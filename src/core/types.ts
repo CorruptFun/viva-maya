@@ -41,6 +41,9 @@ export interface Spawn {
 
 export const key = (c: Coord): string => `${c.row},${c.col}`
 
+/** Daily-spin prizes; applied as head-start boosts to the next level played. */
+export type BoostType = 'wildReel' | 'diceBomb' | 'jackpot' | 'extraMoves' | 'doubleScore'
+
 /** One "collect N of symbol X" goal inside a level. */
 export interface LevelObjective {
   symbol: SymbolType

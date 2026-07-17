@@ -1,34 +1,53 @@
+import type { BoostType } from './types'
+
 export interface SaveData {
-  v: 2
+  v: 3
   best: number
   /** Highest level the player may attempt (1-based). */
   unlocked: number
   /** Earned stars per completed level (1–3). */
   stars: Record<number, number>
+  /** YYYY-MM-DD (local) of the last daily spin, or null if never spun. */
+  lastSpinDate: string | null
+  /** Consecutive-day spin streak (1 = first day). */
+  streak: number
+  /** Prizes waiting to be applied to the next level started. */
+  pendingBoosts: BoostType[]
 }
 
 const KEY = 'viva-maya:v1'
 
-const DEFAULTS: SaveData = { v: 2, best: 0, unlocked: 1, stars: {} }
+const DEFAULTS: SaveData = {
+  v: 3,
+  best: 0,
+  unlocked: 1,
+  stars: {},
+  lastSpinDate: null,
+  streak: 0,
+  pendingBoosts: [],
+}
+
+function fresh(): SaveData {
+  return { ...DEFAULTS, stars: {}, pendingBoosts: [] }
+}
 
 /** localStorage can throw (private mode, storage full) — never let that kill the game. */
 export function loadSave(): SaveData {
   try {
     const raw = localStorage.getItem(KEY)
-    if (!raw) return { ...DEFAULTS, stars: {} }
+    if (!raw) return fresh()
     const data = JSON.parse(raw) as Partial<SaveData> & { best?: number }
-    if (data.v === 2) {
-      return {
-        v: 2,
-        best: typeof data.best === 'number' ? data.best : 0,
-        unlocked: typeof data.unlocked === 'number' ? Math.max(1, data.unlocked) : 1,
-        stars: data.stars && typeof data.stars === 'object' ? data.stars : {},
-      }
-    }
-    // v1 payload was `{ best }` — migrate.
-    return { ...DEFAULTS, stars: {}, best: typeof data.best === 'number' ? data.best : 0 }
+    const base = fresh()
+    // v1 was {best}; v2 added unlocked/stars; v3 added daily-spin fields.
+    base.best = typeof data.best === 'number' ? data.best : 0
+    base.unlocked = typeof data.unlocked === 'number' ? Math.max(1, data.unlocked) : 1
+    base.stars = data.stars && typeof data.stars === 'object' ? data.stars : {}
+    base.lastSpinDate = typeof data.lastSpinDate === 'string' ? data.lastSpinDate : null
+    base.streak = typeof data.streak === 'number' ? data.streak : 0
+    base.pendingBoosts = Array.isArray(data.pendingBoosts) ? data.pendingBoosts : []
+    return base
   } catch {
-    return { ...DEFAULTS, stars: {} }
+    return fresh()
   }
 }
 
@@ -57,4 +76,15 @@ export function recordScore(score: number): SaveData {
     persistSave(save)
   }
   return save
+}
+
+/** Consume all pending boosts (they apply to the level being started, win or lose). */
+export function takePendingBoosts(): BoostType[] {
+  const save = loadSave()
+  const boosts = save.pendingBoosts
+  if (boosts.length > 0) {
+    save.pendingBoosts = []
+    persistSave(save)
+  }
+  return boosts
 }

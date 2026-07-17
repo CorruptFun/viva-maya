@@ -20,9 +20,9 @@ import {
 import { Board } from '../core/board'
 import { LEVEL_COUNT, levelSpec } from '../core/levels'
 import { mulberry32 } from '../core/rng'
-import { recordResult, recordScore } from '../core/save'
+import { recordResult, recordScore, takePendingBoosts } from '../core/save'
 import { SYMBOLS, key } from '../core/types'
-import type { ClearWave, Coord, FallMove, LevelSpec, Piece, Spawn, SymbolType } from '../core/types'
+import type { BoostType, ClearWave, Coord, FallMove, LevelSpec, Piece, Spawn, SymbolType } from '../core/types'
 import { addCasinoBackdrop } from '../view/background'
 import { TEX_SIZE, ensurePieceTexture } from '../view/textures'
 import { FONT, GHOST_PILL, GOLD_PILL, addMuteChip, addPillButton } from '../view/ui'
@@ -80,6 +80,8 @@ export class GameScene extends Phaser.Scene {
 
   private autoplay = false
   private autoplayDelay = 450
+  private activeBoosts: BoostType[] = []
+  private scoreMult = 1
   private apSched = 0
   private apFired = 0
   private apMoved = 0
@@ -113,7 +115,10 @@ export class GameScene extends Phaser.Scene {
     this.selectedSprite = null
     this.selectPulse = null
     this.dragFrom = null
+    this.scoreMult = 1
+    this.activeBoosts = []
     this.autoplay = import.meta.env.DEV && new URLSearchParams(location.search).has('auto')
+    this.applyBoosts(takePendingBoosts())
 
     if (import.meta.env.DEV) {
       // URL knobs for automated checks: ?goal=N ?moves=N ?auto=MS ?plant=1
@@ -131,9 +136,9 @@ export class GameScene extends Phaser.Scene {
         this.time.timeScale = turbo
       }
       if (params.has('plant')) {
-        this.board.debugPlant({ row: 6, col: 1 }, 'wildReelCol')
-        this.board.debugPlant({ row: 7, col: 1 }, 'diceBomb')
-        this.board.debugPlant({ row: 7, col: 2 }, 'jackpot')
+        this.board.plant({ row: 6, col: 1 }, 'wildReelCol')
+        this.board.plant({ row: 7, col: 1 }, 'diceBomb')
+        this.board.plant({ row: 7, col: 2 }, 'jackpot')
       }
     }
 
@@ -142,6 +147,25 @@ export class GameScene extends Phaser.Scene {
     this.buildHud()
     this.buildPieceLayer()
     this.buildParticles()
+
+    if (this.scoreMult > 1) {
+      this.add
+        .text(BOARD_X + BOARD_W - 128, 66, '×2', { fontFamily: FONT, fontSize: '26px', fontStyle: '900', color: '#c9930a' })
+        .setOrigin(1, 0)
+    }
+    if (this.activeBoosts.length > 0) {
+      const toast = this.add
+        .text(DESIGN_W / 2, BOARD_Y - 44, `🎁 ${this.activeBoosts.map(b => this.boostLabel(b)).join('  ·  ')}`, {
+          fontFamily: FONT,
+          fontSize: '24px',
+          fontStyle: '900',
+          color: '#c9930a',
+        })
+        .setOrigin(0.5)
+        .setDepth(30)
+        .setStroke('#ffffff', 6)
+      this.tweens.add({ targets: toast, alpha: 0, y: toast.y - 30, delay: 2200, duration: 500, onComplete: () => toast.destroy() })
+    }
 
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => this.onDown(p))
     this.input.on('pointermove', (p: Phaser.Input.Pointer) => this.onMove(p))
@@ -180,6 +204,45 @@ export class GameScene extends Phaser.Scene {
       document.body.appendChild(el)
     }
     el.textContent = text
+  }
+
+  /** Daily-spin prizes: head starts applied to this level, consumed win or lose. */
+  private applyBoosts(boosts: BoostType[]): void {
+    if (boosts.length === 0) return
+    this.activeBoosts = boosts
+    const usedCells = new Set<string>()
+    const plantAt = (kind: 'wildReelRow' | 'wildReelCol' | 'diceBomb' | 'jackpot') => {
+      for (let tries = 0; tries < 20; tries++) {
+        const at = { row: 3 + Math.floor(Math.random() * 5), col: Math.floor(Math.random() * COLS) }
+        const cellKey = `${at.row},${at.col}`
+        if (usedCells.has(cellKey)) continue
+        usedCells.add(cellKey)
+        this.board.plant(at, kind)
+        return
+      }
+    }
+    for (const boost of boosts) {
+      if (boost === 'extraMoves') this.movesLeft += 5
+      else if (boost === 'doubleScore') this.scoreMult = 2
+      else if (boost === 'wildReel') plantAt(Math.random() < 0.5 ? 'wildReelRow' : 'wildReelCol')
+      else if (boost === 'diceBomb') plantAt('diceBomb')
+      else if (boost === 'jackpot') plantAt('jackpot')
+    }
+  }
+
+  private boostLabel(boost: BoostType): string {
+    switch (boost) {
+      case 'extraMoves':
+        return '+5 moves'
+      case 'doubleScore':
+        return '2x score'
+      case 'wildReel':
+        return 'Wild Reel planted'
+      case 'diceBomb':
+        return 'Dice Bomb planted'
+      case 'jackpot':
+        return 'Jackpot Chip planted'
+    }
   }
 
   private scheduleAutoplay(): void {
@@ -831,7 +894,7 @@ export class GameScene extends Phaser.Scene {
   // -------------------------------------------------------------- scoring
 
   private addScore(points: number): void {
-    this.score += points
+    this.score += points * this.scoreMult
     this.scoreTween?.stop()
     const counter = { v: this.shownScore }
     this.scoreTween = this.tweens.add({

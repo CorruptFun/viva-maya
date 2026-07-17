@@ -434,8 +434,8 @@ export class Board {
     return this.findFirstValidMove() !== null
   }
 
-  /** DEV tooling: turn the piece at a cell into a special (keeps its symbol). */
-  debugPlant(at: Coord, kind: PieceKind): void {
+  /** Turn the piece at a cell into a special (keeps its symbol) — daily-boost plants + DEV tooling. */
+  plant(at: Coord, kind: PieceKind): void {
     const p = this.get(at)
     if (p) this.grid[at.row][at.col] = this.newPiece(p.symbol, kind)
   }

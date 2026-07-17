@@ -1,5 +1,6 @@
 import Phaser from 'phaser'
 import { DESIGN_W } from '../config'
+import { spinAvailable } from '../core/daily'
 import { LEVEL_COUNT } from '../core/levels'
 import { loadSave } from '../core/save'
 import { addCasinoBackdrop } from '../view/background'
@@ -81,5 +82,22 @@ export class HomeScene extends Phaser.Scene {
     addPillButton(this, DESIGN_W / 2, 872, 280, 64, 'LEVELS', GHOST_PILL, () =>
       this.scene.start('levelselect')
     )
+
+    // Daily bonus entry: glowing when the spin is ready, quiet when claimed.
+    // NOTE: no emoji in pill labels — addPillButton's letterSpacing splits
+    // surrogate pairs in Phaser's glyph renderer (renders tofu).
+    const ready = spinAvailable(save)
+    const label = ready ? 'DAILY BONUS' : `SPUN · DAY ${Math.max(1, save.streak)}`
+    const daily = addPillButton(this, DESIGN_W / 2, 986, 340, 76, label, ready ? GOLD_PILL : GHOST_PILL, () =>
+      this.scene.start('daily')
+    )
+    if (ready) {
+      this.tweens.add({ targets: daily, scale: 1.05, duration: 650, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' })
+    }
+    if (save.pendingBoosts.length > 0) {
+      this.add
+        .text(DESIGN_W / 2, 1044, `🎁 boost ready for your next level`, { fontFamily: FONT, fontSize: '20px', color: '#c9930a' })
+        .setOrigin(0.5)
+    }
   }
 }
