@@ -1,0 +1,20 @@
+{
+  "name": "viva-maya",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "icons": "node scripts/gen-icons.mjs"
+  },
+  "dependencies": {
+    "phaser": "^3.90.0"
+  },
+  "devDependencies": {
+    "typescript": "~5.8.3",
+    "vite": "^7.0.0",
+    "vite-plugin-pwa": "^1.0.0"
+  }
+}
