@@ -1,8 +1,22 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-  <rect width="100" height="100" rx="22" fill="#f6f3ec"/>
-  <g fill="#de3140">
-    <circle cx="39.5" cy="41" r="17.5"/>
-    <circle cx="60.5" cy="41" r="17.5"/>
-    <rect x="31.5" y="33.5" width="37" height="37" transform="rotate(45 50 52)"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96">
+  <rect width="96" height="96" rx="20" fill="#f2c14e"/>
+  <rect x="5" y="5" width="86" height="86" rx="15" fill="#fdfbf7"/>
+  <g>
+    <rect x="5" y="5" width="28.67" height="28.67" rx="15" fill="#f3ece0"/>
+    <rect x="62.33" y="5" width="28.67" height="28.67" rx="15" fill="#f3ece0"/>
+    <rect x="33.67" y="33.67" width="28.67" height="28.67" fill="#f3ece0"/>
+    <rect x="5" y="62.33" width="28.67" height="28.67" rx="15" fill="#f3ece0"/>
+    <rect x="62.33" y="62.33" width="28.67" height="28.67" rx="15" fill="#f3ece0"/>
+  </g>
+  <g font-size="22" text-anchor="middle" dominant-baseline="central">
+    <text x="19.3" y="20">🍒</text>
+    <text x="48" y="20" font-family="Arial Black, Arial" font-weight="900" fill="#e0312e">7</text>
+    <text x="76.7" y="20">💎</text>
+    <text x="19.3" y="48">🍀</text>
+    <text x="48" y="48">🔔</text>
+    <text x="76.7" y="48">🍒</text>
+    <text x="19.3" y="76.7">💎</text>
+    <text x="48" y="76.7">🍀</text>
+    <text x="76.7" y="76.7" font-family="Arial Black, Arial" font-weight="900" fill="#e0312e">7</text>
   </g>
 </svg>
