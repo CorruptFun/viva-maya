@@ -642,13 +642,13 @@ function ensureBaseTexture(scene: Phaser.Scene, key: string, w: number, h: numbe
   // Soft contact shadow — a couple of footprint copies nudged straight down (only the bottom edge peeks out).
   for (let i = 3; i >= 1; i--) {
     g.fillStyle(tok.shadow, 0.07)
-    g.fillRoundedRect(ox, oy + i * 1.5, w, H, safeR(r, w, H))
+    g.fillRoundedRect(ox, oy + i * 1.5, w, H, safeR(r, w, h))
   }
   // Pedestal: darkest outer rim (the thickness) → mid inner wall.
   g.fillStyle(tok.pedestalDeep, 1)
-  g.fillRoundedRect(ox, oy, w, H, safeR(r, w, H))
+  g.fillRoundedRect(ox, oy, w, H, safeR(r, w, h))
   g.fillStyle(tok.pedestal, 1)
-  g.fillRoundedRect(ox + 2, oy + 2, w - 4, H - 4, safeR(r - 2, w - 4, H - 4))
+  g.fillRoundedRect(ox + 2, oy + 2, w - 4, H - 4, safeR(r - 2, w - 4, h - 4))
   // Dark interior well at the top (revealed as the cap sinks); its rounded bottom stays hidden under the cap.
   const wellH = Math.round(h * 0.6)
   g.fillStyle(tok.well, 1)
