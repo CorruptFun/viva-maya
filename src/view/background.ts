@@ -1,13 +1,56 @@
 import Phaser from 'phaser'
-import { DESIGN_H, DESIGN_W } from '../config'
+import { BOARD_W, BOARD_Y, DESIGN_H, DESIGN_W } from '../config'
+import { D, E } from './motion'
+import { quality } from './quality'
+import { css, getTheme, prefersReducedMotion } from './theme'
 
 /**
- * Ambient casino dressing for the empty margins: warm gradient wash, twinkling
- * marquee light strips, corner bokeh glows, faint card-suit watermarks, and
- * (on menu screens) slow-drifting sparkle dust. Everything is procedural and
- * static-cheap; the 'game' variant stays calm so the board keeps the focus.
+ * Atmospheric warm-light backdrop for the empty margins (§3b of the visual
+ * overhaul). Fakes volumetric lounge depth with a stack of translucent ADD light
+ * planes between the flat wash and the opaque gameplay — spotlight cone, drifting
+ * god-rays, blurred bokeh, a warm board light-bleed, a warm vignette that focuses
+ * the eye inward, and a chasing marquee. Everything is procedural + baked once and
+ * animated ONLY with transforms/alpha (no per-frame graphics redraw).
+ *
+ * Three guarantees keep the board readable and the GPU cool:
+ *  1. Every light plane lives at NEGATIVE depth, so the opaque gold tray + tiles
+ *     (depth ≥ 0) mechanically occlude anything over the board rect 40–680×300–940.
+ *  2. Alpha ceilings — board-adjacent ≤ 0.10, margin-confined ≤ 0.20; all light is
+ *     ADD, the vignette is the single NORMAL darkener (warm, never black).
+ *  3. Per-variant intensity + the adaptive quality governor keep steady-state
+ *     blended overdraw within the §5 fill-rate budget (≤ 3.0 FSE menu, ≤ 2.0 game).
  */
 export type BackdropVariant = 'home' | 'menu' | 'game'
+
+/** Explicit negative depth ladder (§3b) — the mechanical no-cross-the-board guarantee. */
+const Z = {
+  wash: -60,
+  aurora: -56,
+  bleed: -54,
+  spotHot: -52,
+  spotBlade: -50,
+  godray: -50,
+  bokehMid: -48,
+  bokehCorner: -46,
+  suits: -44,
+  sparkle: -42,
+  vignette: -34,
+  marquee: -30,
+} as const
+
+// Ambient tween durations, derived from the motion vocabulary's breath token so the
+// backdrop stays slow + coherent rather than sprinkled with magic numbers.
+const T_AURORA = D.breath * 3 // slow aurora pulse
+const T_BLEED = D.breath * 1.6 // board light-bleed pulse
+const T_HOT = D.breath * 1.8 // spotlight hotspot breathe
+const T_SWAY = D.breath * 2.4 // ray / cone sway
+const T_TWINKLE = D.breath * 2.6 // bokeh twinkle
+const T_DRIFT = D.breath * 4 // sparkle drift
+const T_MARQUEE = D.breath * 1.9 // marquee chase loop
+
+// Board centre (the opaque tray occludes negative-depth light across the board rect).
+const BOARD_MID_X = DESIGN_W / 2
+const BOARD_MID_Y = BOARD_Y + BOARD_W / 2 // 620
 
 type SuitSpec = [glyph: string, x: number, y: number, size: number, angle: number, alpha: number]
 
@@ -54,107 +97,406 @@ function ensureTextures(scene: Phaser.Scene): void {
   }
 }
 
-export function addCasinoBackdrop(scene: Phaser.Scene, variant: BackdropVariant): void {
-  ensureTextures(scene)
+// --- small shared builders --------------------------------------------------
 
-  // Warm wash: rose-tinted at the top, deeper tan at the bottom.
-  const wash = scene.add.graphics()
-  wash.fillGradientStyle(0xfaf3ec, 0xfaf3ec, 0xefe7d6, 0xefe7d6, 1)
+/** A soft ADD glow (the pre-blurred `bgglow`), display-sized in px, tinted + placed. */
+function addGlow(
+  scene: Phaser.Scene,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  tint: number,
+  alpha: number,
+  depth: number
+): Phaser.GameObjects.Image {
+  return scene.add
+    .image(x, y, 'bgglow')
+    .setDisplaySize(w, h)
+    .setTint(tint)
+    .setAlpha(alpha)
+    .setBlendMode(Phaser.BlendModes.ADD)
+    .setDepth(depth)
+}
+
+/** Slow alpha yoyo — the canonical "breathing light" pulse. Static when `!animate`. */
+function breatheAlpha(
+  scene: Phaser.Scene,
+  obj: Phaser.GameObjects.GameObject & { setAlpha(a: number): unknown },
+  lo: number,
+  hi: number,
+  dur: number,
+  animate: boolean,
+  delay = 0
+): void {
+  if (!animate) {
+    obj.setAlpha((lo + hi) / 2)
+    return
+  }
+  obj.setAlpha(lo)
+  scene.tweens.add({ targets: obj, alpha: hi, duration: dur, delay, yoyo: true, repeat: -1, ease: E.hero })
+}
+
+/** Gentle ± rotation of a rig container so a whole cone / ray pair sways as one tween. */
+function sway(scene: Phaser.Scene, rig: Phaser.GameObjects.Container, deg: number, dur: number, animate: boolean): void {
+  if (!animate) {
+    rig.setAngle(0)
+    return
+  }
+  rig.setAngle(-deg)
+  scene.tweens.add({ targets: rig, angle: deg, duration: dur, yoyo: true, repeat: -1, ease: E.hero })
+}
+
+/** One `raybeam` blade, pivoting at its top (the light source). */
+function blade(
+  scene: Phaser.Scene,
+  x: number,
+  angle: number,
+  scaleX: number,
+  scaleY: number,
+  tint: number,
+  alpha: number
+): Phaser.GameObjects.Image {
+  return scene.add
+    .image(x, 0, 'raybeam')
+    .setOrigin(0.5, 0)
+    .setAngle(angle)
+    .setScale(scaleX, scaleY)
+    .setTint(tint)
+    .setAlpha(alpha)
+    .setBlendMode(Phaser.BlendModes.ADD)
+}
+
+// --- layer helpers (§3b) ----------------------------------------------------
+
+/** L1 (−60, NORMAL): the flat warm wash. Static — never tweened. */
+function washBase(scene: Phaser.Scene): void {
+  const T = getTheme()
+  const wash = scene.add.graphics().setDepth(Z.wash)
+  wash.fillGradientStyle(T.washTop, T.washTop, T.washBottom, T.washBottom, 1)
   wash.fillRect(0, 0, DESIGN_W, DESIGN_H)
+}
 
-  // Corner bokeh glows.
-  const bokeh: Array<[number, number, number, number, number]> = [
-    [-30, 170, 2.6, 0xf2c14e, 0.1],
-    [DESIGN_W + 20, 320, 2.2, 0xf0a3ad, 0.09],
-    [50, DESIGN_H - 160, 2.4, 0xf0a3ad, 0.08],
-    [DESIGN_W - 40, DESIGN_H - 260, 2.8, 0xf2c14e, 0.09],
-  ]
-  for (const [x, y, scale, tint, alpha] of bokeh) {
-    scene.add.image(x, y, 'bgglow').setScale(scale).setTint(tint).setAlpha(alpha)
+/** L2 (−56, ADD): breathing aurora glows. Game keeps them small + in the margins. */
+function aurora(scene: Phaser.Scene, variant: BackdropVariant): void {
+  const T = getTheme()
+  const reduced = prefersReducedMotion()
+  const animate = !reduced && quality.tier() !== 'low'
+
+  if (variant === 'game') {
+    // Two small (<400px) margin glows: one above the board, one below. Both are
+    // clamped so their bright cores never leave the top / bottom margins.
+    const warm = addGlow(scene, 210, 132, 320, 320, T.washGlowWarm, 0.1, Z.aurora)
+    breatheAlpha(scene, warm, 0.08, 0.1, T_AURORA, animate)
+    const cool = addGlow(scene, 512, 1150, 320, 320, T.washGlowCool, 0.09, Z.aurora)
+    breatheAlpha(scene, cool, 0.07, 0.09, T_AURORA, animate, T_AURORA * 0.5)
+    return
   }
 
-  // Marquee light strips along the top and bottom edges.
-  const dotCount = 15
-  for (let i = 0; i < dotCount; i++) {
-    const x = 24 + (i * (DESIGN_W - 48)) / (dotCount - 1)
-    for (const y of [26, DESIGN_H - 26]) {
-      const dot = scene.add.image(x, y, 'bgdot').setTint(0xf2b234).setAlpha(0.28)
-      scene.tweens.add({
-        targets: dot,
-        alpha: 0.5,
-        duration: 1100,
-        delay: (i % 5) * 210 + (y > 100 ? 400 : 0),
-        yoyo: true,
-        repeat: -1,
-        ease: 'Sine.easeInOut',
-      })
+  // home / menu: two full warm+cool auroras drifting in the upper + lower thirds.
+  const warm = addGlow(scene, 220, 420, 560, 560, T.washGlowWarm, 0.11, Z.aurora)
+  breatheAlpha(scene, warm, 0.08, 0.11, T_AURORA, animate)
+  // On the low tier we keep only the single warm aurora.
+  if (quality.tier() === 'low') return
+  const cool = addGlow(scene, 520, 860, 540, 540, T.washGlowCool, 0.1, Z.aurora)
+  breatheAlpha(scene, cool, 0.07, 0.1, T_AURORA, animate, T_AURORA * 0.5)
+}
+
+/**
+ * L7 (−54, ADD): warm board light-bleed (game only). Sits UNDER the opaque tray +
+ * GameScene's existing rose cabinetGlow — only its edges escape the bezel as a gold
+ * halo ("the machine is powered on"). Together they read as a two-tone bleed.
+ */
+function boardBleed(scene: Phaser.Scene, variant: BackdropVariant): void {
+  if (variant !== 'game') return
+  const T = getTheme()
+  const reduced = prefersReducedMotion()
+  const bleed = addGlow(scene, BOARD_MID_X, BOARD_MID_Y, BOARD_W + 90, BOARD_W + 90, T.bleedWarm, 0.08, Z.bleed)
+  breatheAlpha(scene, bleed, 0.06, 0.1, T_BLEED, !reduced)
+}
+
+/**
+ * L3 (−52 hotspot/pool, −50 blades, ADD): the top spotlight. A warm hotspot at the
+ * source, fanned `raybeam` cone blades, and a floor pool. Game gets a faint hotspot
+ * + a single blade clamped to y ≤ 260 (above the board), no pool.
+ */
+function spotlight(scene: Phaser.Scene, variant: BackdropVariant): void {
+  const T = getTheme()
+  const reduced = prefersReducedMotion()
+  const low = quality.tier() === 'low'
+  const animate = !reduced && !low
+
+  const cfg =
+    variant === 'home'
+      ? { sy: 40, hot: 600, hotA: 0.16, poolA: 0.05, blades: 2, bladeA: 0.08, bladeSY: 1, swayDeg: 3 }
+      : variant === 'menu'
+        ? { sy: 34, hot: 550, hotA: 0.13, poolA: 0.05, blades: 2, bladeA: 0.08, bladeSY: 1, swayDeg: 3 }
+        : { sy: 24, hot: 360, hotA: 0.08, poolA: 0, blades: 1, bladeA: 0.07, bladeSY: 0.34, swayDeg: 1.5 }
+
+  // Hotspot — the bright spotlight source, clamped into the top margin.
+  const hot = addGlow(scene, BOARD_MID_X, cfg.sy + 40, cfg.hot, cfg.hot * 0.9, T.washGlowWarm, cfg.hotA, Z.spotHot)
+  breatheAlpha(scene, hot, cfg.hotA * 0.72, cfg.hotA, T_HOT, animate)
+
+  // Floor pool — a wide, low warm wash at the very bottom (home / menu only).
+  if (cfg.poolA > 0 && !low) {
+    addGlow(scene, BOARD_MID_X, DESIGN_H - 70, 720, 300, T.washGlowWarm, cfg.poolA, Z.spotHot)
+  }
+
+  // Cone blades — a rig at the source so the whole cone sways with ONE tween.
+  if (!low) {
+    const rig = scene.add.container(BOARD_MID_X, cfg.sy).setDepth(Z.spotBlade)
+    if (cfg.blades === 1) {
+      rig.add(blade(scene, 0, 0, 1.1, cfg.bladeSY, T.rayTint, cfg.bladeA))
+    } else {
+      rig.add(blade(scene, 0, -13, 1, cfg.bladeSY, T.rayTint, cfg.bladeA))
+      rig.add(blade(scene, 0, 13, 1, cfg.bladeSY, T.rayTint, cfg.bladeA))
     }
+    sway(scene, rig, cfg.swayDeg, T_SWAY, animate)
+  }
+}
+
+/**
+ * L4 (−50, ADD): drifting god-rays — the big diagonal light shafts. Two crossed on
+ * home (gold + rose), one on menu, NONE on game (the cabinet bulbs already carry the
+ * game's motion; keeps the HUD uncluttered — §7 open decision #5).
+ */
+function godRays(scene: Phaser.Scene, variant: BackdropVariant): void {
+  if (variant === 'game') return
+  const T = getTheme()
+  const reduced = prefersReducedMotion()
+  const low = quality.tier() === 'low'
+  if (low) return // rays are the first thing dropped on weak hardware
+  const animate = !reduced
+
+  const rig = scene.add.container(BOARD_MID_X, -60).setDepth(Z.godray)
+  rig.add(blade(scene, -170, 20, 1.1, 1.4, T.rayTint, 0.09))
+  if (variant === 'home') {
+    rig.add(blade(scene, 175, -20, 0.95, 1.3, T.rayTintCool, 0.06))
+  }
+  sway(scene, rig, 2.5, T_SWAY * 1.15, animate)
+}
+
+/**
+ * L5 (−48 mid / −46 corner, ADD): blurred bokeh. Corner bokeh live in the corners
+ * (margin-confined); mid-field bokeh (home / menu only) add depth in the side gutters.
+ * Each tier shares ONE twinkle tween.
+ */
+function bokeh(scene: Phaser.Scene, variant: BackdropVariant): void {
+  const T = getTheme()
+  const reduced = prefersReducedMotion()
+  const low = quality.tier() === 'low'
+  const animate = !reduced && !low
+
+  const cornerScale = variant === 'game' ? 218 : 300
+  const cornerA = variant === 'game' ? 0.09 : 0.1
+  const corners: Array<[number, number, number]> = [
+    [-30, 170, T.bokehWarm],
+    [DESIGN_W + 20, 320, T.bokehCool],
+    [50, DESIGN_H - 150, T.bokehCool],
+    [DESIGN_W - 40, DESIGN_H - 250, T.bokehWarm],
+  ]
+  // On low, keep just the two warm corners.
+  const cornerSet = low ? [corners[0], corners[3]] : corners
+  const cornerImgs = cornerSet.map(([x, y, tint]) =>
+    addGlow(scene, x, y, cornerScale, cornerScale, tint, cornerA, Z.bokehCorner)
+  )
+  if (animate && cornerImgs.length) {
+    scene.tweens.add({
+      targets: cornerImgs,
+      alpha: cornerA + 0.03,
+      duration: T_TWINKLE,
+      yoyo: true,
+      repeat: -1,
+      ease: E.hero,
+    })
   }
 
-  // Faint card-suit watermarks in the margins.
-  const suits: SuitSpec[] =
+  if (variant === 'game' || low) return
+
+  // Mid-field bokeh in the side gutters (home 3, menu 1).
+  const mids: Array<[number, number, number]> =
+    variant === 'home'
+      ? [
+          [60, 640, T.bokehWarm],
+          [664, 560, T.bokehCool],
+          [360, DESIGN_H - 120, T.bokehWarm],
+        ]
+      : [[664, 600, T.bokehCool]]
+  const midImgs = mids.map(([x, y, tint]) => addGlow(scene, x, y, 260, 260, tint, 0.08, Z.bokehMid))
+  if (animate) {
+    scene.tweens.add({
+      targets: midImgs,
+      alpha: 0.11,
+      duration: T_TWINKLE * 1.2,
+      delay: T_TWINKLE * 0.4,
+      yoyo: true,
+      repeat: -1,
+      ease: E.hero,
+    })
+  }
+}
+
+/** L9 (−44, NORMAL): faint card-suit watermarks in the margins. Static dressing. */
+function suits(scene: Phaser.Scene, variant: BackdropVariant): void {
+  const T = getTheme()
+  const color = css(T.suitWatermark)
+  const specs: SuitSpec[] =
     variant === 'game'
       ? [...SUITS_TOP, ...SUITS_BOTTOM]
       : variant === 'menu'
         ? [...SUITS_TOP, ...SUITS_BOTTOM, ...SUITS_MID.slice(0, 2)]
         : [...SUITS_TOP, ...SUITS_BOTTOM, ...SUITS_MID]
-  for (const [glyph, x, y, size, angle, alpha] of suits) {
+  for (const [glyph, x, y, size, angle, alpha] of specs) {
     scene.add
-      .text(x, y, glyph, { fontFamily: 'Arial, sans-serif', fontSize: `${size}px`, color: '#8a7a52' })
+      .text(x, y, glyph, { fontFamily: 'Arial, sans-serif', fontSize: `${size}px`, color })
       .setOrigin(0.5)
       .setAngle(angle)
       .setAlpha(alpha)
+      .setDepth(Z.suits)
   }
+}
 
-  // Slow-drifting sparkle dust — menu screens only; the board stays calm.
-  if (variant !== 'game') {
-    const motes: Array<[number, number, number]> = [
-      [90, 420, 0.9],
-      [640, 380, 0.7],
-      [180, 760, 0.6],
-      [560, 700, 0.8],
-      [340, 980, 0.7],
-      [80, 1000, 0.5],
-      [660, 950, 0.6],
-    ]
-    motes.forEach(([x, y, scale], i) => {
-      const mote = scene.add.image(x, y, 'bgdot').setTint(0xd9a521).setAlpha(0.35).setScale(scale)
-      scene.tweens.add({
-        targets: mote,
-        y: y - 70,
-        alpha: 0.12,
-        duration: 3800 + i * 420,
-        delay: i * 300,
-        yoyo: true,
-        repeat: -1,
-        ease: 'Sine.easeInOut',
-      })
+/**
+ * L9 (−42, ADD): drifting sparkle dust. Menus + home only (never over the board),
+ * capped + scaled by the quality governor, and dropped entirely under reduced motion
+ * or on the low tier (it is a "falling particle").
+ */
+function sparkle(scene: Phaser.Scene, variant: BackdropVariant): void {
+  if (variant === 'game') return
+  if (prefersReducedMotion() || quality.tier() === 'low') return
+  const T = getTheme()
+
+  const base = variant === 'home' ? 8 : 6
+  const n = Math.max(3, quality.count(base))
+  const spots: Array<[number, number]> = [
+    [90, 420],
+    [640, 380],
+    [180, 760],
+    [560, 700],
+    [340, 980],
+    [80, 1000],
+    [660, 950],
+    [420, 300],
+  ]
+  for (let i = 0; i < n; i++) {
+    const [x, y] = spots[i % spots.length]
+    const scale = 0.5 + (i % 3) * 0.2
+    const mote = scene.add
+      .image(x, y, 'bgdot')
+      .setTint(T.sparkleTint)
+      .setAlpha(0.35)
+      .setScale(scale)
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setDepth(Z.sparkle)
+    scene.tweens.add({
+      targets: mote,
+      y: y + 78,
+      alpha: 0.1,
+      duration: T_DRIFT + i * 420,
+      delay: i * 300,
+      yoyo: true,
+      repeat: -1,
+      ease: E.hero,
     })
   }
+}
 
-  // Game screen: faint tokens + cards shuffling through the empty space below the board —
-  // casino ambiance for the "cabinet", kept low + slow so the board keeps the focus.
-  if (variant === 'game' && scene.textures.exists('chip')) {
-    const tokens: Array<[string, number, number, number, number]> = [
-      ['chip', 96, 1092, 0.95, 0.16],
-      ['card', 250, 1186, 0.85, 0.14],
-      ['chip', 468, 1206, 1.05, 0.15],
-      ['card', 624, 1104, 0.8, 0.13],
-      ['chip', 356, 1234, 0.7, 0.12],
-    ]
-    tokens.forEach(([key, x, y, scale, alpha], i) => {
-      const dir = i % 2 ? -1 : 1
-      const t = scene.add.image(x, y, key).setScale(scale).setAlpha(alpha).setAngle(dir * 12)
-      scene.tweens.add({
-        targets: t,
-        y: y - 42,
-        angle: dir * 12 + dir * 20,
-        duration: 4200 + i * 500,
-        delay: i * 350,
-        yoyo: true,
-        repeat: -1,
-        ease: 'Sine.easeInOut',
-      })
-    })
+/**
+ * L6 (−34, NORMAL): the warm vignette — four edge gradient bands (reliable per-corner
+ * alpha via `fillGradientStyle` on `fillRect`) whose overlap darkens corners more than
+ * sides. One static object in warm `vignetteInk` (NEVER black). Sits above the light
+ * stack (contains the glow) but below the marquee + gameplay.
+ */
+function vignette(scene: Phaser.Scene): void {
+  const T = getTheme()
+  const ink = T.vignetteInk
+  const g = scene.add.graphics().setDepth(Z.vignette)
+  const W = DESIGN_W
+  const H = DESIGN_H
+  const Vt = 0.1
+  const Vb = 0.16
+  const Vs = 0.12
+  const bandT = 340
+  const bandB = 380
+  const bandS = 200
+  // top (fades down)
+  g.fillGradientStyle(ink, ink, ink, ink, Vt, Vt, 0, 0)
+  g.fillRect(0, 0, W, bandT)
+  // bottom (fades up)
+  g.fillGradientStyle(ink, ink, ink, ink, 0, 0, Vb, Vb)
+  g.fillRect(0, H - bandB, W, bandB)
+  // left (fades right)
+  g.fillGradientStyle(ink, ink, ink, ink, Vs, 0, Vs, 0)
+  g.fillRect(0, 0, bandS, H)
+  // right (fades left)
+  g.fillGradientStyle(ink, ink, ink, ink, 0, Vs, 0, Vs)
+  g.fillRect(W - bandS, 0, bandS, H)
+}
+
+/**
+ * L8 (−30, NORMAL): the chasing marquee. A travelling brightness wave along the edges,
+ * driven by ONE proxy tween (not one-per-dot). Home lights all four edges; menu + game
+ * light the top + bottom only. Reduced-motion / low tier → flat mid-alpha, no chase.
+ */
+function marquee(scene: Phaser.Scene, variant: BackdropVariant): void {
+  const T = getTheme()
+  const reduced = prefersReducedMotion()
+  const flat = reduced || quality.tier() === 'low'
+
+  const dots: Phaser.GameObjects.Image[] = []
+  const line = (from: number, to: number, fixed: number, horizontal: boolean, count: number): void => {
+    for (let i = 0; i < count; i++) {
+      const t = from + (i * (to - from)) / (count - 1)
+      const x = horizontal ? t : fixed
+      const y = horizontal ? fixed : t
+      dots.push(
+        scene.add.image(x, y, 'bgdot').setTint(T.marqueeBright).setAlpha(0.32).setDepth(Z.marquee)
+      )
+    }
   }
+  line(24, DESIGN_W - 24, 26, true, 15)
+  line(24, DESIGN_W - 24, DESIGN_H - 26, true, 15)
+  if (variant === 'home') {
+    line(120, DESIGN_H - 120, 26, false, 11)
+    line(120, DESIGN_H - 120, DESIGN_W - 26, false, 11)
+  }
+
+  if (flat) {
+    dots.forEach(d => d.setAlpha(0.42))
+    return
+  }
+  const proxy = { p: 0 }
+  scene.tweens.add({
+    targets: proxy,
+    p: 1,
+    duration: T_MARQUEE,
+    repeat: -1,
+    ease: 'Linear',
+    onUpdate: () => {
+      const ph = proxy.p * Math.PI * 2
+      for (let i = 0; i < dots.length; i++) {
+        dots[i].setAlpha(0.26 + 0.22 * (0.5 + 0.5 * Math.sin(ph + i * 0.6)))
+      }
+    },
+  })
+}
+
+/**
+ * Compose the atmospheric backdrop for a scene. Layers are added back-to-front; each
+ * helper reads the active theme + reduced-motion + quality tier itself and sets its
+ * own explicit negative depth, so ordering here is for readability only.
+ */
+export function addCasinoBackdrop(scene: Phaser.Scene, variant: BackdropVariant): void {
+  ensureTextures(scene)
+
+  washBase(scene)
+  aurora(scene, variant)
+  boardBleed(scene, variant)
+  spotlight(scene, variant)
+  godRays(scene, variant)
+  bokeh(scene, variant)
+  suits(scene, variant)
+  sparkle(scene, variant)
+  vignette(scene)
+  marquee(scene, variant)
 }
