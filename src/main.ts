@@ -7,8 +7,13 @@ import { GameScene } from './scenes/GameScene'
 import { HomeScene } from './scenes/HomeScene'
 import { LevelSelectScene } from './scenes/LevelSelectScene'
 import { installQualityGovernor } from './view/quality'
+import { applyPageChrome, getTheme } from './view/theme'
 
 registerSW({ immediate: true })
+
+// Paint the body background + <meta theme-color> to match the active theme at boot,
+// so the page chrome behind the canvas matches the wash (Golden Hour = unchanged).
+applyPageChrome(getTheme())
 
 if (import.meta.env.DEV) {
   // On-screen error surface — devtools aren't always reachable (phones, embedded panes).
