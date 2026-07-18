@@ -4,7 +4,19 @@ import { LIVES_MAX } from '../config'
 import { formatCountdown } from '../core/lives'
 import type { LivesState } from '../core/lives'
 import { loadSave } from '../core/save'
-import { css, getTheme, prefersReducedMotion } from './theme'
+import type { SaveData } from '../core/save'
+import {
+  THEME_META,
+  THEME_ORDER,
+  THEMES,
+  css,
+  getTheme,
+  getThemeId,
+  prefersReducedMotion,
+  setTheme,
+  themeUnlocked,
+} from './theme'
+import type { Theme, ThemeId } from './theme'
 
 export const FONT = '"Arial Black", "Helvetica Neue", Arial, sans-serif'
 
@@ -806,4 +818,209 @@ export function openSoundPanel(scene: Phaser.Scene): void {
   }
 
   layer.add(addPillButton(scene, W / 2, pyTop + ph - 72, 240, 68, 'DONE', GOLD_PILL, () => layer.destroy()))
+}
+
+/**
+ * A compact preview of a theme drawn purely from ITS OWN tokens: a soft wash gradient with a warm
+ * glow smudge and a few signature accent dots (gold / accent / accentAlt). Used both as the theme
+ * chip's icon (the active theme) and inside each picker row (that row's TARGET theme), so every
+ * swatch reads accurately for the look it represents. Returns a Graphics centred on its own origin
+ * (seat it in a container / pressable `face`). Cards/bezel are never previewed — those stay cream.
+ */
+function makeThemeSwatch(scene: Phaser.Scene, T: Theme, w: number, h: number, accents = 3): Phaser.GameObjects.Graphics {
+  const g = scene.add.graphics()
+  const r = Math.max(3, Math.min(12, h * 0.24))
+  const x = -w / 2
+  const y = -h / 2
+  // Wash: solid bottom colour, then falling-height top-colour bands blend up toward the top edge
+  // (same top-lit technique as the button gloss) — reads as a soft vertical wash, light OR dark.
+  g.fillStyle(T.washBottom, 1)
+  g.fillRoundedRect(x, y, w, h, r)
+  const bands = 7
+  for (let i = 0; i < bands; i++) {
+    const bh = Math.max(1, h * (0.94 - 0.86 * (i / (bands - 1))))
+    g.fillStyle(T.washTop, 0.16)
+    g.fillRoundedRect(x, y, w, bh, safeR(r, w, bh))
+  }
+  // Warm glow smudge near the top — the wash's warm glow token, for a little life.
+  g.fillStyle(T.washGlowWarm, 0.5)
+  g.fillCircle(x + w * 0.32, y + h * 0.34, h * 0.14)
+  // Signature accent dots along the lower third (the theme's colour swing).
+  const dots = [T.gold, T.accent, T.accentAlt]
+  const n = Math.max(1, Math.min(accents, dots.length))
+  const dr = h * 0.14
+  const gap = dr * 2.7
+  const startX = -((n - 1) * gap) / 2
+  for (let i = 0; i < n; i++) {
+    g.fillStyle(dots[i], 1)
+    g.fillCircle(startX + i * gap, h * 0.24, dr)
+    g.lineStyle(1, T.washTop, 0.4)
+    g.strokeCircle(startX + i * gap, h * 0.24, dr)
+  }
+  // Gold bezel frame — the swatch reads as a little framed screen.
+  g.lineStyle(Math.max(1.5, h * 0.05), T.goldBezel, 0.9)
+  g.strokeRoundedRect(x, y, w, h, r)
+  return g
+}
+
+/**
+ * One picker row: a full-width pressable pill carrying the theme's swatch preview + name + feel.
+ * The active theme is a GOLD_PILL highlight; unlocked-inactive is GHOST_PILL; locked renders at
+ * α 0.55 with the baked `lock` texture + "Reach Level N" and only nudges on tap (no apply). Tapping
+ * an unlocked, inactive row fires `onPick`. Built via `buildPressable` so the whole face sinks as a
+ * tactile cap.
+ */
+function buildThemeRow(
+  scene: Phaser.Scene,
+  cx: number,
+  cy: number,
+  w: number,
+  h: number,
+  id: ThemeId,
+  save: SaveData,
+  reduced: boolean,
+  onPick: () => void
+): Phaser.GameObjects.Container {
+  const unlocked = themeUnlocked(id, save)
+  const active = id === getThemeId()
+  const T = THEMES[id]
+  const meta = THEME_META[id]
+  const style = active ? GOLD_PILL : GHOST_PILL
+
+  const { container, face } = buildPressable(scene, cx, cy, w, h, style, () => {
+    sfx.uiTap()
+    if (!unlocked) {
+      // Gentle "locked" nudge — no theme change.
+      if (!reduced) {
+        scene.tweens.add({ targets: face, x: 6, duration: 55, yoyo: true, repeat: 3, ease: 'Sine.easeInOut', onComplete: () => face.setX(0) })
+      }
+      return
+    }
+    if (active) return // already the active theme — no-op
+    onPick()
+  })
+
+  const padX = 26
+  const swW = h * 0.72
+  const swatch = makeThemeSwatch(scene, T, swW, swW, 3)
+  swatch.setPosition(-w / 2 + padX + swW / 2, 0)
+  face.add(swatch)
+
+  const textX = -w / 2 + padX + swW + 22
+  const name = scene.add
+    .text(textX, -14, meta.name, { fontFamily: FONT, fontSize: '30px', fontStyle: '900', color: active ? '#4a3305' : '#2a2732' })
+    .setOrigin(0, 0.5)
+    .setLetterSpacing(1)
+  const feel = scene.add
+    .text(textX, 20, meta.feel, { fontFamily: 'Arial, sans-serif', fontSize: '20px', color: active ? '#7a5a12' : '#6a6459' })
+    .setOrigin(0, 0.5)
+  face.add([name, feel])
+
+  const rightX = w / 2 - padX
+  if (!unlocked) {
+    const lock = scene.add.image(rightX - 8, -12, 'lock').setDisplaySize(34, 34)
+    const req = scene.add
+      .text(rightX, 22, `Reach Level ${meta.unlockLevel}`, { fontFamily: FONT, fontSize: '18px', fontStyle: '900', color: '#a8213c' })
+      .setOrigin(1, 0.5)
+    face.add([lock, req])
+    face.setAlpha(0.55)
+  } else if (active) {
+    const badge = scene.add
+      .text(rightX, 0, 'ACTIVE', { fontFamily: FONT, fontSize: '20px', fontStyle: '900', color: '#4a3305' })
+      .setOrigin(1, 0.5)
+      .setLetterSpacing(1)
+    face.add(badge)
+  }
+
+  return container
+}
+
+/**
+ * Round theme-picker chip styled like GHOST_PILL, but its "glyph" is a live tri-colour swatch of
+ * the ACTIVE theme (wash + gold + accent) so the chip itself previews the current look. Opens the
+ * picker on tap. Built via `buildPressable` directly (not `addRoundChip`) so the icon can be a
+ * Graphics swatch instead of text.
+ */
+export function addThemeChip(scene: Phaser.Scene, x: number, y: number, size = 52): Phaser.GameObjects.Container {
+  const { container, face } = buildPressable(scene, x, y, size, size, GHOST_PILL, () => {
+    sfx.uiTap()
+    openThemePanel(scene)
+  })
+  container.setDepth(50)
+  face.add(makeThemeSwatch(scene, getTheme(), size * 0.52, size * 0.52, 2))
+  return container
+}
+
+/**
+ * Theme-picker overlay (§3e): a scrim + cream card titled "THEME" with one row per theme in
+ * `THEME_ORDER`. Each row shows the theme's name + feel and an accurate swatch drawn from THAT
+ * theme's own tokens. The active row is a gold highlight; locked rows render dim (α 0.55) with a
+ * lock icon + "Reach Level N" and only nudge on tap. Picking an unlocked theme persists it
+ * (`setTheme`) and rebuilds the panel in place so the highlight + swatches follow the choice.
+ *
+ * Apply model (§2.4): the theme id at FIRST open is threaded through rebuilds via `openingThemeId`;
+ * on CLOSE, if it changed, the calling scene restarts so its art repaints in the new wash — no live
+ * re-tint (boot textures are never re-baked and read fine on every theme). Mirrors `openSoundPanel`.
+ */
+export function openThemePanel(scene: Phaser.Scene, openingThemeId: ThemeId = getThemeId()): void {
+  const W = 720
+  const H = 1280
+  const reduced = prefersReducedMotion()
+  const save = loadSave()
+  const layer = scene.add.container(0, 0).setDepth(60)
+
+  const px = 40
+  const pw = W - 80
+  const ph = 792
+  const pyTop = (H - ph) / 2
+
+  const scrim = scene.add.rectangle(W / 2, H / 2, W, H, 0x2a2417, 0.6).setInteractive()
+  const close = (): void => {
+    const changed = getThemeId() !== openingThemeId
+    layer.destroy()
+    if (changed) scene.scene.restart()
+  }
+  scrim.on('pointerup', close)
+
+  const g = scene.add.graphics()
+  g.fillStyle(0x8a7a52, 0.3)
+  g.fillRoundedRect(px + 4, pyTop + 8, pw, ph, 30)
+  g.fillStyle(0xfffdf8, 1)
+  g.fillRoundedRect(px, pyTop, pw, ph, 30)
+  g.lineStyle(4, 0xf2c14e, 1)
+  g.strokeRoundedRect(px, pyTop, pw, ph, 30)
+
+  // Blocker so taps on the card don't fall through to the scrim (which closes).
+  const block = scene.add.rectangle(W / 2, pyTop + ph / 2, pw, ph, 0xffffff, 0.001).setInteractive()
+
+  const title = scene.add
+    .text(W / 2, pyTop + 56, 'THEME', { fontFamily: FONT, fontSize: '46px', fontStyle: '900', color: '#c9930a' })
+    .setOrigin(0.5)
+    .setLetterSpacing(2)
+    .setShadow(0, 2, 'rgba(0,0,0,0.12)', 4, false, true)
+  const subtitle = scene.add
+    .text(W / 2, pyTop + 104, "Dress up the room — every look's on the house.", {
+      fontFamily: 'Arial, sans-serif',
+      fontSize: '22px',
+      color: '#6a6459',
+    })
+    .setOrigin(0.5)
+  layer.add([scrim, g, block, title, subtitle])
+
+  const rowW = pw - 80
+  const rowH = 116
+  let y = pyTop + 194
+  for (const id of THEME_ORDER) {
+    layer.add(
+      buildThemeRow(scene, W / 2, y, rowW, rowH, id, save, reduced, () => {
+        setTheme(id) // persist + repaint page chrome now; art repaints on close-if-changed
+        // Rebuild so the gold highlight + chip swatch follow the pick (openingThemeId preserved).
+        layer.destroy()
+        openThemePanel(scene, openingThemeId)
+      })
+    )
+    y += 128
+  }
+
+  layer.add(addPillButton(scene, W / 2, pyTop + ph - 66, 240, 68, 'DONE', GOLD_PILL, close))
 }

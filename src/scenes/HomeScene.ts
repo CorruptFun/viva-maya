@@ -20,8 +20,10 @@ import {
   addPillButton,
   addSoundChip,
   addStreakBadge,
+  addThemeChip,
   openHelpPanel,
   openSoundPanel,
+  openThemePanel,
   startScene,
 } from '../view/ui'
 
@@ -48,6 +50,10 @@ export class HomeScene extends Phaser.Scene {
     // Move-sound picker, mirrored in the top-right corner.
     addSoundChip(this, 676, 44)
     if (import.meta.env.DEV && new URLSearchParams(location.search).has('sound')) openSoundPanel(this)
+
+    // Theme picker — paired with the sound chip (both are look-and-feel pickers).
+    addThemeChip(this, 604, 44)
+    if (import.meta.env.DEV && new URLSearchParams(location.search).has('theme')) openThemePanel(this)
 
     // Persistent chip balance (earned reward token) — top-center, between the ? and ♪ corner
     // chips and above the lives pool. A read-out only; chips are never spent in Phase 1.
