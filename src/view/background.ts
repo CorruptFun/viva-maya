@@ -1,5 +1,5 @@
 import Phaser from 'phaser'
-import { BOARD_W, BOARD_Y, DESIGN_H, DESIGN_W } from '../config'
+import { BOARD_W, BOARD_Y, contentOffsetY, DESIGN_H, DESIGN_W } from '../config'
 import { D, E } from './motion'
 import { quality } from './quality'
 import { css, getTheme, prefersReducedMotion } from './theme'
@@ -173,9 +173,12 @@ function blade(
 /** L1 (−60, NORMAL): the flat warm wash. Static — never tweened. */
 function washBase(scene: Phaser.Scene): void {
   const T = getTheme()
+  const OFF = contentOffsetY()
   const wash = scene.add.graphics().setDepth(Z.wash)
   wash.fillGradientStyle(T.washTop, T.washTop, T.washBottom, T.washBottom, 1)
-  wash.fillRect(0, 0, DESIGN_W, DESIGN_H)
+  // Fill the full letterbox-free visible world (design box + reclaimed top/bottom margins), so the
+  // margins read as warm wash instead of cream void. Extra pad absorbs minor live-resize growth.
+  wash.fillRect(0, -OFF - 60, DESIGN_W, DESIGN_H + 2 * OFF + 120)
 }
 
 /** L2 (−56, ADD): breathing aurora glows. Game keeps them small + in the margins. */
@@ -413,7 +416,11 @@ function vignette(scene: Phaser.Scene): void {
   const ink = T.vignetteInk
   const g = scene.add.graphics().setDepth(Z.vignette)
   const W = DESIGN_W
-  const H = DESIGN_H
+  // Anchor the vignette to the VISIBLE world edges (design box + reclaimed margins), so the inward
+  // focus still lands at the true screen edges on flexible-height screens.
+  const OFF = contentOffsetY()
+  const VT = -OFF
+  const VH = DESIGN_H + 2 * OFF
   const Vt = 0.1
   const Vb = 0.16
   const Vs = 0.12
@@ -422,16 +429,16 @@ function vignette(scene: Phaser.Scene): void {
   const bandS = 200
   // top (fades down)
   g.fillGradientStyle(ink, ink, ink, ink, Vt, Vt, 0, 0)
-  g.fillRect(0, 0, W, bandT)
+  g.fillRect(0, VT, W, bandT)
   // bottom (fades up)
   g.fillGradientStyle(ink, ink, ink, ink, 0, 0, Vb, Vb)
-  g.fillRect(0, H - bandB, W, bandB)
+  g.fillRect(0, VT + VH - bandB, W, bandB)
   // left (fades right)
   g.fillGradientStyle(ink, ink, ink, ink, Vs, 0, Vs, 0)
-  g.fillRect(0, 0, bandS, H)
+  g.fillRect(0, VT, bandS, VH)
   // right (fades left)
   g.fillGradientStyle(ink, ink, ink, ink, 0, Vs, 0, Vs)
-  g.fillRect(W - bandS, 0, bandS, H)
+  g.fillRect(W - bandS, VT, bandS, VH)
 }
 
 /**
@@ -455,11 +462,15 @@ function marquee(scene: Phaser.Scene, variant: BackdropVariant): void {
       )
     }
   }
-  line(24, DESIGN_W - 24, 26, true, 15)
-  line(24, DESIGN_W - 24, DESIGN_H - 26, true, 15)
+  // Run the marquee along the VISIBLE world edges so the chasing frame reaches the true screen edges.
+  const OFF = contentOffsetY()
+  const VT = -OFF
+  const VB = DESIGN_H + OFF
+  line(24, DESIGN_W - 24, VT + 26, true, 15)
+  line(24, DESIGN_W - 24, VB - 26, true, 15)
   if (variant === 'home') {
-    line(120, DESIGN_H - 120, 26, false, 11)
-    line(120, DESIGN_H - 120, DESIGN_W - 26, false, 11)
+    line(VT + 120, VB - 120, 26, false, 11)
+    line(VT + 120, VB - 120, DESIGN_W - 26, false, 11)
   }
 
   if (flat) {
@@ -525,14 +536,17 @@ export function addProscenium(scene: Phaser.Scene): void {
   const T = getTheme()
   const cx = DESIGN_W / 2
   const halfW = 176
+  // Frame the VISIBLE world edges: lift the crown into the reclaimed top margin and drop the console
+  // lip into the reclaimed bottom margin, so the shared molding reaches the true screen edges.
+  const OFF = contentOffsetY()
 
   // A faint warm keystone glow first (behind the molding): the "powered-on" whisper, margin-confined.
-  addGlow(scene, cx, 22, 96, 78, T.bleedWarm, 0.09, Z.proscenium - 1)
+  addGlow(scene, cx, 22 - OFF, 96, 78, T.bleedWarm, 0.09, Z.proscenium - 1)
 
   const g = scene.add.graphics().setDepth(Z.proscenium)
 
   // ---- Crown: a shallow double-reveal molding arc, confined to the top edge ----
-  const apexY = 34
+  const apexY = 34 - OFF
   const drop = 15
   g.lineStyle(2.5, T.gold, 0.5)
   g.strokePoints(crownArc(cx, halfW, apexY, drop), false)
@@ -543,7 +557,7 @@ export function addProscenium(scene: Phaser.Scene): void {
   for (const ex of [cx - halfW, cx + halfW]) g.lineBetween(ex, apexY + drop, ex, apexY + drop + 9)
 
   // ---- Heart keystone at the apex — the shared signature ----
-  const keyY = 17
+  const keyY = 17 - OFF
   const keyR = 15
   g.fillStyle(T.goldDeep, 0.35) // soft under-shadow for a hint of depth
   g.fillPoints(heartPolygon(cx, keyY + 2, keyR), true)
@@ -553,7 +567,7 @@ export function addProscenium(scene: Phaser.Scene): void {
   g.strokePoints(heartPolygon(cx, keyY, keyR), true)
 
   // ---- Console lip: a thin matched molding mirroring the crown, at the very bottom edge ----
-  const lipY = 1250
+  const lipY = 1250 + OFF
   g.lineStyle(2.5, T.gold, 0.45)
   g.lineBetween(cx - halfW, lipY, cx + halfW, lipY)
   g.lineStyle(1.5, T.goldBezel, 0.28)

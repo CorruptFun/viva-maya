@@ -1,6 +1,6 @@
 import Phaser from 'phaser'
 import { sfx } from '../audio/sfx'
-import { DESIGN_H, DESIGN_W } from '../config'
+import { DESIGN_H, DESIGN_W, restScrollY } from '../config'
 import { loadSave } from '../core/save'
 import { BOOST_ITEMS, buyBoost } from '../core/store'
 import type { BoostStoreItem } from '../core/store'
@@ -40,6 +40,7 @@ export class StoreScene extends Phaser.Scene {
   create(): void {
     this.activeToast = undefined // scenes are reused via scene.start — clear the stale per-entry ref
     // Warm cream fade-in + directional rise (the receiving half of startScene's cross-fade).
+    this.cameras.main.setScroll(0, restScrollY()) // centre the design box (reduced-motion path skips applyEntrance)
     this.cameras.main.fadeIn(prefersReducedMotion() ? 90 : 180, 255, 253, 248)
     applyEntrance(this)
     addCasinoBackdrop(this, 'home')

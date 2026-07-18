@@ -1,6 +1,6 @@
 import Phaser from 'phaser'
 import { SWAP_SOUNDS, SWAP_SOUND_LABELS, sfx } from '../audio/sfx'
-import { LIVES_MAX } from '../config'
+import { LIVES_MAX, restScrollY, worldH } from '../config'
 import { formatCountdown } from '../core/lives'
 import type { LivesState } from '../core/lives'
 import { loadSave } from '../core/save'
@@ -140,8 +140,11 @@ export function consumeEntrance(): SceneDir {
 export function applyEntrance(scene: Phaser.Scene, dir: SceneDir = consumeEntrance()): SceneDir {
   if (prefersReducedMotion()) return dir
   const cam = scene.cameras.main
-  cam.setScroll(cam.scrollX, dir === 'deeper' ? -ENTRANCE_OFFSET : ENTRANCE_OFFSET)
-  scene.tweens.add({ targets: cam, scrollY: 0, duration: 340, ease: 'Back.easeOut' })
+  // Rest at the centring scroll (restScrollY), not 0, so the entrance nudge settles onto the
+  // vertically-centred design box instead of yanking it back to the top on flexible-height screens.
+  const rest = restScrollY()
+  cam.setScroll(cam.scrollX, rest + (dir === 'deeper' ? -ENTRANCE_OFFSET : ENTRANCE_OFFSET))
+  scene.tweens.add({ targets: cam, scrollY: rest, duration: 340, ease: 'Back.easeOut' })
   return dir
 }
 
@@ -1057,7 +1060,7 @@ export function openHelpPanel(scene: Phaser.Scene): void {
   const H = 1280
   const layer = scene.add.container(0, 0).setDepth(60)
 
-  const scrim = scene.add.rectangle(W / 2, H / 2, W, H, 0x2a2417, 0.6).setInteractive()
+  const scrim = scene.add.rectangle(W / 2, H / 2, W, worldH(), 0x2a2417, 0.6).setInteractive()
   scrim.on('pointerup', () => { sfx.whoosh(); layer.destroy() }) // §E3 B14: tap-outside close partner
 
   const px = 40
@@ -1151,7 +1154,7 @@ export function openSoundPanel(scene: Phaser.Scene): void {
   const H = 1280
   const layer = scene.add.container(0, 0).setDepth(60)
 
-  const scrim = scene.add.rectangle(W / 2, H / 2, W, H, 0x2a2417, 0.6).setInteractive()
+  const scrim = scene.add.rectangle(W / 2, H / 2, W, worldH(), 0x2a2417, 0.6).setInteractive()
   scrim.on('pointerup', () => { sfx.whoosh(); layer.destroy() }) // §E3 B14: tap-outside close partner
 
   const px = 40
@@ -1357,7 +1360,7 @@ export function openThemePanel(scene: Phaser.Scene, openingThemeId: ThemeId = ge
   const ph = 792
   const pyTop = (H - ph) / 2
 
-  const scrim = scene.add.rectangle(W / 2, H / 2, W, H, 0x2a2417, 0.6).setInteractive()
+  const scrim = scene.add.rectangle(W / 2, H / 2, W, worldH(), 0x2a2417, 0.6).setInteractive()
   const close = (): void => {
     sfx.whoosh() // §E3 B14: airy sweep partners the panel closing
     const changed = getThemeId() !== openingThemeId
@@ -1536,7 +1539,7 @@ export function openSettingsPanel(scene: Phaser.Scene): void {
   const startedRM = rawReduceMotionPref()
   const startedHC = hcBoard()
 
-  const scrim = scene.add.rectangle(W / 2, H / 2, W, H, 0x2a2417, 0.6).setInteractive()
+  const scrim = scene.add.rectangle(W / 2, H / 2, W, worldH(), 0x2a2417, 0.6).setInteractive()
   const close = (): void => {
     sfx.whoosh() // §E3 B14: airy sweep partners the panel closing
     const changed = rawReduceMotionPref() !== startedRM || hcBoard() !== startedHC
@@ -1605,7 +1608,7 @@ export function openOnboarding(scene: Phaser.Scene, onClose?: () => void): void 
   const cardW = 600
   const cardH = 520
 
-  const scrim = scene.add.rectangle(W / 2, H / 2, W, H, 0x2a2417, 0.6).setInteractive()
+  const scrim = scene.add.rectangle(W / 2, H / 2, W, worldH(), 0x2a2417, 0.6).setInteractive()
   const close = (): void => {
     layer.destroy()
     onClose?.()

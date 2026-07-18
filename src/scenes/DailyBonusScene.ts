@@ -1,6 +1,6 @@
 import Phaser from 'phaser'
 import { sfx } from '../audio/sfx'
-import { DESIGN_W } from '../config'
+import { DESIGN_W, restScrollY } from '../config'
 import { performSpin, spinAvailable, todayKey } from '../core/daily'
 import { occasionFor, pendingOccasion } from '../core/maya'
 import { mulberry32 } from '../core/rng'
@@ -51,6 +51,7 @@ export class DailyBonusScene extends Phaser.Scene {
     this.heartbloomFired = false // §E4 — reset per scene entry (scene.start reuses the instance)
     // Warm cream fade-in (never black) — the receiving half of every startScene cross-fade.
     this.cameras.main.fadeIn(this.prefersReducedMotion() ? 90 : 180, 255, 253, 248)
+    this.cameras.main.setScroll(0, restScrollY()) // centre the design box in the taller world
     addCasinoBackdrop(this, 'home')
     const save = loadSave()
     const params = new URLSearchParams(location.search)

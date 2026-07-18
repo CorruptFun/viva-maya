@@ -8,6 +8,8 @@ import {
   CLEAR_MS,
   COLS,
   DESIGN_W,
+  restScrollY,
+  worldH,
   FALL_BASE_MS,
   FALL_PER_CELL_MS,
   INVALID_MS,
@@ -269,7 +271,7 @@ export class GameScene extends Phaser.Scene {
     this.hitstopUntil = 0
     this.baseTimeScale = 1
     this.impactFlash = undefined
-    this.cameras.main.setScroll(0, 0)
+    this.cameras.main.setScroll(0, restScrollY())
     this.activeBoosts = []
     this.autoplay = import.meta.env.DEV && new URLSearchParams(location.search).has('auto')
     if (!this.endless) this.applyBoosts(takePendingBoosts())
@@ -358,6 +360,7 @@ export class GameScene extends Phaser.Scene {
     this.log('showLivesGate')
     const T = getTheme()
     const reduced = this.prefersReducedMotion()
+    this.cameras.main.setScroll(0, restScrollY())
     addCasinoBackdrop(this, 'menu')
     addPillButton(this, 64, 84, 84, 56, '‹', GHOST_PILL, () => startScene(this,'home'))
     addMuteChip(this, 676, 40)
@@ -1342,14 +1345,14 @@ export class GameScene extends Phaser.Scene {
         ox = amp * (Math.random() * 2 - 1)
         oy = amp * (Math.random() * 2 - 1)
       }
-      this.cameras.main.setScroll(ox, oy)
+      this.cameras.main.setScroll(ox, restScrollY() + oy)
       if (this.trauma === 0) {
         this.traumaDirX = 0
         this.traumaDirY = 0
-        this.cameras.main.setScroll(0, 0)
+        this.cameras.main.setScroll(0, restScrollY())
       }
-    } else if (this.cameras.main.scrollX !== 0 || this.cameras.main.scrollY !== 0) {
-      this.cameras.main.setScroll(0, 0)
+    } else if (this.cameras.main.scrollX !== 0 || this.cameras.main.scrollY !== restScrollY()) {
+      this.cameras.main.setScroll(0, restScrollY())
     }
     if (this.armedGlows.size > 0) {
       const a = 0.16 + 0.14 * (0.5 + 0.5 * Math.sin(time / 300))
@@ -2637,7 +2640,7 @@ export class GameScene extends Phaser.Scene {
   /** Dim scrim behind an end-of-round overlay (also swallows taps meant for the board). */
   private overlayScrim(): void {
     this.clearSelection()
-    this.add.rectangle(DESIGN_W / 2, 640, DESIGN_W, 1280, getTheme().scrim, 0.5).setDepth(40).setInteractive()
+    this.add.rectangle(DESIGN_W / 2, 640, DESIGN_W, worldH(), getTheme().scrim, 0.5).setDepth(40).setInteractive()
   }
 
   /** Shared rounded result card, centered at (cx, cy) with half-height halfH. */

@@ -1,6 +1,6 @@
 import Phaser from 'phaser'
 import { sfx } from '../audio/sfx'
-import { DESIGN_W } from '../config'
+import { DESIGN_W, restScrollY } from '../config'
 import { spinAvailable, todayKey } from '../core/daily'
 import { endlessBestThisWeek, endlessUnlocked } from '../core/endless'
 import { LEVEL_COUNT } from '../core/levels'
@@ -53,6 +53,9 @@ export class HomeScene extends Phaser.Scene {
     this.noteOpen = false // reset per entry (scene.start reuses the instance)
     // Warm cream fade-in (never black) — the receiving half of every startScene cross-fade.
     this.cameras.main.fadeIn(this.prefersReducedMotion() ? 90 : 180, 255, 253, 248)
+    // Centre the 720×1280 design box in the (possibly taller) world; applyEntrance/power-on animate
+    // onto this rest position rather than 0.
+    this.cameras.main.setScroll(0, restScrollY())
     // §E10 / Signature #1 — the app's FIRST Home paint (straight from BootScene, before any in-app
     // navigation and only once per page-load) is the "power-on" reveal. Every later Home entry
     // (return from a level, back button, theme/settings restart) gets the normal quick entrance.
