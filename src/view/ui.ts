@@ -84,6 +84,7 @@ function rawReduceMotionPref(): boolean {
 export function startScene(from: Phaser.Scene, key: string, data?: object): void {
   if (!from.input.enabled) return // already transitioning
   from.input.enabled = false
+  sfx.whoosh() // §E3 B14: a short airy sweep partners the cream cross-fade
   const dur = prefersReducedMotion() ? 90 : 180
   const cam = from.cameras.main
   cam.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => from.scene.start(key, data))
@@ -275,6 +276,20 @@ export const ROSE_PILL: PillStyle = { id: 'rose', fill: 0xd3304f, border: 0xa821
 // ─────────────────────────────────────────────────────────────────────────────
 
 const TEX_PAD = 12
+
+/**
+ * Light guarded press haptic (§E14 haptic unify) — the tactile partner to `sfx.uiPress()` on every
+ * button depress. Respects the a11y Haptics-off switch and no-ops where the Vibration API is absent
+ * (desktop / iOS Safari), so it never throws. Deliberately tiny — a tap, not a buzz.
+ */
+function pressHaptic(): void {
+  if (hapticsOff()) return
+  try {
+    if ('vibrate' in navigator) navigator.vibrate?.(8)
+  } catch {
+    // no Vibration API — silent no-op
+  }
+}
 
 /**
  * Minimum interactive edge in DESIGN pixels for every pressable's INVISIBLE hit-zone (§E8 touch
@@ -632,7 +647,15 @@ function buildPressable(
     animate(capY + press, 0.95, 1.02, 60, 'Quad.easeOut')
   }
   const rise = (): void => animate(capY, 1, 1, 200, 'Back.easeOut')
-  zone.on('pointerdown', sink)
+  // §E3 B14: the down-thock + light haptic partner the press itself (distinct from the pointerup
+  // `uiTap` on release). Skipped when disabled so an inert control stays silent. Mute/haptics-gated.
+  const onDown = (): void => {
+    if (disabled) return
+    sfx.uiPress()
+    pressHaptic()
+    sink()
+  }
+  zone.on('pointerdown', onDown)
   zone.on('pointerout', rise)
   zone.on('pointerup', () => {
     rise()
@@ -817,6 +840,7 @@ export function addHelpChip(scene: Phaser.Scene, x: number, y: number, size = 52
     { fontFamily: FONT, fontSize: `${Math.round(size * 0.56)}px`, fontStyle: '900', color: GHOST_PILL.textColor },
     () => {
       sfx.uiTap()
+      sfx.whoosh() // §E3 B14: airy sweep partners the panel opening
       openHelpPanel(scene)
     }
   )
@@ -850,7 +874,7 @@ export function openHelpPanel(scene: Phaser.Scene): void {
   const layer = scene.add.container(0, 0).setDepth(60)
 
   const scrim = scene.add.rectangle(W / 2, H / 2, W, H, 0x2a2417, 0.6).setInteractive()
-  scrim.on('pointerup', () => layer.destroy())
+  scrim.on('pointerup', () => { sfx.whoosh(); layer.destroy() }) // §E3 B14: tap-outside close partner
 
   const px = 40
   const pw = W - 80
@@ -900,7 +924,7 @@ export function openHelpPanel(scene: Phaser.Scene): void {
     y += rowH
   }
 
-  layer.add(addPillButton(scene, W / 2, pyTop + ph - 72, 240, 68, 'GOT IT', GOLD_PILL, () => layer.destroy()))
+  layer.add(addPillButton(scene, W / 2, pyTop + ph - 72, 240, 68, 'GOT IT', GOLD_PILL, () => { sfx.whoosh(); layer.destroy() }))
   layer.add(
     scene.add
       .text(W / 2, pyTop + ph - 26, '© 2026 CorruptFun LLC · All rights reserved', {
@@ -923,6 +947,7 @@ export function addSoundChip(scene: Phaser.Scene, x: number, y: number, size = 5
     { fontFamily: FONT, fontSize: `${Math.round(size * 0.56)}px`, fontStyle: '900', color: GHOST_PILL.textColor },
     () => {
       sfx.uiTap()
+      sfx.whoosh() // §E3 B14: airy sweep partners the panel opening
       openSoundPanel(scene)
     }
   )
@@ -943,7 +968,7 @@ export function openSoundPanel(scene: Phaser.Scene): void {
   const layer = scene.add.container(0, 0).setDepth(60)
 
   const scrim = scene.add.rectangle(W / 2, H / 2, W, H, 0x2a2417, 0.6).setInteractive()
-  scrim.on('pointerup', () => layer.destroy())
+  scrim.on('pointerup', () => { sfx.whoosh(); layer.destroy() }) // §E3 B14: tap-outside close partner
 
   const px = 40
   const pw = W - 80
@@ -990,7 +1015,7 @@ export function openSoundPanel(scene: Phaser.Scene): void {
     y += rowH
   }
 
-  layer.add(addPillButton(scene, W / 2, pyTop + ph - 72, 240, 68, 'DONE', GOLD_PILL, () => layer.destroy()))
+  layer.add(addPillButton(scene, W / 2, pyTop + ph - 72, 240, 68, 'DONE', GOLD_PILL, () => { sfx.whoosh(); layer.destroy() }))
 }
 
 /**
@@ -1117,6 +1142,7 @@ function buildThemeRow(
 export function addThemeChip(scene: Phaser.Scene, x: number, y: number, size = 52): Phaser.GameObjects.Container {
   const { container, face } = buildPressable(scene, x, y, size, size, GHOST_PILL, () => {
     sfx.uiTap()
+    sfx.whoosh() // §E3 B14: airy sweep partners the panel opening
     openThemePanel(scene)
   })
   container.setDepth(50)
@@ -1149,6 +1175,7 @@ export function openThemePanel(scene: Phaser.Scene, openingThemeId: ThemeId = ge
 
   const scrim = scene.add.rectangle(W / 2, H / 2, W, H, 0x2a2417, 0.6).setInteractive()
   const close = (): void => {
+    sfx.whoosh() // §E3 B14: airy sweep partners the panel closing
     const changed = getThemeId() !== openingThemeId
     layer.destroy()
     if (changed) scene.scene.restart()
@@ -1209,6 +1236,7 @@ export function addSettingsChip(scene: Phaser.Scene, x: number, y: number, size 
     { fontFamily: 'sans-serif', fontSize: `${Math.round(size * 0.52)}px`, color: GHOST_PILL.textColor },
     () => {
       sfx.uiTap()
+      sfx.whoosh() // §E3 B14: airy sweep partners the panel opening
       openSettingsPanel(scene)
     }
   )
@@ -1326,6 +1354,7 @@ export function openSettingsPanel(scene: Phaser.Scene): void {
 
   const scrim = scene.add.rectangle(W / 2, H / 2, W, H, 0x2a2417, 0.6).setInteractive()
   const close = (): void => {
+    sfx.whoosh() // §E3 B14: airy sweep partners the panel closing
     const changed = rawReduceMotionPref() !== startedRM || hcBoard() !== startedHC
     layer.destroy()
     if (changed) scene.scene.restart()

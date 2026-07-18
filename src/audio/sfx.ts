@@ -106,6 +106,10 @@ class Sfx {
   private reverbFb: GainNode[] = []
   private reverbDamp: BiquadFilterNode[] = []
 
+  // --- Cascade riser (§E3/E11) — ONE continuous low voice, retriggered per wave, never accumulating ---
+  private riserNodes: AudioScheduledSourceNode[] = []
+  private riserGain: GainNode | null = null
+
   // --- Ambient bed (§E3-A2) ---
   private _ambience = false
   private bedRunning = false
@@ -159,8 +163,10 @@ class Sfx {
     // AudioContext runs on its own thread and would keep droning; gain-to-zero suspends it.
     try {
       document.addEventListener('visibilitychange', () => {
-        if (document.hidden) this.suspendBed()
-        else this.resumeBed()
+        if (document.hidden) {
+          this.suspendBed()
+          this.teardownRiser(0.05) // the one continuous partner voice must stop cleanly on blur (§A2)
+        } else this.resumeBed()
       })
     } catch {
       // no DOM — nothing to suspend
@@ -616,6 +622,7 @@ class Sfx {
 
   /** Short rising major arpeggio with a shimmer tail — the win fanfare (~1.2s). */
   winFanfare(): void {
+    this.riserResolve() // the cascade riser hands its crescendo off to the fanfare (§E11), never overlapping it
     this.duckBed(0.45, 1.2) // bed inhales under the fanfare (§A4)
     this.voice((ctx, t, out) => {
       const notes = [523.25, 659.25, 783.99, 1046.5] // C5 E5 G5 C6
@@ -735,6 +742,207 @@ class Sfx {
       src.start(t)
       src.stop(t + 0.46)
     })
+  }
+
+  // ------------------------------------------------- per-beat partners (§E3 B14)
+  // Subtle one-shot VOICES that give each new visual beat an audible partner. Every one routes
+  // through voice() (→ dry bus + shared reverb room), key-locks pitched material via snap(), pans
+  // where the beat is positional, and stays QUIETER than the existing lead SFX — partners, not leads.
+
+  /**
+   * Soft low "thock" on a button PRESS (pointerdown) — the depress, distinct from `uiTap`'s brighter
+   * pointerup release click. Lower, rounder, and quieter so a press+release reads as one tactile event.
+   */
+  uiPress(): void {
+    this.voice((ctx, t, out) => {
+      this.tone(ctx, out, t, { type: 'sine', freq: 200, endFreq: 128, peak: 0.16, dur: 0.06, attack: 0.004 })
+      const src = this.noiseSource(ctx)
+      const lp = ctx.createBiquadFilter()
+      lp.type = 'lowpass'
+      lp.frequency.value = 700
+      const g = ctx.createGain()
+      g.gain.setValueAtTime(0.06, t)
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.04)
+      src.connect(lp).connect(g).connect(out)
+      src.start(t)
+      src.stop(t + 0.05)
+    })
+  }
+
+  /** Short airy filtered-noise sweep — a subtle partner for scene cross-fades + panel open/close. */
+  whoosh(pan = 0): void {
+    this.voice((ctx, t, out0) => {
+      const out = this.panOut(ctx, out0, pan)
+      const src = this.noiseSource(ctx)
+      const bp = ctx.createBiquadFilter()
+      bp.type = 'bandpass'
+      bp.Q.value = 0.7
+      bp.frequency.setValueAtTime(500, t)
+      bp.frequency.exponentialRampToValueAtTime(2600, t + 0.12)
+      bp.frequency.exponentialRampToValueAtTime(700, t + 0.26)
+      const g = ctx.createGain()
+      g.gain.setValueAtTime(0.0001, t)
+      g.gain.exponentialRampToValueAtTime(0.12, t + 0.06) // subtle — never a lead
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.28)
+      src.connect(bp).connect(g).connect(out)
+      src.start(t)
+      src.stop(t + 0.3)
+    })
+  }
+
+  /**
+   * Light glassy "tink" on a match-clear pop — an octave above `pop`'s climb, key-locked to the same
+   * scale (§A10) so it shimmers consonantly over the cascade, panned by board column (§A8). Kept very
+   * quiet so a busy wave stays musical rather than clacky.
+   */
+  clearTink(cascade = 1, pan = 0): void {
+    this.voice((ctx, t, out0) => {
+      const out = this.panOut(ctx, out0, pan)
+      const rate = Math.pow(2, (Math.max(1, cascade) - 1) / 12)
+      const f = this.snap(1760 * rate)
+      this.tone(ctx, out, t, { type: 'sine', freq: f, peak: 0.07, dur: 0.09, attack: 0.002 })
+      this.tone(ctx, out, t, { type: 'sine', freq: f * 2.01, peak: 0.03, dur: 0.06, attack: 0.002 })
+    })
+  }
+
+  /**
+   * Height-mapped landing thunk for deal-in + refill settles (§E5). `height` ∈ 0..1 (drop distance /
+   * board height): a deep drop reads as a low, weighty thunk; a short one as a light tick. Panned by
+   * column (§A8). Callers throttle to one voice per settling column so a refill is a rain, not mush.
+   */
+  land(height = 0.5, pan = 0): void {
+    this.voice((ctx, t, out0) => {
+      const out = this.panOut(ctx, out0, pan)
+      const h = Math.max(0, Math.min(1, height))
+      const f = 190 - 95 * h // heavier (lower) with drop distance
+      this.tone(ctx, out, t, { type: 'sine', freq: f, endFreq: f * 0.7, peak: 0.1 + 0.12 * h, dur: 0.08 + 0.05 * h, attack: 0.004 })
+      const src = this.noiseSource(ctx)
+      const lp = ctx.createBiquadFilter()
+      lp.type = 'lowpass'
+      lp.frequency.value = 500
+      const g = ctx.createGain()
+      g.gain.setValueAtTime(0.05 + 0.05 * h, t)
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.03)
+      src.connect(lp).connect(g).connect(out)
+      src.start(t)
+      src.stop(t + 0.04)
+    })
+  }
+
+  /** Short rising tick — the special-piece charge→release wind-up (§E6). Key-locked, subtle. */
+  charge(cascade = 1): void {
+    this.voice((ctx, t, out) => {
+      const rate = Math.pow(2, (Math.max(1, cascade) - 1) / 12)
+      const base = this.snap(440 * rate)
+      this.tone(ctx, out, t, { type: 'triangle', freq: base, endFreq: base * 3, peak: 0.12, dur: 0.09, attack: 0.006 })
+    })
+  }
+
+  /** Tiny key-locked tick under a chunky score climb (composes with — never doubles — `coinCount`). */
+  scoreTick(): void {
+    this.voice((ctx, t, out) => {
+      this.tone(ctx, out, t, { type: 'triangle', freq: this.snap(1320), peak: 0.08, dur: 0.05, attack: 0.002 })
+    })
+  }
+
+  /** Mechanical reel-landing clunk — a wood-block detent + short clack for a slot reel settling. Panned by reel. */
+  reelClunk(pan = 0): void {
+    this.voice((ctx, t, out0) => {
+      const out = this.panOut(ctx, out0, pan)
+      this.tone(ctx, out, t, { type: 'triangle', freq: 150, endFreq: 90, peak: 0.28, dur: 0.1, attack: 0.003 })
+      const src = this.noiseSource(ctx)
+      const bp = ctx.createBiquadFilter()
+      bp.type = 'bandpass'
+      bp.Q.value = 1.2
+      bp.frequency.value = 1400
+      const g = ctx.createGain()
+      g.gain.setValueAtTime(0.14, t)
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.05)
+      src.connect(bp).connect(g).connect(out)
+      src.start(t)
+      src.stop(t + 0.06)
+    })
+  }
+
+  // ------------------------------------------------- cascade riser (§E3 / E11)
+
+  /**
+   * Low bass bed that ratchets UP one key-locked step per cascade wave and resolves into `winFanfare`
+   * (§E11) — ties the audio arc to the visual combo arc. Exactly ONE voice: each wave stops/retriggers
+   * the previous so oscillators NEVER accumulate, and every voice self-stops after ~2.3s so a stalled
+   * cascade can't drone. Mute-gated; sits in the shared reverb room via the dry bus.
+   */
+  cascadeRiser(cascade: number): void {
+    if (this._muted) return
+    const ctx = this.ensureContext()
+    if (!ctx || !this.dryBus) return
+    if (ctx.state === 'suspended') void ctx.resume()
+    try {
+      this.teardownRiser(0.05) // fade + stop the previous wave's voice first — never accumulate
+      const t = ctx.currentTime
+      const step = Math.max(1, cascade)
+      const level = Math.min(0.12, 0.05 + step * 0.015) // subtle, capped — a bed, never a lead
+      const root = getTheme().audio.bedRoot
+      const f = this.snap(root * 2 * Math.pow(2, Math.min(step - 1, 7) / 12)) // climbs, capped at +7 steps
+      const g = ctx.createGain()
+      g.gain.setValueAtTime(Math.max(0.0001, this.riserGain ? 0.02 : 0.0001), t)
+      g.gain.linearRampToValueAtTime(level, t + 0.12) // swell in
+      g.gain.setValueAtTime(level, t + 1.2)
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 2.2) // auto-fade safety
+      g.connect(this.dryBus)
+      const lp = ctx.createBiquadFilter()
+      lp.type = 'lowpass'
+      lp.frequency.value = 420 + step * 60
+      lp.connect(g)
+      const mk = (detune: number): OscillatorNode => {
+        const o = ctx.createOscillator()
+        o.type = 'sawtooth'
+        o.frequency.setValueAtTime(f, t)
+        o.frequency.linearRampToValueAtTime(f * 1.06, t + 1.2) // slow rising tension
+        o.detune.value = detune
+        o.connect(lp)
+        o.start(t)
+        o.stop(t + 2.3) // self-stop so a never-resolved riser can't leak oscillators
+        return o
+      }
+      this.riserGain = g
+      this.riserNodes = [mk(-7), mk(7)]
+    } catch {
+      this.riserNodes = []
+      this.riserGain = null
+    }
+  }
+
+  /** Resolve the cascade riser — a short fade-out that hands off to the win fanfare. Idempotent. */
+  riserResolve(): void {
+    this.teardownRiser(0.3)
+  }
+
+  /** Fade + stop the current riser voice cleanly (no-op if none). Shared by retrigger/resolve/blur. */
+  private teardownRiser(fade = 0.2): void {
+    const ctx = this.ctx
+    const g = this.riserGain
+    const nodes = this.riserNodes
+    this.riserGain = null
+    this.riserNodes = []
+    if (!ctx) return
+    try {
+      const t = ctx.currentTime
+      if (g) {
+        g.gain.cancelScheduledValues(t)
+        g.gain.setValueAtTime(Math.max(0.0001, g.gain.value), t)
+        g.gain.exponentialRampToValueAtTime(0.0001, t + fade)
+      }
+      for (const o of nodes) {
+        try {
+          o.stop(t + fade + 0.05)
+        } catch {
+          // already stopped
+        }
+      }
+    } catch {
+      // teardown must never throw
+    }
   }
 
   // ---------------------------------------------------------- ambient bed (§A2)
