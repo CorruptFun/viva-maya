@@ -5,7 +5,7 @@ import { endlessBestThisWeek, endlessUnlocked } from '../core/endless'
 import { LEVEL_COUNT } from '../core/levels'
 import { loadSave } from '../core/save'
 import { addCasinoBackdrop } from '../view/background'
-import { getTheme } from '../view/theme'
+import { getTheme, prefersReducedMotion } from '../view/theme'
 import { FONT, GHOST_PILL, ROSE_PILL, addMarquee, addMuteChip, addPillButton, startScene } from '../view/ui'
 
 const GRID_COLS = 5
@@ -81,7 +81,8 @@ export class LevelSelectScene extends Phaser.Scene {
     for (const { container, cy, current } of chipEntries) {
       const startPulse = current ? () => this.startChipPulse(container) : undefined
       if (reduced) {
-        startPulse?.()
+        // Reduced motion (§E8): skip the entrance pop AND the "you are here" breathing pulse —
+        // the current chip is already distinguished by its gold border, so it rests static.
         continue
       }
       container.setScale(0.55).setAlpha(0)
@@ -138,12 +139,9 @@ export class LevelSelectScene extends Phaser.Scene {
       .setLetterSpacing(2)
   }
 
+  /** Reduced-motion (OS query OR in-app override) — delegates to the shared theme authority (§E8). */
   private prefersReducedMotion(): boolean {
-    try {
-      return typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
-    } catch {
-      return false
-    }
+    return prefersReducedMotion()
   }
 
   /** The current level's gentle "you are here" breathing pulse — started once its entrance pop settles. */
@@ -230,19 +228,28 @@ export class LevelSelectScene extends Phaser.Scene {
     cy: number,
     content: Phaser.GameObjects.Container
   ): void {
-    // Gold glow ring haloing the chip.
-    const ring = this.add.image(0, 0, 'ring').setDisplaySize(CHIP + 34, CHIP + 34).setTint(getTheme().gold).setAlpha(0.85)
+    const reduced = this.prefersReducedMotion()
+    // Gold glow ring haloing the chip — static (no breathe loop) under reduced motion (§E8).
+    const ring = this.add.image(0, 0, 'ring').setDisplaySize(CHIP + 34, CHIP + 34).setTint(getTheme().gold).setAlpha(reduced ? 0.6 : 0.85)
     container.addAt(ring, 0)
-    this.tweens.add({ targets: ring, alpha: 0.35, scale: ring.scale * 1.08, duration: 700, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' })
+    if (!reduced) {
+      this.tweens.add({ targets: ring, alpha: 0.35, scale: ring.scale * 1.08, duration: 700, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' })
+    }
 
-    // Number pop 0→1.15→1.
-    const base = numText.scale
-    numText.setScale(0)
-    this.tweens.add({ targets: numText, scale: base * 1.15, duration: 300, delay: 220, ease: 'Back.easeOut', onComplete: () =>
-      this.tweens.add({ targets: numText, scale: base, duration: 160, ease: 'Sine.easeOut' }),
-    })
+    // Number pop 0→1.15→1 (skipped under reduced motion — the number stays at rest).
+    if (!reduced) {
+      const base = numText.scale
+      numText.setScale(0)
+      this.tweens.add({ targets: numText, scale: base * 1.15, duration: 300, delay: 220, ease: 'Back.easeOut', onComplete: () =>
+        this.tweens.add({ targets: numText, scale: base, duration: 160, ease: 'Sine.easeOut' }),
+      })
+    }
 
-    // Deferred unlock sparkle at the chip's on-screen position.
+    // Deferred unlock sparkle at the chip's on-screen position (a one-shot burst — skipped when reduced).
+    if (reduced) {
+      sfx.starDing(1)
+      return
+    }
     this.time.delayedCall(240, () => {
       const spark = this.add
         .particles(0, 0, 'spark', {

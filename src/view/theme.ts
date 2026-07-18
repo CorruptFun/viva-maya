@@ -178,12 +178,16 @@ const golden: Theme = {
   glossLo: 0xf7e9cf,
   rim: 0xfff7e0,
 
-  // Text on cream
+  // Text on cream. inkMuted / inkFaint / goldText are the deliberate WCAG-AA contrast nudge
+  // (§E8 call #3 — the one intentional carve-out from P7's zero-visual-diff pledge): darkened so
+  // muted body text clears 4.5:1 and gold display text clears 3:1 on the cream cards, on all four
+  // themes (cards stay cream everywhere, so one fix covers all). Bright gold stays a FILL colour
+  // (gold / goldBright / goldBezel below), never a body-text colour.
   ink: '#2a2732',
   inkSoft: '#6a6459',
-  inkMuted: '#9a927e',
-  inkFaint: '#b3ab97',
-  goldText: '#c9930a',
+  inkMuted: '#746d59', // was #9a927e (3.04:1) → 5.07:1 on cardFill (body AA)
+  inkFaint: '#857e6b', // was #b3ab97 (2.25:1) → 3.98:1 on cardFill (large AA, faintest tier)
+  goldText: '#9a6d00', // was #c9930a (2.70:1) → 4.53:1 on cardFill; also fixes gold on the golden wash
   goldPillText: '#4a3305',
   navyText: '#26304d',
   onRose: '#ffffff',
@@ -372,11 +376,95 @@ export function applyPageChrome(T: Theme): void {
   }
 }
 
-/** Canonical `prefers-reduced-motion` check (§2.1) — the single home for the duplicated copies. */
-export function prefersReducedMotion(): boolean {
+// ─────────────────────────────────────────────────────────────────────────────
+// In-app accessibility preferences (§E8). Two switches (vestibular ≠ photosensitivity) plus a
+// haptics opt-out, persisted in one shape-tolerant localStorage key so users needn't touch the OS
+// setting. Defaults are all OFF, so Maya's default experience is unchanged: every motion loop still
+// animates and every flash still fires unless she (or her OS) opts out. The settings panel (a later
+// slice) is the UI that flips these; this module owns the state + persistence.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const A11Y_KEY = 'viva-maya:a11y'
+
+interface A11yPrefs {
+  /** In-app Reduce-Motion override — OR'd into `prefersReducedMotion()` alongside the OS query. */
+  reduceMotion: boolean
+  /** Separate photosensitivity switch — gates camera flashes + impact frames (never the OS query). */
+  reduceFlashing: boolean
+  /** Opt out of haptic vibration. */
+  hapticsOff: boolean
+}
+
+const A11Y_DEFAULTS: A11yPrefs = { reduceMotion: false, reduceFlashing: false, hapticsOff: false }
+
+/** Read + validate the persisted prefs. Shape-tolerant; any bad/absent value → all-off default. */
+function readA11y(): A11yPrefs {
+  try {
+    const raw = localStorage.getItem(A11Y_KEY)
+    if (raw === null) return { ...A11Y_DEFAULTS }
+    const v = JSON.parse(raw) as Partial<A11yPrefs>
+    return {
+      reduceMotion: v.reduceMotion === true,
+      reduceFlashing: v.reduceFlashing === true,
+      hapticsOff: v.hapticsOff === true,
+    }
+  } catch {
+    return { ...A11Y_DEFAULTS }
+  }
+}
+
+let _a11y: A11yPrefs = readA11y()
+
+function writeA11y(): void {
+  try {
+    localStorage.setItem(A11Y_KEY, JSON.stringify(_a11y))
+  } catch {
+    // storage blocked (private mode / no DOM) — the choice just won't persist
+  }
+}
+
+/** The OS `prefers-reduced-motion` media query, kept internal so the export can OR-in the app flag. */
+function osReducedMotion(): boolean {
   try {
     return typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
   } catch {
     return false
   }
+}
+
+/**
+ * Canonical reduced-motion check (§2.1) — the single home for the duplicated copies. TRUE when the
+ * OS media query matches OR the in-app Reduce-Motion override is on, so a user who can't change the
+ * OS setting still gets the static path. Default (both off) → identical to the old OS-only behaviour.
+ */
+export function prefersReducedMotion(): boolean {
+  return _a11y.reduceMotion || osReducedMotion()
+}
+
+/** In-app Reduce-Flashing switch (§E8) — gates camera flashes + impact frames. Default OFF. */
+export function reduceFlashing(): boolean {
+  return _a11y.reduceFlashing
+}
+
+/** In-app Haptics-off switch (§E8) — callers skip `navigator.vibrate` when true. Default OFF. */
+export function hapticsOff(): boolean {
+  return _a11y.hapticsOff
+}
+
+/** Set + persist the in-app Reduce-Motion override (the settings panel's toggle). */
+export function setReduceMotion(v: boolean): void {
+  _a11y.reduceMotion = v
+  writeA11y()
+}
+
+/** Set + persist the in-app Reduce-Flashing switch. */
+export function setReduceFlashing(v: boolean): void {
+  _a11y.reduceFlashing = v
+  writeA11y()
+}
+
+/** Set + persist the in-app Haptics-off switch. */
+export function setHapticsOff(v: boolean): void {
+  _a11y.hapticsOff = v
+  writeA11y()
 }
