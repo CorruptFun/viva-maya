@@ -9,7 +9,7 @@ import { greeting, occasionFor, pendingOccasion, secretNote, withName } from '..
 import { loadSave, markOccasionSeen, touchOpen } from '../core/save'
 import { addCasinoBackdrop } from '../view/background'
 import { quality } from '../view/quality'
-import { getTheme } from '../view/theme'
+import { getTheme, prefersReducedMotion } from '../view/theme'
 import {
   FONT,
   GHOST_PILL,
@@ -99,15 +99,18 @@ export class HomeScene extends Phaser.Scene {
     const heart = this.add.image(DESIGN_W / 2, emblemY, 'heart')
     heart.setDisplaySize(190, 190)
     const base = heart.scaleX
-    this.tweens.add({
-      targets: heart,
-      scale: base * 1.09,
-      duration: 620,
-      yoyo: true,
-      repeat: -1,
-      repeatDelay: 340,
-      ease: 'Sine.easeInOut',
-    })
+    // Emblem heartbeat pulse — gated (§E8): under reduced motion it rests at base scale, no beat.
+    if (!reduced) {
+      this.tweens.add({
+        targets: heart,
+        scale: base * 1.09,
+        duration: 620,
+        yoyo: true,
+        repeat: -1,
+        repeatDelay: 340,
+        ease: 'Sine.easeInOut',
+      })
+    }
     // §E9 secret love note — DISCOVERED, never advertised: a long-press (~620ms) or 4 quick taps
     // on the emblem opens it. Nothing on the front door hints at it beyond the tappable heart.
     this.wireSecretNote(heart)
@@ -178,14 +181,17 @@ export class HomeScene extends Phaser.Scene {
       startScene(this,'game', { level: currentLevel })
     )
     menuButtons.push(play)
-    this.tweens.add({
-      targets: play,
-      scale: 1.04,
-      duration: 800,
-      yoyo: true,
-      repeat: -1,
-      ease: 'Sine.easeInOut',
-    })
+    // PLAY breathe — gated (§E8): reduced motion leaves it at its resting scale.
+    if (!reduced) {
+      this.tweens.add({
+        targets: play,
+        scale: 1.04,
+        duration: 800,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut',
+      })
+    }
     const sub =
       save.best > 0
         ? `Level ${currentLevel}  ·  best ${save.best.toLocaleString()}`
@@ -208,7 +214,8 @@ export class HomeScene extends Phaser.Scene {
       startScene(this,'daily')
     )
     menuButtons.push(daily)
-    if (ready) {
+    // Daily-ready breathe — gated (§E8): reduced motion leaves it at its resting scale.
+    if (ready && !reduced) {
       this.tweens.add({ targets: daily, scale: 1.05, duration: 650, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' })
     }
     if (save.pendingBoosts.length > 0) {
@@ -410,11 +417,8 @@ export class HomeScene extends Phaser.Scene {
     this.time.delayedCall(1700, () => hearts.destroy())
   }
 
+  /** Reduced-motion (OS query OR in-app override) — delegates to the shared theme authority (§E8). */
   private prefersReducedMotion(): boolean {
-    try {
-      return typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
-    } catch {
-      return false
-    }
+    return prefersReducedMotion()
   }
 }

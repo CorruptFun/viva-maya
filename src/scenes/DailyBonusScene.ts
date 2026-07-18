@@ -8,7 +8,7 @@ import { loadSave, markOccasionSeen } from '../core/save'
 import { SYMBOLS } from '../core/types'
 import type { Piece, PieceKind } from '../core/types'
 import { addCasinoBackdrop } from '../view/background'
-import { getTheme } from '../view/theme'
+import { getTheme, prefersReducedMotion } from '../view/theme'
 import { ensurePieceTexture } from '../view/textures'
 import { FONT, GHOST_PILL, GOLD_PILL, addPillButton, startScene } from '../view/ui'
 
@@ -198,7 +198,10 @@ export class DailyBonusScene extends Phaser.Scene {
       )
     }
     const spinBtn = addPillButton(this, DESIGN_W / 2, 740, 300, 92, 'SPIN', GOLD_PILL, doSpin)
-    this.tweens.add({ targets: spinBtn, scale: 1.05, duration: 700, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' })
+    // SPIN breathe — gated (§E8): reduced motion leaves it at its resting scale.
+    if (!reduced) {
+      this.tweens.add({ targets: spinBtn, scale: 1.05, duration: 700, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' })
+    }
     if (import.meta.env.DEV && params.has('autospin')) this.time.delayedCall(300, doSpin)
   }
 
@@ -226,7 +229,8 @@ export class DailyBonusScene extends Phaser.Scene {
         ease: 'Cubic.easeOut',
         onComplete: () => {
           sfx.invalidThud()
-          this.cameras.main.shake(60, 0.004)
+          // Reel-settle kick routed through the reduced-motion gate (§E8) — the sound still lands.
+          if (!reduced) this.cameras.main.shake(60, 0.004)
           // Soft gold glow behind the settled winning symbol (separate object → not clipped by the reel mask).
           const glow = this.add
             .image(w.x + REEL_W / 2, w.y + REEL_H / 2, 'bgglow')
@@ -395,11 +399,8 @@ export class DailyBonusScene extends Phaser.Scene {
     this.time.delayedCall(1700, () => stream.active && stream.destroy())
   }
 
+  /** Reduced-motion (OS query OR in-app override) — delegates to the shared theme authority (§E8). */
   private prefersReducedMotion(): boolean {
-    try {
-      return typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
-    } catch {
-      return false
-    }
+    return prefersReducedMotion()
   }
 }

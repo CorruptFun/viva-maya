@@ -221,6 +221,14 @@ export const ROSE_PILL: PillStyle = { id: 'rose', fill: 0xd3304f, border: 0xa821
 
 const TEX_PAD = 12
 
+/**
+ * Minimum interactive edge in DESIGN pixels for every pressable's INVISIBLE hit-zone (§E8 touch
+ * targets). 84 design-px ≈ 44pt at this design scale — the WCAG floor. The hit rectangle grows to
+ * this minimum in each axis while the baked cap/pedestal art keeps its authored size, so the corner
+ * chips (52²) and the short back pills (84×56) become comfortably tappable with zero visual change.
+ */
+const MIN_HIT = 84
+
 /** Mix a colour toward white (t > 0) or black (t < 0) by |t| ∈ [0,1]. */
 function shade(color: number, t: number): number {
   const r = (color >> 16) & 0xff
@@ -547,7 +555,10 @@ function buildPressable(
   const baseImg = scene.add.image(0, capY + ext / 2, `btnbase:${id}`)
   const face = scene.add.container(0, capY)
   face.add(scene.add.image(0, 0, `btnface:${id}`))
-  const zone = scene.add.rectangle(0, capY, w, h, 0xffffff, 0.001).setInteractive({ useHandCursor: true })
+  // Hit-zone grows to the ≥44pt minimum in each axis (visual art unchanged) — §E8 touch targets.
+  const zone = scene.add
+    .rectangle(0, capY, Math.max(w, MIN_HIT), Math.max(h, MIN_HIT), 0xffffff, 0.001)
+    .setInteractive({ useHandCursor: true })
   container.add([baseImg, face, zone])
 
   let disabled = opts.disabled ?? false
@@ -840,7 +851,7 @@ export function openHelpPanel(scene: Phaser.Scene): void {
       .text(W / 2, pyTop + ph - 26, '© 2026 CorruptFun LLC · All rights reserved', {
         fontFamily: 'Arial, sans-serif',
         fontSize: '16px',
-        color: '#b3ab97',
+        color: getTheme().inkFaint,
       })
       .setOrigin(0.5)
   )

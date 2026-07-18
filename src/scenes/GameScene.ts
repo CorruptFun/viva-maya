@@ -29,7 +29,7 @@ import { SYMBOLS, key } from '../core/types'
 import type { BoostType, ClearWave, Coord, FallMove, LevelSpec, Piece, Spawn, SymbolType } from '../core/types'
 import { addCasinoBackdrop } from '../view/background'
 import { quality } from '../view/quality'
-import { css, getTheme } from '../view/theme'
+import { css, getTheme, hapticsOff, prefersReducedMotion, reduceFlashing as prefReduceFlashing } from '../view/theme'
 import { TEX_SIZE, ensurePieceTexture } from '../view/textures'
 import { FONT, GHOST_PILL, GOLD_PILL, ROSE_PILL, addChipPill, addLivesHud, addMuteChip, addPillButton, startScene } from '../view/ui'
 import type { ChipPill } from '../view/ui'
@@ -106,7 +106,7 @@ export class GameScene extends Phaser.Scene {
   private hitstopUntil = 0
   /** Tween/timer timescale to restore after a hitstop (1, or ?turbo=N in DEV). */
   private baseTimeScale = 1
-  /** Future a11y "reduce flashing" switch (photosensitivity ≠ vestibular). A later slice wires the real toggle. */
+  /** A11y "reduce flashing" switch (photosensitivity ≠ vestibular) — read from the real toggle in create(). */
   private reduceFlashing = false
 
   // --- P6 idle micro-life (all reduced-motion-gated, governor-capped) ---
@@ -237,6 +237,7 @@ export class GameScene extends Phaser.Scene {
     this.armedGlows.clear()
     this.goalGlows.clear()
     this.reducedMotion = this.prefersReducedMotion()
+    this.reduceFlashing = prefReduceFlashing() // §E8 — wire the punch() flash gate to the real toggle
     this.selected = null
     this.selectedSprite = null
     this.selectPulse = null
@@ -322,6 +323,7 @@ export class GameScene extends Phaser.Scene {
   private showLivesGate(): void {
     this.log('showLivesGate')
     const T = getTheme()
+    const reduced = this.prefersReducedMotion()
     addCasinoBackdrop(this, 'menu')
     addPillButton(this, 64, 84, 84, 56, '‹', GHOST_PILL, () => startScene(this,'home'))
     addMuteChip(this, 676, 40)
@@ -334,8 +336,10 @@ export class GameScene extends Phaser.Scene {
       .text(DESIGN_W / 2, 384, 'Out of lives — they refill on their own', { fontFamily: FONT, fontSize: '24px', color: T.onBackdropMuted })
       .setOrigin(0.5)
 
-    const emblem = this.add.image(DESIGN_W / 2, 560, 'heart').setDisplaySize(150, 150).setTint(0x8a7a52).setAlpha(0.4)
-    this.tweens.add({ targets: emblem, alpha: 0.65, scale: emblem.scaleX * 1.05, duration: 900, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' })
+    const emblem = this.add.image(DESIGN_W / 2, 560, 'heart').setDisplaySize(150, 150).setTint(0x8a7a52).setAlpha(reduced ? 0.5 : 0.4)
+    if (!reduced) {
+      this.tweens.add({ targets: emblem, alpha: 0.65, scale: emblem.scaleX * 1.05, duration: 900, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' })
+    }
 
     const hud = addLivesHud(this, DESIGN_W / 2, 700, { size: 46, showTimer: false })
     const nextText = this.add
@@ -356,7 +360,9 @@ export class GameScene extends Phaser.Scene {
           playBtn = addPillButton(this, DESIGN_W / 2, 924, 320, 88, 'PLAY', GOLD_PILL, () =>
             startScene(this,'game', { level: this.level })
           )
-          this.tweens.add({ targets: playBtn, scale: 1.05, duration: 650, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' })
+          if (!reduced) {
+            this.tweens.add({ targets: playBtn, scale: 1.05, duration: 650, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' })
+          }
         }
       } else {
         nextText.setText(`Next life in  ${formatCountdown(st.nextInMs)}`)
@@ -873,7 +879,9 @@ export class GameScene extends Phaser.Scene {
       .setAlpha(0.1)
       .setBlendMode(Phaser.BlendModes.ADD)
     this.cabinetGlow.setDisplaySize(BOARD_W + 170, BOARD_W + 170)
-    this.tweens.add({ targets: this.cabinetGlow, alpha: 0.18, duration: 1700, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' })
+    // cabinetGlow breathe — gated (§E8): reduced motion rests it at a static mid-glow, no pulse.
+    if (this.reducedMotion) this.cabinetGlow.setAlpha(0.14)
+    else this.tweens.add({ targets: this.cabinetGlow, alpha: 0.18, duration: 1700, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' })
 
     // Recessed gold TRAY: an opaque gold-bezel cabinet with a well floor DARKER than the tiles,
     // so the 64 raised glossy cushions pop out of a real 3-D setting. Baked once (static graphics),
@@ -956,16 +964,21 @@ export class GameScene extends Phaser.Scene {
     pts.forEach((p, i) => {
       const bulb = this.add.image(p.x, p.y, 'bulb').setDisplaySize(13, 13).setDepth(2)
       bulb.setTint(i % 2 === 0 ? 0xff5a6a : 0xffd75e) // reddish / gold
-      bulb.setAlpha(0.4)
-      this.tweens.add({
-        targets: bulb,
-        alpha: 1,
-        duration: period / 2,
-        yoyo: true,
-        repeat: -1,
-        delay: (i / pts.length) * period,
-        ease: 'Sine.easeInOut',
-      })
+      // Traveling bulb chase — gated (§E8): reduced motion rests every bulb statically lit, no chase.
+      if (this.reducedMotion) {
+        bulb.setAlpha(0.85)
+      } else {
+        bulb.setAlpha(0.4)
+        this.tweens.add({
+          targets: bulb,
+          alpha: 1,
+          duration: period / 2,
+          yoyo: true,
+          repeat: -1,
+          delay: (i / pts.length) * period,
+          ease: 'Sine.easeInOut',
+        })
+      }
       this.cabinetBulbs.push(bulb)
     })
   }
@@ -1052,7 +1065,7 @@ export class GameScene extends Phaser.Scene {
     g.lineStyle(2, T.border, 1)
     g.strokeRoundedRect(BOARD_X, cardY - 52, 170, 104, 20)
     this.add
-      .text(BOARD_X + 85, cardY - 28, 'MOVES', { fontFamily: FONT, fontSize: '18px', color: '#8a8577' })
+      .text(BOARD_X + 85, cardY - 28, 'MOVES', { fontFamily: FONT, fontSize: '18px', color: T.inkMuted })
       .setOrigin(0.5)
       .setLetterSpacing(3)
     this.movesText = this.add
@@ -1075,7 +1088,7 @@ export class GameScene extends Phaser.Scene {
       g.lineStyle(2, T.goldBezel, 0.9)
       g.strokeRoundedRect(bx, cardY - 52, cardW, 104, 20)
       this.add
-        .text(bx + cardW / 2, cardY - 28, "WEEK'S BEST", { fontFamily: FONT, fontSize: '18px', color: '#8a8577' })
+        .text(bx + cardW / 2, cardY - 28, "WEEK'S BEST", { fontFamily: FONT, fontSize: '18px', color: T.inkMuted })
         .setOrigin(0.5)
         .setLetterSpacing(2)
       this.add
@@ -1417,7 +1430,8 @@ export class GameScene extends Phaser.Scene {
     const pos = this.cellToXY(at)
     this.ring.setPosition(pos.x, pos.y).setVisible(true)
     this.selectedSprite = this.sprites.get(this.board.get(at)!.id) ?? null
-    if (this.selectedSprite) {
+    // Selected-piece pulse — gated (§E8): reduced motion relies on the static ring alone for the tell.
+    if (this.selectedSprite && !this.reducedMotion) {
       this.selectPulse = this.tweens.add({
         targets: this.selectedSprite,
         scale: PIECE_SCALE * 1.12,
@@ -1482,8 +1496,9 @@ export class GameScene extends Phaser.Scene {
     this.moveMade = true
     this.movesText.setText(String(this.movesLeft))
     if (this.movesLeft <= 5) this.movesText.setColor(getTheme().warn)
-    // Getting tight — start a gentle looping pulse on the moves number (once, no stacking).
-    if (this.movesLeft <= 3 && !this.movesPulse) {
+    // Getting tight — start a gentle looping pulse on the moves number (once, no stacking). Gated
+    // (§E8): reduced motion keeps the warn colour above (the real signal), just no pulse.
+    if (this.movesLeft <= 3 && !this.movesPulse && !this.reducedMotion) {
       this.movesPulse = this.tweens.add({
         targets: this.movesText,
         scale: 1.08,
@@ -2151,12 +2166,9 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  /** Reduced-motion (OS query OR in-app override) — delegates to the shared theme authority (§E8). */
   private prefersReducedMotion(): boolean {
-    try {
-      return typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
-    } catch {
-      return false
-    }
+    return prefersReducedMotion()
   }
 
   /**
@@ -2223,7 +2235,8 @@ export class GameScene extends Phaser.Scene {
         onComplete: () =>
           this.tweens.add({ targets: bloom, alpha: 0, duration: 460, ease: 'Quad.easeIn', onComplete: () => bloom.destroy() }),
       })
-      this.cameras.main.flash(200, 255, 249, 235)
+      // Win bloom's cream camera flash — gated by the reduce-flashing switch (§E8), like the jackpot flash.
+      if (!this.reduceFlashing) this.cameras.main.flash(200, 255, 249, 235)
       sfx.reelSweep()
       if (stars >= 3) sfx.jackpotStrike()
     })
@@ -2249,9 +2262,9 @@ export class GameScene extends Phaser.Scene {
     const word = this.rankWord(stars)
     const layer = track(this.add.container(cx, cy).setDepth(46))
 
-    // Slow-spinning gold ray behind the lozenge.
+    // Slow-spinning gold ray behind the lozenge — static under reduced motion (§E8); the lozenge stays.
     const ray = this.add.image(0, 0, 'sweep').setDisplaySize(560, 96).setAlpha(0.4).setBlendMode(Phaser.BlendModes.ADD)
-    this.tweens.add({ targets: ray, angle: 360, duration: 2500, repeat: -1, ease: 'Linear' })
+    if (!this.reducedMotion) this.tweens.add({ targets: ray, angle: 360, duration: 2500, repeat: -1, ease: 'Linear' })
 
     const T = getTheme()
     const text = this.add
@@ -2655,7 +2668,7 @@ export class GameScene extends Phaser.Scene {
 
     const goals = this.objectives.map(o => `${o.remaining > 0 ? o.remaining : '✓'}`).join('   ')
     this.add
-      .text(cx, cy - 70, `Still needed:  ${goals}`, { fontFamily: FONT, fontSize: '26px', color: '#8a8577' })
+      .text(cx, cy - 70, `Still needed:  ${goals}`, { fontFamily: FONT, fontSize: '26px', color: getTheme().inkMuted })
       .setOrigin(0.5)
       .setDepth(42)
 
@@ -2810,10 +2823,11 @@ export class GameScene extends Phaser.Scene {
       if (nextExists) startScene(this,'game', { level: this.level + 1 })
       else startScene(this,'levelselect', { fromWin: true })
     })
-    // Beat 5: a soft gold glow-ring pulse behind the Continue pill to lead the eye.
-    const glow = this.add.image(0, 176, 'bgglow').setTint(T.gold).setBlendMode(Phaser.BlendModes.ADD).setDisplaySize(360, 150).setAlpha(0.18)
+    // Beat 5: a soft gold glow-ring pulse behind the Continue pill to lead the eye. Gated (§E8):
+    // reduced motion rests it at a static soft glow, no pulse.
+    const glow = this.add.image(0, 176, 'bgglow').setTint(T.gold).setBlendMode(Phaser.BlendModes.ADD).setDisplaySize(360, 150).setAlpha(this.reducedMotion ? 0.28 : 0.18)
     card.add(glow)
-    this.tweens.add({ targets: glow, alpha: 0.42, duration: 780, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' })
+    if (!this.reducedMotion) this.tweens.add({ targets: glow, alpha: 0.42, duration: 780, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' })
     card.add(nextBtn)
     card.add(addPillButton(this, 0, 176 + 84, 300, 60, 'LEVELS', GHOST_PILL, () => startScene(this,'levelselect', { fromWin: true })))
 
@@ -2826,7 +2840,8 @@ export class GameScene extends Phaser.Scene {
       cg.lineStyle(3, T.roseDeep, 1)
       cg.strokeCircle(0, 0, 22)
       const cIcon = this.add.text(0, 0, '»', { fontFamily: FONT, fontSize: '26px', fontStyle: '900', color: T.onRose }).setOrigin(0.5)
-      const cZone = this.add.circle(0, 0, 24, 0xffffff, 0.001).setInteractive({ useHandCursor: true })
+      // Invisible hit circle grown to the ≥44pt floor (§E8) — the visual chip (r22) is unchanged.
+      const cZone = this.add.circle(0, 0, 42, 0xffffff, 0.001).setInteractive({ useHandCursor: true })
       cZone.on('pointerup', () => this.overlaySettle?.())
       close.add([cg, cIcon, cZone])
       card.add(close)
@@ -2890,7 +2905,7 @@ export class GameScene extends Phaser.Scene {
     settleActions.push(() => pileChips.forEach(c => c.setScale(46 / 48)))
 
     // Reward label + rolling counter (navy on cream — legible under the celebration).
-    card.add(this.add.text(58, py - 34, 'REWARD', { fontFamily: FONT, fontSize: '18px', color: '#8a8577' }).setOrigin(0, 0.5).setLetterSpacing(2))
+    card.add(this.add.text(58, py - 34, 'REWARD', { fontFamily: FONT, fontSize: '18px', color: T.inkMuted }).setOrigin(0, 0.5).setLetterSpacing(2))
     const counter = this.add
       .text(58, py + 8, animate ? '0' : String(chipReward), { fontFamily: FONT, fontSize: '52px', fontStyle: '900', color: T.navyText })
       .setOrigin(0, 0.5)
@@ -3005,7 +3020,7 @@ export class GameScene extends Phaser.Scene {
       .setShadow(0, 3, 'rgba(0,0,0,0.15)', 6, false, true)
 
     this.add
-      .text(cx, cy - 92, 'YOUR SCORE', { fontFamily: FONT, fontSize: '20px', color: '#8a8577' })
+      .text(cx, cy - 92, 'YOUR SCORE', { fontFamily: FONT, fontSize: '20px', color: getTheme().inkMuted })
       .setOrigin(0.5)
       .setDepth(42)
       .setLetterSpacing(2)
@@ -3021,7 +3036,7 @@ export class GameScene extends Phaser.Scene {
       .setShadow(0, 2, 'rgba(0,0,0,0.12)', 4, false, true)
 
     this.add
-      .text(cx, cy + 34, "THIS WEEK'S BEST", { fontFamily: FONT, fontSize: '20px', color: '#8a8577' })
+      .text(cx, cy + 34, "THIS WEEK'S BEST", { fontFamily: FONT, fontSize: '20px', color: getTheme().inkMuted })
       .setOrigin(0.5)
       .setDepth(42)
       .setLetterSpacing(2)
@@ -3196,8 +3211,9 @@ export class GameScene extends Phaser.Scene {
     })
   }
 
-  /** Haptic buzz, guarded for browsers without the Vibration API. */
+  /** Haptic buzz, guarded for browsers without the Vibration API + the a11y haptics-off switch (§E8). */
   private vibrate(pattern: number | number[]): void {
+    if (hapticsOff()) return
     if ('vibrate' in navigator) navigator.vibrate?.(pattern)
   }
 }
