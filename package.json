@@ -3,6 +3,9 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "author": "CorruptFun",
+  "license": "UNLICENSED",
+  "copyright": "© 2026 CorruptFun. All rights reserved.",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",

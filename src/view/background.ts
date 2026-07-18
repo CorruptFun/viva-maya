@@ -131,4 +131,30 @@ export function addCasinoBackdrop(scene: Phaser.Scene, variant: BackdropVariant)
       })
     })
   }
+
+  // Game screen: faint tokens + cards shuffling through the empty space below the board —
+  // casino ambiance for the "cabinet", kept low + slow so the board keeps the focus.
+  if (variant === 'game' && scene.textures.exists('chip')) {
+    const tokens: Array<[string, number, number, number, number]> = [
+      ['chip', 96, 1092, 0.95, 0.16],
+      ['card', 250, 1186, 0.85, 0.14],
+      ['chip', 468, 1206, 1.05, 0.15],
+      ['card', 624, 1104, 0.8, 0.13],
+      ['chip', 356, 1234, 0.7, 0.12],
+    ]
+    tokens.forEach(([key, x, y, scale, alpha], i) => {
+      const dir = i % 2 ? -1 : 1
+      const t = scene.add.image(x, y, key).setScale(scale).setAlpha(alpha).setAngle(dir * 12)
+      scene.tweens.add({
+        targets: t,
+        y: y - 42,
+        angle: dir * 12 + dir * 20,
+        duration: 4200 + i * 500,
+        delay: i * 350,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut',
+      })
+    })
+  }
 }

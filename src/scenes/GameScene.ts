@@ -59,6 +59,8 @@ export class GameScene extends Phaser.Scene {
   private pieceLayer!: Phaser.GameObjects.Container
   private emitters!: Record<SymbolType, Phaser.GameObjects.Particles.ParticleEmitter>
   private sparkEmitter!: Phaser.GameObjects.Particles.ParticleEmitter
+  private cabinetBulbs: Phaser.GameObjects.Image[] = []
+  private cabinetGlow?: Phaser.GameObjects.Image
   private state: GameState = 'idle'
 
   private movesLeft = 0
@@ -182,6 +184,7 @@ export class GameScene extends Phaser.Scene {
 
     addCasinoBackdrop(this, 'game')
     this.buildBackdrop()
+    this.buildCabinet()
     this.buildHud()
     this.buildPieceLayer()
     this.buildParticles()
@@ -407,6 +410,16 @@ export class GameScene extends Phaser.Scene {
   // ----------------------------------------------------------------- build
 
   private buildBackdrop(): void {
+    // Reddish "screen is on" glow behind the board — the opaque card covers its center, so only
+    // a soft rose halo bleeds past the frame. Surges on a win (see celebrateBoard).
+    this.cabinetGlow = this.add
+      .image(DESIGN_W / 2, BOARD_Y + BOARD_W / 2, 'bgglow')
+      .setTint(0xd3304f)
+      .setAlpha(0.1)
+      .setBlendMode(Phaser.BlendModes.ADD)
+    this.cabinetGlow.setDisplaySize(BOARD_W + 170, BOARD_W + 170)
+    this.tweens.add({ targets: this.cabinetGlow, alpha: 0.18, duration: 1700, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' })
+
     const g = this.add.graphics()
     const pad = 18
     const x = BOARD_X - pad
@@ -428,6 +441,87 @@ export class GameScene extends Phaser.Scene {
         if ((r + c) % 2 === 0) g.fillRect(BOARD_X + c * CELL, BOARD_Y + r * CELL, CELL, CELL)
       }
     }
+  }
+
+  /**
+   * Slot-cabinet marquee: a ring of alternating red/gold bulbs on the board bezel, lit in a
+   * traveling chase. Sits outside the 8×8 grid so it never covers a piece. Bulbs are stored so
+   * a win can flash them (flashCabinet / celebrateBoard).
+   */
+  private buildCabinet(): void {
+    this.cabinetBulbs = []
+    const pad = 18
+    const inset = 12
+    const left = BOARD_X - pad + inset
+    const right = BOARD_X - pad + (BOARD_W + pad * 2) - inset
+    const top = BOARD_Y - pad + inset
+    const bottom = BOARD_Y - pad + (BOARD_W + pad * 2) - inset
+    const step = 56
+    const pts: Array<{ x: number; y: number }> = []
+    for (let x = left; x < right - 1; x += step) pts.push({ x, y: top })
+    for (let y = top; y < bottom - 1; y += step) pts.push({ x: right, y })
+    for (let x = right; x > left + 1; x -= step) pts.push({ x, y: bottom })
+    for (let y = bottom; y > top + 1; y -= step) pts.push({ x: left, y })
+
+    const period = 1500 // one lap of the chase
+    pts.forEach((p, i) => {
+      const bulb = this.add.image(p.x, p.y, 'bulb').setDisplaySize(13, 13).setDepth(2)
+      bulb.setTint(i % 2 === 0 ? 0xff5a6a : 0xffd75e) // reddish / gold
+      bulb.setAlpha(0.4)
+      this.tweens.add({
+        targets: bulb,
+        alpha: 1,
+        duration: period / 2,
+        yoyo: true,
+        repeat: -1,
+        delay: (i / pts.length) * period,
+        ease: 'Sine.easeInOut',
+      })
+      this.cabinetBulbs.push(bulb)
+    })
+  }
+
+  /** Quick light flash on the cabinet — bulbs pop + reddish glow surges. For mega-wins / wins. */
+  private flashCabinet(): void {
+    for (const bulb of this.cabinetBulbs) {
+      const base = bulb.scaleX
+      this.tweens.add({ targets: bulb, scaleX: base * 1.7, scaleY: base * 1.7, duration: 140, yoyo: true, ease: 'Quad.easeOut' })
+    }
+    if (this.cabinetGlow) {
+      this.tweens.add({ targets: this.cabinetGlow, alpha: 0.42, duration: 160, yoyo: true, repeat: 1, ease: 'Quad.easeOut' })
+    }
+  }
+
+  /** A modest spray of chips + cards bursting from the board — the casino "panel" win touch. */
+  private burstTokens(count = 10): void {
+    const cx = BOARD_X + BOARD_W / 2
+    const cy = BOARD_Y + BOARD_W / 2
+    for (let i = 0; i < count; i++) {
+      const key = i % 2 === 0 ? 'chip' : 'card'
+      const token = this.add
+        .image(cx + (Math.random() * 2 - 1) * 110, cy + (Math.random() * 2 - 1) * 110, key)
+        .setDepth(24)
+        .setScale(0)
+      const ang = Math.random() * Math.PI * 2
+      const dist = 150 + Math.random() * 170
+      this.tweens.add({
+        targets: token,
+        x: cx + Math.cos(ang) * dist,
+        y: cy + Math.sin(ang) * dist - 40,
+        scale: 0.85,
+        rotation: (Math.random() * 2 - 1) * 3,
+        duration: 680,
+        ease: 'Cubic.easeOut',
+        onComplete: () =>
+          this.tweens.add({ targets: token, alpha: 0, y: token.y + 140, duration: 480, onComplete: () => token.destroy() }),
+      })
+    }
+  }
+
+  /** Full board win celebration: light flash + token burst (plays on the visible board pre-overlay). */
+  private celebrateBoard(): void {
+    this.flashCabinet()
+    this.burstTokens()
   }
 
   private buildHud(): void {
@@ -927,6 +1021,7 @@ export class GameScene extends Phaser.Scene {
   private finishWin(): void {
     this.log('finishWin')
     this.state = 'ended'
+    this.celebrateBoard() // casino light flash + chip/card burst on the still-visible board
     const movesFrac = this.movesLeft / this.spec.moves
     const stars = movesFrac >= 0.5 ? 3 : movesFrac >= 0.25 ? 2 : 1
     const bonus = this.movesLeft * MOVES_BONUS
@@ -1237,6 +1332,7 @@ export class GameScene extends Phaser.Scene {
     if (big) {
       sfx.jackpotStrike()
       this.vibrate([60, 40, 120])
+      this.flashCabinet() // mega-win: pop the marquee lights
     }
     const text = this.add
       .text(DESIGN_W / 2, BOARD_Y + BOARD_W / 2 - 40, big ? 'MEGA WIN!' : `COMBO x${cascade}`, {

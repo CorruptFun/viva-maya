@@ -208,3 +208,118 @@ export function addMuteChip(scene: Phaser.Scene, x: number, y: number, size = 52
   container.add([g, icon, zone])
   return container
 }
+
+/** Round "?" help chip styled like GHOST_PILL — opens the how-to-play panel. */
+export function addHelpChip(scene: Phaser.Scene, x: number, y: number, size = 52): Phaser.GameObjects.Container {
+  const r = size / 2
+  const container = scene.add.container(x, y).setDepth(50)
+  const g = scene.add.graphics()
+  g.fillStyle(0x8a7a52, 0.18)
+  g.fillCircle(2, 3, r)
+  g.fillStyle(GHOST_PILL.fill, 1)
+  g.fillCircle(0, 0, r)
+  g.lineStyle(2, GHOST_PILL.border ?? 0xe8dfc9, 1)
+  g.strokeCircle(0, 0, r)
+  const icon = scene.add
+    .text(0, 1, '?', { fontFamily: FONT, fontSize: `${Math.round(size * 0.56)}px`, fontStyle: '900', color: '#8a8577' })
+    .setOrigin(0.5)
+  const zone = scene.add.rectangle(0, 0, size, size, 0xffffff, 0.001).setInteractive({ useHandCursor: true })
+  zone.on('pointerdown', () => container.setScale(0.9))
+  zone.on('pointerout', () => container.setScale(1))
+  zone.on('pointerup', () => {
+    container.setScale(1)
+    sfx.uiTap()
+    openHelpPanel(scene)
+  })
+  container.add([g, icon, zone])
+  return container
+}
+
+interface HelpSection {
+  icon: string
+  title: string
+  body: string
+}
+
+const HELP_SECTIONS: HelpSection[] = [
+  { icon: 'clover', title: 'THE GOAL', body: 'Match 3+ of the same symbol in a row. Collect the goal symbols up top before your moves run out.' },
+  { icon: 'diamond', title: 'MAKE A MOVE', body: 'Swipe a symbol into a neighbour, or tap two that touch, to swap. A swap only sticks if it makes a match.' },
+  { icon: 'jackpot', title: 'POWER-UPS', body: 'Match 4 → Wild Reel (clears a line). L or T → Dice Bomb (3×3). Match 5 → Jackpot Chip (clears a colour).' },
+  { icon: 'heart', title: 'LIVES', body: 'Losing a level costs a heart — winning is free. Out of hearts? One returns every 30 minutes.' },
+  { icon: 'chip', title: 'DAILY BONUS', body: 'Spin once a day for a free boost. Come back daily to grow your streak.' },
+  { icon: 'star', title: 'STARS', body: 'Finish with moves to spare for up to 3 stars. Every 10th level is a milestone.' },
+  { icon: 'card', title: 'ENDLESS', body: 'After Level 30, race the weekly board — same for everyone. Beat your best score!' },
+]
+
+/**
+ * How-to-play / FAQ overlay: a scrim + tall card of sections (icon + title + blurb), a GOT IT
+ * button, and tap-outside-to-close. A transparent blocker over the card stops panel taps from
+ * closing it. Everything lives in one container destroyed on close.
+ */
+export function openHelpPanel(scene: Phaser.Scene): void {
+  const W = 720
+  const H = 1280
+  const layer = scene.add.container(0, 0).setDepth(60)
+
+  const scrim = scene.add.rectangle(W / 2, H / 2, W, H, 0x2a2417, 0.6).setInteractive()
+  scrim.on('pointerup', () => layer.destroy())
+
+  const px = 40
+  const pw = W - 80
+  const pyTop = 118
+  const ph = 1046
+  const g = scene.add.graphics()
+  g.fillStyle(0x8a7a52, 0.3)
+  g.fillRoundedRect(px + 4, pyTop + 8, pw, ph, 30)
+  g.fillStyle(0xfffdf8, 1)
+  g.fillRoundedRect(px, pyTop, pw, ph, 30)
+  g.lineStyle(4, 0xf2c14e, 1)
+  g.strokeRoundedRect(px, pyTop, pw, ph, 30)
+
+  // Blocker so taps on the card don't fall through to the scrim (which closes).
+  const block = scene.add.rectangle(W / 2, pyTop + ph / 2, pw, ph, 0xffffff, 0.001).setInteractive()
+
+  const title = scene.add
+    .text(W / 2, pyTop + 56, 'HOW TO PLAY', { fontFamily: FONT, fontSize: '46px', fontStyle: '900', color: '#c9930a' })
+    .setOrigin(0.5)
+    .setLetterSpacing(2)
+    .setShadow(0, 2, 'rgba(0,0,0,0.12)', 4, false, true)
+  layer.add([scrim, g, block, title])
+
+  const textX = px + 116
+  const wrap = pw - (textX - px) - 34
+  let y = pyTop + 116
+  const rowH = 118
+  for (const s of HELP_SECTIONS) {
+    layer.add(scene.add.image(px + 66, y + 32, s.icon).setDisplaySize(52, 52))
+    layer.add(
+      scene.add
+        .text(textX, y, s.title, { fontFamily: FONT, fontSize: '24px', fontStyle: '900', color: '#2a2732' })
+        .setOrigin(0, 0)
+        .setLetterSpacing(1)
+    )
+    layer.add(
+      scene.add
+        .text(textX, y + 34, s.body, {
+          fontFamily: 'Arial, sans-serif',
+          fontSize: '20px',
+          color: '#6a6459',
+          wordWrap: { width: wrap },
+          lineSpacing: 4,
+        })
+        .setOrigin(0, 0)
+    )
+    y += rowH
+  }
+
+  layer.add(addPillButton(scene, W / 2, pyTop + ph - 72, 240, 68, 'GOT IT', GOLD_PILL, () => layer.destroy()))
+  layer.add(
+    scene.add
+      .text(W / 2, pyTop + ph - 26, '© 2026 CorruptFun · All rights reserved', {
+        fontFamily: 'Arial, sans-serif',
+        fontSize: '16px',
+        color: '#b3ab97',
+      })
+      .setOrigin(0.5)
+  )
+}
