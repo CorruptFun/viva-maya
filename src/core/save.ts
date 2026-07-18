@@ -22,6 +22,8 @@ export interface SaveData {
   lives: number
   /** Epoch ms the current life-regen cycle started (0 when the pool is full). */
   livesAnchor: number
+  /** Earned chip balance — a reward token banked from level wins. Earned-only; never spent in Phase 1. */
+  chips: number
 }
 
 const KEY = 'viva-maya:v1'
@@ -38,6 +40,7 @@ const DEFAULTS: SaveData = {
   endlessBest: 0,
   lives: LIVES_MAX,
   livesAnchor: 0,
+  chips: 0,
 }
 
 function fresh(): SaveData {
@@ -64,6 +67,8 @@ export function loadSave(): SaveData {
     base.lives =
       typeof data.lives === 'number' ? Math.max(0, Math.min(LIVES_MAX, Math.floor(data.lives))) : LIVES_MAX
     base.livesAnchor = typeof data.livesAnchor === 'number' ? data.livesAnchor : 0
+    // Earned chip balance (Phase 1 reward token). Absent in pre-chip saves → 0.
+    base.chips = typeof data.chips === 'number' ? Math.max(0, Math.floor(data.chips)) : 0
     // v6 grace refill: the pool grew (3→10) and the break got much shorter — top EVERYONE up to
     // full on upgrade so nobody is left stranded at the old, stingier count (e.g. mid-session).
     const storedVersion = typeof data.v === 'number' ? (data.v as number) : 1
@@ -102,6 +107,14 @@ export function recordScore(score: number): SaveData {
     persistSave(save)
   }
   return save
+}
+
+/** Bank earned chips (a win payout). Clamps to a non-negative integer; returns the new total. */
+export function addChips(n: number): number {
+  const save = loadSave()
+  save.chips += Math.max(0, Math.floor(n))
+  persistSave(save)
+  return save.chips
 }
 
 /** Consume all pending boosts (they apply to the level being started, win or lose). */
