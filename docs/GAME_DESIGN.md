@@ -69,8 +69,8 @@ clears a RANDOM present color. Swap-combos (both consumed, epicenter = drag dest
   EARNED" splash (heart shower + fanfare) before the normal result card (GameScene.milestoneSplash).
 
 ## Endless weekly race (src/core/endless.ts + GameScene endless mode)
-- Unlocks once the last numbered level is cleared (save.unlocked > LEVEL_COUNT). Entry: rose
-  ENDLESS pill on Home and LevelSelect.
+- Unlocks after ENDLESS_UNLOCK_LEVEL=30 (fixed, independent of LEVEL_COUNT — save.unlocked > 30).
+  Entry: rose ENDLESS pill on Home and LevelSelect.
 - weekKey(now) = ISO-8601 week "YYYY-Www" (local, Thursday-anchored). seedForWeek() = FNV-1a →
   endlessRng() = mulberry32(seed): EVERYONE gets the SAME board that week; every attempt that
   week replays the identical starting board (a BEST-score race, not per-attempt random).
@@ -109,10 +109,11 @@ clears a RANDOM present color. Swap-combos (both consumed, epicenter = drag dest
   NOTE: no emoji in pill labels — letterSpacing splits surrogate pairs (renders tofu).
 
 ## Save (src/core/save.ts — localStorage key 'viva-maya:v1', all access try/catch)
-v5: { v:5, best, unlocked, stars{level:1..3}, lastSpinDate|null, streak, pendingBoosts[],
+v6: { v:6, best, unlocked, stars{level:1..3}, lastSpinDate|null, streak, pendingBoosts[],
       endlessWeek|null, endlessBest, lives, livesAnchor }
 Migrations: v1 {best} → v2 (+unlocked/stars) → v3 (+daily) → v4 (+endless: endlessWeek
-"YYYY-Www", endlessBest) → v5 (+lives/energy: lives, livesAnchor — pre-v5 saves start full).
+"YYYY-Www", endlessBest) → v5 (+lives/energy: lives, livesAnchor — pre-v5 saves start full)
+→ v6 (grace refill: tops every save to full — lives=LIVES_MAX, livesAnchor=0 — on upgrade).
 Loader is shape-tolerant (old saves default new fields). Mute flag is separate: 'viva-maya:muted'.
 
 ## Audio (src/audio/sfx.ts — procedural WebAudio, zero assets)
@@ -165,7 +166,7 @@ builds and deploys automatically. Legacy fallback: publish dist/ to gh-pages bra
 ## Roadmap (agreed direction)
 DONE: streak flame on Home (addStreakBadge) · endless weekly-seed race after L30 (shared board,
 BEST race — src/core/endless.ts) · star-milestone celebration every 10 levels (milestoneSplash) ·
-lives/energy (lose-only, 3-pool, 30-min regen — src/core/lives.ts).
+lives/energy (lose-only, 10-pool, 8-min regen — src/core/lives.ts).
 TODO: tune levelSpec from Maya's real play · optionally let the daily spin grant a bonus life.
 Still rejected: purchasable currencies, home-decorating meta, pay-to-win. (Lives/energy was
 previously rejected but reintroduced 2026-07-17 at Austin's request as a self-refilling return hook.)
