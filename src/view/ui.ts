@@ -34,6 +34,52 @@ export function addMarquee(scene: Phaser.Scene, centerX: number, y: number): voi
   })
 }
 
+/**
+ * Warm flame pill announcing the daily-spin streak — a return hook shown on the
+ * home screen when streak > 0. The 🔥 lives in its own text object (no letterSpacing)
+ * because letterSpacing splits emoji surrogate pairs in Phaser's glyph renderer.
+ * Returns null when there's no streak to show.
+ */
+export function addStreakBadge(
+  scene: Phaser.Scene,
+  centerX: number,
+  y: number,
+  streak: number
+): Phaser.GameObjects.Container | null {
+  if (streak <= 0) return null
+  const container = scene.add.container(centerX, y)
+  const flame = scene.add.text(0, 0, '🔥', { fontFamily: 'sans-serif', fontSize: '32px' }).setOrigin(0.5)
+  const label = scene.add
+    .text(0, 0, `${streak} DAY STREAK`, { fontFamily: FONT, fontSize: '22px', fontStyle: '900', color: '#c9930a' })
+    .setOrigin(0, 0.5)
+    .setLetterSpacing(2)
+  const gap = 8
+  const padX = 26
+  const h = 54
+  const w = flame.width + gap + label.width + padX * 2
+  const g = scene.add.graphics()
+  g.fillStyle(0x8a7a52, 0.16)
+  g.fillRoundedRect(-w / 2 + 2, -h / 2 + 4, w, h, h / 2)
+  g.fillStyle(0xfff3d6, 1)
+  g.fillRoundedRect(-w / 2, -h / 2, w, h, h / 2)
+  g.lineStyle(2, 0xf2c14e, 1)
+  g.strokeRoundedRect(-w / 2, -h / 2, w, h, h / 2)
+  flame.setPosition(-w / 2 + padX + flame.width / 2, 0)
+  label.setPosition(flame.x + flame.width / 2 + gap, 0)
+  container.add([g, flame, label])
+  // A little flame flicker so it reads as "alive" / on fire.
+  scene.tweens.add({
+    targets: flame,
+    scaleX: 1.16,
+    scaleY: 1.12,
+    duration: 480,
+    yoyo: true,
+    repeat: -1,
+    ease: 'Sine.easeInOut',
+  })
+  return container
+}
+
 export interface PillStyle {
   fill: number
   border?: number
@@ -42,6 +88,8 @@ export interface PillStyle {
 
 export const GOLD_PILL: PillStyle = { fill: 0xf2b234, border: 0xc9930a, textColor: '#4a3305' }
 export const GHOST_PILL: PillStyle = { fill: 0xffffff, border: 0xe8dfc9, textColor: '#8a8577' }
+/** Rose "special mode" pill — sets the endless weekly race apart from the gold progression buttons. */
+export const ROSE_PILL: PillStyle = { fill: 0xd3304f, border: 0xa8213c, textColor: '#ffffff' }
 
 /** Rounded tappable button with press feedback. Returns the container. */
 export function addPillButton(

@@ -18,14 +18,15 @@ import {
   SWAP_MS,
 } from '../config'
 import { Board } from '../core/board'
+import { ENDLESS_MOVES, endlessBestForWeek, endlessRngForWeek, recordEndless, weekKey } from '../core/endless'
 import { LEVEL_COUNT, levelSpec } from '../core/levels'
 import { mulberry32 } from '../core/rng'
-import { recordResult, recordScore, takePendingBoosts } from '../core/save'
+import { loadSave, recordResult, recordScore, takePendingBoosts } from '../core/save'
 import { SYMBOLS, key } from '../core/types'
 import type { BoostType, ClearWave, Coord, FallMove, LevelSpec, Piece, Spawn, SymbolType } from '../core/types'
 import { addCasinoBackdrop } from '../view/background'
 import { TEX_SIZE, ensurePieceTexture } from '../view/textures'
-import { FONT, GHOST_PILL, GOLD_PILL, addMuteChip, addPillButton } from '../view/ui'
+import { FONT, GHOST_PILL, GOLD_PILL, ROSE_PILL, addMuteChip, addPillButton } from '../view/ui'
 
 /**
  * Turn state machine:
@@ -82,6 +83,9 @@ export class GameScene extends Phaser.Scene {
   private autoplayDelay = 450
   private activeBoosts: BoostType[] = []
   private scoreMult = 1
+  private endless = false
+  private endlessBest = 0
+  private endlessWeekKey = ''
   private apSched = 0
   private apFired = 0
   private apMoved = 0
@@ -96,15 +100,32 @@ export class GameScene extends Phaser.Scene {
     super('game')
   }
 
-  init(data: { level?: number }): void {
+  init(data: { level?: number; endless?: boolean }): void {
+    // The ?endless URL fallback only applies when no explicit level was routed in — otherwise
+    // it would stick across scene.start('game', {level}) (the SPA URL never changes in DEV).
+    this.endless =
+      data?.endless === true ||
+      (import.meta.env.DEV && data?.level == null && new URLSearchParams(location.search).has('endless'))
     this.level = Math.max(1, data?.level ?? 1)
   }
 
   create(): void {
     this.sid = Math.floor(Math.random() * 10000)
-    this.log('create', location.search, 'level', this.level)
-    this.spec = levelSpec(this.level)
-    this.board = new Board(ROWS, COLS, this.spec.symbolCount, mulberry32((Math.random() * 2 ** 31) | 0))
+    this.log('create', location.search, this.endless ? 'ENDLESS' : `level ${this.level}`)
+    // Endless: a fixed-budget score attack on this WEEK's shared, seeded board (same for
+    // everyone). No objectives, no boosts (planting specials would change the board and
+    // break the race's fairness). Otherwise: the numbered level with a fresh random board.
+    if (this.endless) {
+      // Capture the week key ONCE so the run is scored against the board it was seeded from,
+      // even if the local week boundary is crossed mid-run.
+      this.endlessWeekKey = weekKey()
+      this.spec = { level: 0, moves: ENDLESS_MOVES, symbolCount: SYMBOLS.length, objectives: [] }
+      this.board = new Board(ROWS, COLS, SYMBOLS.length, endlessRngForWeek(this.endlessWeekKey))
+      this.endlessBest = endlessBestForWeek(loadSave(), this.endlessWeekKey)
+    } else {
+      this.spec = levelSpec(this.level)
+      this.board = new Board(ROWS, COLS, this.spec.symbolCount, mulberry32((Math.random() * 2 ** 31) | 0))
+    }
     this.movesLeft = this.spec.moves
     this.objectives = this.spec.objectives.map(o => ({ symbol: o.symbol, remaining: o.count, total: o.count }))
     this.score = 0
@@ -118,7 +139,7 @@ export class GameScene extends Phaser.Scene {
     this.scoreMult = 1
     this.activeBoosts = []
     this.autoplay = import.meta.env.DEV && new URLSearchParams(location.search).has('auto')
-    this.applyBoosts(takePendingBoosts())
+    if (!this.endless) this.applyBoosts(takePendingBoosts())
 
     if (import.meta.env.DEV) {
       // URL knobs for automated checks: ?goal=N ?moves=N ?auto=MS ?plant=1
@@ -153,19 +174,7 @@ export class GameScene extends Phaser.Scene {
         .text(BOARD_X + BOARD_W - 128, 66, '×2', { fontFamily: FONT, fontSize: '26px', fontStyle: '900', color: '#c9930a' })
         .setOrigin(1, 0)
     }
-    if (this.activeBoosts.length > 0) {
-      const toast = this.add
-        .text(DESIGN_W / 2, BOARD_Y - 44, `🎁 ${this.activeBoosts.map(b => this.boostLabel(b)).join('  ·  ')}`, {
-          fontFamily: FONT,
-          fontSize: '24px',
-          fontStyle: '900',
-          color: '#c9930a',
-        })
-        .setOrigin(0.5)
-        .setDepth(30)
-        .setStroke('#ffffff', 6)
-      this.tweens.add({ targets: toast, alpha: 0, y: toast.y - 30, delay: 2200, duration: 500, onComplete: () => toast.destroy() })
-    }
+    if (this.activeBoosts.length > 0) this.showBoostBanner(this.activeBoosts)
 
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => this.onDown(p))
     this.input.on('pointermove', (p: Phaser.Input.Pointer) => this.onMove(p))
@@ -245,6 +254,45 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  /**
+   * Level-start banner announcing the daily-spin boosts. A self-sizing gold pill
+   * that pops in over the top of the board, holds, then fades up — sits below the
+   * HUD so it never collides with the moves/objective chips (the old flat toast at
+   * BOARD_Y-44 overlapped that row). Scales down if the label runs wider than the board.
+   */
+  private showBoostBanner(boosts: BoostType[]): void {
+    const banner = this.add.container(DESIGN_W / 2, BOARD_Y + 72).setDepth(31)
+    const text = this.add
+      .text(0, 0, `🎁  ${boosts.map(b => this.boostLabel(b)).join('   ·   ')}`, {
+        fontFamily: FONT,
+        fontSize: '26px',
+        fontStyle: '900',
+        color: '#c9930a',
+      })
+      .setOrigin(0.5)
+    const w = text.width + 56
+    const h = 64
+    const g = this.add.graphics()
+    g.fillStyle(0x8a7a52, 0.2)
+    g.fillRoundedRect(-w / 2 + 2, -h / 2 + 5, w, h, h / 2)
+    g.fillStyle(0xfffdf8, 0.98)
+    g.fillRoundedRect(-w / 2, -h / 2, w, h, h / 2)
+    g.lineStyle(3, 0xf2c14e, 1)
+    g.strokeRoundedRect(-w / 2, -h / 2, w, h, h / 2)
+    banner.add([g, text])
+    const fit = Math.min(1, (BOARD_W + 20) / w)
+    banner.setScale(0)
+    this.tweens.add({ targets: banner, scale: fit, duration: 320, ease: 'Back.easeOut' })
+    this.tweens.add({
+      targets: banner,
+      alpha: 0,
+      y: banner.y - 26,
+      delay: 2400,
+      duration: 500,
+      onComplete: () => banner.destroy(),
+    })
+  }
+
   private scheduleAutoplay(): void {
     if (!this.autoplay) return
     this.apSched++
@@ -302,9 +350,18 @@ export class GameScene extends Phaser.Scene {
   }
 
   private buildHud(): void {
-    // Top row: back · LEVEL N · score.
+    // Top row: back · LEVEL N (or ENDLESS) · score.
     addPillButton(this, 64, 84, 84, 56, '‹', GHOST_PILL, () => this.scene.start('levelselect'))
-    addPillButton(this, DESIGN_W / 2, 84, 220, 56, `LEVEL ${this.level}`, GOLD_PILL, () => {})
+    addPillButton(
+      this,
+      DESIGN_W / 2,
+      84,
+      this.endless ? 240 : 220,
+      56,
+      this.endless ? 'ENDLESS' : `LEVEL ${this.level}`,
+      this.endless ? ROSE_PILL : GOLD_PILL,
+      () => {}
+    )
     this.add
       .text(BOARD_X + BOARD_W, 62, 'SCORE', { fontFamily: FONT, fontSize: '18px', color: '#8a8577' })
       .setOrigin(1, 0)
@@ -338,36 +395,60 @@ export class GameScene extends Phaser.Scene {
       })
       .setOrigin(0.5)
 
-    const chipW = 118
-    const chipGap = 12
-    this.objectives.forEach((o, i) => {
-      const cx =
-        BOARD_X + BOARD_W - chipW / 2 - (this.objectives.length - 1 - i) * (chipW + chipGap)
-      const chip = this.add.container(cx, cardY)
-      const cg = this.add.graphics()
-      cg.fillStyle(0x8a7a52, 0.12)
-      cg.fillRoundedRect(-chipW / 2 + 2, -52 + 5, chipW, 104, 20)
-      cg.fillStyle(0xffffff, 1)
-      cg.fillRoundedRect(-chipW / 2, -52, chipW, 104, 20)
-      cg.lineStyle(2, 0xe8dfc9, 1)
-      cg.strokeRoundedRect(-chipW / 2, -52, chipW, 104, 20)
-      chip.add(cg)
-      const icon = this.add.image(0, -18, o.symbol)
-      icon.setDisplaySize(46, 46)
-      chip.add(icon)
-      o.text = this.add
-        .text(0, 26, String(o.remaining), { fontFamily: FONT, fontSize: '30px', fontStyle: '900', color: '#2a2732' })
+    if (this.endless) {
+      // No objectives in endless — show this week's target (BEST to beat) instead.
+      const cardW = 290
+      const bx = BOARD_X + BOARD_W - cardW
+      g.fillStyle(0x8a7a52, 0.12)
+      g.fillRoundedRect(bx + 2, cardY - 52 + 5, cardW, 104, 20)
+      g.fillStyle(0xfffdf8, 1)
+      g.fillRoundedRect(bx, cardY - 52, cardW, 104, 20)
+      g.lineStyle(2, 0xf2c14e, 0.9)
+      g.strokeRoundedRect(bx, cardY - 52, cardW, 104, 20)
+      this.add
+        .text(bx + cardW / 2, cardY - 28, "WEEK'S BEST", { fontFamily: FONT, fontSize: '18px', color: '#8a8577' })
         .setOrigin(0.5)
-      chip.add(o.text)
-      o.chip = chip
-    })
+        .setLetterSpacing(2)
+      this.add
+        .text(bx + cardW / 2, cardY + 12, this.endlessBest > 0 ? this.endlessBest.toLocaleString() : '—', {
+          fontFamily: FONT,
+          fontSize: '40px',
+          fontStyle: '900',
+          color: '#c9930a',
+        })
+        .setOrigin(0.5)
+    } else {
+      const chipW = 118
+      const chipGap = 12
+      this.objectives.forEach((o, i) => {
+        const cx = BOARD_X + BOARD_W - chipW / 2 - (this.objectives.length - 1 - i) * (chipW + chipGap)
+        const chip = this.add.container(cx, cardY)
+        const cg = this.add.graphics()
+        cg.fillStyle(0x8a7a52, 0.12)
+        cg.fillRoundedRect(-chipW / 2 + 2, -52 + 5, chipW, 104, 20)
+        cg.fillStyle(0xffffff, 1)
+        cg.fillRoundedRect(-chipW / 2, -52, chipW, 104, 20)
+        cg.lineStyle(2, 0xe8dfc9, 1)
+        cg.strokeRoundedRect(-chipW / 2, -52, chipW, 104, 20)
+        chip.add(cg)
+        const icon = this.add.image(0, -18, o.symbol)
+        icon.setDisplaySize(46, 46)
+        chip.add(icon)
+        o.text = this.add
+          .text(0, 26, String(o.remaining), { fontFamily: FONT, fontSize: '30px', fontStyle: '900', color: '#2a2732' })
+          .setOrigin(0.5)
+        chip.add(o.text)
+        o.chip = chip
+      })
+    }
 
     this.add
-      .text(DESIGN_W / 2, 988, 'Collect the goal symbols before moves run out', {
-        fontFamily: 'Arial, sans-serif',
-        fontSize: '22px',
-        color: '#9a927e',
-      })
+      .text(
+        DESIGN_W / 2,
+        988,
+        this.endless ? "Biggest score wins this week's board" : 'Collect the goal symbols before moves run out',
+        { fontFamily: 'Arial, sans-serif', fontSize: '22px', color: '#9a927e' }
+      )
       .setOrigin(0.5)
   }
 
@@ -572,12 +653,14 @@ export class GameScene extends Phaser.Scene {
     }
     this.dbgStage = 'end-checks'
     this.log('end-checks', 'objectivesDone', this.objectives.every(o => o.remaining <= 0), 'movesLeft', this.movesLeft)
-    if (this.objectives.every(o => o.remaining <= 0)) {
+    // Endless never "wins" on objectives (it has none) — it ends when moves run out.
+    if (!this.endless && this.objectives.every(o => o.remaining <= 0)) {
       this.finishWin()
       return
     }
     if (this.movesLeft <= 0) {
-      this.finishLose()
+      if (this.endless) this.finishEndless()
+      else this.finishLose()
       return
     }
     if (!this.board.hasValidMove()) await this.reshuffle()
@@ -766,8 +849,16 @@ export class GameScene extends Phaser.Scene {
     const stars = movesFrac >= 0.5 ? 3 : movesFrac >= 0.25 ? 2 : 1
     const bonus = this.movesLeft * MOVES_BONUS
     if (bonus > 0) this.addScore(bonus)
-    recordResult(this.level, stars, this.score)
-    this.time.delayedCall(500, () => this.showOverlay(true, stars, bonus))
+    const save = recordResult(this.level, stars, this.score)
+    // Every 10th level is a milestone: a full-screen star-tally splash before the result card.
+    const milestone = this.level % 10 === 0
+    const totalStars = Object.values(save.stars).reduce((sum, s) => sum + s, 0)
+    if (milestone) {
+      // The splash already showered hearts + fanfare — the result card stays calm (celebrate=false).
+      this.time.delayedCall(420, () => this.milestoneSplash(totalStars, () => this.showOverlay(true, stars, bonus, false)))
+    } else {
+      this.time.delayedCall(500, () => this.showOverlay(true, stars, bonus))
+    }
   }
 
   private finishLose(): void {
@@ -777,42 +868,116 @@ export class GameScene extends Phaser.Scene {
     this.time.delayedCall(400, () => this.showOverlay(false, 0, 0))
   }
 
-  private showOverlay(win: boolean, stars: number, bonus: number): void {
-    this.log('showOverlay', win ? 'win' : 'lose', 'stars', stars, 'bonus', bonus)
+  private finishEndless(): void {
+    this.log('finishEndless')
+    this.state = 'ended'
+    const { best, isRecord } = recordEndless(this.score, this.endlessWeekKey)
+    this.time.delayedCall(450, () => this.showEndlessOverlay(this.score, best, isRecord))
+  }
+
+  /**
+   * A star-milestone celebration (levels 10/20/30…): a big "LEVEL N · ★ totalStars"
+   * flourish with a heart shower over the board, then hands off to the result card.
+   */
+  private milestoneSplash(totalStars: number, done: () => void): void {
+    sfx.winFanfare()
+    this.time.delayedCall(180, () => sfx.jackpotStrike())
+    this.vibrate([80, 50, 120])
+    const cx = DESIGN_W / 2
+    const cy = 560
+    this.overlayHearts(cx, 30, cy - 60)
+    const layer = this.add.container(0, 0).setDepth(48)
+    const big = this.add
+      .text(cx, cy - 44, `LEVEL ${this.level}!`, {
+        fontFamily: FONT,
+        fontSize: '76px',
+        fontStyle: '900',
+        color: '#c9930a',
+      })
+      .setOrigin(0.5)
+      .setStroke('#ffffff', 10)
+      .setShadow(0, 4, 'rgba(0,0,0,0.22)', 10, true, true)
+      .setScale(0)
+    const sub = this.add
+      .text(cx, cy + 60, `★  ${totalStars} STARS EARNED  ★`, {
+        fontFamily: FONT,
+        fontSize: '38px',
+        fontStyle: '900',
+        color: '#d3304f',
+      })
+      .setOrigin(0.5)
+      .setStroke('#ffffff', 8)
+      .setAlpha(0)
+    layer.add([big, sub])
+    this.tweens.add({ targets: big, scale: 1, duration: 360, ease: 'Back.easeOut' })
+    // Genuine slide-up (from cy+60 to cy+42) as it fades in.
+    this.tweens.add({ targets: sub, alpha: 1, y: cy + 42, duration: 300, delay: 240, ease: 'Sine.easeOut' })
+    this.time.delayedCall(1550, () =>
+      this.tweens.add({
+        targets: layer,
+        alpha: 0,
+        duration: 300,
+        onComplete: () => {
+          layer.destroy()
+          done()
+        },
+      })
+    )
+  }
+
+  /** Dim scrim behind an end-of-round overlay (also swallows taps meant for the board). */
+  private overlayScrim(): void {
     this.clearSelection()
     this.add.rectangle(DESIGN_W / 2, 640, DESIGN_W, 1280, 0x2a2417, 0.5).setDepth(40).setInteractive()
+  }
+
+  /** Shared rounded result card, centered at (cx, cy) with half-height halfH. */
+  private overlayCard(cx: number, cy: number, halfH: number): void {
+    const g = this.add.graphics().setDepth(41)
+    g.fillStyle(0x8a7a52, 0.25)
+    g.fillRoundedRect(cx - 260 + 4, cy - halfH + 8, 520, halfH * 2, 34)
+    g.fillStyle(0xfffdf8, 1)
+    g.fillRoundedRect(cx - 260, cy - halfH, 520, halfH * 2, 34)
+    g.lineStyle(4, 0xf2c14e, 1)
+    g.strokeRoundedRect(cx - 260, cy - halfH, 520, halfH * 2, 34)
+  }
+
+  /** Maya's touch: a shower of hearts bursting from (x, y). */
+  private overlayHearts(x: number, count: number, y = 400): void {
+    const hearts = this.add
+      .particles(0, 0, 'heart', {
+        speed: { min: 140, max: 420 },
+        angle: { min: 220, max: 320 },
+        scale: { start: 0.55, end: 0.15 },
+        alpha: { start: 1, end: 0 },
+        lifespan: { min: 700, max: 1300 },
+        gravityY: 500,
+        rotate: { min: -120, max: 120 },
+        emitting: false,
+      })
+      .setDepth(45)
+    hearts.explode(count, x, y)
+    this.time.delayedCall(1600, () => hearts.destroy())
+  }
+
+  private showOverlay(win: boolean, stars: number, bonus: number, celebrate = true): void {
+    this.log('showOverlay', win ? 'win' : 'lose', 'stars', stars, 'bonus', bonus)
+    this.overlayScrim()
 
     if (win) {
-      sfx.winFanfare()
-      this.vibrate(80)
-      // Maya's touch: a shower of hearts over the card.
-      const hearts = this.add
-        .particles(0, 0, 'heart', {
-          speed: { min: 140, max: 420 },
-          angle: { min: 220, max: 320 },
-          scale: { start: 0.55, end: 0.15 },
-          alpha: { start: 1, end: 0 },
-          lifespan: { min: 700, max: 1300 },
-          gravityY: 500,
-          rotate: { min: -120, max: 120 },
-          emitting: false,
-        })
-        .setDepth(45)
-      hearts.explode(26, DESIGN_W / 2, 400)
-      this.time.delayedCall(1600, () => hearts.destroy())
+      // celebrate=false when a milestone splash already played the fanfare + heart shower.
+      if (celebrate) {
+        sfx.winFanfare()
+        this.vibrate(80)
+        this.overlayHearts(DESIGN_W / 2, 26)
+      }
     } else {
       sfx.loseWah()
     }
 
     const cx = DESIGN_W / 2
     const cy = 590
-    const g = this.add.graphics().setDepth(41)
-    g.fillStyle(0x8a7a52, 0.25)
-    g.fillRoundedRect(cx - 260 + 4, cy - 230 + 8, 520, 460, 34)
-    g.fillStyle(0xfffdf8, 1)
-    g.fillRoundedRect(cx - 260, cy - 230, 520, 460, 34)
-    g.lineStyle(4, 0xf2c14e, 1)
-    g.strokeRoundedRect(cx - 260, cy - 230, 520, 460, 34)
+    this.overlayCard(cx, cy, 230)
 
     this.add
       .text(cx, cy - 160, win ? 'LEVEL CLEAR!' : 'OUT OF MOVES', {
@@ -886,6 +1051,73 @@ export class GameScene extends Phaser.Scene {
         this.scene.start('game', { level: this.level })
       ).setDepth(42)
     }
+    addPillButton(this, cx, cy + 140 + 84, 300, 60, 'LEVELS', GHOST_PILL, () =>
+      this.scene.start('levelselect')
+    ).setDepth(42)
+  }
+
+  /** End-of-run card for the endless weekly race — a score attack, no stars. */
+  private showEndlessOverlay(score: number, best: number, isRecord: boolean): void {
+    this.log('showEndlessOverlay', 'score', score, 'best', best, 'isRecord', isRecord)
+    this.overlayScrim()
+    const cx = DESIGN_W / 2
+    const cy = 590
+    if (isRecord) {
+      sfx.winFanfare()
+      sfx.jackpotStrike()
+      this.vibrate([60, 40, 120])
+      this.overlayHearts(cx, 28)
+    } else {
+      // "Time's up" is a finish line, not a failure — a gentle close, no lose-wah.
+      sfx.starDing(0)
+    }
+    this.overlayCard(cx, cy, 230)
+
+    this.add
+      .text(cx, cy - 158, isRecord ? 'NEW BEST!' : "TIME'S UP", {
+        fontFamily: FONT,
+        fontSize: '48px',
+        fontStyle: '900',
+        color: isRecord ? '#c9930a' : '#26304d',
+      })
+      .setOrigin(0.5)
+      .setDepth(42)
+      .setShadow(0, 3, 'rgba(0,0,0,0.15)', 6, false, true)
+
+    this.add
+      .text(cx, cy - 92, 'YOUR SCORE', { fontFamily: FONT, fontSize: '20px', color: '#8a8577' })
+      .setOrigin(0.5)
+      .setDepth(42)
+      .setLetterSpacing(2)
+    this.add
+      .text(cx, cy - 44, score.toLocaleString(), {
+        fontFamily: FONT,
+        fontSize: '58px',
+        fontStyle: '900',
+        color: '#2a2732',
+      })
+      .setOrigin(0.5)
+      .setDepth(42)
+      .setShadow(0, 2, 'rgba(0,0,0,0.12)', 4, false, true)
+
+    this.add
+      .text(cx, cy + 34, "THIS WEEK'S BEST", { fontFamily: FONT, fontSize: '20px', color: '#8a8577' })
+      .setOrigin(0.5)
+      .setDepth(42)
+      .setLetterSpacing(2)
+    this.add
+      .text(cx, cy + 74, best.toLocaleString(), {
+        fontFamily: FONT,
+        fontSize: '34px',
+        fontStyle: '900',
+        color: '#c9930a',
+      })
+      .setOrigin(0.5)
+      .setDepth(42)
+
+    addPillButton(this, cx, cy + 140, 300, 72, 'PLAY AGAIN', ROSE_PILL, () =>
+      this.scene.start('game', { endless: true })
+    ).setDepth(42)
     addPillButton(this, cx, cy + 140 + 84, 300, 60, 'LEVELS', GHOST_PILL, () =>
       this.scene.start('levelselect')
     ).setDepth(42)

@@ -1,10 +1,11 @@
 import Phaser from 'phaser'
 import { sfx } from '../audio/sfx'
 import { DESIGN_W } from '../config'
+import { endlessBestThisWeek, endlessUnlocked } from '../core/endless'
 import { LEVEL_COUNT } from '../core/levels'
 import { loadSave } from '../core/save'
 import { addCasinoBackdrop } from '../view/background'
-import { FONT, GHOST_PILL, addMarquee, addMuteChip, addPillButton } from '../view/ui'
+import { FONT, GHOST_PILL, ROSE_PILL, addMarquee, addMuteChip, addPillButton } from '../view/ui'
 
 const GRID_COLS = 5
 const CHIP = 108
@@ -34,8 +35,26 @@ export class LevelSelectScene extends Phaser.Scene {
       this.addChip(n, cx, cy, save.unlocked, save.stars[n] ?? 0)
     }
 
+    // Endless weekly race sits just past the numbered grid, once level 30 is cleared.
+    let footY = 1024
+    if (endlessUnlocked(save, LEVEL_COUNT)) {
+      const wkBest = endlessBestThisWeek(save)
+      addPillButton(this, DESIGN_W / 2, 998, 420, 72, 'ENDLESS', ROSE_PILL, () =>
+        this.scene.start('game', { endless: true })
+      )
+      this.add
+        .text(
+          DESIGN_W / 2,
+          1046,
+          wkBest > 0 ? `this week's board  ·  best ${wkBest.toLocaleString()}` : `new weekly board  ·  set the pace`,
+          { fontFamily: FONT, fontSize: '20px', color: '#9a927e' }
+        )
+        .setOrigin(0.5)
+      footY = 1104
+    }
+
     this.add
-      .text(DESIGN_W / 2, 1030, `BEST  ${save.best.toLocaleString()}`, {
+      .text(DESIGN_W / 2, footY, `BEST  ${save.best.toLocaleString()}`, {
         fontFamily: FONT,
         fontSize: '30px',
         fontStyle: '900',
@@ -44,7 +63,7 @@ export class LevelSelectScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setLetterSpacing(2)
     this.add
-      .text(DESIGN_W / 2, 1076, 'Collect the goal symbols before moves run out', {
+      .text(DESIGN_W / 2, footY + 46, 'Collect the goal symbols before moves run out', {
         fontFamily: 'Arial, sans-serif',
         fontSize: '22px',
         color: '#9a927e',

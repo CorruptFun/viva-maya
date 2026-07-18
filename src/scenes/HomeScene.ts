@@ -1,10 +1,11 @@
 import Phaser from 'phaser'
 import { DESIGN_W } from '../config'
 import { spinAvailable } from '../core/daily'
+import { endlessBestThisWeek, endlessUnlocked } from '../core/endless'
 import { LEVEL_COUNT } from '../core/levels'
 import { loadSave } from '../core/save'
 import { addCasinoBackdrop } from '../view/background'
-import { FONT, GHOST_PILL, GOLD_PILL, addMarquee, addPillButton } from '../view/ui'
+import { FONT, GHOST_PILL, GOLD_PILL, ROSE_PILL, addMarquee, addPillButton, addStreakBadge } from '../view/ui'
 
 export class HomeScene extends Phaser.Scene {
   constructor() {
@@ -16,6 +17,9 @@ export class HomeScene extends Phaser.Scene {
     const currentLevel = Math.min(save.unlocked, LEVEL_COUNT)
 
     addCasinoBackdrop(this, 'home')
+
+    // Daily-spin streak flame — a warm "welcome back" hook up top (hidden at streak 0).
+    addStreakBadge(this, DESIGN_W / 2, 150, save.streak)
 
     // Big heart emblem with a heartbeat pulse.
     const heart = this.add.image(DESIGN_W / 2, 300, 'heart')
@@ -97,6 +101,22 @@ export class HomeScene extends Phaser.Scene {
     if (save.pendingBoosts.length > 0) {
       this.add
         .text(DESIGN_W / 2, 1044, `🎁 boost ready for your next level`, { fontFamily: FONT, fontSize: '20px', color: '#c9930a' })
+        .setOrigin(0.5)
+    }
+
+    // Endless weekly race — unlocks once the last numbered level is cleared.
+    if (endlessUnlocked(save, LEVEL_COUNT)) {
+      const wkBest = endlessBestThisWeek(save)
+      addPillButton(this, DESIGN_W / 2, 1108, 340, 72, 'ENDLESS', ROSE_PILL, () =>
+        this.scene.start('game', { endless: true })
+      )
+      this.add
+        .text(
+          DESIGN_W / 2,
+          1158,
+          wkBest > 0 ? `this week's board  ·  best ${wkBest.toLocaleString()}` : `new weekly board  ·  set the pace`,
+          { fontFamily: FONT, fontSize: '20px', color: '#9a927e' }
+        )
         .setOrigin(0.5)
     }
   }
