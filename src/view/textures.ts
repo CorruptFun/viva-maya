@@ -166,6 +166,68 @@ function makeJackpot(scene: Phaser.Scene): void {
   g.destroy()
 }
 
+/** Casino chip token — for the slot-cabinet ambiance + win bursts. */
+function makeChip(scene: Phaser.Scene): void {
+  const g = scene.make.graphics({ x: 0, y: 0 }, false)
+  const c = 24
+  const r = 22
+  g.fillStyle(0xc4223e, 1)
+  g.fillCircle(c, c, r) // rose-red rim
+  g.fillStyle(0xfff3d6, 1)
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2
+    g.fillCircle(c + Math.cos(a) * r * 0.82, c + Math.sin(a) * r * 0.82, 3.2) // edge spots
+  }
+  g.fillStyle(0xf2b234, 1)
+  g.fillCircle(c, c, r * 0.62) // gold inner ring
+  g.fillStyle(0xfff3d6, 1)
+  g.fillCircle(c, c, r * 0.5) // cream face
+  g.fillStyle(0xd3304f, 1)
+  g.fillCircle(c, c, r * 0.22) // center pip
+  g.generateTexture('chip', 48, 48)
+  g.destroy()
+}
+
+/** Mini playing card (red diamond pip). */
+function makeCard(scene: Phaser.Scene): void {
+  const g = scene.make.graphics({ x: 0, y: 0 }, false)
+  const w = 40
+  const h = 56
+  g.fillStyle(0xfffdf8, 1)
+  g.fillRoundedRect(0, 0, w, h, 7)
+  g.lineStyle(2, 0xe8dfc9, 1)
+  g.strokeRoundedRect(1, 1, w - 2, h - 2, 6)
+  const cx = w / 2
+  const cy = h / 2
+  g.fillStyle(0xd3304f, 1)
+  g.fillPoints(
+    [
+      { x: cx, y: cy - 11 },
+      { x: cx + 8, y: cy },
+      { x: cx, y: cy + 11 },
+      { x: cx - 8, y: cy },
+    ],
+    true
+  )
+  g.fillCircle(7, 8, 2.4) // corner pip
+  g.fillCircle(w - 7, h - 8, 2.4)
+  g.generateTexture('card', 40, 56)
+  g.destroy()
+}
+
+/** Marquee bulb (white so it can be tinted red/gold per position). */
+function makeBulb(scene: Phaser.Scene): void {
+  const g = scene.make.graphics({ x: 0, y: 0 }, false)
+  g.fillStyle(0xffffff, 0.22)
+  g.fillCircle(8, 8, 8)
+  g.fillStyle(0xffffff, 0.9)
+  g.fillCircle(8, 8, 4.5)
+  g.fillStyle(0xffffff, 1)
+  g.fillCircle(8, 8, 2.4)
+  g.generateTexture('bulb', 16, 16)
+  g.destroy()
+}
+
 function makeSweep(scene: Phaser.Scene): void {
   const g = scene.make.graphics({ x: 0, y: 0 }, false)
   g.fillStyle(0xf2b234, 0.45)
@@ -233,6 +295,9 @@ export function createAllTextures(scene: Phaser.Scene): void {
   makeRing(scene)
   makeJackpot(scene)
   makeSweep(scene)
+  makeChip(scene)
+  makeCard(scene)
+  makeBulb(scene)
   makeGlyphTexture(scene, 'star', '⭐', 44, 64)
   makeGlyphTexture(scene, 'lock', '🔒', 40, 64)
   makeGlyphTexture(scene, 'heart', '❤️', 44, 64)

@@ -6,7 +6,18 @@ import { LEVEL_COUNT } from '../core/levels'
 import { refreshLives } from '../core/lives'
 import { loadSave } from '../core/save'
 import { addCasinoBackdrop } from '../view/background'
-import { FONT, GHOST_PILL, GOLD_PILL, ROSE_PILL, addLivesHud, addMarquee, addPillButton, addStreakBadge } from '../view/ui'
+import {
+  FONT,
+  GHOST_PILL,
+  GOLD_PILL,
+  ROSE_PILL,
+  addHelpChip,
+  addLivesHud,
+  addMarquee,
+  addPillButton,
+  addStreakBadge,
+  openHelpPanel,
+} from '../view/ui'
 
 export class HomeScene extends Phaser.Scene {
   constructor() {
@@ -18,6 +29,10 @@ export class HomeScene extends Phaser.Scene {
     const currentLevel = Math.min(save.unlocked, LEVEL_COUNT)
 
     addCasinoBackdrop(this, 'home')
+
+    // How-to-play / FAQ, tucked in the top-left corner.
+    addHelpChip(this, 60, 44)
+    if (import.meta.env.DEV && new URLSearchParams(location.search).has('help')) openHelpPanel(this)
 
     // Top status: lives pool (with a live "next life" countdown) above the streak flame.
     const livesHud = addLivesHud(this, DESIGN_W / 2, 100, { size: 32 })
