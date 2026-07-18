@@ -633,6 +633,39 @@ class Sfx {
   }
 
   /**
+   * The "Maya" leitmotif (§E4) — the ownable signature. A 3-note RISING motif (major-third → fifth →
+   * octave) closed by winFanfare's sparkle-chord tail, KEY-LOCKED to the active theme (each degree
+   * snapped to the theme's pentatonic, anchored 3 octaves above `bedRoot`) and bathed in the shared
+   * reverb room, so it "sits in the theme's lounge." This voice is fired ONLY by the Heartbloom hero
+   * win (PERFECT / jackpot / daily claim) and plays NOWHERE else — that scarcity is what keeps it the
+   * one phrase people hum. Deliberately distinct from winFanfare (full 4-note arpeggio) and
+   * jackpotStrike (siren wail). Mute-gated like every voice.
+   */
+  mayaMotif(): void {
+    this.duckBed(0.4, 1.4) // the bed inhales under the leitmotif (§A4)
+    this.voice((ctx, t, out) => {
+      // Anchor 3 octaves above the theme root, then snap each rising degree into the theme's key (§A10).
+      const base = getTheme().audio.bedRoot * 8
+      const notes = [
+        this.snap(base * Math.pow(2, 4 / 12)), // major third — "Ma"
+        this.snap(base * Math.pow(2, 7 / 12)), // perfect fifth — "a"
+        this.snap(base * 2), // octave — "ya", the resolving lift
+      ]
+      const step = 0.16 // a touch slower than winFanfare's 0.12 → a deliberate, singable phrase
+      notes.forEach((f, i) => {
+        const delay = i * step
+        this.tone(ctx, out, t, { type: 'triangle', freq: f, peak: 0.3, dur: 0.6, attack: 0.02, delay })
+        this.tone(ctx, out, t, { type: 'sine', freq: f * 2, peak: 0.1, dur: 0.34, attack: 0.02, delay })
+      })
+      // winFanfare's sustained sparkle-chord tail, snapped to key, closing the motif out.
+      const tail = notes.length * step + 0.05
+      for (const f of [1046.5, 1318.5, 1568.0]) {
+        this.tone(ctx, out, t, { type: 'sine', freq: this.snap(f), peak: 0.11, dur: 0.8, attack: 0.05, delay: tail })
+      }
+    })
+  }
+
+  /**
    * Coin roll-up tally — ~8 ascending metallic pings (a brighter, pitched-up cousin of
    * reelSweep's tick train) closed by a 2-note "cha-ching" (the top two winFanfare notes).
    * Scores the payout counter as it rolls 0→reward.

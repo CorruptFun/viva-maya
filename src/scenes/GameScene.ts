@@ -86,6 +86,10 @@ export class GameScene extends Phaser.Scene {
   private cabinetBulbs: Phaser.GameObjects.Image[] = []
   private cabinetGlow?: Phaser.GameObjects.Image
   private state: GameState = 'idle'
+  /** §E4 latch — a jackpot chip detonated this round, so the Heartbloom hero win fires even below 3-star. */
+  private jackpotOccurred = false
+  /** §E4 guard — the Heartbloom (giant heart of light + Maya leitmotif) fires at most ONCE per round. */
+  private heartbloomFired = false
 
   // --- Impact & weight (E5/E6) ---
   /** Trauma accumulator (0..1); shake magnitude is trauma², decayed each frame in update(). */
@@ -190,6 +194,8 @@ export class GameScene extends Phaser.Scene {
     this.sid = Math.floor(Math.random() * 10000)
     this.log('create', location.search, this.endless ? 'ENDLESS' : `level ${this.level}`)
     this.moveMade = false
+    this.jackpotOccurred = false // §E4 — reset per round (scene.restart re-runs create, not field inits)
+    this.heartbloomFired = false
 
     // DEV: ?lives=N forces the pool before the gate check.
     if (import.meta.env.DEV) {
@@ -1859,6 +1865,7 @@ export class GameScene extends Phaser.Scene {
 
   /** Jackpot-chip strike (extracted so it composes with the charge→freeze→release orchestration). */
   private detonateJackpot(): void {
+    this.jackpotOccurred = true // §E4 — a jackpot this round qualifies the win for the Heartbloom hero beat
     sfx.jackpotStrike()
     // The jackpot's signature is a full-screen cream flash (its own "impact frame") — gate it via the
     // reduce-flashing hook — plus a heavy omnidirectional trauma kick.
@@ -2174,6 +2181,14 @@ export class GameScene extends Phaser.Scene {
     }
     this.input.once('pointerdown', skip)
 
+    // BEAT 0 — the Heartbloom hero win (§E4, signature moment #3). Fires ONLY on the biggest wins:
+    // a PERFECT (3-star) clear OR a jackpot strike this round. A giant heart of light blooms from
+    // board-center under the Maya leitmotif — LAYERED beneath the existing bloom/flash/rank-word/
+    // fireworks/coin-payout, never replacing them. Scarce by construction: plain 1–2 star wins never
+    // qualify, and it self-guards to one fire per round. Fired synchronously (not via `at`) so an
+    // instant tap-skip can't rob the hero moment. Nothing else here is gated on it.
+    if (stars >= 3 || this.jackpotOccurred) this.heartbloom()
+
     // BEAT 1 — screen lights up (warm bloom + cream camera flash).
     at(120, () => {
       const bloom = track(
@@ -2317,6 +2332,75 @@ export class GameScene extends Phaser.Scene {
 
     // A small heart puff for brand warmth.
     this.overlayHearts(360, 14, 300)
+  }
+
+  /**
+   * The HEARTBLOOM (§E4, signature moment #3) — Viva Maya's ownable hero-win beat. A giant translucent
+   * heart of light (the baked `heartglow`, ADD, tinted the theme's warm `bloom`) blooms from board-
+   * center, BEATS TWICE (lub-DUB) on a cadence inspired by Home's ~620/340 emblem heartbeat, and
+   * streams heart-particles up from its apex — all under `sfx.mayaMotif()`, the 3-note leitmotif heard
+   * NOWHERE else. Perf: 1 ADD sprite + a capped heart stream (~12 live), transient, over a win where
+   * nothing else competes (~0.9 FSE). Reduced motion: a single STATIC heart of light — no double-beat,
+   * no streaming particles — but the motif still plays (audio isn't motion). Caller gates scarcity;
+   * this method self-guards to one fire per round.
+   */
+  private heartbloom(cx = DESIGN_W / 2, cy = BOARD_Y + BOARD_W / 2): void {
+    if (this.heartbloomFired) return
+    this.heartbloomFired = true
+    sfx.mayaMotif() // the leitmotif rings in BOTH motion modes — audio is never "motion"
+    const glow = this.add
+      .image(cx, cy, 'heartglow')
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setDepth(39) // above the Beat-1 warm bloom (38), below the rank wordmark (46) — a keystone backdrop
+      .setTint(getTheme().bloom)
+      .setDisplaySize(560, 560)
+    const base = glow.scaleX
+
+    if (this.reducedMotion) {
+      // Static heart of light: a single soft appear + hold + fade. No double-beat, no strobing, no stream.
+      glow.setScale(base).setAlpha(0)
+      this.tweens.add({
+        targets: glow,
+        alpha: 0.4,
+        duration: 220,
+        ease: 'Quad.easeOut',
+        onComplete: () =>
+          this.tweens.add({ targets: glow, alpha: 0, delay: 300, duration: 340, onComplete: () => glow.destroy() }),
+      })
+      return
+    }
+
+    // Bloom open, then a lub-DUB doublet (two Back.easeOut swells), then relax + fade out.
+    glow.setScale(base * 0.4).setAlpha(0)
+    this.tweens.chain({
+      targets: glow,
+      tweens: [
+        { scale: base, alpha: 0.5, duration: 230, ease: 'Back.easeOut' }, // bloom open
+        { scale: base * 1.12, duration: 150, ease: 'Back.easeOut' }, // lub
+        { scale: base * 0.99, duration: 90, ease: 'Sine.easeInOut' }, // brief diastole
+        { scale: base * 1.2, alpha: 0.56, duration: 160, ease: 'Back.easeOut' }, // DUB (the bigger beat)
+        { scale: base * 1.06, alpha: 0, delay: 40, duration: 320, ease: 'Quad.easeIn' }, // relax + fade
+      ],
+      onComplete: () => glow.destroy(),
+    })
+
+    // Heart-particles STREAM up from the bloom's apex — a short capped plume (~12 live) timed to the beat.
+    const stream = this.add
+      .particles(cx, cy - 160, 'heart', {
+        speed: { min: 130, max: 300 },
+        angle: { min: 250, max: 290 }, // a narrow upward plume (270 = straight up)
+        scale: { start: 0.5, end: 0.12 },
+        alpha: { start: 0.95, end: 0 },
+        lifespan: { min: 600, max: 1000 },
+        gravityY: 360,
+        rotate: { min: -90, max: 90 },
+        quantity: 1,
+        frequency: 45, // ~12 emits over the 560ms window → capped live count
+        emitting: true,
+      })
+      .setDepth(45)
+    this.time.delayedCall(560, () => stream.active && stream.stop())
+    this.time.delayedCall(1700, () => stream.active && stream.destroy())
   }
 
   private rankWord(stars: number): string {
