@@ -5,7 +5,7 @@ import { endlessBestThisWeek, endlessUnlocked } from '../core/endless'
 import { LEVEL_COUNT } from '../core/levels'
 import { loadSave } from '../core/save'
 import { addCasinoBackdrop } from '../view/background'
-import { FONT, GHOST_PILL, ROSE_PILL, addMarquee, addMuteChip, addPillButton } from '../view/ui'
+import { FONT, GHOST_PILL, ROSE_PILL, addMarquee, addMuteChip, addPillButton, startScene } from '../view/ui'
 
 const GRID_COLS = 5
 const CHIP = 108
@@ -30,10 +30,12 @@ export class LevelSelectScene extends Phaser.Scene {
   }
 
   create(): void {
+    // Warm cream fade-in (never black) — the receiving half of every startScene cross-fade.
+    this.cameras.main.fadeIn(this.prefersReducedMotion() ? 90 : 180, 255, 253, 248)
     const save = loadSave()
     addCasinoBackdrop(this, 'menu')
     addMarquee(this, DESIGN_W / 2, 96)
-    addPillButton(this, 64, 84, 84, 56, '‹', GHOST_PILL, () => this.scene.start('home'))
+    addPillButton(this, 64, 84, 84, 56, '‹', GHOST_PILL, () => startScene(this,'home'))
     addMuteChip(this, 676, 40)
 
     const unlocked = endlessUnlocked(save)
@@ -115,7 +117,7 @@ export class LevelSelectScene extends Phaser.Scene {
     // Fixed footer.
     if (unlocked) {
       const wkBest = endlessBestThisWeek(save)
-      addPillButton(this, DESIGN_W / 2, 1150, 420, 68, 'ENDLESS', ROSE_PILL, () => this.scene.start('game', { endless: true }))
+      addPillButton(this, DESIGN_W / 2, 1150, 420, 68, 'ENDLESS', ROSE_PILL, () => startScene(this,'game', { endless: true }))
       this.add
         .text(DESIGN_W / 2, 1196, wkBest > 0 ? `weekly board  ·  best ${wkBest.toLocaleString()}` : `new weekly board`, {
           fontFamily: FONT,
@@ -202,7 +204,7 @@ export class LevelSelectScene extends Phaser.Scene {
         const screenY = cy + content.y
         if (this.dragMoved >= 12 || screenY < viewTop || screenY > viewBottom) return
         sfx.uiTap()
-        this.scene.start('game', { level: n })
+        startScene(this,'game', { level: n })
       })
       container.add(zone)
     } else {

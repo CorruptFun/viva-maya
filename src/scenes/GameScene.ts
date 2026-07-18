@@ -28,7 +28,7 @@ import type { BoostType, ClearWave, Coord, FallMove, LevelSpec, Piece, Spawn, Sy
 import { addCasinoBackdrop } from '../view/background'
 import { quality } from '../view/quality'
 import { TEX_SIZE, ensurePieceTexture } from '../view/textures'
-import { FONT, GHOST_PILL, GOLD_PILL, ROSE_PILL, addChipPill, addLivesHud, addMuteChip, addPillButton } from '../view/ui'
+import { FONT, GHOST_PILL, GOLD_PILL, ROSE_PILL, addChipPill, addLivesHud, addMuteChip, addPillButton, startScene } from '../view/ui'
 import type { ChipPill } from '../view/ui'
 
 /**
@@ -79,6 +79,20 @@ export class GameScene extends Phaser.Scene {
   private cabinetBulbs: Phaser.GameObjects.Image[] = []
   private cabinetGlow?: Phaser.GameObjects.Image
   private state: GameState = 'idle'
+
+  // --- P6 idle micro-life (all reduced-motion-gated, governor-capped) ---
+  /** 3a: masked cream gloss that glides across the 8×8 while idle; paused off-idle (see update). */
+  private boardShimmer?: Phaser.GameObjects.Image
+  private boardShimmerTween?: Phaser.Tweens.Tween
+  /** Tracks the shimmer's idle on/off edge so update() only toggles it on a state change. */
+  private shimmerOn = false
+  /** 3c: score-text punch tween — killed + restarted so overlapping chunky gains don't stack scale. */
+  private scorePunchTween: Phaser.Tweens.Tween | null = null
+  /** 3d: idle-hint nudge — armed on entering idle, disarmed on the first board touch / swap-start. */
+  private hintTimer: Phaser.Time.TimerEvent | null = null
+  private hintTween: Phaser.Tweens.Tween | null = null
+  private hintTargets: Phaser.GameObjects.Sprite[] = []
+  private hintRing?: Phaser.GameObjects.Image
 
   private movesLeft = 0
   private objectives: ObjectiveState[] = []
@@ -142,6 +156,8 @@ export class GameScene extends Phaser.Scene {
   }
 
   create(): void {
+    // Warm cream fade-in (never black) — the receiving half of every startScene cross-fade.
+    this.cameras.main.fadeIn(this.prefersReducedMotion() ? 90 : 180, 255, 253, 248)
     this.sid = Math.floor(Math.random() * 10000)
     this.log('create', location.search, this.endless ? 'ENDLESS' : `level ${this.level}`)
     this.moveMade = false
@@ -219,6 +235,7 @@ export class GameScene extends Phaser.Scene {
     this.buildHud()
     this.buildPieceLayer()
     this.buildParticles()
+    this.buildBoardShimmer()
 
     if (this.scoreMult > 1) {
       this.add
@@ -237,6 +254,7 @@ export class GameScene extends Phaser.Scene {
       this.time.addEvent({ delay: 300, loop: true, callback: () => this.updateDebug() })
     }
     this.scheduleAutoplay()
+    this.armHint()
   }
 
   /**
@@ -248,7 +266,7 @@ export class GameScene extends Phaser.Scene {
   private showLivesGate(): void {
     this.log('showLivesGate')
     addCasinoBackdrop(this, 'menu')
-    addPillButton(this, 64, 84, 84, 56, '‹', GHOST_PILL, () => this.scene.start('home'))
+    addPillButton(this, 64, 84, 84, 56, '‹', GHOST_PILL, () => startScene(this,'home'))
     addMuteChip(this, 676, 40)
 
     this.add
@@ -279,7 +297,7 @@ export class GameScene extends Phaser.Scene {
         fullText.setText('')
         if (!playBtn) {
           playBtn = addPillButton(this, DESIGN_W / 2, 924, 320, 88, 'PLAY', GOLD_PILL, () =>
-            this.scene.start('game', { level: this.level })
+            startScene(this,'game', { level: this.level })
           )
           this.tweens.add({ targets: playBtn, scale: 1.05, duration: 650, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' })
         }
@@ -300,7 +318,7 @@ export class GameScene extends Phaser.Scene {
    */
   private exitToLevels(): void {
     if (!this.endless && this.state === 'idle' && this.moveMade) spendLife()
-    this.scene.start('levelselect')
+    startScene(this,'levelselect')
   }
 
   /** DEV only: expose model state via DOM (dataset + visible strip) for external tooling. */
@@ -513,6 +531,173 @@ export class GameScene extends Phaser.Scene {
         this.apMoved++
         void this.trySwap(hint.a, hint.b)
       }
+    })
+  }
+
+  // ------------------------------------------------------------ idle micro-life (§3d)
+
+  /**
+   * 3a: a masked cream gloss that glides across the whole 8×8 every ~6s while the board is idle
+   * (paused off-idle in update). One `sweep` sprite, ADD, α ≤ 0.16, geometry-masked to the board
+   * rect at depth 3 so it catches light on tiles + pieces without crossing the bezel. Skipped
+   * under reduced motion / on the weakest governor tier.
+   */
+  private buildBoardShimmer(): void {
+    if (this.reducedMotion || quality.count(1) === 0) return
+    const maskShape = this.make.graphics({ x: 0, y: 0 }, false)
+    maskShape.fillStyle(0xffffff)
+    maskShape.fillRect(BOARD_X, BOARD_Y, BOARD_W, BOARD_W)
+    const sweep = this.add
+      .image(BOARD_X - CELL * 1.5, BOARD_Y + BOARD_W / 2, 'sweep')
+      .setDepth(3)
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setTint(0xfff6e8)
+      .setAlpha(0.15)
+      .setVisible(false)
+    sweep.setDisplaySize(CELL * 2.2, BOARD_W + 40)
+    sweep.setAngle(12)
+    sweep.setMask(maskShape.createGeometryMask())
+    this.boardShimmer = sweep
+    // Travels off the left edge → off the right edge (mask clips the entry/exit); ~6s cadence.
+    this.boardShimmerTween = this.tweens.add({
+      targets: sweep,
+      x: BOARD_X + BOARD_W + CELL * 1.5,
+      duration: 1200,
+      ease: 'Sine.easeInOut',
+      repeat: -1,
+      repeatDelay: 4800,
+      paused: true,
+    })
+  }
+
+  /** 3d: (re)arm the ~5s idle-hint timer. Idempotent — clears any pending/active nudge first. */
+  private armHint(): void {
+    this.disarmHint()
+    if (this.state !== 'idle') return
+    this.hintTimer = this.time.delayedCall(5000, () => this.showHint())
+  }
+
+  /**
+   * 3d: after ~5s idle, gently pulse a valid pair (reusing the engine's findFirstValidMove). Under
+   * reduced motion it's a single static ring on the pair — no loop. Disarmed the moment the player
+   * touches the board (onDown) or a swap starts (trySwap).
+   */
+  private showHint(): void {
+    this.hintTimer = null
+    if (this.state !== 'idle') return
+    const move = this.board.findFirstValidMove()
+    if (!move) return
+    const pa = this.board.get(move.a)
+    const pb = this.board.get(move.b)
+    if (!pa || !pb) return
+    const sprites = [this.sprites.get(pa.id), this.sprites.get(pb.id)].filter(
+      (s): s is Phaser.GameObjects.Sprite => !!s && s.active
+    )
+    if (sprites.length === 0) return
+    this.hintTargets = sprites
+    if (this.reducedMotion) {
+      const pos = this.cellToXY(move.a)
+      this.hintRing = this.add
+        .image(pos.x, pos.y, 'ring')
+        .setDisplaySize(CELL * 1.02, CELL * 1.02)
+        .setTint(0xf2b234)
+        .setAlpha(0.7)
+      this.pieceLayer.add(this.hintRing)
+      return
+    }
+    this.hintTween = this.tweens.add({
+      targets: sprites,
+      scale: PIECE_SCALE * 1.12,
+      duration: 460,
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.easeInOut',
+    })
+  }
+
+  /** Retire the idle-hint nudge: cancel the timer, stop the pulse, settle the pair, drop the ring. */
+  private disarmHint(): void {
+    this.hintTimer?.remove(false)
+    this.hintTimer = null
+    this.hintTween?.stop()
+    this.hintTween = null
+    for (const s of this.hintTargets) if (s.active) s.setScale(PIECE_SCALE)
+    this.hintTargets = []
+    this.hintRing?.destroy()
+    this.hintRing = undefined
+  }
+
+  /**
+   * 3b: the objective-complete beat. The chip's green ✓ + pulse-stop are already handled by the
+   * clarity pass (onObjectiveComplete) — this ADDS the celebration: a ✓ stamp punch over the chip,
+   * a spark burst, an ascending ding + a haptic. Reduced motion: a static stamp, no spark, instant.
+   */
+  private objectiveStamp(o: ObjectiveState): void {
+    const chip = o.chip
+    if (!chip) return
+    sfx.starDing(2)
+    this.vibrate(40)
+    const x = chip.x
+    const y = chip.y
+    if (!this.reducedMotion && quality.count(1) > 0) {
+      this.sparkEmitter.explode(quality.count(10), x, y)
+    }
+    const stamp = this.add
+      .text(x, y, '✓', { fontFamily: FONT, fontSize: '84px', fontStyle: '900', color: '#2fae4c' })
+      .setOrigin(0.5)
+      .setDepth(33)
+      .setStroke('#ffffff', 8)
+      .setShadow(0, 3, 'rgba(0,0,0,0.18)', 6, false, true)
+    if (this.reducedMotion) {
+      stamp.setScale(0.9)
+      this.time.delayedCall(600, () => stamp.destroy())
+      return
+    }
+    stamp.setScale(0).setAngle(-12)
+    this.tweens.add({
+      targets: stamp,
+      scale: 1,
+      angle: 0,
+      duration: 300,
+      ease: 'Back.easeOut',
+      onComplete: () =>
+        this.tweens.add({
+          targets: stamp,
+          alpha: 0,
+          y: y - 30,
+          delay: 240,
+          duration: 320,
+          ease: 'Sine.easeIn',
+          onComplete: () => stamp.destroy(),
+        }),
+    })
+  }
+
+  /**
+   * 3e: a quick gold `ring` implosion + spark when a piece is born into a special (wild reel / dice
+   * bomb / jackpot). ADD, transient, depth 22 (above the pieces, below the HUD). Reduced motion: no-op.
+   */
+  private specialBirth(at: Coord): void {
+    const pos = this.cellToXY(at)
+    if (!this.reducedMotion && quality.count(1) > 0) {
+      this.sparkEmitter.explode(quality.count(6), pos.x, pos.y)
+    }
+    if (this.reducedMotion) return
+    const ring = this.add
+      .image(pos.x, pos.y, 'ring')
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setTint(0xf2b234)
+      .setDepth(22)
+      .setDisplaySize(CELL * 2.2, CELL * 2.2)
+      .setAlpha(0.7)
+    this.tweens.add({
+      targets: ring,
+      alpha: 0,
+      scaleX: ring.scaleX * 0.42,
+      scaleY: ring.scaleY * 0.42,
+      duration: 320,
+      ease: 'Quad.easeIn',
+      onComplete: () => ring.destroy(),
     })
   }
 
@@ -919,6 +1104,21 @@ export class GameScene extends Phaser.Scene {
    * is gone (cleared / transformed / reshuffled) its halo is destroyed, so nothing leaks.
    */
   update(time: number): void {
+    // 3a shimmer yields to the game: it only glides while the board is settled (idle). Toggle
+    // only on the idle edge so we're not restarting a tween every frame.
+    if (this.boardShimmer && this.boardShimmerTween) {
+      const idleNow = this.state === 'idle'
+      if (idleNow !== this.shimmerOn) {
+        this.shimmerOn = idleNow
+        if (idleNow) {
+          this.boardShimmer.setVisible(true)
+          this.boardShimmerTween.restart()
+        } else {
+          this.boardShimmerTween.pause()
+          this.boardShimmer.setVisible(false)
+        }
+      }
+    }
     if (this.armedGlows.size > 0) {
       const a = 0.16 + 0.14 * (0.5 + 0.5 * Math.sin(time / 300))
       for (const [id, glow] of this.armedGlows) {
@@ -960,6 +1160,7 @@ export class GameScene extends Phaser.Scene {
       this.dragFrom = null
       return
     }
+    this.disarmHint() // the player is engaging the board — retire the nudge
     this.dragFrom = cell
     this.dragStartX = p.x
     this.dragStartY = p.y
@@ -1034,6 +1235,7 @@ export class GameScene extends Phaser.Scene {
     const pb = this.board.get(b)
     if (!pa || !pb) return
     this.state = 'swapping'
+    this.disarmHint() // idle effects yield to the move (§3d composition)
     sfx.swap()
 
     const sa = this.sprites.get(pa.id)!
@@ -1060,6 +1262,7 @@ export class GameScene extends Phaser.Scene {
         ])
         this.state = 'idle'
         this.scheduleAutoplay()
+        this.armHint()
         return
       }
       wave = this.board.matchWave([b, a])
@@ -1117,6 +1320,7 @@ export class GameScene extends Phaser.Scene {
     if (!this.board.hasValidMove()) await this.reshuffle()
     this.state = 'idle'
     this.scheduleAutoplay()
+    this.armHint()
   }
 
   private async playWave(wave: ClearWave, cascade: number): Promise<void> {
@@ -1165,8 +1369,11 @@ export class GameScene extends Phaser.Scene {
         o.text.setColor('#f2b234')
         this.time.delayedCall(160, () => o.remaining > 0 && o.text?.setColor('#2a2732'))
       }
-      // Done: retire the "target" emphasis (green ✓ already set above stays).
-      if (o.remaining === 0) this.onObjectiveComplete(o)
+      // Done: retire the "target" emphasis (green ✓ already set above stays) + punch the beat.
+      if (o.remaining === 0) {
+        this.onObjectiveComplete(o)
+        this.objectiveStamp(o)
+      }
     }
     const wavePoints = wave.cleared.length * POINTS_PER_PIECE * cascade
     this.addScore(wavePoints)
@@ -1226,6 +1433,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     // Morph matched pieces into their earned specials.
+    let births = 0
     for (const t of wave.transformed) {
       const old = this.sprites.get(t.from.id)
       if (old) {
@@ -1237,6 +1445,11 @@ export class GameScene extends Phaser.Scene {
       promises.push(
         this.t({ targets: sprite, scale: PIECE_SCALE, delay: 80, duration: 200, ease: 'Back.easeOut' })
       )
+      // 3e: a quick gold ring implosion + spark celebrates the birth (cap ≤2/wave).
+      if (births < 2) {
+        this.specialBirth(t.at)
+        births++
+      }
     }
 
     promises.push(new Promise(resolve => this.time.delayedCall(effectMs, () => resolve())))
@@ -1844,8 +2057,8 @@ export class GameScene extends Phaser.Scene {
     refresh()
     this.time.addEvent({ delay: 1000, loop: true, callback: refresh })
 
-    addPillButton(this, cx, cy + 140, 300, 72, 'RETRY', GOLD_PILL, () => this.scene.start('game', { level: this.level })).setDepth(42)
-    addPillButton(this, cx, cy + 140 + 84, 300, 60, 'LEVELS', GHOST_PILL, () => this.scene.start('levelselect')).setDepth(42)
+    addPillButton(this, cx, cy + 140, 300, 72, 'RETRY', GOLD_PILL, () => startScene(this,'game', { level: this.level })).setDepth(42)
+    addPillButton(this, cx, cy + 140 + 84, 300, 60, 'LEVELS', GHOST_PILL, () => startScene(this,'levelselect')).setDepth(42)
   }
 
   /**
@@ -1944,15 +2157,15 @@ export class GameScene extends Phaser.Scene {
     // Continue buttons.
     const nextExists = this.level < LEVEL_COUNT
     const nextBtn = addPillButton(this, 0, 176, 300, 72, nextExists ? 'NEXT LEVEL' : 'ALL CLEAR!', GOLD_PILL, () => {
-      if (nextExists) this.scene.start('game', { level: this.level + 1 })
-      else this.scene.start('levelselect', { fromWin: true })
+      if (nextExists) startScene(this,'game', { level: this.level + 1 })
+      else startScene(this,'levelselect', { fromWin: true })
     })
     // Beat 5: a soft gold glow-ring pulse behind the Continue pill to lead the eye.
     const glow = this.add.image(0, 176, 'bgglow').setTint(0xf2b234).setBlendMode(Phaser.BlendModes.ADD).setDisplaySize(360, 150).setAlpha(0.18)
     card.add(glow)
     this.tweens.add({ targets: glow, alpha: 0.42, duration: 780, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' })
     card.add(nextBtn)
-    card.add(addPillButton(this, 0, 176 + 84, 300, 60, 'LEVELS', GHOST_PILL, () => this.scene.start('levelselect', { fromWin: true })))
+    card.add(addPillButton(this, 0, 176 + 84, 300, 60, 'LEVELS', GHOST_PILL, () => startScene(this,'levelselect', { fromWin: true })))
 
     // Rose skip/close chip (top-right) — a tap jumps straight to the settled card.
     if (animate) {
@@ -2172,17 +2385,18 @@ export class GameScene extends Phaser.Scene {
       .setDepth(42)
 
     addPillButton(this, cx, cy + 140, 300, 72, 'PLAY AGAIN', ROSE_PILL, () =>
-      this.scene.start('game', { endless: true })
+      startScene(this,'game', { endless: true })
     ).setDepth(42)
     addPillButton(this, cx, cy + 140 + 84, 300, 60, 'LEVELS', GHOST_PILL, () =>
-      this.scene.start('levelselect')
+      startScene(this,'levelselect')
     ).setDepth(42)
   }
 
   // -------------------------------------------------------------- scoring
 
   private addScore(points: number): void {
-    this.score += points * this.scoreMult
+    const gain = points * this.scoreMult
+    this.score += gain
     this.scoreTween?.stop()
     const counter = { v: this.shownScore }
     this.scoreTween = this.tweens.add({
@@ -2194,6 +2408,27 @@ export class GameScene extends Phaser.Scene {
         this.shownScore = Math.round(counter.v)
         this.scoreText.setText(this.shownScore.toLocaleString())
       },
+    })
+    this.scorePunch(gain)
+  }
+
+  /**
+   * 3c: a scale punch + brief gold tint flash on the SCORE read-out for chunky gains (≥120 pts).
+   * Only during a resolve (mutually exclusive with the idle nudge, and skips the finishWin bonus,
+   * which runs in 'ended'). Reduced-motion: instant (no punch — the counter still rolls).
+   */
+  private scorePunch(gain: number): void {
+    if (this.reducedMotion || gain < 120 || this.state !== 'resolving' || !this.scoreText) return
+    this.scoreText.setColor('#f2b234')
+    this.time.delayedCall(180, () => this.scoreText?.setColor('#2a2732'))
+    this.scorePunchTween?.stop()
+    this.scoreText.setScale(1)
+    this.scorePunchTween = this.tweens.add({
+      targets: this.scoreText,
+      scale: 1.15,
+      duration: 120,
+      yoyo: true,
+      ease: 'Quad.easeOut',
     })
   }
 
