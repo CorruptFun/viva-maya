@@ -75,20 +75,74 @@ function rawReduceMotionPref(): boolean {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Directional scene grammar (§E10). Beyond the flat cream fade, a scene now ENTERS with a subtle
+// 24px push/pop so the app gains spatial memory: going DEEPER (Home→Game/LevelSelect/Daily) rises
+// the destination up into place, going BACK settles it down — each with an E.release/Back settle.
+// The direction is queued by `startScene` into a module var and consumed by the destination's
+// `applyEntrance(scene)` in its create(); scenes that never call it just keep the flat fade, so the
+// mechanism adds nothing other scenes must adopt to compile. Reduced-motion → no offset (flat fade).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Direction a scene ENTERS from (§E10): 'deeper' rises up into place, 'back' settles down. */
+export type SceneDir = 'deeper' | 'back'
+
+/** Subtle push/pop travel for the directional entrance (design px). Deliberately small. */
+const ENTRANCE_OFFSET = 24
+
+/** Pending entrance direction for the NEXT scene's create(), set by startScene, read by applyEntrance. */
+let nextEntrance: SceneDir = 'deeper'
+
+/** Count of in-app scene navigations this page-load — lets Home tell a true BootScene→Home open apart. */
+let sceneNavigations = 0
+
+/** True once any in-app `startScene` navigation has happened (i.e. we're past the initial Boot→Home open). */
+export function hasNavigated(): boolean {
+  return sceneNavigations > 0
+}
+
 /**
  * Warm cream cross-fade between scenes (§3d). Locks input during the fade (which doubles as an
  * anti-double-tap guard), fades the camera to brand cream (#fffdf8 — NEVER black), and starts
  * the destination scene once the fade-out completes. Each scene's create() pairs this with a
  * matching `this.cameras.main.fadeIn(...)` at the top. Reduced-motion shortens the fade.
+ *
+ * §E10: the optional `dir` sets the destination's directional entrance. Explicit dir wins; otherwise
+ * returning to Home reads as 'back' (settles down) and going anywhere else reads as 'deeper' (rises
+ * in). Back-compatible — the existing 3-arg call sites keep working with `dir` left undefined.
  */
-export function startScene(from: Phaser.Scene, key: string, data?: object): void {
+export function startScene(from: Phaser.Scene, key: string, data?: object, dir?: SceneDir): void {
   if (!from.input.enabled) return // already transitioning
   from.input.enabled = false
   sfx.whoosh() // §E3 B14: a short airy sweep partners the cream cross-fade
+  nextEntrance = dir ?? (key === 'home' ? 'back' : 'deeper')
+  sceneNavigations += 1
   const dur = prefersReducedMotion() ? 90 : 180
   const cam = from.cameras.main
   cam.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => from.scene.start(key, data))
   cam.fadeOut(dur, 255, 253, 248)
+}
+
+/** Read + clear the pending directional entrance (defaults 'deeper' when nothing is queued). */
+export function consumeEntrance(): SceneDir {
+  const dir = nextEntrance
+  nextEntrance = 'deeper'
+  return dir
+}
+
+/**
+ * §E10 directional entrance: nudge a freshly-created scene's CAMERA so the destination pushes in with
+ * a subtle 24px travel + an E.release/Back settle — 'deeper' rises up into place, 'back' settles down —
+ * then resolves to a flat view. Consumes the direction queued by the triggering `startScene`. A scene
+ * MAY call this once in create() after its `fadeIn`; scenes that don't just get today's flat cream
+ * fade. Reduced-motion → no offset. Returns the resolved direction.
+ */
+export function applyEntrance(scene: Phaser.Scene, dir: SceneDir = consumeEntrance()): SceneDir {
+  if (prefersReducedMotion()) return dir
+  const cam = scene.cameras.main
+  cam.setScroll(cam.scrollX, dir === 'deeper' ? -ENTRANCE_OFFSET : ENTRANCE_OFFSET)
+  scene.tweens.add({ targets: cam, scrollY: 0, duration: 340, ease: 'Back.easeOut' })
+  return dir
 }
 
 export interface LivesHud {
@@ -139,8 +193,29 @@ export function addLivesHud(
   return { container, update }
 }
 
-/** Two-tone marquee title with a heart flourish, centered. */
-export function addMarquee(scene: Phaser.Scene, centerX: number, y: number): void {
+/** Handle to the marquee title so a caller (Home's boot) can choreograph the power-on reveal. */
+export interface Marquee {
+  viva: Phaser.GameObjects.Text
+  maya: Phaser.GameObjects.Text
+  heart: Phaser.GameObjects.Image
+  /** Marquee-frame bulbs above the wordmark (empty unless `opts.bulbs`). */
+  bulbs: Phaser.GameObjects.Image[]
+  /**
+   * Power-on reveal (Signature #1): the wordmark darks IMMEDIATELY (call synchronously so it never
+   * flashes visible first), then after `leadIn` ms a single gold sweep glides VIVA→MAYA lighting the
+   * words as it passes, the marquee bulbs cascade-light left→right in its wake, and the heart flourish
+   * pops in last. Returns roughly when the reveal finishes (ms) so the caller can chain the glow bloom
+   * + button stagger. Under reduced motion everything is simply left statically lit.
+   */
+  powerOn: (scene: Phaser.Scene, leadIn?: number) => number
+}
+
+/**
+ * Two-tone marquee title with a heart flourish, centered. Returns a {@link Marquee} handle (callers
+ * that ignore it — e.g. LevelSelect — are unaffected). `opts.bulbs` adds a subtle row of marquee
+ * bulbs above the wordmark (used on Home so the power-on has something to cascade-light).
+ */
+export function addMarquee(scene: Phaser.Scene, centerX: number, y: number, opts: { bulbs?: boolean } = {}): Marquee {
   const viva = scene.add
     .text(0, y, 'VIVA', { fontFamily: FONT, fontSize: '58px', fontStyle: '900', color: '#ffffff' })
     .setOrigin(0, 0.5)
@@ -158,24 +233,48 @@ export function addMarquee(scene: Phaser.Scene, centerX: number, y: number): voi
   const total = viva.width + gap + maya.width + 12 + heartW
   viva.setX(centerX - total / 2)
   maya.setX(viva.x + viva.width + gap)
+  const spanLeft = viva.x
+  const spanRight = maya.x + maya.width
   const heart = scene.add.image(maya.x + maya.width + 12 + heartW / 2, y - 14, 'heart')
   heart.setDisplaySize(heartW, heartW)
-  scene.tweens.add({
-    targets: heart,
-    scale: heart.scaleX * 1.18,
-    duration: 700,
-    yoyo: true,
-    repeat: -1,
-    ease: 'Sine.easeInOut',
-  })
+  const heartBase = heart.scaleX
+  // Heart-flourish heartbeat — extracted so the power-on can restart it after the heart pops in.
+  const beatHeart = (): void => {
+    if (prefersReducedMotion()) return
+    scene.tweens.add({
+      targets: heart,
+      scale: heartBase * 1.18,
+      duration: 700,
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.easeInOut',
+    })
+  }
+  beatHeart()
+
+  // Optional marquee-frame bulbs above the wordmark (Home only) — a subtle alternating gold/accent
+  // row that reads as the top edge of a cabinet sign and gives the power-on a light to cascade.
+  const bulbs: Phaser.GameObjects.Image[] = []
+  if (opts.bulbs) {
+    const T = getTheme()
+    const by = y - 44
+    const n = 9
+    for (let i = 0; i < n; i++) {
+      const bx = spanLeft + ((spanRight - spanLeft) * i) / (n - 1)
+      const bulb = scene.add
+        .image(bx, by, 'bulb')
+        .setDisplaySize(13, 13)
+        .setTint(i % 2 === 0 ? T.gold : T.accent)
+        .setAlpha(0.62)
+      bulbs.push(bulb)
+    }
+  }
 
   // Slow light-sweep shine: a masked cream gloss that periodically glides VIVA→MAYA. Each word
   // gets its own streak clipped to its glyphs (bitmap mask), and the two share one tween value so
   // the highlight reads as a single continuous band travelling across the whole wordmark. Skipped
   // under reduced motion.
   if (!prefersReducedMotion()) {
-    const spanLeft = viva.x
-    const spanRight = maya.x + maya.width
     const streakW = 46
     const shineFor = (word: Phaser.GameObjects.Text): Phaser.GameObjects.Image => {
       const shine = scene.add
@@ -197,6 +296,65 @@ export function addMarquee(scene: Phaser.Scene, centerX: number, y: number): voi
       repeatDelay: 2600,
     })
   }
+
+  const powerOn = (s: Phaser.Scene, leadIn = 0): number => {
+    if (prefersReducedMotion()) return 0 // static reveal — everything already sits lit
+    // Dark the wordmark + heart flourish, dim the bulbs NOW (synchronous — no visible-then-dark flash).
+    viva.setAlpha(0)
+    maya.setAlpha(0)
+    s.tweens.killTweensOf(heart)
+    heart.setScale(0)
+    for (const b of bulbs) b.setAlpha(0.12)
+
+    // A single bright gold sweep glides across the wordmark and reveals it as it passes.
+    const streakW = 60
+    const sweep = s.add
+      .image(spanLeft - streakW, y, 'sweep')
+      .setDisplaySize(streakW, 96)
+      .setAngle(16)
+      .setTint(getTheme().goldBright)
+      .setAlpha(0)
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setDepth(60)
+    s.time.delayedCall(leadIn, () => sfx.whoosh()) // §E3 the airy sweep partners the gold light passing
+    s.tweens.add({ targets: sweep, alpha: 0.9, duration: 140, yoyo: true, hold: 460, delay: leadIn, ease: 'Sine.easeInOut' })
+    s.tweens.add({
+      targets: sweep,
+      x: spanRight + streakW,
+      duration: 720,
+      delay: leadIn,
+      ease: 'Sine.easeInOut',
+      onComplete: () => sweep.destroy(),
+    })
+    // Words fade in tracking the sweep's passage.
+    s.tweens.add({ targets: viva, alpha: 1, duration: 240, delay: leadIn + 150, ease: 'Quad.easeOut' })
+    s.tweens.add({ targets: maya, alpha: 1, duration: 240, delay: leadIn + 380, ease: 'Quad.easeOut' })
+    // Bulbs cascade-light left→right in the sweep's wake.
+    bulbs.forEach((b, i) => {
+      s.tweens.add({
+        targets: b,
+        alpha: 0.85,
+        duration: 200,
+        delay: leadIn + 300 + i * 55,
+        yoyo: true,
+        hold: 90,
+        ease: 'Sine.easeInOut',
+        onComplete: () => b.setAlpha(0.62),
+      })
+    })
+    // Heart flourish pops in last, then resumes its heartbeat.
+    s.tweens.add({
+      targets: heart,
+      scale: heartBase,
+      duration: 300,
+      delay: leadIn + 620,
+      ease: 'Back.easeOut',
+      onComplete: beatHeart,
+    })
+    return leadIn + 920
+  }
+
+  return { viva, maya, heart, bulbs, powerOn }
 }
 
 /**

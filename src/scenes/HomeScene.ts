@@ -24,12 +24,22 @@ import {
   addSoundChip,
   addStreakBadge,
   addThemeChip,
+  applyEntrance,
+  hasNavigated,
   openHelpPanel,
   openSettingsPanel,
   openSoundPanel,
   openThemePanel,
   startScene,
 } from '../view/ui'
+
+/**
+ * Power-on latch (§E10 / Signature #1). Set once the app's first Home paint has run its full
+ * "wake up" choreography, so later returns to Home (from a level / back) get the normal quick
+ * entrance instead of replaying the reveal. Module-scoped → resets on a real page reload (a true
+ * boot), never on an in-app scene.restart() (theme/settings change) or scene navigation.
+ */
+let bootRevealed = false
 
 export class HomeScene extends Phaser.Scene {
   /** Guards the discovered secret-note overlay so long-press/4-tap can't stack copies. */
@@ -43,6 +53,15 @@ export class HomeScene extends Phaser.Scene {
     this.noteOpen = false // reset per entry (scene.start reuses the instance)
     // Warm cream fade-in (never black) — the receiving half of every startScene cross-fade.
     this.cameras.main.fadeIn(this.prefersReducedMotion() ? 90 : 180, 255, 253, 248)
+    // §E10 / Signature #1 — the app's FIRST Home paint (straight from BootScene, before any in-app
+    // navigation and only once per page-load) is the "power-on" reveal. Every later Home entry
+    // (return from a level, back button, theme/settings restart) gets the normal quick entrance.
+    const isBoot = !hasNavigated() && !bootRevealed
+    bootRevealed = true
+    const powerOn = isBoot && !this.prefersReducedMotion()
+    // Directional push/pop (§E10) rides the NORMAL entrances (returns settle DOWN); the power-on IS
+    // its own entrance, so it opts out of the camera nudge. Reduced-motion → applyEntrance no-ops.
+    if (!powerOn) applyEntrance(this)
     const save = loadSave()
     // §E9 — stamp first/last open dates (safe: touches only those two fields). Enables future
     // "welcome back" warmth; never alters progress.
@@ -121,7 +140,8 @@ export class HomeScene extends Phaser.Scene {
     heart.setDisplaySize(190, 190)
     const base = heart.scaleX
     // Emblem heartbeat pulse — gated (§E8): under reduced motion it rests at base scale, no beat.
-    if (!reduced) {
+    const beatEmblem = (): void => {
+      if (reduced) return
       this.tweens.add({
         targets: heart,
         scale: base * 1.09,
@@ -131,6 +151,20 @@ export class HomeScene extends Phaser.Scene {
         repeatDelay: 340,
         ease: 'Sine.easeInOut',
       })
+    }
+    if (powerOn) {
+      // Power-on beat #1: the emblem draws/scales in first, THEN its heartbeat starts.
+      heart.setScale(0)
+      this.tweens.add({
+        targets: heart,
+        scale: base,
+        duration: 380,
+        delay: 100,
+        ease: 'Back.easeOut',
+        onComplete: beatEmblem,
+      })
+    } else {
+      beatEmblem()
     }
     // §E9 secret love note — DISCOVERED, never advertised: a long-press (~620ms) or 4 quick taps
     // on the emblem opens it. Nothing on the front door hints at it beyond the tappable heart.
@@ -159,7 +193,10 @@ export class HomeScene extends Phaser.Scene {
       })
     }
 
-    addMarquee(this, DESIGN_W / 2, 500)
+    // Marquee wordmark (+ a subtle bulb row for the power-on to cascade-light). On boot, beats #2/#3:
+    // a single gold sweep unveils VIVA·MAYA and the bulbs cascade left→right after the emblem draws in.
+    const marquee = addMarquee(this, DESIGN_W / 2, 500, { bulbs: true })
+    if (powerOn) marquee.powerOn(this, 420)
     this.add
       .text(DESIGN_W / 2, 560, 'cascades  ·  power-ups  ·  jackpots', {
         fontFamily: FONT,
@@ -177,11 +214,17 @@ export class HomeScene extends Phaser.Scene {
     const glowSY = glow.scaleY
     glow.setAlpha(reduced ? 0.28 : 0)
     if (!reduced) {
-      // Fade in alongside PLAY, then keep breathing between ~0.22 and ~0.4.
+      // Power-on beat #4: on boot the warm glow BLOOMS up (delayed + swelling from small) after the
+      // wordmark reveal; on a normal entrance it just fades in alongside PLAY. Then it keeps breathing.
+      const bloomDelay = powerOn ? 980 : 0
+      if (powerOn) glow.setScale(glowSX * 0.7, glowSY * 0.7)
       this.tweens.add({
         targets: glow,
         alpha: 0.22,
-        duration: 260,
+        scaleX: glowSX,
+        scaleY: glowSY,
+        duration: powerOn ? 420 : 260,
+        delay: bloomDelay,
         ease: 'Sine.easeOut',
         onComplete: () => {
           this.tweens.add({
@@ -267,6 +310,9 @@ export class HomeScene extends Phaser.Scene {
     // tween a different property, so they coexist with these y/alpha tweens.
     // Reduced motion keeps every button in its final alpha=1 / final-y resting state.
     if (!reduced) {
+      // Power-on beat #5: on boot the button stagger waits for the glow bloom, so the chips/buttons
+      // are the last thing to arrive; on a normal entrance it plays immediately (unchanged).
+      const staggerBase = powerOn ? 1080 : 0
       menuButtons.forEach((btn, i) => {
         const finalY = btn.y
         btn.setAlpha(0)
@@ -276,7 +322,7 @@ export class HomeScene extends Phaser.Scene {
           y: finalY,
           alpha: 1,
           duration: 260,
-          delay: i * 60,
+          delay: staggerBase + i * 60,
           ease: 'Back.easeOut',
         })
       })
