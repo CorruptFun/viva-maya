@@ -1390,7 +1390,11 @@ export class GameScene extends Phaser.Scene {
   private onDown(p: Phaser.Input.Pointer): void {
     if (this.introOpen) return // §E14 — ignore board taps while the first-run card is up
     if (this.state !== 'idle') return
-    const cell = this.xyToCell(p.x, p.y)
+    // Pieces are WORLD objects (rendered at BOARD_X/Y + col/row*CELL). Since the fill-screen change
+    // scrolls the main camera by restScrollY() to centre the design box, game-space (p.x/p.y) no
+    // longer equals world-space — so hit-test the cell against the camera-converted WORLD point.
+    // Phaser sets p.worldX/worldY from the main camera (scroll incl.) before this event fires.
+    const cell = this.xyToCell(p.worldX, p.worldY)
     if (!cell) {
       this.clearSelection()
       this.dragFrom = null
@@ -1398,15 +1402,15 @@ export class GameScene extends Phaser.Scene {
     }
     this.disarmHint() // the player is engaging the board — retire the nudge
     this.dragFrom = cell
-    this.dragStartX = p.x
-    this.dragStartY = p.y
+    this.dragStartX = p.worldX
+    this.dragStartY = p.worldY
     this.dragConsumed = false
   }
 
   private onMove(p: Phaser.Input.Pointer): void {
     if (this.state !== 'idle' || !this.dragFrom || this.dragConsumed) return
-    const dx = p.x - this.dragStartX
-    const dy = p.y - this.dragStartY
+    const dx = p.worldX - this.dragStartX // world-space deltas (dragStartX/Y are world; see onDown)
+    const dy = p.worldY - this.dragStartY
     if (Math.max(Math.abs(dx), Math.abs(dy)) < DRAG_THRESHOLD) return
     this.dragConsumed = true
     const from = this.dragFrom
