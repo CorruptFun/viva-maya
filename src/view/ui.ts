@@ -1,7 +1,58 @@
 import Phaser from 'phaser'
 import { sfx } from '../audio/sfx'
+import { LIVES_MAX } from '../config'
+import { formatCountdown } from '../core/lives'
+import type { LivesState } from '../core/lives'
 
 export const FONT = '"Arial Black", "Helvetica Neue", Arial, sans-serif'
+
+export interface LivesHud {
+  container: Phaser.GameObjects.Container
+  /** Repaint hearts + countdown from a fresh LivesState (call on a per-second timer). */
+  update: (state: LivesState) => void
+}
+
+/**
+ * Row of ❤️ hearts (filled = available, faded = spent) with a "next life mm:ss"
+ * countdown underneath. The energy pool for the lose-only lives system.
+ */
+export function addLivesHud(
+  scene: Phaser.Scene,
+  centerX: number,
+  y: number,
+  opts: { size?: number; gap?: number; showTimer?: boolean; timerColor?: string } = {}
+): LivesHud {
+  const size = opts.size ?? 34
+  const gap = opts.gap ?? 10
+  const showTimer = opts.showTimer ?? true
+  const container = scene.add.container(centerX, y)
+  const totalW = LIVES_MAX * size + (LIVES_MAX - 1) * gap
+  const hearts: Phaser.GameObjects.Image[] = []
+  for (let i = 0; i < LIVES_MAX; i++) {
+    const heart = scene.add
+      .image(-totalW / 2 + size / 2 + i * (size + gap), 0, 'heart')
+      .setDisplaySize(size, size)
+    hearts.push(heart)
+    container.add(heart)
+  }
+  let timer: Phaser.GameObjects.Text | undefined
+  if (showTimer) {
+    timer = scene.add
+      .text(0, size / 2 + 14, '', { fontFamily: FONT, fontSize: '20px', fontStyle: '900', color: opts.timerColor ?? '#9a927e' })
+      .setOrigin(0.5)
+    container.add(timer)
+  }
+  const update = (state: LivesState): void => {
+    hearts.forEach((heart, i) => {
+      const filled = i < state.lives
+      heart.setAlpha(filled ? 1 : 0.24)
+      if (filled) heart.clearTint()
+      else heart.setTint(0x7a7266)
+    })
+    if (timer) timer.setText(state.full ? '' : `next life  ${formatCountdown(state.nextInMs)}`)
+  }
+  return { container, update }
+}
 
 /** Two-tone marquee title with a heart flourish, centered. */
 export function addMarquee(scene: Phaser.Scene, centerX: number, y: number): void {

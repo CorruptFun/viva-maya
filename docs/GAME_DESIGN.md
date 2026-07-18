@@ -6,8 +6,12 @@ This file is the canonical mechanics reference — keep it updated when rules ch
 
 ## Pillars
 - The match-3 board IS the game. Everything else is a doorway back into it.
-- Additions must create reasons to RETURN, never chores to clear. No energy systems,
-  no purchasable currencies, no meta-building. Boosters are earned (daily spin), not bought.
+- Additions must create reasons to RETURN, never chores to clear. A light lives/energy pool
+  (lose-only, self-refilling — see Lives) paces sessions and pulls players back. Still NO
+  purchasable currencies, NO meta-building, NO pay-to-win. Lives regenerate and boosters are
+  earned (daily spin) — nothing is bought.
+  (Direction change 2026-07-17: the earlier "no energy systems" rule was reversed at owner's
+  request — energy that forces a short break is now a wanted return hook.)
 - Warm "modern slot screen" look: off-white #f6f3ec, gold #f2b234/#c9930a, rose #d3304f,
   navy #26304d, system-emoji symbols. Heart motif = Maya tribute (name carries it; no
   explicit dedication text in product copy).
@@ -73,6 +77,19 @@ clears a RANDOM present color. Swap-combos (both consumed, epicenter = drag dest
 - recordEndless persists endlessBest per week (resets when weekKey rolls over); also flows into
   all-time save.best. HUD shows a "WEEK'S BEST" card; end card shows NEW BEST! / TIME'S UP.
 
+## Lives / energy (src/core/lives.ts + GameScene gate)
+- Small pool: LIVES_MAX=3, LIFE_REGEN_MS=30 min (config.ts). Only a LOSS drains a life; a
+  mid-level QUIT after ≥1 move also drains one (closes the quit-to-dodge-loss exploit). WINS
+  ARE FREE — so a steady/skilled player never hits the wall ("lasts longer the better you play").
+- Regen is wall-clock (device clock trusted, like the daily spin): +1 life every 30 min, so an
+  empty pool is playable again at 30 min and fully full at 90 min. Storage: save.lives +
+  save.livesAnchor (epoch ms the current regen cycle started; 0 when full). refreshLives() banks
+  regen + persists on every read; spendLife/grantLife mutate; devSetLives for ?lives=N.
+- ENDLESS is NEVER gated (it's already weekly-scarce). Numbered levels gate on entry: 0 lives →
+  GameScene.showLivesGate ("TAKE A BREAK", faded hearts, live "next life mm:ss / full mm:ss"
+  countdown, PLAY appears when one regenerates). Gate is checked BEFORE boosts are consumed, so a
+  gated entry never wastes a pending boost. Hearts HUD (addLivesHud) on Home + the lose overlay.
+
 ## Daily Bonus (src/core/daily.ts + DailyBonusScene)
 - One spin per LOCAL calendar day (lastSpinDate 'YYYY-MM-DD'; device clock trusted — offline toy).
 - 3-reel slot machine that ALWAYS lands 3-of-a-kind of the prize (gift, not gambling).
@@ -88,11 +105,11 @@ clears a RANDOM present color. Swap-combos (both consumed, epicenter = drag dest
   NOTE: no emoji in pill labels — letterSpacing splits surrogate pairs (renders tofu).
 
 ## Save (src/core/save.ts — localStorage key 'viva-maya:v1', all access try/catch)
-v4: { v:4, best, unlocked, stars{level:1..3}, lastSpinDate|null, streak, pendingBoosts[],
-      endlessWeek|null, endlessBest }
-Migrations: v1 {best} → v2 (+unlocked/stars) → v3 (+daily fields) → v4 (+endless race:
-endlessWeek "YYYY-Www", endlessBest); loader is shape-tolerant (old saves default new fields).
-Mute flag is separate: 'viva-maya:muted'.
+v5: { v:5, best, unlocked, stars{level:1..3}, lastSpinDate|null, streak, pendingBoosts[],
+      endlessWeek|null, endlessBest, lives, livesAnchor }
+Migrations: v1 {best} → v2 (+unlocked/stars) → v3 (+daily) → v4 (+endless: endlessWeek
+"YYYY-Www", endlessBest) → v5 (+lives/energy: lives, livesAnchor — pre-v5 saves start full).
+Loader is shape-tolerant (old saves default new fields). Mute flag is separate: 'viva-maya:muted'.
 
 ## Audio (src/audio/sfx.ts — procedural WebAudio, zero assets)
 Singleton, lazy AudioContext, unlocked on first pointerdown (iOS), master gain 0.5 →
@@ -127,9 +144,10 @@ icon.html → 5×5 emoji board + VIVA MAYA banner (checkerboard = (row+col)%2). 
 `npm run icons` regenerates all of public/. favicon.svg is hand-authored.
 
 ## Dev/test knobs (DEV builds only; see GameScene/BootScene/DailyBonusScene create)
-?level=N jump · ?endless=1 boot the weekly race · ?scene=daily|home|levelselect ·
-?auto=MS autoplay hinted moves · ?turbo=N scale tween/timer clocks · ?goal=N ?moves=N
-override level · ?plant=1 seed specials · ?spin=1 force spin available · ?autospin=1 auto-trigger spin.
+?level=N jump · ?endless=1 boot the weekly race · ?lives=N set the life pool (test the gate) ·
+?scene=daily|home|levelselect · ?auto=MS autoplay hinted moves · ?turbo=N scale tween/timer
+clocks · ?goal=N ?moves=N override level · ?plant=1 seed specials · ?spin=1 force spin ·
+?autospin=1 auto-trigger spin.
 DEV strip (top-left) mirrors model state (level/state/moves/score/objectives/hint) — the
 Claude browser pane starves the RAF clock and drops clicks while hidden; screenshots are
 the only reliable channel there, so verify via strip + autoplay/autospin, and confirm
@@ -142,6 +160,8 @@ builds and deploys automatically. Legacy fallback: publish dist/ to gh-pages bra
 
 ## Roadmap (agreed direction)
 DONE: streak flame on Home (addStreakBadge) · endless weekly-seed race after L30 (shared board,
-BEST race — src/core/endless.ts) · star-milestone celebration every 10 levels (milestoneSplash).
-TODO: surface streak in more places if wanted · tune levelSpec from Maya's real play.
-Explicitly rejected: lives/energy, currencies, home-decorating meta.
+BEST race — src/core/endless.ts) · star-milestone celebration every 10 levels (milestoneSplash) ·
+lives/energy (lose-only, 3-pool, 30-min regen — src/core/lives.ts).
+TODO: tune levelSpec from Maya's real play · optionally let the daily spin grant a bonus life.
+Still rejected: purchasable currencies, home-decorating meta, pay-to-win. (Lives/energy was
+previously rejected but reintroduced 2026-07-17 at owner's request as a self-refilling return hook.)

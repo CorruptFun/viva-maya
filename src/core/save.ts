@@ -1,7 +1,8 @@
+import { LIVES_MAX } from '../config'
 import type { BoostType } from './types'
 
 export interface SaveData {
-  v: 4
+  v: 5
   best: number
   /** Highest level the player may attempt (1-based). */
   unlocked: number
@@ -17,12 +18,16 @@ export interface SaveData {
   endlessWeek: string | null
   /** Best endless score for endlessWeek's board; resets when the week rolls over. */
   endlessBest: number
+  /** Current lives in the energy pool. */
+  lives: number
+  /** Epoch ms the current life-regen cycle started (0 when the pool is full). */
+  livesAnchor: number
 }
 
 const KEY = 'viva-maya:v1'
 
 const DEFAULTS: SaveData = {
-  v: 4,
+  v: 5,
   best: 0,
   unlocked: 1,
   stars: {},
@@ -31,6 +36,8 @@ const DEFAULTS: SaveData = {
   pendingBoosts: [],
   endlessWeek: null,
   endlessBest: 0,
+  lives: LIVES_MAX,
+  livesAnchor: 0,
 }
 
 function fresh(): SaveData {
@@ -44,7 +51,7 @@ export function loadSave(): SaveData {
     if (!raw) return fresh()
     const data = JSON.parse(raw) as Partial<SaveData> & { best?: number }
     const base = fresh()
-    // v1 was {best}; v2 added unlocked/stars; v3 added daily-spin fields; v4 added endless race.
+    // v1 {best}; v2 +unlocked/stars; v3 +daily-spin; v4 +endless race; v5 +lives/energy.
     base.best = typeof data.best === 'number' ? data.best : 0
     base.unlocked = typeof data.unlocked === 'number' ? Math.max(1, data.unlocked) : 1
     base.stars = data.stars && typeof data.stars === 'object' ? data.stars : {}
@@ -53,6 +60,10 @@ export function loadSave(): SaveData {
     base.pendingBoosts = Array.isArray(data.pendingBoosts) ? data.pendingBoosts : []
     base.endlessWeek = typeof data.endlessWeek === 'string' ? data.endlessWeek : null
     base.endlessBest = typeof data.endlessBest === 'number' ? data.endlessBest : 0
+    // Pre-v5 saves had no lives → start them full rather than locked out.
+    base.lives =
+      typeof data.lives === 'number' ? Math.max(0, Math.min(LIVES_MAX, Math.floor(data.lives))) : LIVES_MAX
+    base.livesAnchor = typeof data.livesAnchor === 'number' ? data.livesAnchor : 0
     return base
   } catch {
     return fresh()

@@ -20,13 +20,14 @@ import {
 import { Board } from '../core/board'
 import { ENDLESS_MOVES, endlessBestForWeek, endlessRngForWeek, recordEndless, weekKey } from '../core/endless'
 import { LEVEL_COUNT, levelSpec } from '../core/levels'
+import { devSetLives, formatCountdown, refreshLives, spendLife } from '../core/lives'
 import { mulberry32 } from '../core/rng'
 import { loadSave, recordResult, recordScore, takePendingBoosts } from '../core/save'
 import { SYMBOLS, key } from '../core/types'
 import type { BoostType, ClearWave, Coord, FallMove, LevelSpec, Piece, Spawn, SymbolType } from '../core/types'
 import { addCasinoBackdrop } from '../view/background'
 import { TEX_SIZE, ensurePieceTexture } from '../view/textures'
-import { FONT, GHOST_PILL, GOLD_PILL, ROSE_PILL, addMuteChip, addPillButton } from '../view/ui'
+import { FONT, GHOST_PILL, GOLD_PILL, ROSE_PILL, addLivesHud, addMuteChip, addPillButton } from '../view/ui'
 
 /**
  * Turn state machine:
@@ -86,6 +87,8 @@ export class GameScene extends Phaser.Scene {
   private endless = false
   private endlessBest = 0
   private endlessWeekKey = ''
+  /** A move was consumed this level — so a mid-level quit costs a life (numbered levels only). */
+  private moveMade = false
   private apSched = 0
   private apFired = 0
   private apMoved = 0
@@ -112,6 +115,20 @@ export class GameScene extends Phaser.Scene {
   create(): void {
     this.sid = Math.floor(Math.random() * 10000)
     this.log('create', location.search, this.endless ? 'ENDLESS' : `level ${this.level}`)
+    this.moveMade = false
+
+    // DEV: ?lives=N forces the pool before the gate check.
+    if (import.meta.env.DEV) {
+      const lv = new URLSearchParams(location.search).get('lives')
+      if (lv !== null) devSetLives(Number(lv))
+    }
+    // Lives gate — a numbered level needs a life to enter (endless is never gated). Checked
+    // BEFORE the board build / boost consume, so a gated entry never wastes a pending boost.
+    if (!this.endless && refreshLives().lives <= 0) {
+      this.showLivesGate()
+      return
+    }
+
     // Endless: a fixed-budget score attack on this WEEK's shared, seeded board (same for
     // everyone). No objectives, no boosts (planting specials would change the board and
     // break the race's fairness). Otherwise: the numbered level with a fresh random board.
@@ -185,6 +202,70 @@ export class GameScene extends Phaser.Scene {
       this.time.addEvent({ delay: 300, loop: true, callback: () => this.updateDebug() })
     }
     this.scheduleAutoplay()
+  }
+
+  /**
+   * Out-of-lives screen (numbered levels only) — a warm "take a break" with a live
+   * countdown to the next life. When one regenerates, a PLAY button appears. The
+   * countdown is wall-clock based (refreshLives reads Date.now), so it stays correct
+   * even if the timer tick is throttled while the tab is hidden.
+   */
+  private showLivesGate(): void {
+    this.log('showLivesGate')
+    addCasinoBackdrop(this, 'menu')
+    addPillButton(this, 64, 84, 84, 56, '‹', GHOST_PILL, () => this.scene.start('home'))
+    addMuteChip(this, 676, 40)
+
+    this.add
+      .text(DESIGN_W / 2, 320, 'TAKE A BREAK', { fontFamily: FONT, fontSize: '56px', fontStyle: '900', color: '#c9930a' })
+      .setOrigin(0.5)
+      .setShadow(0, 3, 'rgba(90,70,20,0.25)', 6, false, true)
+    this.add
+      .text(DESIGN_W / 2, 384, 'Out of lives — they refill on their own', { fontFamily: FONT, fontSize: '24px', color: '#9a927e' })
+      .setOrigin(0.5)
+
+    const emblem = this.add.image(DESIGN_W / 2, 560, 'heart').setDisplaySize(150, 150).setTint(0x8a7a52).setAlpha(0.4)
+    this.tweens.add({ targets: emblem, alpha: 0.65, scale: emblem.scaleX * 1.05, duration: 900, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' })
+
+    const hud = addLivesHud(this, DESIGN_W / 2, 700, { size: 46, showTimer: false })
+    const nextText = this.add
+      .text(DESIGN_W / 2, 782, '', { fontFamily: FONT, fontSize: '30px', fontStyle: '900', color: '#2a2732' })
+      .setOrigin(0.5)
+    const fullText = this.add
+      .text(DESIGN_W / 2, 828, '', { fontFamily: FONT, fontSize: '22px', color: '#9a927e' })
+      .setOrigin(0.5)
+    let playBtn: Phaser.GameObjects.Container | null = null
+
+    const tick = (): void => {
+      const st = refreshLives()
+      hud.update(st)
+      if (st.lives > 0) {
+        nextText.setText('A life is ready!')
+        fullText.setText('')
+        if (!playBtn) {
+          playBtn = addPillButton(this, DESIGN_W / 2, 924, 320, 88, 'PLAY', GOLD_PILL, () =>
+            this.scene.start('game', { level: this.level })
+          )
+          this.tweens.add({ targets: playBtn, scale: 1.05, duration: 650, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' })
+        }
+      } else {
+        nextText.setText(`Next life in  ${formatCountdown(st.nextInMs)}`)
+        fullText.setText(`Full in  ${formatCountdown(st.fullInMs)}`)
+      }
+    }
+    tick()
+    this.time.addEvent({ delay: 1000, loop: true, callback: tick })
+  }
+
+  /**
+   * In-game back button: a mid-level quit AFTER a move spends a life (numbered levels only).
+   * Only when the board is settled (idle) — mid-resolve, finishWin/finishLose is the single
+   * source of truth for the outcome, so we must not pre-charge a move that's about to WIN
+   * (wins are free) or double-charge one that's about to lose.
+   */
+  private exitToLevels(): void {
+    if (!this.endless && this.state === 'idle' && this.moveMade) spendLife()
+    this.scene.start('levelselect')
   }
 
   /** DEV only: expose model state via DOM (dataset + visible strip) for external tooling. */
@@ -351,7 +432,7 @@ export class GameScene extends Phaser.Scene {
 
   private buildHud(): void {
     // Top row: back · LEVEL N (or ENDLESS) · score.
-    addPillButton(this, 64, 84, 84, 56, '‹', GHOST_PILL, () => this.scene.start('levelselect'))
+    addPillButton(this, 64, 84, 84, 56, '‹', GHOST_PILL, () => this.exitToLevels())
     addPillButton(
       this,
       DESIGN_W / 2,
@@ -627,6 +708,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.movesLeft--
+    this.moveMade = true
     this.movesText.setText(String(this.movesLeft))
     if (this.movesLeft <= 5) this.movesText.setColor('#d3302f')
     await this.resolveLoop(wave)
@@ -864,6 +946,7 @@ export class GameScene extends Phaser.Scene {
   private finishLose(): void {
     this.log('finishLose')
     this.state = 'ended'
+    spendLife() // a loss costs a life (numbered levels only ever reach finishLose)
     recordScore(this.score)
     this.time.delayedCall(400, () => this.showOverlay(false, 0, 0))
   }
@@ -1038,6 +1121,14 @@ export class GameScene extends Phaser.Scene {
         })
         .setOrigin(0.5)
         .setDepth(42)
+    }
+    if (!win) {
+      // A loss spent a life — show what's left + when the next one lands.
+      const livesHud = addLivesHud(this, cx, cy + 56, { size: 28 })
+      livesHud.container.setDepth(42)
+      const refresh = (): void => livesHud.update(refreshLives())
+      refresh()
+      this.time.addEvent({ delay: 1000, loop: true, callback: refresh })
     }
 
     const nextExists = win && this.level < LEVEL_COUNT

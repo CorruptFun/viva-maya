@@ -3,9 +3,10 @@ import { DESIGN_W } from '../config'
 import { spinAvailable } from '../core/daily'
 import { endlessBestThisWeek, endlessUnlocked } from '../core/endless'
 import { LEVEL_COUNT } from '../core/levels'
+import { refreshLives } from '../core/lives'
 import { loadSave } from '../core/save'
 import { addCasinoBackdrop } from '../view/background'
-import { FONT, GHOST_PILL, GOLD_PILL, ROSE_PILL, addMarquee, addPillButton, addStreakBadge } from '../view/ui'
+import { FONT, GHOST_PILL, GOLD_PILL, ROSE_PILL, addLivesHud, addMarquee, addPillButton, addStreakBadge } from '../view/ui'
 
 export class HomeScene extends Phaser.Scene {
   constructor() {
@@ -18,11 +19,17 @@ export class HomeScene extends Phaser.Scene {
 
     addCasinoBackdrop(this, 'home')
 
-    // Daily-spin streak flame — a warm "welcome back" hook up top (hidden at streak 0).
-    addStreakBadge(this, DESIGN_W / 2, 150, save.streak)
+    // Top status: lives pool (with a live "next life" countdown) above the streak flame.
+    const livesHud = addLivesHud(this, DESIGN_W / 2, 100, { size: 32 })
+    const refreshLivesHud = (): void => livesHud.update(refreshLives())
+    refreshLivesHud()
+    this.time.addEvent({ delay: 1000, loop: true, callback: refreshLivesHud })
+    // Daily-spin streak flame — hidden at streak 0.
+    addStreakBadge(this, DESIGN_W / 2, 176, save.streak)
 
     // Big heart emblem with a heartbeat pulse.
-    const heart = this.add.image(DESIGN_W / 2, 300, 'heart')
+    const emblemY = 330
+    const heart = this.add.image(DESIGN_W / 2, emblemY, 'heart')
     heart.setDisplaySize(190, 190)
     const base = heart.scaleX
     this.tweens.add({
@@ -40,11 +47,11 @@ export class HomeScene extends Phaser.Scene {
       [138, -30, 24, 500],
       [110, 84, 20, 900],
     ]) {
-      const mini = this.add.image(DESIGN_W / 2 + dx, 300 + dy, 'heart').setAlpha(0.5)
+      const mini = this.add.image(DESIGN_W / 2 + dx, emblemY + dy, 'heart').setAlpha(0.5)
       mini.setDisplaySize(size, size)
       this.tweens.add({
         targets: mini,
-        y: 300 + dy - 14,
+        y: emblemY + dy - 14,
         alpha: 0.25,
         duration: 1600,
         delay,
