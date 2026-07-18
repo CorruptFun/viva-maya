@@ -11,6 +11,7 @@ import {
   GHOST_PILL,
   GOLD_PILL,
   ROSE_PILL,
+  addChipPill,
   addHelpChip,
   addLivesHud,
   addMarquee,
@@ -42,6 +43,10 @@ export class HomeScene extends Phaser.Scene {
     // Move-sound picker, mirrored in the top-right corner.
     addSoundChip(this, 676, 44)
     if (import.meta.env.DEV && new URLSearchParams(location.search).has('sound')) openSoundPanel(this)
+
+    // Persistent chip balance (earned reward token) — top-center, between the ? and ♪ corner
+    // chips and above the lives pool. A read-out only; chips are never spent in Phase 1.
+    addChipPill(this, DESIGN_W / 2, 44)
 
     // Top status: lives pool (with a live "next life" countdown) above the streak flame.
     const livesHud = addLivesHud(this, DESIGN_W / 2, 100, { size: 32 })

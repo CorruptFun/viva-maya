@@ -22,12 +22,13 @@ import { ENDLESS_MOVES, endlessBestForWeek, endlessRngForWeek, recordEndless, we
 import { LEVEL_COUNT, levelSpec } from '../core/levels'
 import { devSetLives, formatCountdown, refreshLives, spendLife } from '../core/lives'
 import { mulberry32 } from '../core/rng'
-import { loadSave, recordResult, recordScore, takePendingBoosts } from '../core/save'
+import { addChips, loadSave, recordResult, recordScore, takePendingBoosts } from '../core/save'
 import { SYMBOLS, key } from '../core/types'
 import type { BoostType, ClearWave, Coord, FallMove, LevelSpec, Piece, Spawn, SymbolType } from '../core/types'
 import { addCasinoBackdrop } from '../view/background'
 import { TEX_SIZE, ensurePieceTexture } from '../view/textures'
-import { FONT, GHOST_PILL, GOLD_PILL, ROSE_PILL, addLivesHud, addMuteChip, addPillButton } from '../view/ui'
+import { FONT, GHOST_PILL, GOLD_PILL, ROSE_PILL, addChipPill, addLivesHud, addMuteChip, addPillButton } from '../view/ui'
+import type { ChipPill } from '../view/ui'
 
 /**
  * Turn state machine:
@@ -83,6 +84,11 @@ export class GameScene extends Phaser.Scene {
   private shownScore = 0
   private scoreTween: Phaser.Tweens.Tween | null = null
   private scoreText!: Phaser.GameObjects.Text
+
+  /** Compact chip-balance pill in the HUD; the win payout flies a chip into it. */
+  private chipHud?: ChipPill
+  /** New chip total banked by the current win (set in finishWin, applied on the payout fly-in). */
+  private chipBanked = 0
 
   /** Set while the win result card is animating in — a tap fast-forwards it to the settled state. */
   private overlaySettle: (() => void) | null = null
@@ -553,6 +559,10 @@ export class GameScene extends Phaser.Scene {
       .setShadow(0, 2, 'rgba(0,0,0,0.12)', 4, false, true)
     // Mute chip nudged to y=34 (from 40) so its lower arc clears the SCORE label.
     addMuteChip(this, 676, 34)
+
+    // Persistent chip balance — compact, tucked into the top row's gap between the back button
+    // and the LEVEL tab. Shows the pre-win total; the win payout flies a chip in to bump it.
+    this.chipHud = addChipPill(this, 182, 84, { compact: true })
 
     // Second row: moves card + objective chips.
     const cardY = 196
@@ -1060,8 +1070,10 @@ export class GameScene extends Phaser.Scene {
     const bonus = this.movesLeft * MOVES_BONUS
     if (bonus > 0) this.addScore(bonus)
     const save = recordResult(this.level, stars, this.score)
-    // Cosmetic celebration payout (no economy): rewards a clean, fast clear.
+    // Reward payout — rewards a clean, fast clear and is BANKED to the persistent chip balance.
+    // Once per win (finishWin runs exactly once per completed level); endless/losses pay nothing.
     const chipReward = stars * 8 + this.movesLeft * 2
+    this.chipBanked = addChips(chipReward)
     // Every 10th level is a milestone: a full-screen star-tally splash stands in for Beats 1–2.
     const milestone = this.level % 10 === 0
     const totalStars = Object.values(save.stars).reduce((sum, s) => sum + s, 0)
@@ -1615,8 +1627,11 @@ export class GameScene extends Phaser.Scene {
 
     if (!animate) {
       pileChips.forEach(c => c.setScale(46 / 48))
+      this.chipHud?.update(this.chipBanked) // snap the HUD balance to the banked total (no fly-in)
       return
     }
+    // A skip mid-roll still lands the balance on the HUD pill.
+    settleActions.push(() => this.chipHud?.update(this.chipBanked))
 
     // Flying chips arc in from the edges/star row and land on the pile, popping it.
     const flyCount = 12
@@ -1656,6 +1671,9 @@ export class GameScene extends Phaser.Scene {
         onComplete: () => {
           counter.setText(String(chipReward))
           this.vibrate(30)
+          // The reward leaps from the pile up to the HUD balance pill, bumping its count.
+          const flyer = this.spawnHudFlyChip(card.x + pileX, card.y + py)
+          if (flyer) settleActions.push(() => flyer.destroy())
         },
       })
       settleActions.push(() => {
@@ -1663,6 +1681,27 @@ export class GameScene extends Phaser.Scene {
         counter.setText(String(chipReward))
       })
     })
+  }
+
+  /** Beat 4 tail: a chip flies from the win-card pile to the HUD balance pill, then bumps it. */
+  private spawnHudFlyChip(fromX: number, fromY: number): Phaser.GameObjects.Image | undefined {
+    if (!this.chipHud) return undefined
+    const target = this.chipHud.container
+    const chip = this.add.image(fromX, fromY, 'chip').setDisplaySize(46, 46).setDepth(52)
+    this.tweens.add({
+      targets: chip,
+      x: target.x,
+      y: target.y,
+      scaleX: chip.scaleX * 0.62,
+      scaleY: chip.scaleY * 0.62,
+      duration: 520,
+      ease: 'Cubic.easeIn',
+      onComplete: () => {
+        if (chip.active) chip.destroy()
+        this.chipHud?.update(this.chipBanked)
+      },
+    })
+    return chip
   }
 
   /** End-of-run card for the endless weekly race — a score attack, no stars. */

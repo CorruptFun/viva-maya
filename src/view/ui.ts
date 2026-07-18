@@ -3,6 +3,7 @@ import { SWAP_SOUNDS, SWAP_SOUND_LABELS, sfx } from '../audio/sfx'
 import { LIVES_MAX } from '../config'
 import { formatCountdown } from '../core/lives'
 import type { LivesState } from '../core/lives'
+import { loadSave } from '../core/save'
 
 export const FONT = '"Arial Black", "Helvetica Neue", Arial, sans-serif'
 
@@ -178,6 +179,62 @@ export const GOLD_PILL: PillStyle = { fill: 0xf2b234, border: 0xc9930a, textColo
 export const GHOST_PILL: PillStyle = { fill: 0xffffff, border: 0xe8dfc9, textColor: '#8a8577' }
 /** Rose "special mode" pill — sets the endless weekly race apart from the gold progression buttons. */
 export const ROSE_PILL: PillStyle = { fill: 0xd3304f, border: 0xa8213c, textColor: '#ffffff' }
+
+export interface ChipPill {
+  container: Phaser.GameObjects.Container
+  /** Set the displayed balance, with a small scale-pop (used when a win payout lands). */
+  update: (chips: number) => void
+}
+
+/**
+ * Persistent chip-balance pill — the gold `chip` token + the running count (read from the save
+ * on build). Chips are an earned-only reward token, so this is a read-out, never a spend button.
+ * The win payout flies a chip into it and calls update() to bump the total. `compact` shrinks it
+ * for the in-game HUD; the roomier default suits the Home status row.
+ */
+export function addChipPill(
+  scene: Phaser.Scene,
+  x: number,
+  y: number,
+  opts: { compact?: boolean } = {}
+): ChipPill {
+  const compact = opts.compact ?? false
+  const h = compact ? 44 : 52
+  const iconSize = Math.round(h * 0.66)
+  const padX = compact ? 15 : 18
+  const gap = compact ? 7 : 9
+  const container = scene.add.container(x, y).setDepth(50)
+  const g = scene.add.graphics()
+  const icon = scene.add.image(0, 0, 'chip').setDisplaySize(iconSize, iconSize)
+  const label = scene.add
+    .text(0, 1, '', { fontFamily: FONT, fontSize: `${Math.round(h * 0.44)}px`, fontStyle: '900', color: '#4a3305' })
+    .setOrigin(0, 0.5)
+  container.add([g, icon, label])
+
+  // Self-sizing: the pill background is rebuilt to fit the current count so it never clips as the
+  // balance grows (cream fill + gold bezel — the "gold ghost" look, matching the streak badge).
+  const redraw = (chips: number): void => {
+    label.setText(chips.toLocaleString())
+    const w = padX + iconSize + gap + label.width + padX
+    g.clear()
+    g.fillStyle(0x8a7a52, 0.18)
+    g.fillRoundedRect(-w / 2 + 2, -h / 2 + 4, w, h, h / 2)
+    g.fillStyle(0xfff3d6, 1)
+    g.fillRoundedRect(-w / 2, -h / 2, w, h, h / 2)
+    g.lineStyle(compact ? 2 : 3, 0xf2c14e, 1)
+    g.strokeRoundedRect(-w / 2, -h / 2, w, h, h / 2)
+    icon.setPosition(-w / 2 + padX + iconSize / 2, 0)
+    label.setPosition(icon.x + iconSize / 2 + gap, 1)
+  }
+  redraw(loadSave().chips)
+
+  const update = (chips: number): void => {
+    redraw(chips)
+    scene.tweens.add({ targets: container, scaleX: 1.14, scaleY: 1.14, duration: 130, yoyo: true, ease: 'Quad.easeOut' })
+  }
+
+  return { container, update }
+}
 
 /** Rounded tappable button with press feedback. Returns the container. */
 export function addPillButton(
