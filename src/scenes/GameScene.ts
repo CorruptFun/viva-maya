@@ -81,6 +81,20 @@ export class GameScene extends Phaser.Scene {
   private cabinetGlow?: Phaser.GameObjects.Image
   private state: GameState = 'idle'
 
+  // --- Impact & weight (E5/E6) ---
+  /** Trauma accumulator (0..1); shake magnitude is trauma², decayed each frame in update(). */
+  private trauma = 0
+  private traumaDirX = 0
+  private traumaDirY = 0
+  /** The single shared impact-frame sprite — CAPPED at one concurrent (photosensitivity red line). */
+  private impactFlash?: Phaser.GameObjects.Image
+  /** Wall-clock deadline of the active hitstop freeze; guards "one freeze at a time, deepest owns it." */
+  private hitstopUntil = 0
+  /** Tween/timer timescale to restore after a hitstop (1, or ?turbo=N in DEV). */
+  private baseTimeScale = 1
+  /** Future a11y "reduce flashing" switch (photosensitivity ≠ vestibular). A later slice wires the real toggle. */
+  private reduceFlashing = false
+
   // --- P6 idle micro-life (all reduced-motion-gated, governor-capped) ---
   /** 3a: masked cream gloss that glides across the 8×8 while idle; paused off-idle (see update). */
   private boardShimmer?: Phaser.GameObjects.Image
@@ -204,6 +218,13 @@ export class GameScene extends Phaser.Scene {
     this.dragFrom = null
     this.scoreMult = 1
     this.movesPulse = null
+    this.trauma = 0
+    this.traumaDirX = 0
+    this.traumaDirY = 0
+    this.hitstopUntil = 0
+    this.baseTimeScale = 1
+    this.impactFlash = undefined
+    this.cameras.main.setScroll(0, 0)
     this.activeBoosts = []
     this.autoplay = import.meta.env.DEV && new URLSearchParams(location.search).has('auto')
     if (!this.endless) this.applyBoosts(takePendingBoosts())
@@ -222,6 +243,7 @@ export class GameScene extends Phaser.Scene {
       if (turbo > 0) {
         this.tweens.timeScale = turbo
         this.time.timeScale = turbo
+        this.baseTimeScale = turbo
       }
       if (params.has('plant')) {
         this.board.plant({ row: 6, col: 1 }, 'wildReelCol')
@@ -254,8 +276,12 @@ export class GameScene extends Phaser.Scene {
       this.updateDebug()
       this.time.addEvent({ delay: 300, loop: true, callback: () => this.updateDebug() })
     }
-    this.scheduleAutoplay()
-    this.armHint()
+    // The animated deal-in sets state='resolving' and owns the idle handoff (autoplay + hint) once
+    // the board finishes assembling; an instant fill (reduced motion) leaves us idle → hand off now.
+    if (this.state === 'idle') {
+      this.scheduleAutoplay()
+      this.armHint()
+    }
   }
 
   /**
@@ -1023,10 +1049,46 @@ export class GameScene extends Phaser.Scene {
     this.ring.setDisplaySize(CELL * 1.02, CELL * 1.02)
     this.pieceLayer.add(this.ring)
 
-    for (let r = 0; r < ROWS; r++) {
-      for (let c = 0; c < COLS; c++) {
+    // Board deal-in (E5, signature moment #2): rain the 64 tiles in column-staggered from the top
+    // edge — the layer is grid-masked, so pieces starting above BOARD_Y clip to "fall from above" —
+    // with a Back landing overshoot + settle squash. Reduced motion → instant fill (today's behavior).
+    if (this.reducedMotion) {
+      for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+          const at = { row: r, col: c }
+          this.createSprite(this.board.get(at)!, at)
+        }
+      }
+      return
+    }
+
+    this.state = 'resolving' // gate input until the board finishes assembling
+    const COL_STAGGER = 40
+    const FALL_MS = FALL_BASE_MS + FALL_PER_CELL_MS * ROWS // full-height drop
+    const total = ROWS * COLS
+    let landed = 0
+    for (let c = 0; c < COLS; c++) {
+      // dropCells = ROWS → the whole column starts stacked just above the top edge and pours in.
+      // TODO(B14): sfx.land() — one height-mapped thunk per settling column.
+      for (let r = 0; r < ROWS; r++) {
         const at = { row: r, col: c }
-        this.createSprite(this.board.get(at)!, at)
+        const sprite = this.createSprite(this.board.get(at)!, at, ROWS)
+        const to = this.cellToXY(at)
+        this.tweens.add({
+          targets: sprite,
+          y: to.y,
+          delay: c * COL_STAGGER,
+          duration: FALL_MS,
+          ease: 'Back.easeOut',
+          onComplete: () => {
+            this.settleSquash(sprite, ROWS)
+            if (++landed >= total) {
+              this.state = 'idle'
+              this.scheduleAutoplay()
+              this.armHint()
+            }
+          },
+        })
       }
     }
   }
@@ -1108,7 +1170,34 @@ export class GameScene extends Phaser.Scene {
    * alpha (shared sine so they pulse in step — cheap, no per-glow tween). When a special's sprite
    * is gone (cleared / transformed / reshuffled) its halo is destroyed, so nothing leaks.
    */
-  update(time: number): void {
+  update(time: number, delta: number): void {
+    // Trauma screenshake (E6): decay the accumulator and drive a camera offset. Directional when a
+    // blast latched a vector; omnidirectional otherwise. Camera scroll shakes ALL scene content
+    // (incl. the masked board) as one unit and is free. No-op under reduced motion (trauma never
+    // accumulates — addTrauma is gated), so the board sits perfectly still.
+    if (this.trauma > 0) {
+      this.trauma = Math.max(0, this.trauma - (delta / 1000) * 2.6)
+      const amp = 14 * this.trauma * this.trauma
+      let ox: number
+      let oy: number
+      if (this.traumaDirX !== 0 || this.traumaDirY !== 0) {
+        const main = Math.random() * 2 - 1
+        const cross = (Math.random() * 2 - 1) * 0.3
+        ox = amp * (this.traumaDirX * main - this.traumaDirY * cross)
+        oy = amp * (this.traumaDirY * main + this.traumaDirX * cross)
+      } else {
+        ox = amp * (Math.random() * 2 - 1)
+        oy = amp * (Math.random() * 2 - 1)
+      }
+      this.cameras.main.setScroll(ox, oy)
+      if (this.trauma === 0) {
+        this.traumaDirX = 0
+        this.traumaDirY = 0
+        this.cameras.main.setScroll(0, 0)
+      }
+    } else if (this.cameras.main.scrollX !== 0 || this.cameras.main.scrollY !== 0) {
+      this.cameras.main.setScroll(0, 0)
+    }
     // 3a shimmer yields to the game: it only glides while the board is settled (idle). Toggle
     // only on the idle edge so we're not restarting a tween every frame.
     if (this.boardShimmer && this.boardShimmerTween) {
@@ -1260,7 +1349,7 @@ export class GameScene extends Phaser.Scene {
         // Invalid: thud and snap back. No move spent.
         this.board.swap(a, b)
         sfx.invalidThud()
-        this.cameras.main.shake(90, 0.005)
+        this.punch({ trauma: 0.22 }) // small unified thud kick (reduced-motion → still)
         await Promise.all([
           this.t({ targets: sa, x: posA.x, y: posA.y, duration: INVALID_MS, ease: 'Quad.easeIn' }),
           this.t({ targets: sb, x: posB.x, y: posB.y, duration: INVALID_MS, ease: 'Quad.easeIn' }),
@@ -1335,21 +1424,50 @@ export class GameScene extends Phaser.Scene {
     // Signature clear blip, once per wave — rises a semitone per cascade step.
     sfx.pop(cascade)
 
-    // Effect choreography.
-    let effectMs = 0
-    for (const e of wave.events) {
-      if (e.type === 'reel') {
-        this.detonateReel(e.at, e.horizontal, cascade)
-        effectMs = Math.max(effectMs, 320)
-      } else if (e.type === 'bomb') {
-        this.detonateBomb(e.at, e.radius, cascade)
-        effectMs = Math.max(effectMs, 300)
-      } else {
-        sfx.jackpotStrike()
-        this.cameras.main.flash(280, 255, 214, 90)
-        this.cameras.main.shake(240, 0.008)
-        effectMs = Math.max(effectMs, 320)
+    const clearedIds = new Set(wave.cleared.map(c => c.piece.id))
+
+    // Match-size weighting (E6/E11 first-wave part): a big OPENING match reads as weight instantly —
+    // a brighter flash + extra spark + a small trauma kick, BEFORE any cascade (cascades get their
+    // own combo beat below). Reduced motion keeps the flash, drops the kick (both gated in punch()).
+    if (cascade === 1 && wave.cleared.length >= 5) {
+      const bigAt = wave.events[0]?.at ?? pops[0]?.at
+      if (bigAt) {
+        const bp = this.cellToXY(bigAt)
+        this.punch({ trauma: 0.3, flash: { x: bp.x, y: bp.y, size: CELL * 1.3 } })
+        if (!this.reducedMotion && quality.count(1) > 0) this.sparkEmitter.explode(quality.count(12), bp.x, bp.y)
       }
+    }
+
+    // Effect choreography — charge → graded hitstop → release (E6, signature moment #4). The clear
+    // pop of every cell is delayed by the same charge window (below) so the wind-up reads first.
+    const hasEvents = wave.events.length > 0
+    const chargeMs = hasEvents && !this.reducedMotion ? 70 : 0
+    let effectMs = 0
+    if (hasEvents) {
+      // The deepest event this wave owns the single freeze: reel 0 / bomb ~45 / jackpot·mega ~70ms.
+      let hitstopMs = 0
+      for (const e of wave.events) {
+        if (e.type === 'bomb') hitstopMs = Math.max(hitstopMs, 45)
+        else if (e.type === 'jackpot') hitstopMs = Math.max(hitstopMs, 70)
+      }
+      if (cascade >= 4) hitstopMs = Math.max(hitstopMs, 70)
+
+      for (const e of wave.events) this.chargeFlare(e.at) // wind-up on every detonating tile
+      this.time.delayedCall(chargeMs, () => {
+        this.hitstop(hitstopMs) // freeze, then release the explosions on the same frame
+        for (const e of wave.events) {
+          if (e.type === 'reel') this.detonateReel(e.at, e.horizontal, cascade)
+          else if (e.type === 'bomb') this.detonateBomb(e.at, e.radius, cascade)
+          else this.detonateJackpot()
+        }
+        // The board reacts: surviving neighbors of the primary blast flinch outward + settle.
+        if (wave.events[0]) this.secondaryMotion(wave.events[0].at, clearedIds)
+      })
+      effectMs = chargeMs + 340
+    } else if (pops.length >= 5) {
+      // A chunky normal clear (no special) still shoves its surviving neighbors outward.
+      const chunkAt = pops[0]?.at
+      if (chunkAt) this.secondaryMotion(chunkAt, clearedIds)
     }
 
     // Scoring + objectives (specials count as their symbol; jackpot pieces don't).
@@ -1384,7 +1502,8 @@ export class GameScene extends Phaser.Scene {
     this.addScore(wavePoints)
     if (cascade >= 2) {
       this.showCombo(cascade)
-      this.cameras.main.shake(100 + cascade * 30, 0.002 + 0.0012 * Math.min(cascade, 5))
+      // Cascade rumble routed through the single trauma authority (crisp + decayed, never muddy).
+      this.punch({ trauma: Math.min(0.5, 0.12 + cascade * 0.06) })
     }
 
     // Pop cleared sprites, staggered outward from the first effect's epicenter.
@@ -1399,7 +1518,8 @@ export class GameScene extends Phaser.Scene {
       const sprite = this.sprites.get(piece.id)
       if (!sprite) continue
       this.sprites.delete(piece.id)
-      const delay = epicenter ? (Math.abs(at.row - epicenter.row) + Math.abs(at.col - epicenter.col)) * 16 : 0
+      // Cleared cells pop AFTER the charge wind-up (chargeMs) so the detonation reads charge→release.
+      const delay = chargeMs + (epicenter ? (Math.abs(at.row - epicenter.row) + Math.abs(at.col - epicenter.col)) * 16 : 0)
       const pos = this.cellToXY(at)
       this.time.delayedCall(delay, () => {
         this.emitters[piece.symbol]?.explode(6, pos.x, pos.y)
@@ -1466,6 +1586,171 @@ export class GameScene extends Phaser.Scene {
     return this.reducedMotion ? Math.max(1, Math.ceil(n * 0.4)) : Math.round(n)
   }
 
+  // ---------------------------------------------------- impact & weight (E5/E6)
+
+  /**
+   * The single shake/flash authority (KEY CROSS-LENS CALL #1). Every screen kick and impact-frame
+   * flash routes through here so reduced-motion (gates trauma/freeze) and a future reduce-flashing
+   * toggle (gates the white flash) each live in ONE place.
+   */
+  private punch(opts: { trauma?: number; dirX?: number; dirY?: number; flash?: { x: number; y: number; size?: number } }): void {
+    if (opts.trauma) this.addTrauma(opts.trauma, opts.dirX ?? 0, opts.dirY ?? 0)
+    if (opts.flash && !this.reduceFlashing) this.impactFrame(opts.flash.x, opts.flash.y, opts.flash.size)
+  }
+
+  /** Feed the trauma accumulator (clamped) + latch a blast direction. No-op under reduced motion. */
+  private addTrauma(amount: number, dirX = 0, dirY = 0): void {
+    if (this.reducedMotion) return
+    this.trauma = Math.min(1, this.trauma + amount)
+    if (dirX !== 0 || dirY !== 0) {
+      const len = Math.hypot(dirX, dirY) || 1
+      this.traumaDirX = dirX / len
+      this.traumaDirY = dirY / len
+    }
+  }
+
+  /**
+   * Impact frame (E6): one cell-sized full-white silhouette (the `fireball` texture tinted white,
+   * ADD) flashing α1→0 over ~60ms. CAPPED at ONE concurrent — a stacked detonation shares the live
+   * one rather than spawning another (perf + photosensitivity red line). Kept even under reduced
+   * motion (the single allowed 1-frame flash); gated only by the reduce-flashing hook (via punch()).
+   */
+  private impactFrame(x: number, y: number, size = CELL): void {
+    if (this.impactFlash && this.impactFlash.active) return // share the one already flashing
+    const f = this.add
+      .image(x, y, 'fireball')
+      .setTint(0xffffff)
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setDepth(29)
+      .setAlpha(1)
+      .setDisplaySize(size, size)
+    this.impactFlash = f
+    this.tweens.add({
+      targets: f,
+      alpha: 0,
+      duration: 60,
+      ease: 'Quad.easeOut',
+      onComplete: () => {
+        if (this.impactFlash === f) this.impactFlash = undefined
+        f.destroy()
+      },
+    })
+  }
+
+  /**
+   * Graded hitstop (E6, call #2): briefly freeze tweens + timers right before a big blast expands, so
+   * the hit registers. reel 0 / bomb ~45 / jackpot·mega ~70ms. Restored on a WALL-CLOCK setTimeout so
+   * the restore itself isn't frozen; honours ?turbo via baseTimeScale. One freeze at a time — a hit
+   * arriving during an active freeze no-ops (the deepest owns it). Reduced motion → skip.
+   */
+  private hitstop(ms: number): void {
+    if (this.reducedMotion || ms <= 0) return
+    const now = performance.now()
+    if (now < this.hitstopUntil) return
+    this.hitstopUntil = now + ms
+    const restore = this.baseTimeScale
+    this.tweens.timeScale = 0.0001
+    this.time.timeScale = 0.0001
+    setTimeout(() => {
+      if (performance.now() >= this.hitstopUntil - 1) {
+        this.tweens.timeScale = restore
+        this.time.timeScale = restore
+      }
+    }, ms)
+  }
+
+  /**
+   * Charge→release wind-up (E6, signature moment #4): the detonating tile scale-punches DOWN (~0.9)
+   * and a gold glow flares for ~70ms, so the explosion feels earned (its clear-pop is delayed by the
+   * same window in playWave, so the two don't fight). No-op under reduced motion (instant release).
+   */
+  private chargeFlare(atCoord: Coord): void {
+    if (this.reducedMotion) return
+    const pos = this.cellToXY(atCoord)
+    const piece = this.board.get(atCoord)
+    const sprite = piece ? this.sprites.get(piece.id) : undefined
+    if (sprite && sprite.active) {
+      this.tweens.add({ targets: sprite, scaleX: PIECE_SCALE * 0.9, scaleY: PIECE_SCALE * 0.9, duration: 70, ease: 'Quad.easeIn' })
+    }
+    const flare = this.add
+      .image(pos.x, pos.y, 'bgglow')
+      .setTint(0xffe6a8)
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setDepth(24)
+      .setDisplaySize(CELL * 0.9, CELL * 0.9)
+      .setAlpha(0)
+    this.tweens.add({
+      targets: flare,
+      alpha: 0.85,
+      scaleX: flare.scaleX * 1.9,
+      scaleY: flare.scaleY * 1.9,
+      duration: 80,
+      ease: 'Quad.easeOut',
+      onComplete: () => flare.destroy(),
+    })
+  }
+
+  /**
+   * Fall/spawn squash-&-settle (E5): on landing, squash scaleY down (bulge X for volume) then
+   * Back-ease to rest over ~110ms, amplitude ∝ drop distance. Reduced motion → none.
+   */
+  private settleSquash(sprite: Phaser.GameObjects.Sprite, dropCells: number): void {
+    if (this.reducedMotion || !sprite.active) return
+    const amp = Phaser.Math.Clamp(dropCells / ROWS, 0.2, 1)
+    sprite.setScale(PIECE_SCALE * (1 + 0.1 * amp), PIECE_SCALE * (1 - 0.16 * amp))
+    this.tweens.add({ targets: sprite, scaleX: PIECE_SCALE, scaleY: PIECE_SCALE, duration: 110, ease: 'Back.easeOut' })
+  }
+
+  /**
+   * Secondary motion (E5): the ring of SURVIVING neighbors around a blast gets shoved ~4–8px outward
+   * (falloff by distance) then Back-settles home, so the board reads as physical. Cap ~10 pieces.
+   * Reduced motion / weakest governor tier → none.
+   */
+  private secondaryMotion(epicenter: Coord, clearedIds: Set<number>): void {
+    if (this.reducedMotion || quality.count(1) === 0) return
+    const ep = this.cellToXY(epicenter)
+    const CAP = 10
+    const RADIUS = 2.4 * CELL
+    let nudged = 0
+    for (let dr = -2; dr <= 2 && nudged < CAP; dr++) {
+      for (let dc = -2; dc <= 2 && nudged < CAP; dc++) {
+        if (dr === 0 && dc === 0) continue
+        const at = { row: epicenter.row + dr, col: epicenter.col + dc }
+        if (!this.board.inBounds(at)) continue
+        const piece = this.board.get(at)
+        if (!piece || clearedIds.has(piece.id)) continue
+        const sprite = this.sprites.get(piece.id)
+        if (!sprite || !sprite.active) continue
+        const pos = this.cellToXY(at)
+        const dx = pos.x - ep.x
+        const dy = pos.y - ep.y
+        const dist = Math.hypot(dx, dy) || 1
+        if (dist > RADIUS) continue
+        const push = 4 + 4 * (1 - dist / RADIUS)
+        this.tweens.add({
+          targets: sprite,
+          x: pos.x + (dx / dist) * push,
+          y: pos.y + (dy / dist) * push,
+          duration: 60,
+          ease: 'Quad.easeOut',
+          onComplete: () => {
+            if (sprite.active) this.tweens.add({ targets: sprite, x: pos.x, y: pos.y, duration: 220, ease: 'Back.easeOut' })
+          },
+        })
+        nudged++
+      }
+    }
+  }
+
+  /** Jackpot-chip strike (extracted so it composes with the charge→freeze→release orchestration). */
+  private detonateJackpot(): void {
+    sfx.jackpotStrike()
+    // The jackpot's signature is a full-screen cream flash (its own "impact frame") — gate it via the
+    // reduce-flashing hook — plus a heavy omnidirectional trauma kick.
+    if (!this.reduceFlashing) this.cameras.main.flash(280, 255, 214, 90)
+    this.punch({ trauma: 0.95 })
+  }
+
   /**
    * Wild-reel line clear as a MISSILE strike: a fireball head streaks out of the epicenter to each
    * end of the row/col trailing sparks, and the whole line ignites in a fire streak. Faster/thicker
@@ -1475,6 +1760,15 @@ export class GameScene extends Phaser.Scene {
     sfx.reelSweep()
     const at = this.cellToXY(atCoord)
     const boost = Math.min(cascade - 1, 4)
+
+    // DIRECTIONAL impact: a horizontal line-blast kicks the screen horizontally (force with a vector,
+    // not generic noise) + a crisp white impact frame along the blast axis.
+    this.punch({
+      trauma: 0.5 + boost * 0.05,
+      dirX: horizontal ? 1 : 0,
+      dirY: horizontal ? 0 : 1,
+      flash: { x: at.x, y: at.y, size: CELL * 1.2 },
+    })
 
     // The line ignites — a warm fire streak flashing across the whole row/col.
     const sweep = this.add
@@ -1547,8 +1841,11 @@ export class GameScene extends Phaser.Scene {
     const boost = Math.min(cascade - 1, 4)
     const power = radius + boost * 0.4
 
-    // Camera punch — bigger blasts / combos hit harder.
-    this.cameras.main.shake(150 + radius * 70 + boost * 25, 0.007 + radius * 0.0045 + boost * 0.001)
+    // Omnidirectional trauma punch (bigger blasts / combos hit harder) + a capped white impact frame.
+    this.punch({
+      trauma: Math.min(1, 0.45 + radius * 0.12 + boost * 0.04),
+      flash: { x: at.x, y: at.y, size: CELL * 1.3 },
+    })
 
     // White-hot flash core.
     const flash = this.add
@@ -1636,7 +1933,7 @@ export class GameScene extends Phaser.Scene {
           y: to.y,
           duration: FALL_BASE_MS + FALL_PER_CELL_MS * dist,
           ease: 'Back.easeOut',
-        })
+        }).then(() => this.settleSquash(sprite, dist)) // E5: squash-&-settle on landing
       )
     }
     for (const spawn of spawns) {
@@ -1648,7 +1945,7 @@ export class GameScene extends Phaser.Scene {
           y: to.y,
           duration: FALL_BASE_MS + FALL_PER_CELL_MS * spawn.dropCells,
           ease: 'Back.easeOut',
-        })
+        }).then(() => this.settleSquash(sprite, spawn.dropCells)) // E5: squash-&-settle on landing
       )
     }
     return Promise.all(tweens)
