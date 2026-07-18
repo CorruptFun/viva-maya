@@ -22,6 +22,8 @@ const STRIP_LEN = 14
  */
 export class DailyBonusScene extends Phaser.Scene {
   private spinning = false
+  /** §E4 guard — the Heartbloom (heart of light + Maya leitmotif) fires at most ONCE per claim. */
+  private heartbloomFired = false
 
   constructor() {
     super('daily')
@@ -44,6 +46,7 @@ export class DailyBonusScene extends Phaser.Scene {
   }
 
   create(): void {
+    this.heartbloomFired = false // §E4 — reset per scene entry (scene.start reuses the instance)
     // Warm cream fade-in (never black) — the receiving half of every startScene cross-fade.
     this.cameras.main.fadeIn(this.prefersReducedMotion() ? 90 : 180, 255, 253, 248)
     addCasinoBackdrop(this, 'home')
@@ -222,6 +225,9 @@ export class DailyBonusScene extends Phaser.Scene {
   }
 
   private celebrate(labels: string[], blurbs: string[]): void {
+    // §E4 — the daily prize claim is one of the three Heartbloom beats. Layered UNDER the existing
+    // fanfare/jackpot/hearts/sparks/confetti celebration; the Maya leitmotif rings only here + PERFECT/jackpot.
+    this.heartbloom(DESIGN_W / 2, 450) // the cabinet's center, where the reels just settled
     sfx.winFanfare()
     if (labels.includes('JACKPOT CHIP')) sfx.jackpotStrike()
     const hearts = this.add
@@ -292,6 +298,73 @@ export class DailyBonusScene extends Phaser.Scene {
     this.add
       .text(DESIGN_W / 2, 960, `come back tomorrow — ${todayKey()} claimed`, { fontFamily: FONT, fontSize: '18px', color: getTheme().inkFaint })
       .setOrigin(0.5)
+  }
+
+  /**
+   * The HEARTBLOOM (§E4, signature moment #3) — the same ownable hero beat as a PERFECT game win, fired
+   * on the daily prize claim. A giant translucent heart of light (`heartglow`, ADD, theme `bloom` tint)
+   * blooms from the cabinet center, BEATS TWICE (lub-DUB) on a cadence inspired by Home's ~620/340
+   * emblem heartbeat, and streams heart-particles up from its apex — under `sfx.mayaMotif()`, the 3-note
+   * leitmotif heard NOWHERE else. Reduced motion: a single STATIC heart of light (no double-beat, no
+   * stream) + the motif. One ADD sprite + a capped heart plume; self-guards to one fire per claim.
+   */
+  private heartbloom(cx: number, cy: number): void {
+    if (this.heartbloomFired) return
+    this.heartbloomFired = true
+    sfx.mayaMotif() // the leitmotif rings in BOTH motion modes — audio is never "motion"
+    const glow = this.add
+      .image(cx, cy, 'heartglow')
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setDepth(47) // above the cabinet/reels, beneath the CLAIM title (this scene has no higher layer)
+      .setTint(getTheme().bloom)
+      .setDisplaySize(520, 520)
+    const base = glow.scaleX
+
+    if (this.prefersReducedMotion()) {
+      // Static heart of light: a single soft appear + hold + fade. No double-beat, no strobing, no stream.
+      glow.setScale(base).setAlpha(0)
+      this.tweens.add({
+        targets: glow,
+        alpha: 0.4,
+        duration: 220,
+        ease: 'Quad.easeOut',
+        onComplete: () =>
+          this.tweens.add({ targets: glow, alpha: 0, delay: 300, duration: 340, onComplete: () => glow.destroy() }),
+      })
+      return
+    }
+
+    // Bloom open, then a lub-DUB doublet (two Back.easeOut swells), then relax + fade out.
+    glow.setScale(base * 0.4).setAlpha(0)
+    this.tweens.chain({
+      targets: glow,
+      tweens: [
+        { scale: base, alpha: 0.5, duration: 230, ease: 'Back.easeOut' }, // bloom open
+        { scale: base * 1.12, duration: 150, ease: 'Back.easeOut' }, // lub
+        { scale: base * 0.99, duration: 90, ease: 'Sine.easeInOut' }, // brief diastole
+        { scale: base * 1.2, alpha: 0.56, duration: 160, ease: 'Back.easeOut' }, // DUB (the bigger beat)
+        { scale: base * 1.06, alpha: 0, delay: 40, duration: 320, ease: 'Quad.easeIn' }, // relax + fade
+      ],
+      onComplete: () => glow.destroy(),
+    })
+
+    // Heart-particles STREAM up from the bloom's apex — a short capped plume (~12 live) timed to the beat.
+    const stream = this.add
+      .particles(cx, cy - 150, 'heart', {
+        speed: { min: 130, max: 300 },
+        angle: { min: 250, max: 290 }, // a narrow upward plume (270 = straight up)
+        scale: { start: 0.5, end: 0.12 },
+        alpha: { start: 0.95, end: 0 },
+        lifespan: { min: 600, max: 1000 },
+        gravityY: 360,
+        rotate: { min: -90, max: 90 },
+        quantity: 1,
+        frequency: 45, // ~12 emits over the 560ms window → capped live count
+        emitting: true,
+      })
+      .setDepth(47)
+    this.time.delayedCall(560, () => stream.active && stream.stop())
+    this.time.delayedCall(1700, () => stream.active && stream.destroy())
   }
 
   private prefersReducedMotion(): boolean {
