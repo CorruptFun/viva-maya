@@ -24,14 +24,26 @@ import { LEVEL_COUNT, levelSpec } from '../core/levels'
 import { devSetLives, formatCountdown, refreshLives, spendLife } from '../core/lives'
 import { maya, pendingOccasion, warmLoseLine, warmWinSubtitle } from '../core/maya'
 import { mulberry32 } from '../core/rng'
-import { addChips, loadSave, markFinaleSeen, markOccasionSeen, recordResult, recordScore, takePendingBoosts } from '../core/save'
+import { addChips, loadSave, markFinaleSeen, markOccasionSeen, persistSave, recordResult, recordScore, takePendingBoosts } from '../core/save'
 import { SYMBOLS, key } from '../core/types'
 import type { BoostType, ClearWave, Coord, FallMove, LevelSpec, Piece, Spawn, SymbolType } from '../core/types'
 import { addCasinoBackdrop } from '../view/background'
 import { quality } from '../view/quality'
 import { css, getTheme, hapticsOff, prefersReducedMotion, reduceFlashing as prefReduceFlashing } from '../view/theme'
 import { TEX_SIZE, ensurePieceTexture } from '../view/textures'
-import { FONT, GHOST_PILL, GOLD_PILL, ROSE_PILL, addChipPill, addLivesHud, addMuteChip, addPillButton, startScene } from '../view/ui'
+import {
+  FONT,
+  GHOST_PILL,
+  GOLD_PILL,
+  ROSE_PILL,
+  addChipPill,
+  addLivesHud,
+  addMuteChip,
+  addPillButton,
+  hcBoard,
+  openOnboarding,
+  startScene,
+} from '../view/ui'
 import type { ChipPill } from '../view/ui'
 
 /**
@@ -85,6 +97,12 @@ export class GameScene extends Phaser.Scene {
   private goalGlows = new Map<number, Phaser.GameObjects.Image>()
   /** Cached prefers-reduced-motion — tones down detonation particle counts + the armed pulse. */
   private reducedMotion = false
+  /** §E12 cached High-Contrast board flag — read once at create(); drives the darker floor + tints. */
+  private hc = false
+  /** §E12 thicker high-contrast selection ring (a stroked Graphics), built + used only when `hc`. */
+  private hcRing?: Phaser.GameObjects.Graphics
+  /** §E14 guard — true while the first-run onboarding card is up, so board taps are ignored under it. */
+  private introOpen = false
   private cabinetBulbs: Phaser.GameObjects.Image[] = []
   private cabinetGlow?: Phaser.GameObjects.Image
   private state: GameState = 'idle'
@@ -237,6 +255,9 @@ export class GameScene extends Phaser.Scene {
     this.armedGlows.clear()
     this.goalGlows.clear()
     this.reducedMotion = this.prefersReducedMotion()
+    this.hc = hcBoard() // §E12 — high-contrast board mode (darker floor + tints + thicker ring)
+    this.hcRing = undefined // drop any stale ref from a prior create (restart doesn't re-init fields)
+    this.introOpen = false
     this.reduceFlashing = prefReduceFlashing() // §E8 — wire the punch() flash gate to the real toggle
     this.selected = null
     this.selectedSprite = null
@@ -312,6 +333,25 @@ export class GameScene extends Phaser.Scene {
       this.scheduleAutoplay()
       this.armHint()
     }
+
+    this.maybeOnboarding()
+  }
+
+  /**
+   * §E14 first-run onboarding: show the gentle teach-card ONCE, and only for a TRULY-NEW player —
+   * `seenIntro` still false AND still on level 1 (`unlocked <= 1`). The second clause is the guard
+   * that keeps it from ever popping for an existing player mid-progress (Maya at Level 46 has
+   * `unlocked = 47`). Never in endless. Marked seen immediately (so it can't re-show even if the card
+   * is dismissed by tapping away), then rendered; `introOpen` gates board taps while it's up.
+   */
+  private maybeOnboarding(): void {
+    if (this.endless) return
+    const save = loadSave()
+    if (save.seenIntro || save.unlocked > 1) return
+    save.seenIntro = true
+    persistSave(save)
+    this.introOpen = true
+    openOnboarding(this, () => (this.introOpen = false))
   }
 
   /**
@@ -911,7 +951,10 @@ export class GameScene extends Phaser.Scene {
     const wy = y + wi
     const ws = size - wi * 2
     const wr = 20
-    g.fillStyle(0xe4d8bd, 1)
+    // §E12 High-Contrast: a much darker well floor so the (inset) light cushions read as a crisp
+    // grid — the dark floor peeking between tiles IS the 1px cell separator. Warm look untouched otherwise.
+    const wellFloor = this.hc ? 0x241f18 : 0xe4d8bd
+    g.fillStyle(wellFloor, 1)
     g.fillRoundedRect(wx, wy, ws, ws, wr)
     // Top inner-shadow (the recess): stacked dark bands from the top edge, rounded to the well.
     for (const [f, a] of [[0.18, 0.05], [0.12, 0.05], [0.06, 0.06]] as Array<[number, number]>) {
@@ -927,14 +970,17 @@ export class GameScene extends Phaser.Scene {
     // 64 raised glossy tiles — ONE white texture, per-cell tinted (checkerboard WHISPER for
     // row/col tracking, not a stripe). 64 same-texture Images batch to a single draw call; this
     // replaces the old flat one-graphics checkerboard at ≈ +1 persistent draw call.
-    const TILE_A = 0xf4e7c6
-    const TILE_B = 0xf7e3de
+    // §E12 High-Contrast: a second, higher-contrast checkerboard tint set (the warm default's two
+    // tints are near-identical whispers), plus a 3px inset so the dark floor shows as cell separators.
+    const TILE_A = this.hc ? 0xf7f1e3 : 0xf4e7c6
+    const TILE_B = this.hc ? 0xe1cfa6 : 0xf7e3de
+    const tileSize = this.hc ? CELL - 3 : CELL
     for (let r = 0; r < ROWS; r++) {
       for (let c = 0; c < COLS; c++) {
         const p = this.cellToXY({ row: r, col: c })
         this.add
           .image(p.x, p.y, 'tile')
-          .setDisplaySize(CELL, CELL)
+          .setDisplaySize(tileSize, tileSize)
           .setTint((r + c) % 2 === 0 ? TILE_A : TILE_B)
       }
     }
@@ -1178,6 +1224,20 @@ export class GameScene extends Phaser.Scene {
     this.ring.setDisplaySize(CELL * 1.02, CELL * 1.02)
     this.pieceLayer.add(this.ring)
 
+    // §E12 High-Contrast: a thicker two-tone selection ring (dark contrast stroke + bright gold core)
+    // drawn once around the origin and repositioned on select — reads on both the bright cushions and
+    // the dark separators, where the thin baked gold `ring` alone can wash out. Warm mode uses `ring`.
+    if (this.hc) {
+      const s = (CELL * 1.06) / 2
+      const hg = this.add.graphics().setVisible(false)
+      hg.lineStyle(9, 0x241f18, 1)
+      hg.strokeRoundedRect(-s, -s, s * 2, s * 2, 16)
+      hg.lineStyle(5, 0xffd75e, 1)
+      hg.strokeRoundedRect(-s, -s, s * 2, s * 2, 16)
+      this.pieceLayer.add(hg)
+      this.hcRing = hg
+    }
+
     // Board deal-in (E5, signature moment #2): rain the 64 tiles in column-staggered from the top
     // edge — the layer is grid-masked, so pieces starting above BOARD_Y clip to "fall from above" —
     // with a Back landing overshoot + settle squash. Reduced motion → instant fill (today's behavior).
@@ -1376,6 +1436,7 @@ export class GameScene extends Phaser.Scene {
   // ----------------------------------------------------------------- input
 
   private onDown(p: Phaser.Input.Pointer): void {
+    if (this.introOpen) return // §E14 — ignore board taps while the first-run card is up
     if (this.state !== 'idle') return
     const cell = this.xyToCell(p.x, p.y)
     if (!cell) {
@@ -1428,7 +1489,8 @@ export class GameScene extends Phaser.Scene {
     this.clearSelection()
     this.selected = at
     const pos = this.cellToXY(at)
-    this.ring.setPosition(pos.x, pos.y).setVisible(true)
+    const ring = this.hc && this.hcRing ? this.hcRing : this.ring
+    ring.setPosition(pos.x, pos.y).setVisible(true)
     this.selectedSprite = this.sprites.get(this.board.get(at)!.id) ?? null
     // Selected-piece pulse — gated (§E8): reduced motion relies on the static ring alone for the tell.
     if (this.selectedSprite && !this.reducedMotion) {
@@ -1450,6 +1512,7 @@ export class GameScene extends Phaser.Scene {
     this.selectedSprite = null
     this.selected = null
     this.ring.setVisible(false)
+    this.hcRing?.setVisible(false)
   }
 
   // ------------------------------------------------------------ game flow
