@@ -12,13 +12,68 @@ import {
   css,
   getTheme,
   getThemeId,
+  hapticsOff,
   prefersReducedMotion,
+  reduceFlashing,
+  setHapticsOff,
+  setReduceFlashing,
+  setReduceMotion,
   setTheme,
   themeUnlocked,
 } from './theme'
 import type { Theme, ThemeId } from './theme'
 
 export const FONT = '"Arial Black", "Helvetica Neue", Arial, sans-serif'
+
+// ─────────────────────────────────────────────────────────────────────────────
+// High-Contrast board flag (§E12). Kept OUT of theme.ts (owned by that module's a11y block) but
+// following the same shape-tolerant one-key pattern: a self-contained localStorage flag the
+// settings panel flips and GameScene reads at create(). Default OFF → the board's warm look is
+// untouched until Maya opts in. No save-schema coupling (mirrors theme/sfx storage).
+// ─────────────────────────────────────────────────────────────────────────────
+
+const HC_BOARD_KEY = 'viva-maya:hcBoard'
+
+function readHcBoard(): boolean {
+  try {
+    return localStorage.getItem(HC_BOARD_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+let _hcBoard = readHcBoard()
+
+/** In-app High-Contrast board switch (§E12) — GameScene reads this at create(). Default OFF. */
+export function hcBoard(): boolean {
+  return _hcBoard
+}
+
+/** Set + persist the High-Contrast board switch (the settings panel's toggle). */
+export function setHcBoard(v: boolean): void {
+  _hcBoard = v
+  try {
+    localStorage.setItem(HC_BOARD_KEY, v ? '1' : '0')
+  } catch {
+    // storage blocked (private mode / no DOM) — the choice just won't persist
+  }
+}
+
+/**
+ * Raw in-app Reduce-Motion pref for the settings TOGGLE display (§E8) — read straight from the a11y
+ * key so the switch reflects exactly what Maya set, independent of the OS query. Writes still go
+ * through theme.ts's `setReduceMotion` (single source of truth); the effective motion state
+ * (`prefersReducedMotion`) still OR's the OS setting. Shape-tolerant: any bad/absent value → false.
+ */
+function rawReduceMotionPref(): boolean {
+  try {
+    const raw = localStorage.getItem('viva-maya:a11y')
+    if (raw === null) return false
+    return (JSON.parse(raw) as { reduceMotion?: unknown }).reduceMotion === true
+  } catch {
+    return false
+  }
+}
 
 /**
  * Warm cream cross-fade between scenes (§3d). Locks input during the fade (which doubles as an
@@ -1141,4 +1196,254 @@ export function openThemePanel(scene: Phaser.Scene, openingThemeId: ThemeId = ge
   }
 
   layer.add(addPillButton(scene, W / 2, pyTop + ph - 66, 240, 68, 'DONE', GOLD_PILL, close))
+}
+
+/** Round "⚙" settings chip styled like GHOST_PILL — opens the accessibility settings panel. */
+export function addSettingsChip(scene: Phaser.Scene, x: number, y: number, size = 52): Phaser.GameObjects.Container {
+  const { container } = addRoundChip(
+    scene,
+    x,
+    y,
+    size,
+    '⚙',
+    { fontFamily: 'sans-serif', fontSize: `${Math.round(size * 0.52)}px`, color: GHOST_PILL.textColor },
+    () => {
+      sfx.uiTap()
+      openSettingsPanel(scene)
+    }
+  )
+  return container
+}
+
+interface ToggleConfig {
+  label: string
+  sub: string
+  /** Read the CURRENT displayed state (ON = true). */
+  get: () => boolean
+  /** Persist a new state via the matching authority (theme.ts a11y setters / setHcBoard). */
+  set: (v: boolean) => void
+}
+
+/**
+ * One settings toggle row: a soft cream card with a label + sub-descriptor on the left and a pill
+ * slider on the right (gold + knob-right + "ON" when enabled, grey + knob-left + "OFF" when off). A
+ * transparent hit-zone over the whole row flips it — persisting via `cfg.set` and re-skinning the
+ * slider in place (no panel rebuild). The knob glide is reduced-motion gated (static snap otherwise).
+ */
+function buildToggleRow(
+  scene: Phaser.Scene,
+  layer: Phaser.GameObjects.Container,
+  cx: number,
+  cy: number,
+  w: number,
+  h: number,
+  cfg: ToggleConfig,
+  reduced: boolean
+): void {
+  const T = getTheme()
+
+  const bg = scene.add.graphics()
+  bg.fillStyle(T.cardFillAlt, 1)
+  bg.fillRoundedRect(cx - w / 2, cy - h / 2, w, h, 22)
+  bg.lineStyle(2, T.border, 1)
+  bg.strokeRoundedRect(cx - w / 2, cy - h / 2, w, h, 22)
+  layer.add(bg)
+
+  const lx = cx - w / 2 + 30
+  layer.add(
+    scene.add
+      .text(lx, cy - 13, cfg.label, { fontFamily: FONT, fontSize: '27px', fontStyle: '900', color: T.ink })
+      .setOrigin(0, 0.5)
+  )
+  layer.add(
+    scene.add.text(lx, cy + 19, cfg.sub, { fontFamily: 'Arial, sans-serif', fontSize: '18px', color: T.inkMuted }).setOrigin(0, 0.5)
+  )
+
+  // Pill slider on the right edge of the row.
+  const tw = 92
+  const th = 46
+  const tx = cx + w / 2 - 30 - tw / 2 // track centre
+  const knobR = 18
+  const knobOnX = tx + tw / 2 - knobR - 5
+  const knobOffX = tx - tw / 2 + knobR + 5
+
+  const track = scene.add.graphics()
+  const stateText = scene.add.text(tx, cy, '', { fontFamily: FONT, fontSize: '16px', fontStyle: '900' }).setOrigin(0.5)
+  const knob = scene.add.circle(knobOffX, cy, knobR, 0xffffff).setStrokeStyle(2, T.border, 1)
+  layer.add([track, stateText, knob])
+
+  let state = cfg.get()
+  const paint = (animate: boolean): void => {
+    track.clear()
+    track.fillStyle(state ? GOLD_PILL.fill : 0xd8cfba, 1)
+    track.fillRoundedRect(tx - tw / 2, cy - th / 2, tw, th, th / 2)
+    track.lineStyle(2, state ? getTheme().goldDeep : T.border, 1)
+    track.strokeRoundedRect(tx - tw / 2, cy - th / 2, tw, th, th / 2)
+    stateText.setText(state ? 'ON' : 'OFF')
+    stateText.setColor(state ? '#4a3305' : css(0x8a8577))
+    stateText.setX(state ? tx - 15 : tx + 16)
+    const kx = state ? knobOnX : knobOffX
+    if (animate && !reduced) {
+      scene.tweens.add({ targets: knob, x: kx, duration: 130, ease: 'Quad.easeOut' })
+    } else {
+      knob.setX(kx)
+    }
+  }
+  paint(false)
+
+  const zone = scene.add.rectangle(cx, cy, w, h, 0xffffff, 0.001).setInteractive({ useHandCursor: true })
+  zone.on('pointerup', () => {
+    sfx.uiTap()
+    state = !state
+    cfg.set(state)
+    paint(true)
+  })
+  layer.add(zone)
+}
+
+/**
+ * Settings / Accessibility overlay (§E8): a scrim + cream card titled "SETTINGS" with four labelled
+ * ON/OFF toggle rows — Reduce Motion, Reduce Flashing, Haptics, High-Contrast Board. Each row reads
+ * its live pref and persists on tap via the shared authority. Restart-affecting toggles (Reduce
+ * Motion + High-Contrast Board change the CURRENT paint) are snapshotted at open; on CLOSE, if either
+ * changed, the calling scene restarts so its art repaints — mirroring the theme picker's pattern.
+ * Reduce Flashing / Haptics are read live at effect time, so they need no restart.
+ */
+export function openSettingsPanel(scene: Phaser.Scene): void {
+  const W = 720
+  const H = 1280
+  const reduced = prefersReducedMotion()
+  const layer = scene.add.container(0, 0).setDepth(60)
+
+  const px = 40
+  const pw = W - 80
+  const ph = 700
+  const pyTop = (H - ph) / 2
+
+  // Snapshot the restart-affecting prefs at open (raw in-app reduce-motion + HC board).
+  const startedRM = rawReduceMotionPref()
+  const startedHC = hcBoard()
+
+  const scrim = scene.add.rectangle(W / 2, H / 2, W, H, 0x2a2417, 0.6).setInteractive()
+  const close = (): void => {
+    const changed = rawReduceMotionPref() !== startedRM || hcBoard() !== startedHC
+    layer.destroy()
+    if (changed) scene.scene.restart()
+  }
+  scrim.on('pointerup', close)
+
+  const g = scene.add.graphics()
+  dropShadow(g, px, pyTop, pw, ph, 30, getTheme().shadow, { alpha: 0.12, dist: 9 })
+  g.fillStyle(0xfffdf8, 1)
+  g.fillRoundedRect(px, pyTop, pw, ph, 30)
+  g.lineStyle(4, 0xf2c14e, 1)
+  g.strokeRoundedRect(px, pyTop, pw, ph, 30)
+  accentRimTop(g, px, pyTop, pw, 30, { alpha: 0.9 })
+
+  // Blocker so taps on the card don't fall through to the scrim (which closes).
+  const block = scene.add.rectangle(W / 2, pyTop + ph / 2, pw, ph, 0xffffff, 0.001).setInteractive()
+
+  const title = scene.add
+    .text(W / 2, pyTop + 56, 'SETTINGS', { fontFamily: FONT, fontSize: '46px', fontStyle: '900', color: '#c9930a' })
+    .setOrigin(0.5)
+    .setLetterSpacing(2)
+    .setShadow(0, 2, 'rgba(0,0,0,0.12)', 4, false, true)
+  const subtitle = scene.add
+    .text(W / 2, pyTop + 104, 'Make it comfortable to play.', {
+      fontFamily: 'Arial, sans-serif',
+      fontSize: '22px',
+      color: '#6a6459',
+    })
+    .setOrigin(0.5)
+  layer.add([scrim, g, block, title, subtitle])
+
+  const rows: ToggleConfig[] = [
+    { label: 'Reduce Motion', sub: 'Calm the animations', get: rawReduceMotionPref, set: setReduceMotion },
+    { label: 'Reduce Flashing', sub: 'Soften flashes & impacts', get: reduceFlashing, set: setReduceFlashing },
+    { label: 'Haptics', sub: 'Vibrate on big moments', get: () => !hapticsOff(), set: v => setHapticsOff(!v) },
+    { label: 'High-Contrast Board', sub: 'Bolder tiles & outlines', get: hcBoard, set: setHcBoard },
+  ]
+  const rowW = pw - 80
+  const rowH = 90
+  let y = pyTop + 176
+  for (const cfg of rows) {
+    buildToggleRow(scene, layer, W / 2, y, rowW, rowH, cfg, reduced)
+    y += 104
+  }
+
+  layer.add(addPillButton(scene, W / 2, pyTop + ph - 62, 240, 68, 'DONE', GOLD_PILL, close))
+}
+
+/**
+ * First-run onboarding (§E14): a gentle, dismissible teach-card ("Swipe two neighbours to line up 3
+ * or more") shown ONCE for a truly-new player — the caller owns the `seenIntro`/`unlocked` gate and
+ * marks it seen. A soft cream+gold card (help-panel recipe) with a three-in-a-row example, a GOT IT
+ * button, and tap-outside-to-close. Pops in with a Back overshoot unless reduced motion (then static).
+ * `onClose` lets the caller (GameScene) drop its input guard when the card is dismissed.
+ */
+export function openOnboarding(scene: Phaser.Scene, onClose?: () => void): void {
+  const W = 720
+  const H = 1280
+  const reduced = prefersReducedMotion()
+  const layer = scene.add.container(0, 0).setDepth(65)
+
+  const cx = W / 2
+  const cy = 560
+  const cardW = 600
+  const cardH = 520
+
+  const scrim = scene.add.rectangle(W / 2, H / 2, W, H, 0x2a2417, 0.6).setInteractive()
+  const close = (): void => {
+    layer.destroy()
+    onClose?.()
+  }
+  scrim.on('pointerup', close)
+
+  const g = scene.add.graphics()
+  dropShadow(g, cx - cardW / 2, cy - cardH / 2, cardW, cardH, 30, getTheme().shadow, { alpha: 0.14, dist: 9 })
+  g.fillStyle(0xfffdf8, 1)
+  g.fillRoundedRect(cx - cardW / 2, cy - cardH / 2, cardW, cardH, 30)
+  g.lineStyle(4, 0xf2c14e, 1)
+  g.strokeRoundedRect(cx - cardW / 2, cy - cardH / 2, cardW, cardH, 30)
+  accentRimTop(g, cx - cardW / 2, cy - cardH / 2, cardW, 30, { alpha: 0.9 })
+
+  // Blocker so taps on the card don't fall through to the scrim (which closes).
+  const block = scene.add.rectangle(cx, cy, cardW, cardH, 0xffffff, 0.001).setInteractive()
+
+  const title = scene.add
+    .text(cx, cy - cardH / 2 + 66, 'HOW TO PLAY', { fontFamily: FONT, fontSize: '44px', fontStyle: '900', color: '#c9930a' })
+    .setOrigin(0.5)
+    .setLetterSpacing(2)
+    .setShadow(0, 2, 'rgba(0,0,0,0.12)', 4, false, true)
+
+  // A three-in-a-row example so the goal reads at a glance (uses the baked icon textures).
+  const iconSize = 78
+  const gap = 22
+  const row = ['diamond', 'diamond', 'diamond']
+  const rowW = row.length * iconSize + (row.length - 1) * gap
+  const startX = cx - rowW / 2 + iconSize / 2
+  const iconY = cy - 44
+  const icons: Phaser.GameObjects.Image[] = []
+  row.forEach((k, i) => {
+    icons.push(scene.add.image(startX + i * (iconSize + gap), iconY, k).setDisplaySize(iconSize, iconSize))
+  })
+
+  const body = scene.add
+    .text(cx, cy + 64, 'Swipe two neighbours to line up 3 or more of the same symbol. Clear the goals up top before your moves run out.', {
+      fontFamily: 'Arial, sans-serif',
+      fontSize: '23px',
+      color: '#6a6459',
+      align: 'center',
+      wordWrap: { width: cardW - 96 },
+      lineSpacing: 6,
+    })
+    .setOrigin(0.5)
+
+  layer.add([scrim, g, block, title, ...icons, body])
+  layer.add(addPillButton(scene, cx, cy + cardH / 2 - 58, 260, 68, 'GOT IT', GOLD_PILL, close))
+
+  if (!reduced) {
+    layer.setScale(0.9).setAlpha(0)
+    scene.tweens.add({ targets: layer, scale: 1, alpha: 1, duration: 300, ease: 'Back.easeOut' })
+  }
 }

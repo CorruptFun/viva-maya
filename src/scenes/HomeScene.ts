@@ -20,10 +20,12 @@ import {
   addLivesHud,
   addMarquee,
   addPillButton,
+  addSettingsChip,
   addSoundChip,
   addStreakBadge,
   addThemeChip,
   openHelpPanel,
+  openSettingsPanel,
   openSoundPanel,
   openThemePanel,
   startScene,
@@ -53,8 +55,12 @@ export class HomeScene extends Phaser.Scene {
     addCasinoBackdrop(this, 'home')
 
     // How-to-play / FAQ, tucked in the top-left corner.
-    addHelpChip(this, 60, 44)
+    const helpChip = addHelpChip(this, 60, 44)
     if (import.meta.env.DEV && new URLSearchParams(location.search).has('help')) openHelpPanel(this)
+
+    // Settings / accessibility — paired with help on the left (utility cluster).
+    addSettingsChip(this, 132, 44)
+    if (import.meta.env.DEV && new URLSearchParams(location.search).has('settings')) openSettingsPanel(this)
 
     // Move-sound picker, mirrored in the top-right corner.
     addSoundChip(this, 676, 44)
@@ -63,6 +69,21 @@ export class HomeScene extends Phaser.Scene {
     // Theme picker — paired with the sound chip (both are look-and-feel pickers).
     addThemeChip(this, 604, 44)
     if (import.meta.env.DEV && new URLSearchParams(location.search).has('theme')) openThemePanel(this)
+
+    // §E14 first-run advertisement: pulse the ? help chip ONCE for a truly-new player (seenIntro
+    // still false AND on level 1) so a first-timer notices where help lives. Reduced motion → no
+    // pulse (the onboarding card itself carries the teach). Never fires for Maya's Level-46 save.
+    if (!save.seenIntro && save.unlocked <= 1 && !reduced) {
+      this.tweens.add({
+        targets: helpChip,
+        scale: 1.18,
+        duration: 420,
+        yoyo: true,
+        repeat: 3,
+        ease: 'Sine.easeInOut',
+        delay: 320,
+      })
+    }
 
     // Persistent chip balance (earned reward token) — top-center, between the ? and ♪ corner
     // chips and above the lives pool. A read-out only; chips are never spent in Phase 1.
