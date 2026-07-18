@@ -24,6 +24,23 @@ import type { SaveData } from '../core/save'
 
 export type ThemeId = 'golden' | 'roseMidnight' | 'neonVegas' | 'mayaHeart'
 
+/**
+ * Per-theme audio palette (§E3-A3) — makes each theme a *room you can hear*. Read by
+ * `audio/sfx.ts` when it (re)builds the ambient bed and tunes the shared reverb bus, so
+ * P8's `scene.restart()` rebuilds the bed in the new palette for free. Purely tonal:
+ * changing these never changes loudness.
+ */
+export interface AudioPalette {
+  /** Root frequency (Hz) of the ambient bed + the C-pentatonic key-lock scale (§A10). Low = warmer. */
+  bedRoot: number
+  /** Oscillator bias for the bed pad + tonal voices — sine=warm, triangle=soft, sawtooth=electric. */
+  waveBias: OscillatorType
+  /** Bed low-pass cutoff (Hz). Lower = darker/warmer, higher = brighter/airier. */
+  filterWarmth: number
+  /** Shared reverb wet character 0..1 — return level + tail length (higher = longer, wetter lounge). */
+  reverbMix: number
+}
+
 /** ~50 flat tokens (§2.2). Graphics colours are numbers; text colours are CSS strings. */
 export interface Theme {
   id: ThemeId
@@ -90,6 +107,9 @@ export interface Theme {
   // --- Text on backdrop (CSS strings) — flip light on the dark themes ---
   onBackdropInk: string
   onBackdropMuted: string
+
+  // --- Audio palette (§E3-A3) — the theme's sonic room; read by audio/sfx.ts ---
+  audio: AudioPalette
 
   // --- Page chrome (CSS string) — body bg + <meta theme-color> + game backgroundColor ---
   pageBg: string
@@ -174,6 +194,9 @@ const golden: Theme = {
   onBackdropInk: '#2a2732',
   onBackdropMuted: '#9a927e',
 
+  // Audio — warm golden-hour lounge: low sine bed, gentle room.
+  audio: { bedRoot: 65.41 /* C2 */, waveBias: 'sine', filterWarmth: 900, reverbMix: 0.18 },
+
   // Page chrome
   pageBg: '#f6f3ec',
 }
@@ -201,6 +224,8 @@ const mayaHeart: Theme = {
   accentAlt: 0xf0a3ad,
   onBackdropInk: '#6a3a45',
   onBackdropMuted: '#a67e86',
+  // Softer, a touch higher, more reverb — a tender valentine room.
+  audio: { bedRoot: 73.42 /* D2 */, waveBias: 'sine', filterWarmth: 1150, reverbMix: 0.28 },
   pageBg: '#fdf1f0',
 }
 
@@ -229,6 +254,8 @@ const roseMidnight: Theme = {
   accentAlt: 0xf2b234,
   onBackdropInk: '#f3e8f0',
   onBackdropMuted: '#b9a6c4',
+  // Darker, lower, longer tail — after-hours velvet.
+  audio: { bedRoot: 55.0 /* A1 */, waveBias: 'triangle', filterWarmth: 640, reverbMix: 0.34 },
   pageBg: '#1a1526',
 }
 
@@ -257,6 +284,8 @@ const neonVegas: Theme = {
   accentAlt: 0x35d0e0,
   onBackdropInk: '#eaf6ff',
   onBackdropMuted: '#8fa8c8',
+  // Saw bias + brighter, cyan shimmer — the strip at night, electric.
+  audio: { bedRoot: 61.74 /* B1 */, waveBias: 'sawtooth', filterWarmth: 1450, reverbMix: 0.24 },
   pageBg: '#0e1730',
 }
 

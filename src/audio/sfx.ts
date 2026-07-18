@@ -7,8 +7,17 @@
  * unavailable the game simply runs silent, never throwing.
  */
 
+import { getTheme } from '../view/theme'
+
 const MUTE_KEY = 'viva-maya:muted'
 const SWAP_KEY = 'viva-maya:swapSound'
+const AMBIENCE_KEY = 'viva-maya:ambience'
+
+/** Subtle level every dry voice bleeds into the shared reverb bus (§E3-A1) — a light send, not a wash. */
+const REVERB_SEND = 0.12
+
+/** Major-pentatonic semitone classes — the key-lock scale (§E3-A10). */
+const PENTATONIC = [0, 2, 4, 7, 9]
 
 /** Selectable "move a piece" sound. 'silk'/'chime'/'aurora' are the smooth/mystical set. */
 export type SwapSound = 'silk' | 'chime' | 'aurora' | 'classic'
@@ -54,6 +63,23 @@ function writeSwap(s: SwapSound): void {
   }
 }
 
+/** Ambient bed opt-in flag — persisted exactly like mute (§E3-A2). Default OFF: a gift never surprises with a drone. */
+function readAmbience(): boolean {
+  try {
+    return localStorage.getItem(AMBIENCE_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+function writeAmbience(on: boolean): void {
+  try {
+    localStorage.setItem(AMBIENCE_KEY, on ? '1' : '0')
+  } catch {
+    // storage blocked — ambience just won't persist
+  }
+}
+
 interface ToneOpts {
   type: OscillatorType
   freq: number
@@ -68,13 +94,33 @@ interface ToneOpts {
 class Sfx {
   private ctx: AudioContext | null = null
   private master: GainNode | null = null
+  /** Every one-shot lands here (dry). Fans out to master + a subtle shared reverb send (§A1). */
+  private dryBus: GainNode | null = null
   private noiseBuffer: AudioBuffer | null = null
   private started = false
   private _muted = false
   private _swapSound: SwapSound = DEFAULT_SWAP
 
+  // --- Shared reverb bus (§E3-A1) ---
+  private reverbWet: GainNode | null = null
+  private reverbFb: GainNode[] = []
+  private reverbDamp: BiquadFilterNode[] = []
+
+  // --- Ambient bed (§E3-A2) ---
+  private _ambience = false
+  private bedRunning = false
+  private bedNodes: AudioScheduledSourceNode[] = []
+  private bedMaster: GainNode | null = null // overall bed level (LFO rides on top)
+  private bedDuck: GainNode | null = null // 1 → dips under wins (§A4) → 1
+  private bedMute: GainNode | null = null // 1 → 0 on tab-blur (§A2 suspend)
+
   get muted(): boolean {
     return this._muted
+  }
+
+  /** Whether the opt-in ambient bed is enabled (default OFF). */
+  get ambience(): boolean {
+    return this._ambience
   }
 
   get swapSound(): SwapSound {
@@ -98,6 +144,7 @@ class Sfx {
     this.started = true
     this._muted = readMuted()
     this._swapSound = readSwap()
+    this._ambience = readAmbience() // flag only — the bed never auto-starts (§A2 default OFF)
     const unlock = () => {
       const ctx = this.ensureContext()
       if (ctx && ctx.state === 'suspended') void ctx.resume()
@@ -108,12 +155,37 @@ class Sfx {
     } catch {
       // no DOM (tests / SSR) — audio stays disabled, game runs fine
     }
+    // Tab-blur → silence the ambient bed (§A2). The game loop sleeps in main.ts, but the
+    // AudioContext runs on its own thread and would keep droning; gain-to-zero suspends it.
+    try {
+      document.addEventListener('visibilitychange', () => {
+        if (document.hidden) this.suspendBed()
+        else this.resumeBed()
+      })
+    } catch {
+      // no DOM — nothing to suspend
+    }
   }
 
   toggleMuted(): boolean {
     this._muted = !this._muted
     writeMuted(this._muted)
+    // The bed is mute-gated: muting stops it; unmuting restarts it only if ambience is on.
+    if (this._muted) this.stopBed()
+    else if (this._ambience) this.startBed()
     return this._muted
+  }
+
+  /**
+   * Toggle the opt-in ambient bed (§E3-A2) and persist it, mirroring mute. Turning it ON starts
+   * the bed (it's a menu control, so this fires in a menu); OFF stops it. Returns the new state.
+   */
+  toggleAmbience(): boolean {
+    this._ambience = !this._ambience
+    writeAmbience(this._ambience)
+    if (this._ambience) this.startBed()
+    else this.stopBed()
+    return this._ambience
   }
 
   // ------------------------------------------------------------ audio graph
@@ -134,11 +206,60 @@ class Sfx {
       comp.connect(ctx.destination)
       this.ctx = ctx
       this.master = master
+      // Dry bus: every one-shot lands here, then fans out to master (dry) + reverb (subtle tail).
+      const dryBus = ctx.createGain()
+      dryBus.gain.value = 1
+      dryBus.connect(master)
+      this.dryBus = dryBus
+      this.buildReverb(ctx, master, dryBus)
     } catch {
       this.ctx = null
       this.master = null
+      this.dryBus = null
     }
     return this.ctx
+  }
+
+  /**
+   * Shared reverb/space bus (§E3-A1) — a small FDN of 4 damped feedback delay lines. The dry bus
+   * bleeds a SUBTLE tail into it so every disparate one-shot sits in one lounge (the sonic vignette).
+   * No outer loop: master never feeds back here, and each line's feedback stays < 1 → always stable.
+   */
+  private buildReverb(ctx: AudioContext, master: GainNode, dryBus: GainNode): void {
+    const send = ctx.createGain()
+    send.gain.value = REVERB_SEND
+    dryBus.connect(send) // one shared, light send for the whole mix
+    const wet = ctx.createGain()
+    wet.connect(master)
+    const times = [0.0297, 0.0371, 0.0411, 0.0437] // mutually-prime-ish delays
+    this.reverbFb = []
+    this.reverbDamp = []
+    for (const dt of times) {
+      const d = ctx.createDelay(0.5)
+      d.delayTime.value = dt
+      const damp = ctx.createBiquadFilter()
+      damp.type = 'lowpass'
+      const fb = ctx.createGain()
+      send.connect(d)
+      d.connect(damp)
+      damp.connect(fb)
+      fb.connect(d) // feedback loop (gain < 1 → stable), damped each pass
+      d.connect(wet) // tap to output
+      this.reverbFb.push(fb)
+      this.reverbDamp.push(damp)
+    }
+    this.reverbWet = wet
+    this.applyReverbTheme() // set wet/feedback/damp from the active theme's palette
+  }
+
+  /** Tune the reverb's wet level + tail length + brightness from the active theme (§A3). Never louder — tonal only. */
+  private applyReverbTheme(): void {
+    const pal = getTheme().audio
+    if (this.reverbWet) this.reverbWet.gain.value = pal.reverbMix
+    const fb = Math.min(0.78, 0.6 + pal.reverbMix * 0.4) // higher mix → longer tail
+    for (const g of this.reverbFb) g.gain.value = fb
+    const damp = Math.max(1500, Math.min(6000, 1800 + pal.filterWarmth * 1.5)) // brighter/darker tail
+    for (const f of this.reverbDamp) f.frequency.value = damp
   }
 
   /** Run a voice builder against a live context. Never throws. `force` plays through mute
@@ -146,12 +267,55 @@ class Sfx {
   private voice(build: (ctx: AudioContext, t: number, out: AudioNode) => void, force = false): void {
     if (this._muted && !force) return
     const ctx = this.ensureContext()
-    if (!ctx || !this.master) return
+    if (!ctx || !this.dryBus) return
     if (ctx.state === 'suspended') void ctx.resume()
     try {
-      build(ctx, ctx.currentTime, this.master)
+      // Voices land on the dry bus (→ master + a subtle shared reverb tail), not master directly.
+      build(ctx, ctx.currentTime, this.dryBus)
     } catch {
       // an effect must never break the game loop
+    }
+  }
+
+  // ------------------------------------------------------------- key-lock (§A10)
+
+  /**
+   * Snap a frequency to the nearest note of the theme's C-pentatonic scale (rooted on `bedRoot`),
+   * so busy cascades arpeggiate consonantly. Purely tonal — the nudge is < ~1.5 semitones and never
+   * touches gain, so nothing gets louder. Safe on any input (bad values pass through untouched).
+   */
+  private snap(freq: number): number {
+    const root = getTheme().audio.bedRoot
+    if (!(freq > 0) || !(root > 0)) return freq
+    const n = 12 * Math.log2(freq / root) // semitones above the root
+    const oct = Math.floor(n / 12)
+    const within = n - oct * 12
+    let best = 0
+    let bestErr = Infinity
+    for (const wrap of [-12, 0, 12]) {
+      for (const pc of PENTATONIC) {
+        const err = Math.abs(within - (pc + wrap))
+        if (err < bestErr) {
+          bestErr = err
+          best = pc + wrap
+        }
+      }
+    }
+    return root * Math.pow(2, (oct * 12 + best) / 12)
+  }
+
+  // -------------------------------------------------------------- stereo pan (§A8)
+
+  /** Wrap `out` in a StereoPannerNode when `pan` ≠ 0 (equal-power, so centre = no loudness change). */
+  private panOut(ctx: AudioContext, out: AudioNode, pan: number): AudioNode {
+    if (!pan || typeof ctx.createStereoPanner !== 'function') return out
+    try {
+      const p = ctx.createStereoPanner()
+      p.pan.value = Math.max(-1, Math.min(1, pan))
+      p.connect(out)
+      return p
+    } catch {
+      return out
     }
   }
 
@@ -360,10 +524,11 @@ class Sfx {
    * Signature clear blip — a bright coin-like "ding" that rises one semitone per
    * cascade step (rate = 2^((cascade-1)/12)).
    */
-  pop(cascade: number): void {
-    this.voice((ctx, t, out) => {
+  pop(cascade: number, pan = 0): void {
+    this.voice((ctx, t, out0) => {
+      const out = this.panOut(ctx, out0, pan) // pan by board column (§A8); centre by default
       const rate = Math.pow(2, (Math.max(1, cascade) - 1) / 12)
-      const base = 880 * rate
+      const base = this.snap(880 * rate) // key-lock: cascades arpeggiate on the theme scale (§A10)
       // quick upward chirp with fast decay = coin flip
       this.tone(ctx, out, t, { type: 'triangle', freq: base, endFreq: base * 1.5, peak: 0.34, dur: 0.18 })
       // octave-up sine sparkle = casino "ding"
@@ -372,8 +537,9 @@ class Sfx {
   }
 
   /** Rising zipper/ratchet: a rapid tick train with an upward pitch ramp. */
-  reelSweep(): void {
-    this.voice((ctx, t, out) => {
+  reelSweep(pan = 0): void {
+    this.voice((ctx, t, out0) => {
+      const out = this.panOut(ctx, out0, pan) // pan by board column (§A8)
       const ticks = 14
       for (let i = 0; i < ticks; i++) {
         this.tone(ctx, out, t, {
@@ -389,8 +555,10 @@ class Sfx {
   }
 
   /** Noise burst plus a 90->40Hz sine drop — the dice-bomb detonation (~350ms). */
-  bombBoom(): void {
-    this.voice((ctx, t, out) => {
+  bombBoom(pan = 0): void {
+    this.duckBed() // bed inhales under the detonation (§A4)
+    this.voice((ctx, t, out0) => {
+      const out = this.panOut(ctx, out0, pan) // detonation pans by board column (§A8)
       this.tone(ctx, out, t, { type: 'sine', freq: 90, endFreq: 40, peak: 0.6, dur: 0.3, attack: 0.01 })
       const src = this.noiseSource(ctx)
       const lp = ctx.createBiquadFilter()
@@ -408,6 +576,7 @@ class Sfx {
 
   /** Dramatic two-tone siren wail with a bell on top — the jackpot strike (~900ms). */
   jackpotStrike(): void {
+    this.duckBed(0.4, 1.0) // bed inhales under the jackpot (§A4)
     this.voice((ctx, t, out) => {
       const osc = ctx.createOscillator()
       osc.type = 'sawtooth'
@@ -439,7 +608,7 @@ class Sfx {
   starDing(i: number): void {
     this.voice((ctx, t, out) => {
       const freqs = [1046.5, 1318.5, 1568.0] // C6 E6 G6
-      const f = freqs[Math.max(0, Math.min(freqs.length - 1, i))]
+      const f = this.snap(freqs[Math.max(0, Math.min(freqs.length - 1, i))]) // dings in the theme's key (§A10)
       this.tone(ctx, out, t, { type: 'sine', freq: f, peak: 0.34, dur: 0.42, attack: 0.005 })
       this.tone(ctx, out, t, { type: 'sine', freq: f * 2.01, peak: 0.11, dur: 0.28, attack: 0.005 })
     })
@@ -447,6 +616,7 @@ class Sfx {
 
   /** Short rising major arpeggio with a shimmer tail — the win fanfare (~1.2s). */
   winFanfare(): void {
+    this.duckBed(0.45, 1.2) // bed inhales under the fanfare (§A4)
     this.voice((ctx, t, out) => {
       const notes = [523.25, 659.25, 783.99, 1046.5] // C5 E5 G5 C6
       notes.forEach((f, i) => {
@@ -471,17 +641,19 @@ class Sfx {
     this.voice((ctx, t, out) => {
       const pings = 8
       for (let i = 0; i < pings; i++) {
-        const f = 880 * Math.pow(2, i / 12) // bright chromatic climb
+        const f = this.snap(880 * Math.pow(2, i / 12)) // key-locked climb — arpeggiates in scale (§A10)
         const delay = i * 0.07
         this.tone(ctx, out, t, { type: 'triangle', freq: f, endFreq: f * 1.5, peak: 0.16, dur: 0.07, attack: 0.003, delay })
         this.tone(ctx, out, t, { type: 'sine', freq: f * 2, peak: 0.07, dur: 0.05, attack: 0.003, delay })
       }
-      // 2-note "cha-ching" (G5 → C6, the top two winFanfare notes) on completion.
+      // 2-note "cha-ching" (G5 → C6, the top two winFanfare notes) on completion — snapped to key.
       const end = pings * 0.07 + 0.04
-      this.tone(ctx, out, t, { type: 'triangle', freq: 783.99, peak: 0.24, dur: 0.14, attack: 0.004, delay: end })
-      this.tone(ctx, out, t, { type: 'sine', freq: 1567.98, peak: 0.1, dur: 0.12, attack: 0.004, delay: end })
-      this.tone(ctx, out, t, { type: 'triangle', freq: 1046.5, peak: 0.26, dur: 0.32, attack: 0.004, delay: end + 0.12 })
-      this.tone(ctx, out, t, { type: 'sine', freq: 2093.0, peak: 0.11, dur: 0.26, attack: 0.004, delay: end + 0.12 })
+      const chaA = this.snap(783.99)
+      const chaB = this.snap(1046.5)
+      this.tone(ctx, out, t, { type: 'triangle', freq: chaA, peak: 0.24, dur: 0.14, attack: 0.004, delay: end })
+      this.tone(ctx, out, t, { type: 'sine', freq: chaA * 2, peak: 0.1, dur: 0.12, attack: 0.004, delay: end })
+      this.tone(ctx, out, t, { type: 'triangle', freq: chaB, peak: 0.26, dur: 0.32, attack: 0.004, delay: end + 0.12 })
+      this.tone(ctx, out, t, { type: 'sine', freq: chaB * 2, peak: 0.11, dur: 0.26, attack: 0.004, delay: end + 0.12 })
     })
   }
 
@@ -530,6 +702,178 @@ class Sfx {
       src.start(t)
       src.stop(t + 0.46)
     })
+  }
+
+  // ---------------------------------------------------------- ambient bed (§A2)
+
+  /**
+   * Start the opt-in ambient bed (§E3-A2): a warm detuned pad + low room-tone under one slow LFO
+   * "breath", voiced in the active theme's palette (§A3). Only runs when ambience is ON, not muted,
+   * and the tab is visible. Intended for MENUS — scenes call `stopBed()` when gameplay begins.
+   * Idempotent. Reads `getTheme().audio`, so a P8 `scene.restart()` rebuilds it in the new room.
+   */
+  startBed(): void {
+    if (this.bedRunning || !this._ambience || this._muted) return
+    const ctx = this.ensureContext()
+    if (!ctx || !this.master) return
+    if (ctx.state === 'suspended') void ctx.resume()
+    try {
+      const pal = getTheme().audio
+      const t = ctx.currentTime
+      // Chain: [pad + room-tone] → warmth LPF → bedMaster(LFO) → bedDuck(§A4) → bedMute(blur) → master
+      const bedMute = ctx.createGain()
+      bedMute.gain.value = typeof document !== 'undefined' && document.hidden ? 0 : 1
+      bedMute.connect(this.master)
+      const bedDuck = ctx.createGain()
+      bedDuck.gain.value = 1
+      bedDuck.connect(bedMute)
+      const bedMaster = ctx.createGain()
+      const level = 0.05 // very quiet — a bed, never louder than the one-shots on top
+      bedMaster.gain.value = level
+      bedMaster.connect(bedDuck)
+      const warmth = ctx.createBiquadFilter()
+      warmth.type = 'lowpass'
+      warmth.frequency.value = pal.filterWarmth
+      warmth.Q.value = 0.6
+      warmth.connect(bedMaster)
+
+      const nodes: AudioScheduledSourceNode[] = []
+      // Detuned pad: root + fifth + octave, softly spread for a warm chord.
+      const voices: Array<[number, number]> = [
+        [pal.bedRoot, -6],
+        [pal.bedRoot, 6],
+        [pal.bedRoot * 1.5, -4], // a perfect fifth
+        [pal.bedRoot * 2, 3], // octave shimmer
+      ]
+      for (const [freq, detune] of voices) {
+        const o = ctx.createOscillator()
+        o.type = pal.waveBias
+        o.frequency.value = freq
+        o.detune.value = detune
+        const vg = ctx.createGain()
+        vg.gain.value = 0.25
+        o.connect(vg).connect(warmth)
+        o.start(t)
+        nodes.push(o)
+      }
+      // Low room-tone: filtered noise, barely there, grounds the pad.
+      const room = this.noiseSource(ctx)
+      room.loop = true
+      const roomLp = ctx.createBiquadFilter()
+      roomLp.type = 'lowpass'
+      roomLp.frequency.value = 220
+      const roomG = ctx.createGain()
+      roomG.gain.value = 0.12
+      room.connect(roomLp).connect(roomG).connect(warmth)
+      room.start(t)
+      nodes.push(room)
+
+      // One slow LFO breath (~16s period, matching the backdrop's slow breath) swelling the level.
+      const lfo = ctx.createOscillator()
+      lfo.type = 'sine'
+      lfo.frequency.value = 0.06
+      const lfoDepth = ctx.createGain()
+      lfoDepth.gain.value = level * 0.4
+      lfo.connect(lfoDepth).connect(bedMaster.gain)
+      lfo.start(t)
+      nodes.push(lfo)
+
+      // Fade the bed in gently so opting in never pops.
+      bedMaster.gain.cancelScheduledValues(t)
+      bedMaster.gain.setValueAtTime(0.0001, t)
+      bedMaster.gain.linearRampToValueAtTime(level, t + 1.2)
+
+      this.bedNodes = nodes
+      this.bedMaster = bedMaster
+      this.bedDuck = bedDuck
+      this.bedMute = bedMute
+      this.bedRunning = true
+    } catch {
+      this.bedRunning = false
+    }
+  }
+
+  /** Stop and tear down the ambient bed. Idempotent. */
+  stopBed(): void {
+    if (!this.bedRunning) return
+    this.bedRunning = false
+    const ctx = this.ctx
+    try {
+      if (ctx && this.bedMaster) {
+        const t = ctx.currentTime
+        this.bedMaster.gain.cancelScheduledValues(t)
+        this.bedMaster.gain.setValueAtTime(Math.max(0.0001, this.bedMaster.gain.value), t)
+        this.bedMaster.gain.exponentialRampToValueAtTime(0.0001, t + 0.4)
+      }
+      const stopAt = ctx ? ctx.currentTime + 0.45 : 0
+      for (const n of this.bedNodes) {
+        try {
+          n.stop(stopAt)
+        } catch {
+          // already stopped
+        }
+      }
+    } catch {
+      // never let teardown throw
+    }
+    this.bedNodes = []
+    this.bedMaster = null
+    this.bedDuck = null
+    this.bedMute = null
+  }
+
+  /** Tab-blur → silence the bed without tearing it down (§A2 suspend). */
+  private suspendBed(): void {
+    if (!this.bedRunning || !this.bedMute || !this.ctx) return
+    try {
+      const t = this.ctx.currentTime
+      this.bedMute.gain.cancelScheduledValues(t)
+      this.bedMute.gain.setValueAtTime(this.bedMute.gain.value, t)
+      this.bedMute.gain.linearRampToValueAtTime(0, t + 0.15)
+    } catch {
+      // best-effort
+    }
+  }
+
+  /** Tab-visible again → restore the bed (only if still enabled and unmuted). */
+  private resumeBed(): void {
+    if (!this.bedRunning || this._muted || !this._ambience || !this.bedMute || !this.ctx) return
+    if (this.ctx.state === 'suspended') void this.ctx.resume()
+    try {
+      const t = this.ctx.currentTime
+      this.bedMute.gain.cancelScheduledValues(t)
+      this.bedMute.gain.setValueAtTime(this.bedMute.gain.value, t)
+      this.bedMute.gain.linearRampToValueAtTime(1, t + 0.4)
+    } catch {
+      // best-effort
+    }
+  }
+
+  /** Bed "inhales" under a big one-shot (win/jackpot/bomb, §A4), recovering after. No-op if bed is off. */
+  private duckBed(depth = 0.45, dur = 0.9): void {
+    if (!this.bedRunning || !this.bedDuck || !this.ctx) return
+    try {
+      const t = this.ctx.currentTime
+      const g = this.bedDuck.gain
+      g.cancelScheduledValues(t)
+      g.setValueAtTime(Math.max(0.0001, g.value), t)
+      g.linearRampToValueAtTime(depth, t + 0.06) // quick inhale
+      g.linearRampToValueAtTime(1, t + dur) // slow recovery
+    } catch {
+      // best-effort
+    }
+  }
+
+  /**
+   * Re-read the active theme's audio palette (§A3): retune the reverb bus and rebuild the bed in the
+   * new room. Cheap to call on a theme swap; the scene-restart path gets a fresh bed for free anyway.
+   */
+  refreshTheme(): void {
+    this.applyReverbTheme()
+    if (this.bedRunning) {
+      this.stopBed()
+      this.startBed()
+    }
   }
 }
 
