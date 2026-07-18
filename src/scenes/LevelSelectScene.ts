@@ -15,9 +15,15 @@ const ROW_H = CHIP + GAP
 export class LevelSelectScene extends Phaser.Scene {
   /** Largest pointer travel during the current press — a tap on a chip only fires below this. */
   private dragMoved = 0
+  /** Beat 5: set when routed here straight from a win, so the newly-current chip celebrates. */
+  private fromWin = false
 
   constructor() {
     super('levelselect')
+  }
+
+  init(data: { fromWin?: boolean }): void {
+    this.fromWin = data?.fromWin === true
   }
 
   create(): void {
@@ -128,16 +134,17 @@ export class LevelSelectScene extends Phaser.Scene {
 
     if (playable) {
       const hasStars = stars > 0
-      container.add(
-        this.add
-          .text(0, hasStars ? -14 : 0, String(n), {
-            fontFamily: FONT,
-            fontSize: '40px',
-            fontStyle: '900',
-            color: current ? '#c9930a' : '#2a2732',
-          })
-          .setOrigin(0.5)
-      )
+      const numText = this.add
+        .text(0, hasStars ? -14 : 0, String(n), {
+          fontFamily: FONT,
+          fontSize: '40px',
+          fontStyle: '900',
+          color: current ? '#c9930a' : '#2a2732',
+        })
+        .setOrigin(0.5)
+      container.add(numText)
+      // Beat 5 echo: the freshly-unlocked current chip pops + sparkles + haloes on win arrival.
+      if (current && this.fromWin) this.celebrateCurrentChip(container, numText, cx, cy, content)
       for (let i = 0; i < stars; i++) {
         const star = this.add.image((i - (stars - 1) / 2) * 30, 30, 'star')
         star.setDisplaySize(26, 26)
@@ -164,5 +171,49 @@ export class LevelSelectScene extends Phaser.Scene {
       container.add(lock)
     }
     return container
+  }
+
+  /**
+   * Beat 5 echo: the current chip's number pops (0→1.15→1), a gold glow-ring haloes it, and a
+   * small unlock-sparkle bursts on it — a warm "here's where you are now" when arriving from a win.
+   * The sparkle is deferred a tick so it can use the chip's settled screen position (content.y is
+   * finalised right after the build loop).
+   */
+  private celebrateCurrentChip(
+    container: Phaser.GameObjects.Container,
+    numText: Phaser.GameObjects.Text,
+    cx: number,
+    cy: number,
+    content: Phaser.GameObjects.Container
+  ): void {
+    // Gold glow ring haloing the chip.
+    const ring = this.add.image(0, 0, 'ring').setDisplaySize(CHIP + 34, CHIP + 34).setTint(0xf2b234).setAlpha(0.85)
+    container.addAt(ring, 0)
+    this.tweens.add({ targets: ring, alpha: 0.35, scale: ring.scale * 1.08, duration: 700, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' })
+
+    // Number pop 0→1.15→1.
+    const base = numText.scale
+    numText.setScale(0)
+    this.tweens.add({ targets: numText, scale: base * 1.15, duration: 300, delay: 220, ease: 'Back.easeOut', onComplete: () =>
+      this.tweens.add({ targets: numText, scale: base, duration: 160, ease: 'Sine.easeOut' }),
+    })
+
+    // Deferred unlock sparkle at the chip's on-screen position.
+    this.time.delayedCall(240, () => {
+      const spark = this.add
+        .particles(0, 0, 'spark', {
+          speed: { min: 90, max: 260 },
+          angle: { min: 0, max: 360 },
+          scale: { start: 0.6, end: 0 },
+          alpha: { start: 0.95, end: 0 },
+          lifespan: { min: 500, max: 900 },
+          gravityY: 120,
+          emitting: false,
+        })
+        .setDepth(40)
+      spark.explode(14, cx, cy + content.y)
+      this.time.delayedCall(1000, () => spark.destroy())
+      sfx.starDing(1)
+    })
   }
 }

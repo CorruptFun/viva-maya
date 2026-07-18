@@ -82,6 +82,9 @@ export class GameScene extends Phaser.Scene {
   private scoreTween: Phaser.Tweens.Tween | null = null
   private scoreText!: Phaser.GameObjects.Text
 
+  /** Set while the win result card is animating in — a tap fast-forwards it to the settled state. */
+  private overlaySettle: (() => void) | null = null
+
   private autoplay = false
   private autoplayDelay = 450
   private activeBoosts: BoostType[] = []
@@ -1021,21 +1024,223 @@ export class GameScene extends Phaser.Scene {
   private finishWin(): void {
     this.log('finishWin')
     this.state = 'ended'
-    this.celebrateBoard() // casino light flash + chip/card burst on the still-visible board
+    this.celebrateBoard() // Beat 0: casino light flash + chip/card burst on the still-visible board
+    this.vibrate(60)
     const movesFrac = this.movesLeft / this.spec.moves
     const stars = movesFrac >= 0.5 ? 3 : movesFrac >= 0.25 ? 2 : 1
     const bonus = this.movesLeft * MOVES_BONUS
     if (bonus > 0) this.addScore(bonus)
     const save = recordResult(this.level, stars, this.score)
-    // Every 10th level is a milestone: a full-screen star-tally splash before the result card.
+    // Cosmetic celebration payout (no economy): rewards a clean, fast clear.
+    const chipReward = stars * 8 + this.movesLeft * 2
+    // Every 10th level is a milestone: a full-screen star-tally splash stands in for Beats 1–2.
     const milestone = this.level % 10 === 0
     const totalStars = Object.values(save.stars).reduce((sum, s) => sum + s, 0)
     if (milestone) {
-      // The splash already showered hearts + fanfare — the result card stays calm (celebrate=false).
-      this.time.delayedCall(420, () => this.milestoneSplash(totalStars, () => this.showOverlay(true, stars, bonus, false)))
+      // The splash already fired the fanfare + heart shower — the card stays calm (celebrate=false)
+      // but still runs Beat 4 (elastic entrance + coin roll-up), tap-to-settle.
+      this.time.delayedCall(420, () =>
+        this.milestoneSplash(totalStars, () => {
+          this.showOverlay(true, stars, bonus, chipReward, false, true)
+          this.input.once('pointerdown', () => this.overlaySettle?.())
+        })
+      )
     } else {
-      this.time.delayedCall(500, () => this.showOverlay(true, stars, bonus))
+      this.runWinSequence(stars, bonus, chipReward)
     }
+  }
+
+  private prefersReducedMotion(): boolean {
+    try {
+      return typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * Orchestrates the video-inspired win celebration (Beats 1–4) over the still-visible board,
+   * then hands off to the animated result card. The whole thing is TAP-TO-SKIP: the first
+   * pointerdown cancels the pending beats and jumps straight to the settled card. Reduced-motion
+   * keeps the bloom + card + roll-up but drops the fireworks/confetti.
+   */
+  private runWinSequence(stars: number, bonus: number, chipReward: number): void {
+    const reduced = this.prefersReducedMotion()
+    const timers: Phaser.Time.TimerEvent[] = []
+    const transient: Phaser.GameObjects.GameObject[] = []
+    let cardShown = false
+    let skipped = false
+    let fanfarePlayed = false
+
+    const at = (ms: number, cb: () => void): void => {
+      timers.push(this.time.delayedCall(ms, cb))
+    }
+    const track = <T extends Phaser.GameObjects.GameObject>(o: T): T => {
+      transient.push(o)
+      return o
+    }
+    const showCard = (animate: boolean): void => {
+      cardShown = true
+      this.showOverlay(true, stars, bonus, chipReward, false, animate)
+    }
+
+    const skip = (): void => {
+      if (skipped) return
+      skipped = true
+      for (const t of timers) t.remove(false)
+      for (const o of transient) if (o.active) o.destroy()
+      if (!fanfarePlayed) sfx.winFanfare()
+      if (!cardShown) showCard(false)
+      else this.overlaySettle?.()
+    }
+    this.input.once('pointerdown', skip)
+
+    // BEAT 1 — screen lights up (warm bloom + cream camera flash).
+    at(120, () => {
+      const bloom = track(
+        this.add
+          .image(360, 620, 'bgglow')
+          .setTint(0xffe9b0)
+          .setBlendMode(Phaser.BlendModes.ADD)
+          .setDepth(38)
+          .setAlpha(0)
+          .setScale(14)
+      )
+      this.tweens.add({
+        targets: bloom,
+        alpha: 0.55,
+        duration: 120,
+        ease: 'Quad.easeOut',
+        onComplete: () =>
+          this.tweens.add({ targets: bloom, alpha: 0, duration: 460, ease: 'Quad.easeIn', onComplete: () => bloom.destroy() }),
+      })
+      this.cameras.main.flash(200, 255, 249, 235)
+      sfx.reelSweep()
+      if (stars >= 3) sfx.jackpotStrike()
+    })
+
+    // BEAT 2 — rank-word wordmark punch (fires the single winFanfare).
+    at(200, () => {
+      fanfarePlayed = true
+      sfx.winFanfare()
+      this.winWordmark(stars, track, at)
+    })
+
+    // BEAT 3 — fireworks + confetti + a brand heart puff (skipped under reduced-motion).
+    if (!reduced) at(350, () => this.winFireworks(track, at))
+
+    // BEAT 4 — the result card enters (elastic scale-in) + coin roll-up payout.
+    at(1100, () => showCard(true))
+  }
+
+  /** Beat 2: a gold-bezel lozenge stamping the rank word (NICE/GREAT/PERFECT) over the board. */
+  private winWordmark(stars: number, track: <T extends Phaser.GameObjects.GameObject>(o: T) => T, at: (ms: number, cb: () => void) => void): void {
+    const cx = 360
+    const cy = 470
+    const word = this.rankWord(stars)
+    const layer = track(this.add.container(cx, cy).setDepth(46))
+
+    // Slow-spinning gold ray behind the lozenge.
+    const ray = this.add.image(0, 0, 'sweep').setDisplaySize(560, 96).setAlpha(0.4).setBlendMode(Phaser.BlendModes.ADD)
+    this.tweens.add({ targets: ray, angle: 360, duration: 2500, repeat: -1, ease: 'Linear' })
+
+    const text = this.add
+      .text(0, 0, word, { fontFamily: FONT, fontSize: '66px', fontStyle: '900', color: '#26304d' })
+      .setOrigin(0.5)
+      .setStroke('#ffffff', 8)
+      .setShadow(0, 3, 'rgba(90,70,20,0.22)', 6, true, true)
+    const w = text.width + 104
+    const h = 130
+    const g = this.add.graphics()
+    g.fillStyle(0x8a7a52, 0.28)
+    g.fillRoundedRect(-w / 2 + 3, -h / 2 + 8, w, h, h / 2)
+    g.fillStyle(0xf2b234, 1)
+    g.fillRoundedRect(-w / 2, -h / 2, w, h, h / 2)
+    g.fillStyle(0xfffdf8, 1)
+    g.fillRoundedRect(-w / 2 + 13, -h / 2 + 13, w - 26, h - 26, (h - 26) / 2)
+    g.lineStyle(5, 0xc9930a, 1)
+    g.strokeRoundedRect(-w / 2, -h / 2, w, h, h / 2)
+    layer.add([ray, g, text])
+
+    layer.setScale(0).setAngle(-6)
+    // Back.easeOut overshoots ~1.1 then settles to 1 — the elastic punch, with a -6°→0° tilt.
+    this.tweens.add({ targets: layer, scale: 1, angle: 0, duration: 340, ease: 'Back.easeOut' })
+
+    // Hold, then fade up 40px as the card enters.
+    at(940, () => {
+      if (!layer.active) return
+      this.tweens.add({
+        targets: layer,
+        alpha: 0,
+        y: cy - 40,
+        duration: 300,
+        ease: 'Sine.easeIn',
+        onComplete: () => layer.destroy(),
+      })
+    })
+  }
+
+  /** Beat 3: three staggered spark bursts + a capped confetti rain + a brand heart puff. */
+  private winFireworks(track: <T extends Phaser.GameObjects.GameObject>(o: T) => T, at: (ms: number, cb: () => void) => void): void {
+    const shots: Array<[number, number, number]> = [
+      [200, 360, 0xd3304f],
+      [540, 300, 0x26304d],
+      [360, 240, 0xf2b234],
+    ]
+    shots.forEach(([x, y, tint], i) => {
+      at(i * 260, () => {
+        const fw = track(
+          this.add
+            .particles(0, 0, 'spark', {
+              speed: { min: 200, max: 520 },
+              angle: { min: 0, max: 360 },
+              scale: { start: 0.5, end: 0 },
+              alpha: { start: 0.95, end: 0 },
+              lifespan: { min: 700, max: 1100 },
+              gravityY: 120,
+              tint,
+              emitting: false,
+            })
+            .setDepth(44)
+        )
+        fw.explode(24, x, y)
+        at(1600, () => {
+          if (fw.active) fw.destroy()
+        })
+      })
+    })
+
+    // Confetti rain from a top line — capped to ~40 live squares (10 emits × 4).
+    const confetti = track(
+      this.add
+        .particles(0, 0, 'confetti', {
+          x: { min: 60, max: 660 },
+          y: 120,
+          speed: { min: 40, max: 130 },
+          angle: { min: 80, max: 100 },
+          gravityY: 220,
+          rotate: { min: -180, max: 180 },
+          lifespan: 1400,
+          tint: [0xf2b234, 0xd3304f, 0x26304d, 0xfffdf8],
+          quantity: 4,
+          frequency: 60,
+          emitting: true,
+        })
+        .setDepth(43)
+    )
+    at(600, () => {
+      if (confetti.active) confetti.stop()
+    })
+    at(2200, () => {
+      if (confetti.active) confetti.destroy()
+    })
+
+    // A small heart puff for brand warmth.
+    this.overlayHearts(360, 14, 300)
+  }
+
+  private rankWord(stars: number): string {
+    return stars >= 3 ? 'PERFECT!' : stars === 2 ? 'GREAT!' : 'NICE!'
   }
 
   private finishLose(): void {
@@ -1138,65 +1343,38 @@ export class GameScene extends Phaser.Scene {
     this.time.delayedCall(1600, () => hearts.destroy())
   }
 
-  private showOverlay(win: boolean, stars: number, bonus: number, celebrate = true): void {
-    this.log('showOverlay', win ? 'win' : 'lose', 'stars', stars, 'bonus', bonus)
+  private showOverlay(win: boolean, stars: number, bonus: number, chipReward = 0, celebrate = true, animate = true): void {
+    this.log('showOverlay', win ? 'win' : 'lose', 'stars', stars, 'bonus', bonus, 'reward', chipReward)
+    this.overlaySettle = null
     this.overlayScrim()
 
     if (win) {
-      // celebrate=false when a milestone splash already played the fanfare + heart shower.
+      // celebrate=false when a milestone splash / win sequence already fired the fanfare.
       if (celebrate) {
         sfx.winFanfare()
         this.vibrate(80)
         this.overlayHearts(DESIGN_W / 2, 26)
       }
-    } else {
-      sfx.loseWah()
+      this.buildWinCard(stars, bonus, chipReward, animate)
+      return
     }
 
+    sfx.loseWah()
     const cx = DESIGN_W / 2
     const cy = 590
     this.overlayCard(cx, cy, 230)
 
     this.add
-      .text(cx, cy - 160, win ? 'LEVEL CLEAR!' : 'OUT OF MOVES', {
-        fontFamily: FONT,
-        fontSize: '48px',
-        fontStyle: '900',
-        color: win ? '#c9930a' : '#d3302f',
-      })
+      .text(cx, cy - 160, 'OUT OF MOVES', { fontFamily: FONT, fontSize: '48px', fontStyle: '900', color: '#d3302f' })
       .setOrigin(0.5)
       .setDepth(42)
       .setShadow(0, 3, 'rgba(0,0,0,0.15)', 6, false, true)
 
-    if (win) {
-      for (let i = 0; i < 3; i++) {
-        const star = this.add
-          .image(cx + (i - 1) * 84, cy - 70, 'star')
-          .setDepth(42)
-          .setAlpha(i < stars ? 1 : 0.22)
-          .setScale(0)
-        const delay = 150 + i * 160
-        this.tweens.add({
-          targets: star,
-          scale: (i < stars ? 1 : 0.8) * (68 / 64),
-          delay,
-          duration: 260,
-          ease: 'Back.easeOut',
-        })
-        // Ascending bell ding synced to each earned star's pop-in.
-        if (i < stars) this.time.delayedCall(delay, () => sfx.starDing(i))
-      }
-    } else {
-      const goals = this.objectives.map(o => `${o.remaining > 0 ? o.remaining : '✓'}`).join('   ')
-      this.add
-        .text(cx, cy - 70, `Still needed:  ${goals}`, {
-          fontFamily: FONT,
-          fontSize: '26px',
-          color: '#8a8577',
-        })
-        .setOrigin(0.5)
-        .setDepth(42)
-    }
+    const goals = this.objectives.map(o => `${o.remaining > 0 ? o.remaining : '✓'}`).join('   ')
+    this.add
+      .text(cx, cy - 70, `Still needed:  ${goals}`, { fontFamily: FONT, fontSize: '26px', color: '#8a8577' })
+      .setOrigin(0.5)
+      .setDepth(42)
 
     this.add
       .text(cx, cy + 10, `SCORE  ${this.score.toLocaleString()}`, {
@@ -1207,39 +1385,253 @@ export class GameScene extends Phaser.Scene {
       })
       .setOrigin(0.5)
       .setDepth(42)
-    if (win && bonus > 0) {
-      this.add
-        .text(cx, cy + 58, `+${bonus.toLocaleString()} moves bonus`, {
-          fontFamily: FONT,
-          fontSize: '22px',
-          color: '#c9930a',
-        })
-        .setOrigin(0.5)
-        .setDepth(42)
-    }
-    if (!win) {
-      // A loss spent a life — show what's left + when the next one lands.
-      const livesHud = addLivesHud(this, cx, cy + 56, { size: 28 })
-      livesHud.container.setDepth(42)
-      const refresh = (): void => livesHud.update(refreshLives())
-      refresh()
-      this.time.addEvent({ delay: 1000, loop: true, callback: refresh })
+
+    // A loss spent a life — show what's left + when the next one lands.
+    const livesHud = addLivesHud(this, cx, cy + 56, { size: 28 })
+    livesHud.container.setDepth(42)
+    const refresh = (): void => livesHud.update(refreshLives())
+    refresh()
+    this.time.addEvent({ delay: 1000, loop: true, callback: refresh })
+
+    addPillButton(this, cx, cy + 140, 300, 72, 'RETRY', GOLD_PILL, () => this.scene.start('game', { level: this.level })).setDepth(42)
+    addPillButton(this, cx, cy + 140 + 84, 300, 60, 'LEVELS', GHOST_PILL, () => this.scene.start('levelselect')).setDepth(42)
+  }
+
+  /**
+   * Beat 4 — the win result card: an elastic scale-in entrance (0→1.06→1), the rank-word
+   * title, a star row with ascending dings, and the COIN ROLL-UP PAYOUT (a chip pile on a gold
+   * disc with chips flying in as a counter rolls 0→chipReward). Everything lives in one container
+   * so the card can scale as a unit; `animate=false` builds it fully settled (tap-to-skip lands
+   * here). Never occludes the reward number or the Continue button.
+   */
+  private buildWinCard(stars: number, bonus: number, chipReward: number, animate: boolean): void {
+    const cx = DESIGN_W / 2
+    const cy = 610
+    const halfH = 300
+    const w = 520
+    const card = this.add.container(cx, cy).setDepth(41)
+
+    const settleActions: Array<() => void> = []
+    const settleTimers: Phaser.Time.TimerEvent[] = []
+    const at = (ms: number, cb: () => void): void => {
+      settleTimers.push(this.time.delayedCall(ms, cb))
     }
 
-    const nextExists = win && this.level < LEVEL_COUNT
-    if (win) {
-      addPillButton(this, cx, cy + 140, 300, 72, nextExists ? 'NEXT LEVEL' : 'ALL CLEAR!', GOLD_PILL, () => {
-        if (nextExists) this.scene.start('game', { level: this.level + 1 })
-        else this.scene.start('levelselect')
-      }).setDepth(42)
-    } else {
-      addPillButton(this, cx, cy + 140, 300, 72, 'RETRY', GOLD_PILL, () =>
-        this.scene.start('game', { level: this.level })
-      ).setDepth(42)
+    // Card panel (cream + gold bezel).
+    const g = this.add.graphics()
+    g.fillStyle(0x8a7a52, 0.25)
+    g.fillRoundedRect(-w / 2 + 4, -halfH + 8, w, halfH * 2, 34)
+    g.fillStyle(0xfffdf8, 1)
+    g.fillRoundedRect(-w / 2, -halfH, w, halfH * 2, 34)
+    g.lineStyle(4, 0xf2b234, 1)
+    g.strokeRoundedRect(-w / 2, -halfH, w, halfH * 2, 34)
+    card.add(g)
+
+    // "LEVEL N" gold pill tab straddling the top edge.
+    const tab = this.add.container(0, -halfH)
+    const tabLabel = this.add
+      .text(0, 0, `LEVEL ${this.level}`, { fontFamily: FONT, fontSize: '24px', fontStyle: '900', color: '#4a3305' })
+      .setOrigin(0.5)
+      .setLetterSpacing(1)
+    const tw = tabLabel.width + 56
+    const tg = this.add.graphics()
+    tg.fillStyle(0xf2b234, 1)
+    tg.fillRoundedRect(-tw / 2, -26, tw, 52, 26)
+    tg.lineStyle(3, 0xc9930a, 1)
+    tg.strokeRoundedRect(-tw / 2, -26, tw, 52, 26)
+    tab.add([tg, tabLabel])
+    card.add(tab)
+
+    // Rank-word title.
+    const title = this.add
+      .text(0, -210, this.rankWord(stars), { fontFamily: FONT, fontSize: '52px', fontStyle: '900', color: '#c9930a' })
+      .setOrigin(0.5)
+      .setShadow(0, 3, 'rgba(0,0,0,0.15)', 6, false, true)
+    card.add(title)
+
+    // Faint static gold ray behind the star row.
+    const ray = this.add.image(0, -122, 'sweep').setDisplaySize(440, 96).setAlpha(0.22).setBlendMode(Phaser.BlendModes.ADD)
+    card.add(ray)
+
+    // Star row (earned stars pop in with ascending dings).
+    for (let i = 0; i < 3; i++) {
+      const earned = i < stars
+      const star = this.add.image((i - 1) * 84, -122, 'star').setAlpha(earned ? 1 : 0.22)
+      const finalScale = (earned ? 1 : 0.8) * (68 / 64)
+      card.add(star)
+      if (animate) {
+        star.setScale(0)
+        const delay = 150 + i * 160
+        this.tweens.add({ targets: star, scale: finalScale, delay, duration: 260, ease: 'Back.easeOut' })
+        if (earned) at(delay, () => sfx.starDing(i))
+        settleActions.push(() => star.setScale(finalScale))
+      } else {
+        star.setScale(finalScale)
+      }
     }
-    addPillButton(this, cx, cy + 140 + 84, 300, 60, 'LEVELS', GHOST_PILL, () =>
-      this.scene.start('levelselect')
-    ).setDepth(42)
+
+    // Score + optional moves bonus.
+    card.add(
+      this.add
+        .text(0, -44, `SCORE  ${this.score.toLocaleString()}`, {
+          fontFamily: FONT,
+          fontSize: '34px',
+          fontStyle: '900',
+          color: '#26304d',
+        })
+        .setOrigin(0.5)
+    )
+    if (bonus > 0) {
+      card.add(
+        this.add.text(0, -6, `+${bonus.toLocaleString()} moves bonus`, { fontFamily: FONT, fontSize: '20px', color: '#c9930a' }).setOrigin(0.5)
+      )
+    }
+
+    // COIN ROLL-UP PAYOUT.
+    this.buildCoinPayout(card, chipReward, animate, at, settleActions)
+
+    // Continue buttons.
+    const nextExists = this.level < LEVEL_COUNT
+    const nextBtn = addPillButton(this, 0, 176, 300, 72, nextExists ? 'NEXT LEVEL' : 'ALL CLEAR!', GOLD_PILL, () => {
+      if (nextExists) this.scene.start('game', { level: this.level + 1 })
+      else this.scene.start('levelselect', { fromWin: true })
+    })
+    // Beat 5: a soft gold glow-ring pulse behind the Continue pill to lead the eye.
+    const glow = this.add.image(0, 176, 'bgglow').setTint(0xf2b234).setBlendMode(Phaser.BlendModes.ADD).setDisplaySize(360, 150).setAlpha(0.18)
+    card.add(glow)
+    this.tweens.add({ targets: glow, alpha: 0.42, duration: 780, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' })
+    card.add(nextBtn)
+    card.add(addPillButton(this, 0, 176 + 84, 300, 60, 'LEVELS', GHOST_PILL, () => this.scene.start('levelselect', { fromWin: true })))
+
+    // Rose skip/close chip (top-right) — a tap jumps straight to the settled card.
+    if (animate) {
+      const close = this.add.container(w / 2 - 40, -halfH + 40)
+      const cg = this.add.graphics()
+      cg.fillStyle(0xd3304f, 1)
+      cg.fillCircle(0, 0, 22)
+      cg.lineStyle(3, 0xa8213c, 1)
+      cg.strokeCircle(0, 0, 22)
+      const cIcon = this.add.text(0, 0, '»', { fontFamily: FONT, fontSize: '26px', fontStyle: '900', color: '#ffffff' }).setOrigin(0.5)
+      const cZone = this.add.circle(0, 0, 24, 0xffffff, 0.001).setInteractive({ useHandCursor: true })
+      cZone.on('pointerup', () => this.overlaySettle?.())
+      close.add([cg, cIcon, cZone])
+      card.add(close)
+      settleActions.push(() => close.destroy())
+    }
+
+    // Entrance + settle wiring.
+    if (animate) {
+      card.setScale(0)
+      const entrance = this.tweens.add({ targets: card, scale: 1, duration: 320, ease: 'Back.easeOut' })
+      settleActions.push(() => {
+        entrance.stop()
+        card.setScale(1)
+      })
+      this.overlaySettle = () => {
+        for (const t of settleTimers) t.remove(false)
+        for (const a of settleActions) a()
+        this.overlaySettle = null
+      }
+    }
+  }
+
+  /**
+   * The coin payout: a chip pile on a soft gold disc with a counter that rolls 0→chipReward in
+   * navy numerals. When animating, ~12 chips fly in from the edges/star row and land on the pile
+   * as the counter rolls (scored by sfx.coinCount). Built relative to the card container.
+   */
+  private buildCoinPayout(
+    card: Phaser.GameObjects.Container,
+    chipReward: number,
+    animate: boolean,
+    at: (ms: number, cb: () => void) => void,
+    settleActions: Array<() => void>
+  ): void {
+    const py = 74
+    const pileX = -96
+
+    // Soft gold disc behind the pile.
+    card.add(this.add.image(pileX, py, 'bgglow').setTint(0xf2c14e).setBlendMode(Phaser.BlendModes.ADD).setDisplaySize(150, 150).setAlpha(0.5))
+
+    // The resting pile (4–5 chips, slightly fanned).
+    const pileOffsets: Array<[number, number]> = [
+      [-16, 8],
+      [14, 6],
+      [-6, -4],
+      [8, -12],
+      [0, 0],
+    ]
+    const pileChips = pileOffsets.map(([dx, dy]) => {
+      const chip = this.add.image(pileX + dx, py + dy, 'chip').setDisplaySize(46, 46)
+      card.add(chip)
+      if (animate) chip.setScale(0)
+      return chip
+    })
+    const popPile = (idx: number): void => {
+      const chip = pileChips[idx % pileChips.length]
+      chip.setScale(46 / 48)
+      this.tweens.add({ targets: chip, scale: (46 / 48) * 1.18, duration: 110, yoyo: true, ease: 'Quad.easeOut' })
+    }
+    settleActions.push(() => pileChips.forEach(c => c.setScale(46 / 48)))
+
+    // Reward label + rolling counter (navy on cream — legible under the celebration).
+    card.add(this.add.text(58, py - 34, 'REWARD', { fontFamily: FONT, fontSize: '18px', color: '#8a8577' }).setOrigin(0, 0.5).setLetterSpacing(2))
+    const counter = this.add
+      .text(58, py + 8, animate ? '0' : String(chipReward), { fontFamily: FONT, fontSize: '52px', fontStyle: '900', color: '#26304d' })
+      .setOrigin(0, 0.5)
+    card.add(counter)
+    settleActions.push(() => counter.setText(String(chipReward)))
+
+    if (!animate) {
+      pileChips.forEach(c => c.setScale(46 / 48))
+      return
+    }
+
+    // Flying chips arc in from the edges/star row and land on the pile, popping it.
+    const flyCount = 12
+    for (let i = 0; i < flyCount; i++) {
+      const fromX = (Math.random() * 2 - 1) * 230
+      const fromY = -150 - Math.random() * 40
+      const chip = this.add.image(fromX, fromY, 'chip').setDisplaySize(40, 40).setScale(0)
+      card.add(chip)
+      const delay = 360 + i * 40
+      at(delay, () => {
+        this.tweens.add({ targets: chip, scale: 40 / 48, duration: 120, ease: 'Quad.easeOut' })
+        this.tweens.add({
+          targets: chip,
+          x: pileX + (Math.random() * 2 - 1) * 14,
+          y: py + (Math.random() * 2 - 1) * 10,
+          duration: 500 + Math.random() * 180,
+          ease: 'Cubic.easeOut',
+          onComplete: () => {
+            popPile(i)
+            chip.destroy()
+          },
+        })
+      })
+      settleActions.push(() => chip.destroy())
+    }
+
+    // Counter roll-up, scored by the coin tally, with a final haptic tick.
+    at(440, () => {
+      sfx.coinCount()
+      const c = { v: 0 }
+      const roll = this.tweens.add({
+        targets: c,
+        v: chipReward,
+        duration: 780,
+        ease: 'Cubic.easeOut',
+        onUpdate: () => counter.setText(String(Math.round(c.v))),
+        onComplete: () => {
+          counter.setText(String(chipReward))
+          this.vibrate(30)
+        },
+      })
+      settleActions.push(() => {
+        roll.stop()
+        counter.setText(String(chipReward))
+      })
+    })
   }
 
   /** End-of-run card for the endless weekly race — a score attack, no stars. */

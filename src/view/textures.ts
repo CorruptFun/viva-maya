@@ -228,6 +228,15 @@ function makeBulb(scene: Phaser.Scene): void {
   g.destroy()
 }
 
+/** Tiny confetti square (white so it can be tinted per-particle) for the win rain. */
+function makeConfetti(scene: Phaser.Scene): void {
+  const g = scene.make.graphics({ x: 0, y: 0 }, false)
+  g.fillStyle(0xffffff, 1)
+  g.fillRect(0, 0, 8, 8)
+  g.generateTexture('confetti', 8, 8)
+  g.destroy()
+}
+
 function makeSweep(scene: Phaser.Scene): void {
   const g = scene.make.graphics({ x: 0, y: 0 }, false)
   g.fillStyle(0xf2b234, 0.45)
@@ -295,6 +304,7 @@ export function createAllTextures(scene: Phaser.Scene): void {
   makeRing(scene)
   makeJackpot(scene)
   makeSweep(scene)
+  makeConfetti(scene)
   makeChip(scene)
   makeCard(scene)
   makeBulb(scene)
