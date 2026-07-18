@@ -26,6 +26,7 @@ import { addChips, loadSave, recordResult, recordScore, takePendingBoosts } from
 import { SYMBOLS, key } from '../core/types'
 import type { BoostType, ClearWave, Coord, FallMove, LevelSpec, Piece, Spawn, SymbolType } from '../core/types'
 import { addCasinoBackdrop } from '../view/background'
+import { quality } from '../view/quality'
 import { TEX_SIZE, ensurePieceTexture } from '../view/textures'
 import { FONT, GHOST_PILL, GOLD_PILL, ROSE_PILL, addChipPill, addLivesHud, addMuteChip, addPillButton } from '../view/ui'
 import type { ChipPill } from '../view/ui'
@@ -438,25 +439,59 @@ export class GameScene extends Phaser.Scene {
     this.cabinetGlow.setDisplaySize(BOARD_W + 170, BOARD_W + 170)
     this.tweens.add({ targets: this.cabinetGlow, alpha: 0.18, duration: 1700, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' })
 
+    // Recessed gold TRAY: an opaque gold-bezel cabinet with a well floor DARKER than the tiles,
+    // so the 64 raised glossy cushions pop out of a real 3-D setting. Baked once (static graphics),
+    // footprint (pad 18 → x22/y282/size676) unchanged so the marquee bulbs stay aligned.
     const g = this.add.graphics()
     const pad = 18
     const x = BOARD_X - pad
     const y = BOARD_Y - pad
     const size = BOARD_W + pad * 2
+    // Cabinet drop shadow.
     g.fillStyle(0x8a7a52, 0.1)
-    g.fillRoundedRect(x + 3, y + 7, size, size, 26)
+    g.fillRoundedRect(x + 3, y + 8, size, size, 28)
     g.fillStyle(0x8a7a52, 0.07)
-    g.fillRoundedRect(x + 6, y + 12, size, size, 26)
-    g.fillStyle(0xfffdf8, 1)
-    g.fillRoundedRect(x, y, size, size, 26)
-    g.lineStyle(2, 0xe8dfc9, 1)
-    g.strokeRoundedRect(x, y, size, size, 26)
-    g.lineStyle(3, 0xf2c14e, 0.65)
-    g.strokeRoundedRect(x + 7, y + 7, size - 14, size - 14, 19)
-    g.fillStyle(0xb49b62, 0.08)
+    g.fillRoundedRect(x + 6, y + 13, size, size, 28)
+    // Gold bezel frame (opaque) + a lit inner sheen and a dark outer edge for bevel depth.
+    g.fillStyle(0xc9930a, 1)
+    g.fillRoundedRect(x, y, size, size, 28)
+    g.fillStyle(0xf2b234, 1)
+    g.fillRoundedRect(x + 3, y + 3, size - 6, size - 6, 25)
+    g.lineStyle(2, 0xffe6a8, 0.6)
+    g.strokeRoundedRect(x + 3, y + 3, size - 6, size - 6, 25)
+    g.lineStyle(2, 0x7a5a08, 0.5)
+    g.strokeRoundedRect(x, y, size, size, 28)
+    // Recessed well (floor deeper than the tiles so the cushions read as raised).
+    const wi = 14
+    const wx = x + wi
+    const wy = y + wi
+    const ws = size - wi * 2
+    const wr = 20
+    g.fillStyle(0xe4d8bd, 1)
+    g.fillRoundedRect(wx, wy, ws, ws, wr)
+    // Top inner-shadow (the recess): stacked dark bands from the top edge, rounded to the well.
+    for (const [f, a] of [[0.18, 0.05], [0.12, 0.05], [0.06, 0.06]] as Array<[number, number]>) {
+      g.fillStyle(0x000000, a)
+      g.fillRoundedRect(wx, wy, ws, ws * f, { tl: wr, tr: wr, bl: 0, br: 0 })
+    }
+    // Lit bottom lip + a crisp inner rim to seal the recess.
+    g.fillStyle(0xfff3d6, 0.08)
+    g.fillRoundedRect(wx + 4, wy + ws - 12, ws - 8, 9, { tl: 0, tr: 0, bl: wr - 6, br: wr - 6 })
+    g.lineStyle(2, 0x9a875f, 0.45)
+    g.strokeRoundedRect(wx, wy, ws, ws, wr)
+
+    // 64 raised glossy tiles — ONE white texture, per-cell tinted (checkerboard WHISPER for
+    // row/col tracking, not a stripe). 64 same-texture Images batch to a single draw call; this
+    // replaces the old flat one-graphics checkerboard at ≈ +1 persistent draw call.
+    const TILE_A = 0xf4e7c6
+    const TILE_B = 0xf7e3de
     for (let r = 0; r < ROWS; r++) {
       for (let c = 0; c < COLS; c++) {
-        if ((r + c) % 2 === 0) g.fillRect(BOARD_X + c * CELL, BOARD_Y + r * CELL, CELL, CELL)
+        const p = this.cellToXY({ row: r, col: c })
+        this.add
+          .image(p.x, p.y, 'tile')
+          .setDisplaySize(CELL, CELL)
+          .setTint((r + c) % 2 === 0 ? TILE_A : TILE_B)
       }
     }
   }
@@ -981,6 +1016,26 @@ export class GameScene extends Phaser.Scene {
       this.time.delayedCall(delay, () => {
         this.emitters[piece.symbol]?.explode(6, pos.x, pos.y)
         this.sparkEmitter.explode(4, pos.x, pos.y)
+        // Subtle gloss pop — the emptied tile catches light on the clear. Reuses bgglow (ADD,
+        // below the emitters), governor-gated for alpha/count, skipped under reduced-motion.
+        if (!this.reducedMotion && quality.count(1) > 0) {
+          const glow = this.add
+            .image(pos.x, pos.y, 'bgglow')
+            .setTint(0xffedc2)
+            .setBlendMode(Phaser.BlendModes.ADD)
+            .setDepth(19)
+            .setDisplaySize(CELL * 0.72, CELL * 0.72)
+            .setAlpha(0.5 * quality.scale())
+          this.tweens.add({
+            targets: glow,
+            alpha: 0,
+            scaleX: glow.scaleX * 1.8,
+            scaleY: glow.scaleY * 1.8,
+            duration: 190,
+            ease: 'Quad.easeOut',
+            onComplete: () => glow.destroy(),
+          })
+        }
       })
       promises.push(
         this.t({

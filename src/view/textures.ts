@@ -21,6 +21,24 @@ function intoTexture(scene: Phaser.Scene, key: string, draw: (dt: Phaser.Texture
   draw(dt)
 }
 
+/**
+ * Subtle contact-shadow baked UNDER a piece glyph (a soft dark ellipse near the texture's
+ * bottom) so pieces read as SEATED on their glossy tile instead of floating. Drawn first, so
+ * the opaque emoji always renders crisp on top — the glyph is never recoloured or dimmed.
+ * Zero runtime cost: it travels with the sprite through every swap / fall / cascade.
+ */
+function seatShadow(scene: Phaser.Scene, dt: Phaser.Textures.DynamicTexture): void {
+  const g = scene.make.graphics({ x: 0, y: 0 }, false)
+  g.fillStyle(0x000000, 0.05)
+  g.fillEllipse(64, 109, 78, 26)
+  g.fillStyle(0x000000, 0.05)
+  g.fillEllipse(64, 110, 56, 18)
+  g.fillStyle(0x000000, 0.06)
+  g.fillEllipse(64, 111, 38, 11)
+  dt.draw(g)
+  g.destroy()
+}
+
 function makeEmoji(scene: Phaser.Scene, key: SymbolType, glyph: string): void {
   const text = scene.make.text(
     {
@@ -32,6 +50,7 @@ function makeEmoji(scene: Phaser.Scene, key: SymbolType, glyph: string): void {
     false
   )
   intoTexture(scene, key, dt => {
+    seatShadow(scene, dt)
     dt.draw(text, (TEX_SIZE - text.width) / 2, (TEX_SIZE - text.height) / 2)
   })
   text.destroy()
@@ -55,6 +74,7 @@ function makeSeven(scene: Phaser.Scene): void {
     false
   )
   intoTexture(scene, 'seven', dt => {
+    seatShadow(scene, dt)
     dt.draw(text, (TEX_SIZE - text.width) / 2, (TEX_SIZE - text.height) / 2)
   })
   text.destroy()
@@ -84,6 +104,7 @@ function makeBar(scene: Phaser.Scene): void {
     false
   )
   intoTexture(scene, 'bar', dt => {
+    seatShadow(scene, dt)
     dt.draw(g)
     dt.draw(text, (TEX_SIZE - text.width) / 2, 36 + (54 - text.height) / 2)
   })
@@ -234,6 +255,43 @@ function makeConfetti(scene: Phaser.Scene): void {
   g.fillStyle(0xffffff, 1)
   g.fillRect(0, 0, 8, 8)
   g.generateTexture('confetti', 8, 8)
+  g.destroy()
+}
+
+/**
+ * Board tile — ONE reusable 128² texture for all 64 cells (§3c). A RAISED glossy cushion:
+ * a pure-white body (so a single per-cell `setTint()` colours the whole cushion), a soft drop
+ * shadow onto the tray floor, and a top-lit glossy dome shaded downward. The tint-stability
+ * trick: shade with BLACK-alpha (0×tint = stays neutral-dark) and leave the body pure white
+ * (→ full tint) so shadows read as depth and the lit top reads as gloss on every tint. Placed
+ * as 64 same-texture Images = one batched draw call, zero tweens, zero per-frame graphics.
+ * Gradients are only reliable on `fillRect` (Phaser 3.90), so the dome is stacked flat-alpha
+ * rounded rects, never `fillGradientStyle` on a rounded shape.
+ */
+function makeTile(scene: Phaser.Scene): void {
+  const g = scene.make.graphics({ x: 0, y: 0 }, false)
+  const S = TEX_SIZE
+  const m = 4 // inset → the dark-floor gutter that shows between tiles when drawn at CELL size
+  const bw = S - m * 2
+  const r = 22
+  // Drop shadow onto the tray floor — neutral black survives the per-cell tint (0×tint = 0).
+  g.fillStyle(0x000000, 0.1)
+  g.fillRoundedRect(m, m + 5, bw, bw, r)
+  g.fillStyle(0x000000, 0.1)
+  g.fillRoundedRect(m, m + 3, bw, bw, r)
+  // Pure-white cushion body — the ONLY thing a per-cell setTint() colours.
+  g.fillStyle(0xffffff, 1)
+  g.fillRoundedRect(m, m, bw, bw, r)
+  // Glossy dome: top ~42% stays white (lit), shaded downward with stacked flat bands (rounded
+  // bottom corners match the body; square top corners sit hidden mid-body).
+  for (const [f, a] of [[0.42, 0.05], [0.6, 0.05], [0.78, 0.06]] as Array<[number, number]>) {
+    g.fillStyle(0x000000, a)
+    g.fillRoundedRect(m, m + bw * f, bw, bw * (1 - f), { tl: 0, tr: 0, bl: r, br: r })
+  }
+  // Faint seated-edge bevel (dark → survives tint) for tile-to-tile separation.
+  g.lineStyle(2.5, 0x000000, 0.09)
+  g.strokeRoundedRect(m, m, bw, bw, r)
+  g.generateTexture('tile', S, S)
   g.destroy()
 }
 
@@ -492,6 +550,7 @@ export function createAllTextures(scene: Phaser.Scene): void {
   makeChip(scene)
   makeCard(scene)
   makeBulb(scene)
+  makeTile(scene)
   makeGlyphTexture(scene, 'star', '⭐', 44, 64)
   makeGlyphTexture(scene, 'lock', '🔒', 40, 64)
   makeGlyphTexture(scene, 'heart', '❤️', 44, 64)
