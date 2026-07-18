@@ -8,6 +8,21 @@ import { css, getTheme, prefersReducedMotion } from './theme'
 
 export const FONT = '"Arial Black", "Helvetica Neue", Arial, sans-serif'
 
+/**
+ * Warm cream cross-fade between scenes (§3d). Locks input during the fade (which doubles as an
+ * anti-double-tap guard), fades the camera to brand cream (#fffdf8 — NEVER black), and starts
+ * the destination scene once the fade-out completes. Each scene's create() pairs this with a
+ * matching `this.cameras.main.fadeIn(...)` at the top. Reduced-motion shortens the fade.
+ */
+export function startScene(from: Phaser.Scene, key: string, data?: object): void {
+  if (!from.input.enabled) return // already transitioning
+  from.input.enabled = false
+  const dur = prefersReducedMotion() ? 90 : 180
+  const cam = from.cameras.main
+  cam.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => from.scene.start(key, data))
+  cam.fadeOut(dur, 255, 253, 248)
+}
+
 export interface LivesHud {
   container: Phaser.GameObjects.Container
   /** Repaint hearts + countdown from a fresh LivesState (call on a per-second timer). */
