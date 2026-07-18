@@ -315,7 +315,7 @@ export function openHelpPanel(scene: Phaser.Scene): void {
   layer.add(addPillButton(scene, W / 2, pyTop + ph - 72, 240, 68, 'GOT IT', GOLD_PILL, () => layer.destroy()))
   layer.add(
     scene.add
-      .text(W / 2, pyTop + ph - 26, '© 2026 CorruptFun · All rights reserved', {
+      .text(W / 2, pyTop + ph - 26, '© 2026 CorruptFun LLC · All rights reserved', {
         fontFamily: 'Arial, sans-serif',
         fontSize: '16px',
         color: '#b3ab97',
