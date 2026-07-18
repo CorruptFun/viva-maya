@@ -47,7 +47,7 @@ makes it fully offline after first load).
 
 ## License
 
-**Proprietary — © 2026 CorruptFun. All rights reserved.** This repository is public
+**Proprietary — © 2026 CorruptFun LLC. All rights reserved.** This repository is public
 for reference only; no license or right to the code, design, or assets is granted.
 Copying, modifying, redistributing, or reusing any part of it without prior written
 permission is prohibited. See [LICENSE](LICENSE).
