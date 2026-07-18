@@ -136,7 +136,7 @@ export class HomeScene extends Phaser.Scene {
 
     // Big heart emblem with a heartbeat pulse.
     const emblemY = 330
-    const heart = this.add.image(DESIGN_W / 2, emblemY, 'heart')
+    const heart = this.add.image(DESIGN_W / 2, emblemY, 'heartbig')
     heart.setDisplaySize(190, 190)
     const base = heart.scaleX
     // Emblem heartbeat pulse — gated (§E8): under reduced motion it rests at base scale, no beat.
@@ -412,7 +412,7 @@ export class HomeScene extends Phaser.Scene {
     layer.add(halo)
 
     // Slow-BEATING heart — the intimate heartbeat (lub-dub cadence borrowed from the emblem).
-    const noteHeart = this.add.image(cx, cy - 156, 'heart').setDisplaySize(130, 130)
+    const noteHeart = this.add.image(cx, cy - 156, 'heartbig').setDisplaySize(130, 130)
     layer.add(noteHeart)
     if (!reduced) {
       const hb = noteHeart.scaleX
