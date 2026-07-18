@@ -36,6 +36,7 @@ const Z = {
   sparkle: -42,
   vignette: -34,
   marquee: -30,
+  proscenium: -28, // the shared frame molding — frontmost backdrop layer, still behind gameplay (≥0)
 } as const
 
 // Ambient tween durations, derived from the motion vocabulary's breath token so the
@@ -481,6 +482,86 @@ function marquee(scene: Phaser.Scene, variant: BackdropVariant): void {
   })
 }
 
+// --- Proscenium frame (E15) -------------------------------------------------
+
+/** Points tracing a small heart (cusp up, tip down), centred on (cx,cy); `r` ≈ half-width. */
+function heartPolygon(cx: number, cy: number, r: number): Phaser.Geom.Point[] {
+  const pts: Phaser.Geom.Point[] = []
+  const steps = 40
+  for (let i = 0; i <= steps; i++) {
+    const t = (Math.PI * 2 * i) / steps
+    const hx = 16 * Math.pow(Math.sin(t), 3)
+    const hy = 13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t)
+    pts.push(new Phaser.Geom.Point(cx + (hx / 16) * r, cy - (hy / 16) * r))
+  }
+  return pts
+}
+
+/** A shallow molding arc (parabola peaking at centre), sampled as points for `strokePoints`. */
+function crownArc(cx: number, halfW: number, apexY: number, drop: number): Phaser.Geom.Point[] {
+  const pts: Phaser.Geom.Point[] = []
+  const N = 40
+  for (let i = 0; i <= N; i++) {
+    const u = i / N
+    const k = (u - 0.5) * 2 // −1..1
+    pts.push(new Phaser.Geom.Point(cx - halfW + 2 * halfW * u, apexY + drop * k * k))
+  }
+  return pts
+}
+
+/**
+ * The PROSCENIUM (§E15) — a slim shared arched crown with the heart as KEYSTONE across the top
+ * margin, plus a matched console lip at the bottom, drawn at IDENTICAL coords on every scene so all
+ * four read as one machine. Baked once, margin-confined, negative depth (frontmost backdrop layer,
+ * still behind all gameplay/HUD at depth ≥ 0), and fully STATIC — a frame, never a motion beat, so
+ * reduced-motion needs no special path. Warm gold on all four themes (gold/bezel tokens), zero new
+ * textures (graphics + the shared `bgglow`).
+ *
+ * RESTRAINT is the priority: a whisper of molding + a small heart keystone, kept to the extreme
+ * top/bottom edges. The crown lives ABOVE the LEVEL pill / score row (y ≤ 50) and the console lip at
+ * the very bottom (y ≈ 1250), so it never crowds the HUD and never touches the 40–680×300–940 board.
+ */
+export function addProscenium(scene: Phaser.Scene): void {
+  const T = getTheme()
+  const cx = DESIGN_W / 2
+  const halfW = 176
+
+  // A faint warm keystone glow first (behind the molding): the "powered-on" whisper, margin-confined.
+  addGlow(scene, cx, 22, 96, 78, T.bleedWarm, 0.09, Z.proscenium - 1)
+
+  const g = scene.add.graphics().setDepth(Z.proscenium)
+
+  // ---- Crown: a shallow double-reveal molding arc, confined to the top edge ----
+  const apexY = 34
+  const drop = 15
+  g.lineStyle(2.5, T.gold, 0.5)
+  g.strokePoints(crownArc(cx, halfW, apexY, drop), false)
+  g.lineStyle(1.5, T.goldBezel, 0.32)
+  g.strokePoints(crownArc(cx, halfW, apexY + 5, drop), false)
+  // Small drop-serifs capping each end of the crown.
+  g.lineStyle(2.5, T.gold, 0.5)
+  for (const ex of [cx - halfW, cx + halfW]) g.lineBetween(ex, apexY + drop, ex, apexY + drop + 9)
+
+  // ---- Heart keystone at the apex — the shared signature ----
+  const keyY = 17
+  const keyR = 15
+  g.fillStyle(T.goldDeep, 0.35) // soft under-shadow for a hint of depth
+  g.fillPoints(heartPolygon(cx, keyY + 2, keyR), true)
+  g.fillStyle(T.gold, 0.82)
+  g.fillPoints(heartPolygon(cx, keyY, keyR), true)
+  g.lineStyle(1.5, T.goldBright, 0.7)
+  g.strokePoints(heartPolygon(cx, keyY, keyR), true)
+
+  // ---- Console lip: a thin matched molding mirroring the crown, at the very bottom edge ----
+  const lipY = 1250
+  g.lineStyle(2.5, T.gold, 0.45)
+  g.lineBetween(cx - halfW, lipY, cx + halfW, lipY)
+  g.lineStyle(1.5, T.goldBezel, 0.28)
+  g.lineBetween(cx - halfW + 10, lipY + 5, cx + halfW - 10, lipY + 5)
+  g.lineStyle(2.5, T.gold, 0.45)
+  for (const ex of [cx - halfW, cx + halfW]) g.lineBetween(ex, lipY, ex, lipY - 9)
+}
+
 /**
  * Compose the atmospheric backdrop for a scene. Layers are added back-to-front; each
  * helper reads the active theme + reduced-motion + quality tier itself and sets its
@@ -499,4 +580,5 @@ export function addCasinoBackdrop(scene: Phaser.Scene, variant: BackdropVariant)
   sparkle(scene, variant)
   vignette(scene)
   marquee(scene, variant)
+  addProscenium(scene) // §E15 — the shared frame, identical coords on every scene (frontmost backdrop)
 }
