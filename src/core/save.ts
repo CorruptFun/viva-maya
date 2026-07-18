@@ -2,7 +2,7 @@ import { LIVES_MAX } from '../config'
 import type { BoostType } from './types'
 
 export interface SaveData {
-  v: 5
+  v: 6
   best: number
   /** Highest level the player may attempt (1-based). */
   unlocked: number
@@ -27,7 +27,7 @@ export interface SaveData {
 const KEY = 'viva-maya:v1'
 
 const DEFAULTS: SaveData = {
-  v: 5,
+  v: 6,
   best: 0,
   unlocked: 1,
   stars: {},
@@ -64,6 +64,13 @@ export function loadSave(): SaveData {
     base.lives =
       typeof data.lives === 'number' ? Math.max(0, Math.min(LIVES_MAX, Math.floor(data.lives))) : LIVES_MAX
     base.livesAnchor = typeof data.livesAnchor === 'number' ? data.livesAnchor : 0
+    // v6 grace refill: the pool grew (3→10) and the break got much shorter — top EVERYONE up to
+    // full on upgrade so nobody is left stranded at the old, stingier count (e.g. mid-session).
+    const storedVersion = typeof data.v === 'number' ? (data.v as number) : 1
+    if (storedVersion < 6) {
+      base.lives = LIVES_MAX
+      base.livesAnchor = 0
+    }
     return base
   } catch {
     return fresh()
