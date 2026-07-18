@@ -6,6 +6,14 @@ import type { LivesState } from '../core/lives'
 
 export const FONT = '"Arial Black", "Helvetica Neue", Arial, sans-serif'
 
+function prefersReducedMotion(): boolean {
+  try {
+    return typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
+  } catch {
+    return false
+  }
+}
+
 export interface LivesHud {
   container: Phaser.GameObjects.Container
   /** Repaint hearts + countdown from a fresh LivesState (call on a per-second timer). */
@@ -83,6 +91,35 @@ export function addMarquee(scene: Phaser.Scene, centerX: number, y: number): voi
     repeat: -1,
     ease: 'Sine.easeInOut',
   })
+
+  // Slow light-sweep shine: a masked cream gloss that periodically glides VIVA→MAYA. Each word
+  // gets its own streak clipped to its glyphs (bitmap mask), and the two share one tween value so
+  // the highlight reads as a single continuous band travelling across the whole wordmark. Skipped
+  // under reduced motion.
+  if (!prefersReducedMotion()) {
+    const spanLeft = viva.x
+    const spanRight = maya.x + maya.width
+    const streakW = 46
+    const shineFor = (word: Phaser.GameObjects.Text): Phaser.GameObjects.Image => {
+      const shine = scene.add
+        .image(spanLeft - streakW, y, 'sweep')
+        .setDisplaySize(streakW, 84)
+        .setAngle(18)
+        .setTint(0xfffdf8)
+        .setAlpha(0.5)
+        .setBlendMode(Phaser.BlendModes.ADD)
+      shine.setMask(word.createBitmapMask())
+      return shine
+    }
+    scene.tweens.add({
+      targets: [shineFor(viva), shineFor(maya)],
+      x: spanRight + streakW,
+      duration: 1400,
+      ease: 'Sine.easeInOut',
+      repeat: -1,
+      repeatDelay: 2600,
+    })
+  }
 }
 
 /**

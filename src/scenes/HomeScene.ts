@@ -29,6 +29,9 @@ export class HomeScene extends Phaser.Scene {
   create(): void {
     const save = loadSave()
     const currentLevel = Math.min(save.unlocked, LEVEL_COUNT)
+    const reduced = this.prefersReducedMotion()
+    // Stacked pill buttons that fade + slide up into place on entrance (see below).
+    const menuButtons: Phaser.GameObjects.Container[] = []
 
     addCasinoBackdrop(this, 'home')
 
@@ -92,9 +95,39 @@ export class HomeScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setLetterSpacing(2)
 
+    // Soft gold halo behind PLAY — rendered underneath the button, breathing in
+    // time with its scale pulse. Uses the runtime 'bgglow' texture from the backdrop.
+    const glow = this.add.image(DESIGN_W / 2, 720, 'bgglow')
+    glow.setTint(0xf2b234).setBlendMode(Phaser.BlendModes.ADD).setDisplaySize(460, 240)
+    const glowSX = glow.scaleX
+    const glowSY = glow.scaleY
+    glow.setAlpha(reduced ? 0.28 : 0)
+    if (!reduced) {
+      // Fade in alongside PLAY, then keep breathing between ~0.22 and ~0.4.
+      this.tweens.add({
+        targets: glow,
+        alpha: 0.22,
+        duration: 260,
+        ease: 'Sine.easeOut',
+        onComplete: () => {
+          this.tweens.add({
+            targets: glow,
+            alpha: 0.4,
+            scaleX: glowSX * 1.04,
+            scaleY: glowSY * 1.04,
+            duration: 1400,
+            yoyo: true,
+            repeat: -1,
+            ease: 'Sine.easeInOut',
+          })
+        },
+      })
+    }
+
     const play = addPillButton(this, DESIGN_W / 2, 720, 340, 96, 'PLAY', GOLD_PILL, () =>
       this.scene.start('game', { level: currentLevel })
     )
+    menuButtons.push(play)
     this.tweens.add({
       targets: play,
       scale: 1.04,
@@ -111,9 +144,10 @@ export class HomeScene extends Phaser.Scene {
       .text(DESIGN_W / 2, 790, sub, { fontFamily: FONT, fontSize: '22px', color: '#9a927e' })
       .setOrigin(0.5)
 
-    addPillButton(this, DESIGN_W / 2, 872, 280, 64, 'LEVELS', GHOST_PILL, () =>
+    const levels = addPillButton(this, DESIGN_W / 2, 872, 280, 64, 'LEVELS', GHOST_PILL, () =>
       this.scene.start('levelselect')
     )
+    menuButtons.push(levels)
 
     // Daily bonus entry: glowing when the spin is ready, quiet when claimed.
     // NOTE: no emoji in pill labels — addPillButton's letterSpacing splits
@@ -123,6 +157,7 @@ export class HomeScene extends Phaser.Scene {
     const daily = addPillButton(this, DESIGN_W / 2, 986, 340, 76, label, ready ? GOLD_PILL : GHOST_PILL, () =>
       this.scene.start('daily')
     )
+    menuButtons.push(daily)
     if (ready) {
       this.tweens.add({ targets: daily, scale: 1.05, duration: 650, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' })
     }
@@ -135,9 +170,10 @@ export class HomeScene extends Phaser.Scene {
     // Endless weekly race — unlocks after level 30.
     if (endlessUnlocked(save)) {
       const wkBest = endlessBestThisWeek(save)
-      addPillButton(this, DESIGN_W / 2, 1108, 340, 72, 'ENDLESS', ROSE_PILL, () =>
+      const endless = addPillButton(this, DESIGN_W / 2, 1108, 340, 72, 'ENDLESS', ROSE_PILL, () =>
         this.scene.start('game', { endless: true })
       )
+      menuButtons.push(endless)
       this.add
         .text(
           DESIGN_W / 2,
@@ -146,6 +182,34 @@ export class HomeScene extends Phaser.Scene {
           { fontFamily: FONT, fontSize: '20px', color: '#9a927e' }
         )
         .setOrigin(0.5)
+    }
+
+    // Entrance stagger: the stacked pill buttons fade + slide up 12px into place,
+    // ~60ms apart (PLAY, LEVELS, DAILY, ENDLESS). The scale pulses on PLAY/DAILY
+    // tween a different property, so they coexist with these y/alpha tweens.
+    // Reduced motion keeps every button in its final alpha=1 / final-y resting state.
+    if (!reduced) {
+      menuButtons.forEach((btn, i) => {
+        const finalY = btn.y
+        btn.setAlpha(0)
+        btn.y = finalY + 12
+        this.tweens.add({
+          targets: btn,
+          y: finalY,
+          alpha: 1,
+          duration: 260,
+          delay: i * 60,
+          ease: 'Back.easeOut',
+        })
+      })
+    }
+  }
+
+  private prefersReducedMotion(): boolean {
+    try {
+      return typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
+    } catch {
+      return false
     }
   }
 }
