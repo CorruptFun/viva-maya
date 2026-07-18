@@ -295,6 +295,33 @@ function makeTile(scene: Phaser.Scene): void {
   g.destroy()
 }
 
+/**
+ * Vertical light beam for the atmospheric backdrop (§3b) — a spotlight-cone blade / god-ray.
+ * Bright feathered top → fully transparent bottom (a vertical alpha gradient, reliable on
+ * `fillRect`), horizontally feathered by three nested rects: widest = faint halo, narrowest =
+ * hot core. Pure warm-white so it tints cleanly (ADD) to any theme's rayTint; drawn at the use
+ * site with origin (0.5, 0) so it pivots at the light source. Baked once.
+ */
+function makeRaybeam(scene: Phaser.Scene): void {
+  const g = scene.make.graphics({ x: 0, y: 0 }, false)
+  const W = 96
+  const H = 640
+  const c = 0xffffff
+  // widest/faintest halo → narrowest/hottest core; each band fades bright top → clear bottom.
+  const bands: Array<[number, number]> = [
+    [W, 0.2],
+    [W * 0.5, 0.28],
+    [W * 0.2, 0.4],
+  ]
+  for (const [bw, topA] of bands) {
+    const x = (W - bw) / 2
+    g.fillGradientStyle(c, c, c, c, topA, topA, 0, 0)
+    g.fillRect(x, 0, bw, H)
+  }
+  g.generateTexture('raybeam', W, H)
+  g.destroy()
+}
+
 function makeSweep(scene: Phaser.Scene): void {
   const g = scene.make.graphics({ x: 0, y: 0 }, false)
   g.fillStyle(0xf2b234, 0.45)
@@ -551,6 +578,7 @@ export function createAllTextures(scene: Phaser.Scene): void {
   makeCard(scene)
   makeBulb(scene)
   makeTile(scene)
+  makeRaybeam(scene)
   makeGlyphTexture(scene, 'star', '⭐', 44, 64)
   makeGlyphTexture(scene, 'lock', '🔒', 40, 64)
   makeGlyphTexture(scene, 'heart', '❤️', 44, 64)
