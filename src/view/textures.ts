@@ -249,6 +249,36 @@ function makeSweep(scene: Phaser.Scene): void {
   g.destroy()
 }
 
+/** Soft radial fireball (rose→gold→white-hot) — the detonation flash/missile head. Additive. */
+function makeFireball(scene: Phaser.Scene): void {
+  const g = scene.make.graphics({ x: 0, y: 0 }, false)
+  const c = 24
+  g.fillStyle(0xd3304f, 0.22)
+  g.fillCircle(c, c, 24)
+  g.fillStyle(0xf2b234, 0.5)
+  g.fillCircle(c, c, 18)
+  g.fillStyle(0xffcf6a, 0.9)
+  g.fillCircle(c, c, 11)
+  g.fillStyle(0xfff6d9, 1)
+  g.fillCircle(c, c, 5)
+  g.generateTexture('fireball', 48, 48)
+  g.destroy()
+}
+
+/** Bright thin blast ring — scaled out + faded for the bomb shockwave. Additive. */
+function makeShockwave(scene: Phaser.Scene): void {
+  const g = scene.make.graphics({ x: 0, y: 0 }, false)
+  const c = 48
+  g.lineStyle(10, 0xf2b234, 0.35)
+  g.strokeCircle(c, c, 38)
+  g.lineStyle(5, 0xffe6a8, 0.9)
+  g.strokeCircle(c, c, 41)
+  g.lineStyle(2, 0xfffdf8, 1)
+  g.strokeCircle(c, c, 43)
+  g.generateTexture('shockwave', 96, 96)
+  g.destroy()
+}
+
 /** Texture key for a piece, composing special overlays lazily on first use. */
 export function pieceTextureKey(piece: Piece): string {
   if (piece.kind === 'jackpot') return 'jackpot'
@@ -256,40 +286,192 @@ export function pieceTextureKey(piece: Piece): string {
   return `${piece.symbol}|${piece.kind}`
 }
 
+/** Representative colour per symbol — the "match by colour" accent carried onto specials. */
+const SYMBOL_TINT: Record<SymbolType, number> = {
+  cherry: 0xd3304f,
+  seven: 0xe0312e,
+  diamond: 0x49c6ee,
+  bell: 0xf2b234,
+  clover: 0x3fae5a,
+  bar: 0x4a5a8f,
+}
+
+/**
+ * Primed dice-bomb: a dark glossy round shell with a top gloss highlight, a gold fuse collar,
+ * a curved lit fuse and a bright spark at the tip — the piece's symbol rides on the belly as a
+ * smaller colour accent (plus a tint halo + accent ring) so it still matches by colour.
+ */
+function drawBomb(scene: Phaser.Scene, dt: Phaser.Textures.DynamicTexture, symbol: SymbolType, tint: number): void {
+  const cx = 64
+  const cy = 76
+  const r = 40
+  const g = scene.make.graphics({ x: 0, y: 0 }, false)
+  // Symbol-tint halo (keeps colour-match legible under the dark shell).
+  g.fillStyle(tint, 0.16)
+  g.fillCircle(cx, cy, r + 12)
+  g.fillStyle(tint, 0.3)
+  g.fillCircle(cx, cy, r + 3)
+  // Cast shadow + dark glossy shell with a rounder lit upper form.
+  g.fillStyle(0x0b0e18, 0.5)
+  g.fillCircle(cx, cy + 4, r)
+  g.fillStyle(0x1b2138, 1)
+  g.fillCircle(cx, cy, r)
+  g.fillStyle(0x2c3557, 1)
+  g.fillCircle(cx - 3, cy - 5, r - 8)
+  // Colour accent ring + dark bevel rim.
+  g.lineStyle(4, tint, 0.9)
+  g.strokeCircle(cx, cy, r - 1)
+  g.lineStyle(3, 0x0b0e18, 1)
+  g.strokeCircle(cx, cy, r + 1)
+  // Gold fuse collar at the crown.
+  g.fillStyle(0x8a5a12, 1)
+  g.fillRoundedRect(cx - 9, cy - r - 5, 18, 13, 4)
+  g.fillStyle(0xf2b234, 1)
+  g.fillRoundedRect(cx - 8, cy - r - 7, 16, 11, 4)
+  dt.draw(g)
+  g.destroy()
+  // Symbol emoji on the belly — the smaller colour accent.
+  const base = scene.make.image({ x: 0, y: 0, key: symbol }, false)
+  base.setScale(0.4)
+  dt.draw(base, cx, cy + 4)
+  base.destroy()
+  // Top pass: gloss, lit fuse and spark render above the symbol.
+  const g2 = scene.make.graphics({ x: 0, y: 0 }, false)
+  g2.fillStyle(0xffffff, 0.4)
+  g2.fillEllipse(cx - 12, cy - 18, 28, 16)
+  g2.fillStyle(0xffffff, 0.9)
+  g2.fillCircle(cx - 15, cy - 20, 4)
+  // Curved fuse (quadratic sample) from the collar up to the spark.
+  const p0 = { x: cx + 2, y: cy - r - 5 }
+  const cpx = cx + 6
+  const cpy = cy - r - 30
+  const p1 = { x: cx + 30, y: cy - r - 22 }
+  const pts: Array<{ x: number; y: number }> = []
+  for (let i = 0; i <= 8; i++) {
+    const t = i / 8
+    const mt = 1 - t
+    pts.push({
+      x: mt * mt * p0.x + 2 * mt * t * cpx + t * t * p1.x,
+      y: mt * mt * p0.y + 2 * mt * t * cpy + t * t * p1.y,
+    })
+  }
+  g2.lineStyle(6, 0x4a2f16, 1)
+  g2.strokePoints(pts)
+  g2.lineStyle(2.5, 0x9a6a34, 1)
+  g2.strokePoints(pts)
+  // Bright spark at the fuse tip.
+  const tip = pts[pts.length - 1]
+  g2.fillStyle(0xff7a2a, 0.5)
+  g2.fillCircle(tip.x, tip.y, 11)
+  g2.fillStyle(0xf2b234, 0.9)
+  g2.fillCircle(tip.x, tip.y, 7)
+  g2.fillStyle(0xffd75e, 1)
+  g2.fillCircle(tip.x, tip.y, 4.5)
+  g2.fillStyle(0xfff6d9, 1)
+  g2.fillCircle(tip.x, tip.y, 2.4)
+  g2.lineStyle(2, 0xffe08a, 0.9)
+  for (let i = 0; i < 4; i++) {
+    const a = (i / 4) * Math.PI * 2 + 0.4
+    g2.lineBetween(tip.x, tip.y, tip.x + Math.cos(a) * 12, tip.y + Math.sin(a) * 12)
+  }
+  dt.draw(g2)
+  g2.destroy()
+}
+
+/**
+ * Primed wild-reel missile: a beveled gold capsule with a rose warhead cone, navy tail fins and a
+ * glowing thruster, a symbol-coloured payload window, and BOLD cream firing arrows on both ends
+ * of the axis it clears (row = horizontal, col = vertical). Reads clearly as armed + directional.
+ */
+function drawRocket(
+  scene: Phaser.Scene,
+  dt: Phaser.Textures.DynamicTexture,
+  symbol: SymbolType,
+  tint: number,
+  horizontal: boolean
+): void {
+  const cx = 64
+  const cy = 64
+  const g = scene.make.graphics({ x: 0, y: 0 }, false)
+  // Canonical coords point +X (nose right); the column variant swaps axes (a clean 90° turn).
+  const pt = (px: number, py: number): { x: number; y: number } =>
+    horizontal ? { x: cx + px, y: cy + py } : { x: cx + py, y: cy + px }
+  const tri = (a: [number, number], b: [number, number], c: [number, number], color: number, alpha = 1): void => {
+    const pa = pt(a[0], a[1])
+    const pb = pt(b[0], b[1])
+    const pc = pt(c[0], c[1])
+    g.fillStyle(color, alpha)
+    g.fillTriangle(pa.x, pa.y, pb.x, pb.y, pc.x, pc.y)
+  }
+  const rrect = (x0: number, y0: number, w: number, h: number, rad: number, color: number): void => {
+    g.fillStyle(color, 1)
+    if (horizontal) g.fillRoundedRect(cx + x0, cy + y0, w, h, rad)
+    else g.fillRoundedRect(cx + y0, cy + x0, h, w, rad)
+  }
+
+  // Symbol-tint aura (colour identity + juice).
+  g.fillStyle(tint, 0.16)
+  g.fillCircle(cx, cy, 54)
+  // Thruster: gold glow + flame plume at the tail.
+  const glow = pt(-40, 0)
+  g.fillStyle(0xf2b234, 0.45)
+  g.fillCircle(glow.x, glow.y, 15)
+  tri([-30, -10], [-30, 10], [-50, 0], 0xffb347)
+  tri([-30, -6], [-30, 6], [-44, 0], 0xfff6d9)
+  // Tail fins (navy).
+  tri([-30, -13], [-30, -30], [-12, -14], 0x26304d)
+  tri([-30, 13], [-30, 30], [-12, 14], 0x26304d)
+  // Body capsule — beveled gold with a glossy top band.
+  rrect(-31, -18, 49, 36, 16, 0xa87410)
+  rrect(-30, -16, 46, 32, 14, 0xf2b234)
+  rrect(-27, -14, 40, 12, 7, 0xffe6a8)
+  // Warhead nose cone (rose) with a cream glint.
+  tri([15, -18], [15, 18], [45, 0], 0xa8213c)
+  tri([16, -16], [16, 16], [42, 0], 0xd3304f)
+  tri([18, -9], [16, 3], [34, -3], 0xffd9d9, 0.55)
+  // Payload window (symbol colour) mid-body.
+  const win = pt(-8, 0)
+  g.fillStyle(0x26304d, 1)
+  g.fillCircle(win.x, win.y, 15)
+  g.fillStyle(0xfffdf8, 1)
+  g.fillCircle(win.x, win.y, 11)
+  dt.draw(g)
+  g.destroy()
+
+  // Symbol emoji inside the window — the colour accent.
+  const base = scene.make.image({ x: 0, y: 0, key: symbol }, false)
+  base.setScale(0.18)
+  dt.draw(base, win.x, win.y)
+  base.destroy()
+
+  // Top pass: tint ring around the window + bold firing arrows on both ends of the axis.
+  const g2 = scene.make.graphics({ x: 0, y: 0 }, false)
+  g2.lineStyle(3, tint, 1)
+  g2.strokeCircle(win.x, win.y, 13)
+  const chevron = (tipx: number, dir: number): void => {
+    const cpts = [pt(tipx - dir * 11, -13), pt(tipx, 0), pt(tipx - dir * 11, 13)]
+    g2.lineStyle(9, 0x26304d, 1)
+    g2.strokePoints(cpts)
+    g2.lineStyle(5, 0xfff6d9, 1)
+    g2.strokePoints(cpts)
+  }
+  chevron(53, 1)
+  chevron(-53, -1)
+  dt.draw(g2)
+  g2.destroy()
+}
+
 export function ensurePieceTexture(scene: Phaser.Scene, piece: Piece): string {
   const key = pieceTextureKey(piece)
   if (scene.textures.exists(key)) return key
   const dt = scene.textures.addDynamicTexture(key, TEX_SIZE, TEX_SIZE)
   if (!dt) return piece.symbol
-  const base = scene.make.image({ x: 0, y: 0, key: piece.symbol }, false)
-  base.setScale(0.8)
-  dt.draw(base, TEX_SIZE / 2, TEX_SIZE / 2)
-  base.destroy()
-
+  const tint = SYMBOL_TINT[piece.symbol] ?? 0xf2b234
   if (piece.kind === 'diceBomb') {
-    const badge = scene.make.text(
-      { x: 0, y: 0, text: '🎲', style: { fontFamily: 'sans-serif', fontSize: '40px', padding: { x: 6, y: 6 } } },
-      false
-    )
-    dt.draw(badge, TEX_SIZE - badge.width - 2, TEX_SIZE - badge.height - 2)
-    badge.destroy()
+    drawBomb(scene, dt, piece.symbol, tint)
   } else {
-    const g = scene.make.graphics({ x: 0, y: 0 }, false)
-    g.fillStyle(0xf2b234, 1)
-    g.lineStyle(3, 0xa87410, 1)
-    if (piece.kind === 'wildReelRow') {
-      g.fillTriangle(102, 52, 102, 76, 120, 64)
-      g.strokeTriangle(102, 52, 102, 76, 120, 64)
-      g.fillTriangle(26, 52, 26, 76, 8, 64)
-      g.strokeTriangle(26, 52, 26, 76, 8, 64)
-    } else {
-      g.fillTriangle(52, 102, 76, 102, 64, 120)
-      g.strokeTriangle(52, 102, 76, 102, 64, 120)
-      g.fillTriangle(52, 26, 76, 26, 64, 8)
-      g.strokeTriangle(52, 26, 76, 26, 64, 8)
-    }
-    dt.draw(g)
-    g.destroy()
+    // wildReelRow | wildReelCol — a missile pointing along the line it fires.
+    drawRocket(scene, dt, piece.symbol, tint, piece.kind === 'wildReelRow')
   }
   return key
 }
@@ -304,6 +486,8 @@ export function createAllTextures(scene: Phaser.Scene): void {
   makeRing(scene)
   makeJackpot(scene)
   makeSweep(scene)
+  makeFireball(scene)
+  makeShockwave(scene)
   makeConfetti(scene)
   makeChip(scene)
   makeCard(scene)
