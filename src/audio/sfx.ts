@@ -8,6 +8,18 @@
  */
 
 const MUTE_KEY = 'viva-maya:muted'
+const SWAP_KEY = 'viva-maya:swapSound'
+
+/** Selectable "move a piece" sound. 'silk'/'chime'/'aurora' are the smooth/mystical set. */
+export type SwapSound = 'silk' | 'chime' | 'aurora' | 'classic'
+export const SWAP_SOUNDS: SwapSound[] = ['silk', 'chime', 'aurora', 'classic']
+export const SWAP_SOUND_LABELS: Record<SwapSound, string> = {
+  silk: 'SILK',
+  chime: 'CHIME',
+  aurora: 'AURORA',
+  classic: 'CLASSIC',
+}
+const DEFAULT_SWAP: SwapSound = 'silk'
 
 function readMuted(): boolean {
   try {
@@ -22,6 +34,23 @@ function writeMuted(muted: boolean): void {
     localStorage.setItem(MUTE_KEY, muted ? '1' : '0')
   } catch {
     // storage blocked (private mode / no DOM) — mute just won't persist
+  }
+}
+
+function readSwap(): SwapSound {
+  try {
+    const v = localStorage.getItem(SWAP_KEY)
+    return (SWAP_SOUNDS as string[]).includes(v ?? '') ? (v as SwapSound) : DEFAULT_SWAP
+  } catch {
+    return DEFAULT_SWAP
+  }
+}
+
+function writeSwap(s: SwapSound): void {
+  try {
+    localStorage.setItem(SWAP_KEY, s)
+  } catch {
+    // best-effort only
   }
 }
 
@@ -42,9 +71,20 @@ class Sfx {
   private noiseBuffer: AudioBuffer | null = null
   private started = false
   private _muted = false
+  private _swapSound: SwapSound = DEFAULT_SWAP
 
   get muted(): boolean {
     return this._muted
+  }
+
+  get swapSound(): SwapSound {
+    return this._swapSound
+  }
+
+  /** Persist the chosen "move a piece" sound. */
+  setSwapSound(s: SwapSound): void {
+    this._swapSound = s
+    writeSwap(s)
   }
 
   /**
@@ -57,6 +97,7 @@ class Sfx {
     if (this.started) return
     this.started = true
     this._muted = readMuted()
+    this._swapSound = readSwap()
     const unlock = () => {
       const ctx = this.ensureContext()
       if (ctx && ctx.state === 'suspended') void ctx.resume()
@@ -100,9 +141,10 @@ class Sfx {
     return this.ctx
   }
 
-  /** Run a voice builder against a live, unmuted context. Never throws. */
-  private voice(build: (ctx: AudioContext, t: number, out: AudioNode) => void): void {
-    if (this._muted) return
+  /** Run a voice builder against a live context. Never throws. `force` plays through mute
+   * (for the sound picker preview, where a tap is an explicit request to hear it). */
+  private voice(build: (ctx: AudioContext, t: number, out: AudioNode) => void, force = false): void {
+    if (this._muted && !force) return
     const ctx = this.ensureContext()
     if (!ctx || !this.master) return
     if (ctx.state === 'suspended') void ctx.resume()
@@ -156,8 +198,130 @@ class Sfx {
     })
   }
 
-  /** Filtered noise sweeping up — the swap "whoosh". */
-  swapWhoosh(): void {
+  /** Play the currently-selected "move a piece" sound. */
+  swap(): void {
+    this.playSwap(this._swapSound, false)
+  }
+
+  /** Audition a specific move sound (plays through mute — the picker tap is an explicit request). */
+  previewSwap(s: SwapSound): void {
+    this.playSwap(s, true)
+  }
+
+  private playSwap(s: SwapSound, force: boolean): void {
+    if (s === 'silk') this.swapSilk(force)
+    else if (s === 'chime') this.swapChime(force)
+    else if (s === 'aurora') this.swapAurora(force)
+    else this.swapClassic(force)
+  }
+
+  /** SILK — warm sine + soft fifth gliding up through a low-pass, with a breath of air. Smooth. */
+  private swapSilk(force: boolean): void {
+    this.voice((ctx, t, out) => {
+      const glide = (freq: number) => {
+        const o = ctx.createOscillator()
+        o.type = 'sine'
+        o.frequency.setValueAtTime(freq, t)
+        o.frequency.exponentialRampToValueAtTime(freq * 1.6, t + 0.15)
+        return o
+      }
+      const o1 = glide(300)
+      const o2 = glide(450) // a gentle perfect fifth for warmth
+      const lp = ctx.createBiquadFilter()
+      lp.type = 'lowpass'
+      lp.frequency.setValueAtTime(700, t)
+      lp.frequency.exponentialRampToValueAtTime(2200, t + 0.15)
+      const g = ctx.createGain()
+      g.gain.setValueAtTime(0.0001, t)
+      g.gain.exponentialRampToValueAtTime(0.24, t + 0.05)
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.26)
+      o1.connect(lp)
+      o2.connect(lp)
+      lp.connect(g).connect(out)
+      o1.start(t)
+      o1.stop(t + 0.28)
+      o2.start(t)
+      o2.stop(t + 0.28)
+      // faint low-passed air
+      const n = this.noiseSource(ctx)
+      const nlp = ctx.createBiquadFilter()
+      nlp.type = 'lowpass'
+      nlp.frequency.value = 1300
+      const ng = ctx.createGain()
+      ng.gain.setValueAtTime(0.0001, t)
+      ng.gain.exponentialRampToValueAtTime(0.045, t + 0.05)
+      ng.gain.exponentialRampToValueAtTime(0.0001, t + 0.22)
+      n.connect(nlp).connect(ng).connect(out)
+      n.start(t)
+      n.stop(t + 0.24)
+    }, force)
+  }
+
+  /** CHIME — a soft glassy bell (inharmonic partials) with a gentle upward pull. Mystical. */
+  private swapChime(force: boolean): void {
+    this.voice((ctx, t, out) => {
+      const base = 587.33 // D5
+      const partials: Array<[number, number, number]> = [
+        [1, 0.2, 0.34],
+        [2.01, 0.1, 0.24],
+        [3.02, 0.05, 0.18],
+        [4.31, 0.03, 0.14],
+      ]
+      for (const [m, p, d] of partials) {
+        this.tone(ctx, out, t, { type: 'sine', freq: base * m, peak: p, dur: d, attack: 0.005 })
+      }
+      this.tone(ctx, out, t, { type: 'sine', freq: base * 0.75, endFreq: base * 1.01, peak: 0.07, dur: 0.2, attack: 0.02 })
+    }, force)
+  }
+
+  /** AURORA — two detuned triangles swelling through an opening filter, with an ethereal
+   * feedback-delay shimmer tail. Airy, "pulling you in". */
+  private swapAurora(force: boolean): void {
+    this.voice((ctx, t, out) => {
+      const mk = (detune: number) => {
+        const o = ctx.createOscillator()
+        o.type = 'triangle'
+        o.detune.value = detune
+        o.frequency.setValueAtTime(330, t)
+        o.frequency.exponentialRampToValueAtTime(500, t + 0.2)
+        return o
+      }
+      const o1 = mk(-8)
+      const o2 = mk(8)
+      const lp = ctx.createBiquadFilter()
+      lp.type = 'lowpass'
+      lp.Q.value = 5
+      lp.frequency.setValueAtTime(520, t)
+      lp.frequency.exponentialRampToValueAtTime(2400, t + 0.2)
+      const g = ctx.createGain()
+      g.gain.setValueAtTime(0.0001, t)
+      g.gain.exponentialRampToValueAtTime(0.2, t + 0.06)
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.3)
+      const delay = ctx.createDelay(0.5)
+      delay.delayTime.value = 0.12
+      const fb = ctx.createGain()
+      fb.gain.value = 0.3
+      const wet = ctx.createGain()
+      wet.gain.setValueAtTime(0.4, t)
+      wet.gain.setValueAtTime(0.4, t + 0.3)
+      wet.gain.exponentialRampToValueAtTime(0.0001, t + 0.75)
+      o1.connect(lp)
+      o2.connect(lp)
+      lp.connect(g)
+      g.connect(out) // dry
+      g.connect(delay)
+      delay.connect(fb)
+      fb.connect(delay)
+      delay.connect(wet).connect(out) // wet shimmer
+      o1.start(t)
+      o1.stop(t + 0.32)
+      o2.start(t)
+      o2.stop(t + 0.32)
+    }, force)
+  }
+
+  /** CLASSIC — the original filtered-noise "whoosh". */
+  private swapClassic(force: boolean): void {
     this.voice((ctx, t, out) => {
       const src = this.noiseSource(ctx)
       const bp = ctx.createBiquadFilter()
@@ -172,7 +336,7 @@ class Sfx {
       src.connect(bp).connect(g).connect(out)
       src.start(t)
       src.stop(t + 0.22)
-    })
+    }, force)
   }
 
   /** Low damped thud plus a tiny click — the invalid snap-back. */

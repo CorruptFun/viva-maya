@@ -16,10 +16,11 @@ export const PIECE_SIZE = CELL * 0.92
 export const POINTS_PER_PIECE = 20
 export const MOVES_BONUS = 60
 
-// Lives / energy: a small pool that only a LOSS (or mid-level quit) drains — wins are free.
-// One life regenerates every 30 min (wall clock), so an empty pool fully refills in 90 min.
-export const LIVES_MAX = 3
-export const LIFE_REGEN_MS = 30 * 60 * 1000
+// Lives / energy: a generous pool that only a LOSS (or mid-level quit) drains — wins are free.
+// One life regenerates every 8 min (wall clock); an empty pool fully refills in ~80 min, and
+// a single life comes back after a short break. Kept forgiving so a learning player rarely stalls.
+export const LIVES_MAX = 10
+export const LIFE_REGEN_MS = 8 * 60 * 1000
 
 export const SWAP_MS = 130
 export const INVALID_MS = 150

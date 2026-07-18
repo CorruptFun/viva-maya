@@ -78,11 +78,13 @@ clears a RANDOM present color. Swap-combos (both consumed, epicenter = drag dest
   all-time save.best. HUD shows a "WEEK'S BEST" card; end card shows NEW BEST! / TIME'S UP.
 
 ## Lives / energy (src/core/lives.ts + GameScene gate)
-- Small pool: LIVES_MAX=3, LIFE_REGEN_MS=30 min (config.ts). Only a LOSS drains a life; a
-  mid-level QUIT after ≥1 move also drains one (closes the quit-to-dodge-loss exploit). WINS
-  ARE FREE — so a steady/skilled player never hits the wall ("lasts longer the better you play").
-- Regen is wall-clock (device clock trusted, like the daily spin): +1 life every 30 min, so an
-  empty pool is playable again at 30 min and fully full at 90 min. Storage: save.lives +
+- Generous pool: LIVES_MAX=10, LIFE_REGEN_MS=8 min (config.ts) — tuned way up from the original
+  3/30min after Maya burned through a stingy pool while learning (2026-07-17). Only a LOSS drains
+  a life; a mid-level QUIT after ≥1 move also drains one (closes the quit-to-dodge-loss exploit).
+  WINS ARE FREE — so a steady/skilled player never hits the wall.
+- Regen is wall-clock (device clock trusted, like the daily spin): +1 life every 8 min, so a
+  single life returns after a short break and an empty pool refills in ~80 min. save v5→v6 does a
+  one-time GRACE REFILL to full on upgrade so nobody is stranded at the old count. Storage: save.lives +
   save.livesAnchor (epoch ms the current regen cycle started; 0 when full). refreshLives() banks
   regen + persists on every read; spendLife/grantLife mutate; devSetLives for ?lives=N.
 - ENDLESS is NEVER gated (it's already weekly-scarce). Numbered levels gate on entry: 0 lives →

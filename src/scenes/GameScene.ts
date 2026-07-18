@@ -770,7 +770,7 @@ export class GameScene extends Phaser.Scene {
     const pb = this.board.get(b)
     if (!pa || !pb) return
     this.state = 'swapping'
-    sfx.swapWhoosh()
+    sfx.swap()
 
     const sa = this.sprites.get(pa.id)!
     const sb = this.sprites.get(pb.id)!
