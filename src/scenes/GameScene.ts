@@ -47,6 +47,12 @@ interface ObjectiveState {
   symbol: SymbolType
   remaining: number
   total: number
+  /**
+   * Displayed collect count driving `text`. Lags `remaining` so the E10 collect-fly can tick the
+   * visible number DOWN only when a flyer lands (the model decrements synchronously for correct win
+   * detection; the chip catches up on arrival). Kept in sync with `remaining` under reduced motion.
+   */
+  shown?: number
   text?: Phaser.GameObjects.Text
   chip?: Phaser.GameObjects.Container
   /** Soft gold halo behind the chip that breathes while this objective is INCOMPLETE. */
@@ -129,6 +135,14 @@ export class GameScene extends Phaser.Scene {
   private shownScore = 0
   private scoreTween: Phaser.Tweens.Tween | null = null
   private scoreText!: Phaser.GameObjects.Text
+
+  /**
+   * E11 continuous combo counter: ONE reused readout over the board — punches in place + heat-ramps
+   * warm→hot across a cascade, then fades on resolve. Never per-wave spawns. `comboTween` holds
+   * whichever beat is live (punch OR fade) so a new wave / the resolve can cancel it cleanly.
+   */
+  private comboText?: Phaser.GameObjects.Text
+  private comboTween: Phaser.Tweens.Tween | null = null
 
   /** Compact chip-balance pill in the HUD; the win payout flies a chip into it. */
   private chipHud?: ChipPill
@@ -218,6 +232,9 @@ export class GameScene extends Phaser.Scene {
     this.dragFrom = null
     this.scoreMult = 1
     this.movesPulse = null
+    // Combo readout is a scene GameObject — the old one was destroyed on restart, so drop the stale ref.
+    this.comboText = undefined
+    this.comboTween = null
     this.trauma = 0
     this.traumaDirX = 0
     this.traumaDirY = 0
@@ -548,6 +565,92 @@ export class GameScene extends Phaser.Scene {
         this.goalGlows.delete(id)
       }
     }
+  }
+
+  /**
+   * E10 collect-fly, landing step (final): snap an objective's VISIBLE chip to its model value —
+   * set the number (or ✓), pop the chip, gold-flash the number, and on completion retire the target
+   * emphasis + fire the objective-complete stamp. Used directly under reduced motion / when a flyer
+   * isn't in budget, and as the last collect flyer's arrival.
+   */
+  private settleCollect(o: ObjectiveState): void {
+    o.shown = o.remaining
+    o.text?.setText(o.remaining > 0 ? String(o.remaining) : '✓')
+    if (o.chip && o.chip.scale === 1) {
+      this.tweens.add({ targets: o.chip, scale: 1.14, duration: 120, yoyo: true, ease: 'Quad.easeOut' })
+    }
+    if (o.remaining > 0) {
+      // Gold flash — reverts to ink only while still incomplete (a completed chip keeps its green ✓).
+      o.text?.setColor(css(getTheme().gold))
+      this.time.delayedCall(160, () => o.remaining > 0 && o.text?.setColor(getTheme().ink))
+    } else {
+      o.text?.setColor(getTheme().ok)
+      this.onObjectiveComplete(o)
+      this.objectiveStamp(o)
+    }
+  }
+
+  /** E10 collect-fly, intermediate step: a non-final flyer landed — tick the visible counter down
+   *  one notch toward the model + pop the chip (completion is owned by the final flyer's settle). */
+  private stepCollect(o: ObjectiveState): void {
+    const shown = Math.max(o.remaining, (o.shown ?? o.remaining) - 1)
+    o.shown = shown
+    o.text?.setText(shown > 0 ? String(shown) : '✓')
+    if (o.chip && o.chip.scale === 1) {
+      this.tweens.add({ targets: o.chip, scale: 1.12, duration: 110, yoyo: true, ease: 'Quad.easeOut' })
+    }
+    if (o.remaining > 0) {
+      o.text?.setColor(css(getTheme().gold))
+      this.time.delayedCall(140, () => o.remaining > 0 && o.text?.setColor(getTheme().ink))
+    }
+  }
+
+  /**
+   * E10 collect-fly: arc `sources.length` small copies of an objective's symbol from their cleared
+   * cells UP to the COLLECT chip (a lifted quadratic, reusing the symbol texture, self-destroying on
+   * arrival). Each landing ticks the visible counter one step toward the model; the LAST to land
+   * settles it (snap + completion stamp). Non-blocking — the model already decremented, so the
+   * cascade + win detection never wait on these. Cap is enforced by the caller (≤3/wave).
+   */
+  private flyCollect(o: ObjectiveState, sources: Coord[]): void {
+    const chip = o.chip
+    if (!chip) {
+      this.settleCollect(o)
+      return
+    }
+    const targetX = chip.x
+    const targetY = chip.y - 20 // the chip's symbol icon sits above its number
+    const startScale = PIECE_SCALE * 0.7
+    const total = sources.length
+    let landed = 0
+    sources.forEach((at, i) => {
+      const from = this.cellToXY(at)
+      const flyer = this.add.image(from.x, from.y, o.symbol).setDepth(32).setScale(startScale)
+      // Control point lifted above both ends → a gentle board→chip arc (no Path object needed).
+      const ctrlX = (from.x + targetX) / 2 + (Math.random() * 2 - 1) * 30
+      const ctrlY = Math.min(from.y, targetY) - 70 - Math.random() * 30
+      const p = { t: 0 }
+      this.tweens.add({
+        targets: p,
+        t: 1,
+        delay: i * 60,
+        duration: 320 + i * 30,
+        ease: 'Sine.easeIn',
+        onUpdate: () => {
+          const t = p.t
+          const u = 1 - t
+          flyer.x = u * u * from.x + 2 * u * t * ctrlX + t * t * targetX
+          flyer.y = u * u * from.y + 2 * u * t * ctrlY + t * t * targetY
+          flyer.setScale(startScale * (1 - 0.4 * t))
+          flyer.rotation = t * 1.1
+        },
+        onComplete: () => {
+          flyer.destroy()
+          if (++landed >= total) this.settleCollect(o)
+          else this.stepCollect(o)
+        },
+      })
+    })
   }
 
   private scheduleAutoplay(): void {
@@ -1024,6 +1127,7 @@ export class GameScene extends Phaser.Scene {
           .setOrigin(0.5)
         chip.add(o.text)
         o.chip = chip
+        o.shown = o.remaining // display starts synced; collect-fly lets it lag behind the model
       })
     }
 
@@ -1399,6 +1503,7 @@ export class GameScene extends Phaser.Scene {
       this.log(this.dbgStage)
       wave = this.board.matchWave()
     }
+    this.fadeCombo() // E11: the cascade settled — resolve the combo readout (composes with the win peak)
     this.dbgStage = 'end-checks'
     this.log('end-checks', 'objectivesDone', this.objectives.every(o => o.remaining <= 0), 'movesLeft', this.movesLeft)
     // Endless never "wins" on objectives (it has none) — it ends when moves run out.
@@ -1470,32 +1575,42 @@ export class GameScene extends Phaser.Scene {
       if (chunkAt) this.secondaryMotion(chunkAt, clearedIds)
     }
 
-    // Scoring + objectives (specials count as their symbol; jackpot pieces don't).
+    // Scoring + objectives (specials count as their symbol; jackpot pieces don't). The MODEL
+    // (obj.remaining) decrements SYNCHRONOUSLY here so win detection stays exact; the VISIBLE tick +
+    // chip pop are deferred to the E10 collect-fly flyer's arrival below, so the decrement reads as
+    // "the board fed the counter". We also remember which cleared cells fed each objective (for arc
+    // origins). Reduced motion skips the arc and settles the display in place, instantly.
     const changedObjectives = new Set<ObjectiveState>()
-    for (const { piece } of wave.cleared) {
+    const collectSources = new Map<ObjectiveState, Coord[]>()
+    for (const { piece, at } of wave.cleared) {
       if (piece.kind === 'jackpot') continue
       const obj = this.objectives.find(o => o.symbol === piece.symbol)
       if (obj && obj.remaining > 0) {
         obj.remaining--
-        obj.text?.setText(obj.remaining > 0 ? String(obj.remaining) : '✓')
-        if (obj.remaining === 0) obj.text?.setColor(getTheme().ok)
         changedObjectives.add(obj)
+        const src = collectSources.get(obj)
+        if (src) src.push(at)
+        else collectSources.set(obj, [at])
       }
     }
-    // Pop only the chip(s) whose count actually changed this wave, and flash the number gold.
-    for (const o of changedObjectives) {
-      if (o.chip && o.chip.scale === 1) {
-        this.tweens.add({ targets: o.chip, scale: 1.14, duration: 120, yoyo: true, ease: 'Quad.easeOut' })
-      }
-      // Gold flash — but leave a completed objective its green ✓.
-      if (o.text && o.remaining > 0) {
-        o.text.setColor(css(getTheme().gold))
-        this.time.delayedCall(160, () => o.remaining > 0 && o.text?.setColor(getTheme().ink))
-      }
-      // Done: retire the "target" emphasis (green ✓ already set above stays) + punch the beat.
-      if (o.remaining === 0) {
-        this.onObjectiveComplete(o)
-        this.objectiveStamp(o)
+    if (this.reducedMotion) {
+      // E10 fallback: no arc — the existing instant decrement + chip pop (+ complete stamp).
+      for (const o of changedObjectives) this.settleCollect(o)
+    } else {
+      // Collect-fly (E10): arc a small copy of the cleared symbol from the board to its COLLECT chip,
+      // and only THEN tick the counter + pop it. Capped to ≤3 flyers/wave, split greedily across the
+      // objectives that changed (representative cells if more cleared); a starved objective settles
+      // instantly so the visible count never desyncs from the model.
+      let flyBudget = 3
+      for (const o of changedObjectives) {
+        const sources = collectSources.get(o) ?? []
+        const n = Math.min(sources.length, flyBudget)
+        if (n <= 0) {
+          this.settleCollect(o)
+          continue
+        }
+        flyBudget -= n
+        this.flyCollect(o, sources.slice(0, n))
       }
     }
     const wavePoints = wave.cleared.length * POINTS_PER_PIECE * cascade
@@ -2738,40 +2853,76 @@ export class GameScene extends Phaser.Scene {
     })
   }
 
+  /**
+   * E11 continuous combo counter: ONE reused readout over the board — not a fresh text per wave. Each
+   * new cascade wave PUNCHES it in place (scale pop) and HEAT-RAMPS it warm→hot (x2 warm gold → x3 hot
+   * amber → x4+ hot rose/red), with a subtle per-wave scale ramp so a deep chain reads as one rising
+   * crescendo that resolves into the win fanfare (see fadeCombo, called when the cascade settles). At
+   * x4+ it fires the MEGA peak (jackpot strike + haptic + marquee flash), matching the prior behaviour.
+   * Reduced motion keeps the counter + number but drops the punch + colour-pulse (static set).
+   */
   private showCombo(cascade: number): void {
     const big = cascade >= 4
     if (big) {
       sfx.jackpotStrike()
       this.vibrate([60, 40, 120])
-      this.flashCabinet() // mega-win: pop the marquee lights
+      this.flashCabinet() // mega peak: pop the marquee lights
     }
-    const text = this.add
-      .text(DESIGN_W / 2, BOARD_Y + BOARD_W / 2 - 40, big ? 'MEGA WIN!' : `COMBO x${cascade}`, {
-        fontFamily: FONT,
-        fontSize: big ? '72px' : '52px',
-        color: big ? getTheme().goldText : getTheme().warn,
-        fontStyle: '900',
-      })
-      .setOrigin(0.5)
-      .setDepth(30)
-      .setScale(0)
-      .setStroke('#ffffff', 8)
-      .setShadow(0, 4, 'rgba(0,0,0,0.2)', 8, true, true)
-    this.tweens.add({
-      targets: text,
-      scale: big ? 1.25 : 1,
-      duration: 240,
-      ease: 'Back.easeOut',
-      onComplete: () => {
-        this.tweens.add({
-          targets: text,
-          alpha: 0,
-          y: text.y - 70,
-          duration: 500,
-          delay: 260,
-          onComplete: () => text.destroy(),
-        })
-      },
+    // TODO(B14): sfx.cascadeRiser() — a low bass bed ratcheting up per wave, resolving into winFanfare.
+    const label = big ? 'MEGA WIN!' : `COMBO x${cascade}`
+    // Heat ramp: x2 warm gold → x3 hot amber → x4+ hot rose/red.
+    const heat = cascade <= 2 ? getTheme().goldText : cascade === 3 ? css(getTheme().gold) : css(getTheme().rose)
+    const cy = BOARD_Y + BOARD_W / 2 - 40
+    if (!this.comboText || !this.comboText.active) {
+      this.comboText = this.add
+        .text(DESIGN_W / 2, cy, label, { fontFamily: FONT, fontSize: '54px', fontStyle: '900', color: heat })
+        .setOrigin(0.5)
+        .setDepth(30)
+        .setStroke('#ffffff', 8)
+        .setShadow(0, 4, 'rgba(0,0,0,0.2)', 8, true, true)
+    }
+    const t = this.comboText
+    this.comboTween?.stop() // cancel a live punch/fade so waves never stack scale/alpha
+    this.comboTween = null
+    t.setText(label).setColor(heat).setPosition(DESIGN_W / 2, cy).setAlpha(1)
+    // Subtle scale ramp — the resting size grows as the chain deepens (capped), the visual crescendo.
+    const base = Math.min(1.5, 0.9 + cascade * 0.1)
+    if (this.reducedMotion) {
+      t.setScale(base) // static: number + heat colour, no punch/pulse
+      return
+    }
+    // Punch in place: reset to rest, then a quick scale pop (killed + restarted per wave so no stacking).
+    t.setScale(base)
+    this.comboTween = this.tweens.add({
+      targets: t,
+      scale: base * 1.28,
+      duration: 150,
+      yoyo: true,
+      ease: 'Quad.easeOut',
+    })
+  }
+
+  /**
+   * E11: resolve the combo counter once the cascade settles — a soft fade-up-out of the ONE reused
+   * object (not destroyed; the next cascade re-shows it). No-op if nothing showed this resolve.
+   * Reduced motion: a brief hold, then an instant hide.
+   */
+  private fadeCombo(): void {
+    const t = this.comboText
+    if (!t || !t.active || t.alpha === 0) return
+    this.comboTween?.stop()
+    this.comboTween = null
+    if (this.reducedMotion) {
+      this.time.delayedCall(220, () => t.active && t.setAlpha(0))
+      return
+    }
+    this.comboTween = this.tweens.add({
+      targets: t,
+      alpha: 0,
+      y: t.y - 60,
+      delay: 200,
+      duration: 420,
+      ease: 'Sine.easeIn',
     })
   }
 
