@@ -8,6 +8,7 @@ import { loadSave, markOccasionSeen } from '../core/save'
 import { SYMBOLS } from '../core/types'
 import type { Piece, PieceKind } from '../core/types'
 import { addCasinoBackdrop } from '../view/background'
+import { OVERSHOOT, backOut } from '../view/motion'
 import { getTheme, hapticsOff, prefersReducedMotion } from '../view/theme'
 import { ensurePieceTexture } from '../view/textures'
 import { FONT, GHOST_PILL, GOLD_PILL, addPillButton, startScene } from '../view/ui'
@@ -194,7 +195,7 @@ export class DailyBonusScene extends Phaser.Scene {
       streakText.setText(`🔥 day ${result.streak}`)
       idle.forEach(img => img.destroy())
       this.runReels(windows, result.prizes.map(p => p.type), () =>
-        this.celebrate(result.prizes.map(p => p.label), result.prizes.map(p => p.blurb))
+        this.celebrate(result.prizes.map(p => p.label), result.prizes.map(p => p.blurb), result.streak)
       )
     }
     const spinBtn = addPillButton(this, DESIGN_W / 2, 740, 300, 92, 'SPIN', GOLD_PILL, doSpin)
@@ -209,7 +210,12 @@ export class DailyBonusScene extends Phaser.Scene {
   private runReels(windows: { x: number; y: number }[], prizeKinds: string[], onDone: () => void): void {
     const prizeTex = this.prizeTexture(prizeKinds[0])
     const reduced = this.prefersReducedMotion()
+    const last = windows.length - 1
     let settled = 0
+    const finish = (): void => {
+      settled++
+      if (settled === windows.length) onDone()
+    }
     windows.forEach((w, i) => {
       const maskG = this.make.graphics({ x: 0, y: 0 }, false)
       maskG.fillStyle(0xffffff)
@@ -221,48 +227,79 @@ export class DailyBonusScene extends Phaser.Scene {
         const img = this.add.image(0, -s * REEL_H, tex).setDisplaySize(96, 96)
         strip.add(img)
       }
+      const finalY = strip.y + (STRIP_LEN - 1) * REEL_H // exact payline lock — the result is fixed here
+      const land = (): void => {
+        this.landReel(w, i, reduced)
+        finish()
+      }
+
+      // §E8/E15: reduced motion → instant, correct settle. No spin travel, no suspense wobble; the
+      // clunk (audio is never "motion") still lands via landReel.
+      if (reduced) {
+        strip.y = finalY
+        land()
+        return
+      }
+
       sfx.reelSweep()
-      this.tweens.add({
-        targets: strip,
-        y: strip.y + (STRIP_LEN - 1) * REEL_H,
-        duration: 900 + i * 380,
-        ease: 'Cubic.easeOut',
-        onComplete: () => {
-          // §E3/B14: a mechanical reel-landing clunk, panned by reel (left/centre/right) so the three
-          // stops read across the stereo field. A light haptic partners each detent (a11y-gated).
-          sfx.reelClunk((i - 1) * 0.6)
-          if (!hapticsOff() && 'vibrate' in navigator) navigator.vibrate?.(12)
-          // Reel-settle kick routed through the reduced-motion gate (§E8) — the sound still lands.
-          if (!reduced) this.cameras.main.shake(60, 0.004)
-          // Soft gold glow behind the settled winning symbol (separate object → not clipped by the reel mask).
-          const glow = this.add
-            .image(w.x + REEL_W / 2, w.y + REEL_H / 2, 'bgglow')
-            .setTint(getTheme().goldBezel)
-            .setBlendMode(Phaser.BlendModes.ADD)
-            .setDisplaySize(150, 150)
-            .setAlpha(reduced ? 0.3 : 0.16)
-          if (!reduced) {
-            this.tweens.add({
-              targets: glow,
-              alpha: 0.4,
-              scale: glow.scale * 1.12,
-              duration: 900,
-              yoyo: true,
-              repeat: -1,
-              ease: 'Sine.easeInOut',
-            })
-          }
-          settled++
-          if (settled === windows.length) onDone()
-        },
-      })
+      if (i === last) {
+        // §E15 third-reel suspense — the classic slot dopamine beat, on the daily return hook: a
+        // longer decel that dips just PAST the payline, then a small near-miss shimmy springs it up
+        // into lock. The chain ENDS exactly on finalY, so the (pre-computed) result is unchanged.
+        const over = REEL_H * 0.14
+        this.tweens.chain({
+          targets: strip,
+          tweens: [
+            { y: finalY + over, duration: 1500, ease: 'Cubic.easeOut' }, // long, suspenseful decel
+            { y: finalY, duration: 300, ease: backOut(OVERSHOOT.pop) }, // shimmy up into the detent
+          ],
+          onComplete: land,
+        })
+      } else {
+        this.tweens.add({
+          targets: strip,
+          y: finalY,
+          duration: 900 + i * 380,
+          ease: 'Cubic.easeOut',
+          onComplete: land,
+        })
+      }
     })
   }
 
-  private celebrate(labels: string[], blurbs: string[]): void {
+  /** The per-reel landing beat: panned clunk + haptic + settle-kick + a soft gold glow behind the win. */
+  private landReel(w: { x: number; y: number }, i: number, reduced: boolean): void {
+    // §E3/B14: a mechanical reel-landing clunk, panned by reel (left/centre/right) so the three stops
+    // read across the stereo field. A light haptic partners each detent (a11y-gated).
+    sfx.reelClunk((i - 1) * 0.6)
+    if (!hapticsOff() && 'vibrate' in navigator) navigator.vibrate?.(12)
+    // Reel-settle kick routed through the reduced-motion gate (§E8) — the sound still lands.
+    if (!reduced) this.cameras.main.shake(60, 0.004)
+    // Soft gold glow behind the settled winning symbol (separate object → not clipped by the reel mask).
+    const glow = this.add
+      .image(w.x + REEL_W / 2, w.y + REEL_H / 2, 'bgglow')
+      .setTint(getTheme().goldBezel)
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setDisplaySize(150, 150)
+      .setAlpha(reduced ? 0.3 : 0.16)
+    if (!reduced) {
+      this.tweens.add({
+        targets: glow,
+        alpha: 0.4,
+        scale: glow.scale * 1.12,
+        duration: 900,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut',
+      })
+    }
+  }
+
+  private celebrate(labels: string[], blurbs: string[], streak: number): void {
     // §E4 — the daily prize claim is one of the three Heartbloom beats. Layered UNDER the existing
     // fanfare/jackpot/hearts/sparks/confetti celebration; the Maya leitmotif rings only here + PERFECT/jackpot.
     this.heartbloom(DESIGN_W / 2, 450) // the cabinet's center, where the reels just settled
+    this.streakMilestone(streak) // §E15 — a tiered flourish layered on when the streak hits 7 / 30 / 100
     sfx.winFanfare()
     if (labels.includes('JACKPOT CHIP')) sfx.jackpotStrike()
     const hearts = this.add
@@ -333,6 +370,76 @@ export class DailyBonusScene extends Phaser.Scene {
     this.add
       .text(DESIGN_W / 2, 960, `come back tomorrow — ${todayKey()} claimed`, { fontFamily: FONT, fontSize: '18px', color: getTheme().inkFaint })
       .setOrigin(0.5)
+  }
+
+  /**
+   * STREAK MILESTONE (§E15) — a tiered flourish when the streak hits 7 / 30 / 100 days: a
+   * congratulatory line + a bigger heart/spark burst, layered on TOP of the ordinary daily
+   * celebration (ordinary days are unchanged — this returns early). Reuses the existing heart/spark
+   * emitters + gold tokens. Reduced motion → the static congrats line only, no burst.
+   */
+  private streakMilestone(streak: number): void {
+    const tier =
+      streak === 100
+        ? { line: '100 DAYS — LEGENDARY', hearts: 52, sparks: 26 }
+        : streak === 30
+          ? { line: '30-DAY STREAK!', hearts: 40, sparks: 18 }
+          : streak === 7
+            ? { line: 'ONE-WEEK STREAK!', hearts: 30, sparks: 12 }
+            : null
+    if (!tier) return // ordinary day — unchanged
+
+    const reduced = this.prefersReducedMotion()
+    const T = getTheme()
+    // Congratulatory line just under the reels (above the prize title). Depth 49 so it clears the
+    // Heartbloom's glow (depth 47) and stays crisply readable.
+    const banner = this.add
+      .text(DESIGN_W / 2, 636, `🔥  ${tier.line}`, {
+        fontFamily: FONT,
+        fontSize: '32px',
+        fontStyle: '900',
+        color: T.goldText,
+      })
+      .setOrigin(0.5)
+      .setShadow(0, 2, 'rgba(0,0,0,0.18)', 5, false, true)
+      .setDepth(49)
+
+    if (reduced) return // static congrats, no burst
+
+    banner.setScale(0)
+    this.tweens.add({ targets: banner, scale: 1, duration: 340, ease: 'Back.easeOut' })
+
+    // A bigger heart burst — tiered by milestone (reuses the heart texture / celebrate's emitter shape).
+    const hearts = this.add
+      .particles(0, 0, 'heart', {
+        speed: { min: 160, max: 480 },
+        angle: { min: 210, max: 330 },
+        scale: { start: 0.6, end: 0.12 },
+        alpha: { start: 1, end: 0 },
+        lifespan: { min: 800, max: 1500 },
+        gravityY: 480,
+        rotate: { min: -160, max: 160 },
+        emitting: false,
+      })
+      .setDepth(46)
+    hearts.explode(tier.hearts, DESIGN_W / 2, 430)
+    this.time.delayedCall(1800, () => hearts.destroy())
+
+    // A gold spark ring accenting the milestone.
+    const sparks = this.add
+      .particles(0, 0, 'spark', {
+        speed: { min: 200, max: 520 },
+        angle: { min: 0, max: 360 },
+        scale: { start: 0.6, end: 0 },
+        alpha: { start: 0.95, end: 0 },
+        lifespan: { min: 700, max: 1200 },
+        gravityY: 100,
+        tint: T.gold,
+        emitting: false,
+      })
+      .setDepth(46)
+    sparks.explode(tier.sparks, DESIGN_W / 2, 430)
+    this.time.delayedCall(1600, () => sparks.destroy())
   }
 
   /**
