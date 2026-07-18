@@ -7,6 +7,7 @@ import { refreshLives } from '../core/lives'
 import { loadSave } from '../core/save'
 import { addCasinoBackdrop } from '../view/background'
 import { quality } from '../view/quality'
+import { getTheme } from '../view/theme'
 import {
   FONT,
   GHOST_PILL,
@@ -53,7 +54,7 @@ export class HomeScene extends Phaser.Scene {
     addChipPill(this, DESIGN_W / 2, 44)
 
     // Top status: lives pool (with a live "next life" countdown) above the streak flame.
-    const livesHud = addLivesHud(this, DESIGN_W / 2, 100, { size: 32 })
+    const livesHud = addLivesHud(this, DESIGN_W / 2, 100, { size: 32, timerColor: getTheme().onBackdropMuted })
     const refreshLivesHud = (): void => livesHud.update(refreshLives())
     refreshLivesHud()
     this.time.addEvent({ delay: 1000, loop: true, callback: refreshLivesHud })
@@ -103,7 +104,7 @@ export class HomeScene extends Phaser.Scene {
       .text(DESIGN_W / 2, 560, 'cascades  ·  power-ups  ·  jackpots', {
         fontFamily: FONT,
         fontSize: '24px',
-        color: '#9a927e',
+        color: getTheme().onBackdropMuted,
       })
       .setOrigin(0.5)
       .setLetterSpacing(2)
@@ -111,7 +112,7 @@ export class HomeScene extends Phaser.Scene {
     // Soft gold halo behind PLAY — rendered underneath the button, breathing in
     // time with its scale pulse. Uses the runtime 'bgglow' texture from the backdrop.
     const glow = this.add.image(DESIGN_W / 2, 720, 'bgglow')
-    glow.setTint(0xf2b234).setBlendMode(Phaser.BlendModes.ADD).setDisplaySize(460, 240)
+    glow.setTint(getTheme().gold).setBlendMode(Phaser.BlendModes.ADD).setDisplaySize(460, 240)
     const glowSX = glow.scaleX
     const glowSY = glow.scaleY
     glow.setAlpha(reduced ? 0.28 : 0)
@@ -154,7 +155,7 @@ export class HomeScene extends Phaser.Scene {
         ? `Level ${currentLevel}  ·  best ${save.best.toLocaleString()}`
         : `Level ${currentLevel}  ·  swipe to match 3`
     this.add
-      .text(DESIGN_W / 2, 790, sub, { fontFamily: FONT, fontSize: '22px', color: '#9a927e' })
+      .text(DESIGN_W / 2, 790, sub, { fontFamily: FONT, fontSize: '22px', color: getTheme().onBackdropMuted })
       .setOrigin(0.5)
 
     const levels = addPillButton(this, DESIGN_W / 2, 872, 280, 64, 'LEVELS', GHOST_PILL, () =>
@@ -176,7 +177,7 @@ export class HomeScene extends Phaser.Scene {
     }
     if (save.pendingBoosts.length > 0) {
       this.add
-        .text(DESIGN_W / 2, 1044, `🎁 boost ready for your next level`, { fontFamily: FONT, fontSize: '20px', color: '#c9930a' })
+        .text(DESIGN_W / 2, 1044, `🎁 boost ready for your next level`, { fontFamily: FONT, fontSize: '20px', color: getTheme().goldText })
         .setOrigin(0.5)
     }
 
@@ -192,7 +193,7 @@ export class HomeScene extends Phaser.Scene {
           DESIGN_W / 2,
           1158,
           wkBest > 0 ? `this week's board  ·  best ${wkBest.toLocaleString()}` : `new weekly board  ·  set the pace`,
-          { fontFamily: FONT, fontSize: '20px', color: '#9a927e' }
+          { fontFamily: FONT, fontSize: '20px', color: getTheme().onBackdropMuted }
         )
         .setOrigin(0.5)
     }

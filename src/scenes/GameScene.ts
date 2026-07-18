@@ -27,6 +27,7 @@ import { SYMBOLS, key } from '../core/types'
 import type { BoostType, ClearWave, Coord, FallMove, LevelSpec, Piece, Spawn, SymbolType } from '../core/types'
 import { addCasinoBackdrop } from '../view/background'
 import { quality } from '../view/quality'
+import { css, getTheme } from '../view/theme'
 import { TEX_SIZE, ensurePieceTexture } from '../view/textures'
 import { FONT, GHOST_PILL, GOLD_PILL, ROSE_PILL, addChipPill, addLivesHud, addMuteChip, addPillButton, startScene } from '../view/ui'
 import type { ChipPill } from '../view/ui'
@@ -239,7 +240,7 @@ export class GameScene extends Phaser.Scene {
 
     if (this.scoreMult > 1) {
       this.add
-        .text(BOARD_X + BOARD_W - 128, 66, '×2', { fontFamily: FONT, fontSize: '26px', fontStyle: '900', color: '#c9930a' })
+        .text(BOARD_X + BOARD_W - 128, 66, '×2', { fontFamily: FONT, fontSize: '26px', fontStyle: '900', color: getTheme().goldText })
         .setOrigin(1, 0)
     }
     if (this.activeBoosts.length > 0) this.showBoostBanner(this.activeBoosts)
@@ -265,16 +266,17 @@ export class GameScene extends Phaser.Scene {
    */
   private showLivesGate(): void {
     this.log('showLivesGate')
+    const T = getTheme()
     addCasinoBackdrop(this, 'menu')
     addPillButton(this, 64, 84, 84, 56, '‹', GHOST_PILL, () => startScene(this,'home'))
     addMuteChip(this, 676, 40)
 
     this.add
-      .text(DESIGN_W / 2, 320, 'TAKE A BREAK', { fontFamily: FONT, fontSize: '56px', fontStyle: '900', color: '#c9930a' })
+      .text(DESIGN_W / 2, 320, 'TAKE A BREAK', { fontFamily: FONT, fontSize: '56px', fontStyle: '900', color: T.goldText })
       .setOrigin(0.5)
       .setShadow(0, 3, 'rgba(90,70,20,0.25)', 6, false, true)
     this.add
-      .text(DESIGN_W / 2, 384, 'Out of lives — they refill on their own', { fontFamily: FONT, fontSize: '24px', color: '#9a927e' })
+      .text(DESIGN_W / 2, 384, 'Out of lives — they refill on their own', { fontFamily: FONT, fontSize: '24px', color: T.onBackdropMuted })
       .setOrigin(0.5)
 
     const emblem = this.add.image(DESIGN_W / 2, 560, 'heart').setDisplaySize(150, 150).setTint(0x8a7a52).setAlpha(0.4)
@@ -282,10 +284,10 @@ export class GameScene extends Phaser.Scene {
 
     const hud = addLivesHud(this, DESIGN_W / 2, 700, { size: 46, showTimer: false })
     const nextText = this.add
-      .text(DESIGN_W / 2, 782, '', { fontFamily: FONT, fontSize: '30px', fontStyle: '900', color: '#2a2732' })
+      .text(DESIGN_W / 2, 782, '', { fontFamily: FONT, fontSize: '30px', fontStyle: '900', color: T.onBackdropInk })
       .setOrigin(0.5)
     const fullText = this.add
-      .text(DESIGN_W / 2, 828, '', { fontFamily: FONT, fontSize: '22px', color: '#9a927e' })
+      .text(DESIGN_W / 2, 828, '', { fontFamily: FONT, fontSize: '22px', color: T.onBackdropMuted })
       .setOrigin(0.5)
     let playBtn: Phaser.GameObjects.Container | null = null
 
@@ -395,23 +397,24 @@ export class GameScene extends Phaser.Scene {
    * BOARD_Y-44 overlapped that row). Scales down if the label runs wider than the board.
    */
   private showBoostBanner(boosts: BoostType[]): void {
+    const T = getTheme()
     const banner = this.add.container(DESIGN_W / 2, BOARD_Y + 72).setDepth(31)
     const text = this.add
       .text(0, 0, `🎁  ${boosts.map(b => this.boostLabel(b)).join('   ·   ')}`, {
         fontFamily: FONT,
         fontSize: '26px',
         fontStyle: '900',
-        color: '#c9930a',
+        color: T.goldText,
       })
       .setOrigin(0.5)
     const w = text.width + 56
     const h = 64
     const g = this.add.graphics()
-    g.fillStyle(0x8a7a52, 0.2)
+    g.fillStyle(T.shadow, 0.2)
     g.fillRoundedRect(-w / 2 + 2, -h / 2 + 5, w, h, h / 2)
-    g.fillStyle(0xfffdf8, 0.98)
+    g.fillStyle(T.cardFill, 0.98)
     g.fillRoundedRect(-w / 2, -h / 2, w, h, h / 2)
-    g.lineStyle(3, 0xf2c14e, 1)
+    g.lineStyle(3, T.goldBezel, 1)
     g.strokeRoundedRect(-w / 2, -h / 2, w, h, h / 2)
     banner.add([g, text])
     const fit = Math.min(1, (BOARD_W + 20) / w)
@@ -435,12 +438,13 @@ export class GameScene extends Phaser.Scene {
    */
   private showGoalCallout(): void {
     if (this.endless || this.objectives.length === 0) return
+    const T = getTheme()
     const cx = DESIGN_W / 2
     const cy = BOARD_Y + BOARD_W * 0.36
     const layer = this.add.container(cx, cy).setDepth(34)
 
     const header = this.add
-      .text(0, -66, 'COLLECT', { fontFamily: FONT, fontSize: '32px', fontStyle: '900', color: '#c9930a' })
+      .text(0, -66, 'COLLECT', { fontFamily: FONT, fontSize: '32px', fontStyle: '900', color: T.goldText })
       .setOrigin(0.5)
       .setLetterSpacing(5)
       .setShadow(0, 3, 'rgba(90,70,20,0.22)', 5, false, true)
@@ -456,7 +460,7 @@ export class GameScene extends Phaser.Scene {
       content.push(this.add.image(ix, 8, o.symbol).setDisplaySize(iconSize, iconSize))
       content.push(
         this.add
-          .text(ix, 8 + iconSize / 2 + 22, `×${o.total}`, { fontFamily: FONT, fontSize: '24px', fontStyle: '900', color: '#26304d' })
+          .text(ix, 8 + iconSize / 2 + 22, `×${o.total}`, { fontFamily: FONT, fontSize: '24px', fontStyle: '900', color: T.navyText })
           .setOrigin(0.5)
       )
     })
@@ -464,11 +468,11 @@ export class GameScene extends Phaser.Scene {
     const w = Math.max(header.width, rowW) + 84
     const halfH = 96
     const g = this.add.graphics()
-    g.fillStyle(0x8a7a52, 0.22)
+    g.fillStyle(T.shadow, 0.22)
     g.fillRoundedRect(-w / 2 + 3, -halfH + 8, w, halfH * 2, 30)
-    g.fillStyle(0xfffdf8, 0.98)
+    g.fillStyle(T.cardFill, 0.98)
     g.fillRoundedRect(-w / 2, -halfH, w, halfH * 2, 30)
-    g.lineStyle(3, 0xf2c14e, 1)
+    g.lineStyle(3, T.goldBezel, 1)
     g.strokeRoundedRect(-w / 2, -halfH, w, halfH * 2, 30)
     layer.add(g)
     layer.add(content)
@@ -643,7 +647,7 @@ export class GameScene extends Phaser.Scene {
       this.sparkEmitter.explode(quality.count(10), x, y)
     }
     const stamp = this.add
-      .text(x, y, '✓', { fontFamily: FONT, fontSize: '84px', fontStyle: '900', color: '#2fae4c' })
+      .text(x, y, '✓', { fontFamily: FONT, fontSize: '84px', fontStyle: '900', color: getTheme().ok })
       .setOrigin(0.5)
       .setDepth(33)
       .setStroke('#ffffff', 8)
@@ -869,6 +873,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private buildHud(): void {
+    const T = getTheme()
     // Top row: back · LEVEL N (or ENDLESS) · score.
     addPillButton(this, 64, 84, 84, 56, '‹', GHOST_PILL, () => this.exitToLevels())
     addPillButton(
@@ -886,7 +891,7 @@ export class GameScene extends Phaser.Scene {
       .setOrigin(1, 0)
       .setLetterSpacing(3)
     this.scoreText = this.add
-      .text(BOARD_X + BOARD_W, 84, '0', { fontFamily: FONT, fontSize: '34px', color: '#2a2732', fontStyle: 'bold' })
+      .text(BOARD_X + BOARD_W, 84, '0', { fontFamily: FONT, fontSize: '34px', color: T.onBackdropInk, fontStyle: 'bold' })
       .setOrigin(1, 0)
       .setShadow(0, 2, 'rgba(0,0,0,0.12)', 4, false, true)
     // Mute chip nudged to y=34 (from 40) so its lower arc clears the SCORE label.
@@ -899,11 +904,11 @@ export class GameScene extends Phaser.Scene {
     // Second row: moves card + objective chips.
     const cardY = 196
     const g = this.add.graphics()
-    g.fillStyle(0x8a7a52, 0.12)
+    g.fillStyle(T.shadow, 0.12)
     g.fillRoundedRect(BOARD_X + 2, cardY - 52 + 5, 170, 104, 20)
     g.fillStyle(0xffffff, 1)
     g.fillRoundedRect(BOARD_X, cardY - 52, 170, 104, 20)
-    g.lineStyle(2, 0xe8dfc9, 1)
+    g.lineStyle(2, T.border, 1)
     g.strokeRoundedRect(BOARD_X, cardY - 52, 170, 104, 20)
     this.add
       .text(BOARD_X + 85, cardY - 28, 'MOVES', { fontFamily: FONT, fontSize: '18px', color: '#8a8577' })
@@ -914,7 +919,7 @@ export class GameScene extends Phaser.Scene {
         fontFamily: FONT,
         fontSize: '48px',
         fontStyle: '900',
-        color: '#2a2732',
+        color: T.ink,
       })
       .setOrigin(0.5)
 
@@ -922,11 +927,11 @@ export class GameScene extends Phaser.Scene {
       // No objectives in endless — show this week's target (BEST to beat) instead.
       const cardW = 290
       const bx = BOARD_X + BOARD_W - cardW
-      g.fillStyle(0x8a7a52, 0.12)
+      g.fillStyle(T.shadow, 0.12)
       g.fillRoundedRect(bx + 2, cardY - 52 + 5, cardW, 104, 20)
-      g.fillStyle(0xfffdf8, 1)
+      g.fillStyle(T.cardFill, 1)
       g.fillRoundedRect(bx, cardY - 52, cardW, 104, 20)
-      g.lineStyle(2, 0xf2c14e, 0.9)
+      g.lineStyle(2, T.goldBezel, 0.9)
       g.strokeRoundedRect(bx, cardY - 52, cardW, 104, 20)
       this.add
         .text(bx + cardW / 2, cardY - 28, "WEEK'S BEST", { fontFamily: FONT, fontSize: '18px', color: '#8a8577' })
@@ -937,7 +942,7 @@ export class GameScene extends Phaser.Scene {
           fontFamily: FONT,
           fontSize: '40px',
           fontStyle: '900',
-          color: '#c9930a',
+          color: T.goldText,
         })
         .setOrigin(0.5)
     } else {
@@ -947,7 +952,7 @@ export class GameScene extends Phaser.Scene {
       // A "COLLECT" tag over the objective cluster — names the chips unmistakably as TARGETS.
       const clusterCx = BOARD_X + BOARD_W - chipW / 2 - ((n - 1) * (chipW + chipGap)) / 2
       this.add
-        .text(clusterCx, cardY - 70, 'COLLECT', { fontFamily: FONT, fontSize: '18px', fontStyle: '900', color: '#c9930a' })
+        .text(clusterCx, cardY - 70, 'COLLECT', { fontFamily: FONT, fontSize: '18px', fontStyle: '900', color: T.goldText })
         .setOrigin(0.5)
         .setLetterSpacing(4)
         .setShadow(0, 2, 'rgba(90,70,20,0.18)', 3, false, true)
@@ -959,7 +964,7 @@ export class GameScene extends Phaser.Scene {
         // decrement "pop" guards on chip.scale === 1). Static + fainter under reduced-motion.
         const glow = this.add
           .image(0, 0, 'bgglow')
-          .setTint(0xf2b234)
+          .setTint(T.gold)
           .setBlendMode(Phaser.BlendModes.ADD)
           .setDisplaySize(chipW + 56, 104 + 44)
           .setAlpha(this.reducedMotion ? 0.22 : 0.3)
@@ -978,18 +983,18 @@ export class GameScene extends Phaser.Scene {
           })
         }
         const cg = this.add.graphics()
-        cg.fillStyle(0x8a7a52, 0.12)
+        cg.fillStyle(T.shadow, 0.12)
         cg.fillRoundedRect(-chipW / 2 + 2, -52 + 5, chipW, 104, 20)
         cg.fillStyle(0xffffff, 1)
         cg.fillRoundedRect(-chipW / 2, -52, chipW, 104, 20)
-        cg.lineStyle(2, 0xe8dfc9, 1)
+        cg.lineStyle(2, T.border, 1)
         cg.strokeRoundedRect(-chipW / 2, -52, chipW, 104, 20)
         chip.add(cg)
         const icon = this.add.image(0, -20, o.symbol)
         icon.setDisplaySize(54, 54)
         chip.add(icon)
         o.text = this.add
-          .text(0, 27, String(o.remaining), { fontFamily: FONT, fontSize: '30px', fontStyle: '900', color: '#2a2732' })
+          .text(0, 27, String(o.remaining), { fontFamily: FONT, fontSize: '30px', fontStyle: '900', color: T.ink })
           .setOrigin(0.5)
         chip.add(o.text)
         o.chip = chip
@@ -1001,7 +1006,7 @@ export class GameScene extends Phaser.Scene {
         DESIGN_W / 2,
         988,
         this.endless ? "Biggest score wins this week's board" : 'Match the highlighted goal symbols before moves run out',
-        { fontFamily: 'Arial, sans-serif', fontSize: '22px', color: '#9a927e' }
+        { fontFamily: 'Arial, sans-serif', fontSize: '22px', color: T.onBackdropMuted }
       )
       .setOrigin(0.5)
   }
@@ -1271,7 +1276,7 @@ export class GameScene extends Phaser.Scene {
     this.movesLeft--
     this.moveMade = true
     this.movesText.setText(String(this.movesLeft))
-    if (this.movesLeft <= 5) this.movesText.setColor('#d3302f')
+    if (this.movesLeft <= 5) this.movesText.setColor(getTheme().warn)
     // Getting tight — start a gentle looping pulse on the moves number (once, no stacking).
     if (this.movesLeft <= 3 && !this.movesPulse) {
       this.movesPulse = this.tweens.add({
@@ -1355,7 +1360,7 @@ export class GameScene extends Phaser.Scene {
       if (obj && obj.remaining > 0) {
         obj.remaining--
         obj.text?.setText(obj.remaining > 0 ? String(obj.remaining) : '✓')
-        if (obj.remaining === 0) obj.text?.setColor('#2fae4c')
+        if (obj.remaining === 0) obj.text?.setColor(getTheme().ok)
         changedObjectives.add(obj)
       }
     }
@@ -1366,8 +1371,8 @@ export class GameScene extends Phaser.Scene {
       }
       // Gold flash — but leave a completed objective its green ✓.
       if (o.text && o.remaining > 0) {
-        o.text.setColor('#f2b234')
-        this.time.delayedCall(160, () => o.remaining > 0 && o.text?.setColor('#2a2732'))
+        o.text.setColor(css(getTheme().gold))
+        this.time.delayedCall(160, () => o.remaining > 0 && o.text?.setColor(getTheme().ink))
       }
       // Done: retire the "target" emphasis (green ✓ already set above stays) + punch the beat.
       if (o.remaining === 0) {
@@ -1656,7 +1661,7 @@ export class GameScene extends Phaser.Scene {
       .text(DESIGN_W / 2, BOARD_Y + BOARD_W / 2, 'NO MOVES — RESHUFFLING', {
         fontFamily: FONT,
         fontSize: '36px',
-        color: '#2a2732',
+        color: getTheme().ink,
         fontStyle: 'bold',
       })
       .setOrigin(0.5)
@@ -1806,21 +1811,22 @@ export class GameScene extends Phaser.Scene {
     const ray = this.add.image(0, 0, 'sweep').setDisplaySize(560, 96).setAlpha(0.4).setBlendMode(Phaser.BlendModes.ADD)
     this.tweens.add({ targets: ray, angle: 360, duration: 2500, repeat: -1, ease: 'Linear' })
 
+    const T = getTheme()
     const text = this.add
-      .text(0, 0, word, { fontFamily: FONT, fontSize: '66px', fontStyle: '900', color: '#26304d' })
+      .text(0, 0, word, { fontFamily: FONT, fontSize: '66px', fontStyle: '900', color: T.navyText })
       .setOrigin(0.5)
       .setStroke('#ffffff', 8)
       .setShadow(0, 3, 'rgba(90,70,20,0.22)', 6, true, true)
     const w = text.width + 104
     const h = 130
     const g = this.add.graphics()
-    g.fillStyle(0x8a7a52, 0.28)
+    g.fillStyle(T.shadow, 0.28)
     g.fillRoundedRect(-w / 2 + 3, -h / 2 + 8, w, h, h / 2)
-    g.fillStyle(0xf2b234, 1)
+    g.fillStyle(T.gold, 1)
     g.fillRoundedRect(-w / 2, -h / 2, w, h, h / 2)
-    g.fillStyle(0xfffdf8, 1)
+    g.fillStyle(T.cardFill, 1)
     g.fillRoundedRect(-w / 2 + 13, -h / 2 + 13, w - 26, h - 26, (h - 26) / 2)
-    g.lineStyle(5, 0xc9930a, 1)
+    g.lineStyle(5, T.goldDeep, 1)
     g.strokeRoundedRect(-w / 2, -h / 2, w, h, h / 2)
     layer.add([ray, g, text])
 
@@ -1939,7 +1945,7 @@ export class GameScene extends Phaser.Scene {
         fontFamily: FONT,
         fontSize: '76px',
         fontStyle: '900',
-        color: '#c9930a',
+        color: getTheme().goldText,
       })
       .setOrigin(0.5)
       .setStroke('#ffffff', 10)
@@ -1950,7 +1956,7 @@ export class GameScene extends Phaser.Scene {
         fontFamily: FONT,
         fontSize: '38px',
         fontStyle: '900',
-        color: '#d3304f',
+        color: css(getTheme().rose),
       })
       .setOrigin(0.5)
       .setStroke('#ffffff', 8)
@@ -1975,17 +1981,18 @@ export class GameScene extends Phaser.Scene {
   /** Dim scrim behind an end-of-round overlay (also swallows taps meant for the board). */
   private overlayScrim(): void {
     this.clearSelection()
-    this.add.rectangle(DESIGN_W / 2, 640, DESIGN_W, 1280, 0x2a2417, 0.5).setDepth(40).setInteractive()
+    this.add.rectangle(DESIGN_W / 2, 640, DESIGN_W, 1280, getTheme().scrim, 0.5).setDepth(40).setInteractive()
   }
 
   /** Shared rounded result card, centered at (cx, cy) with half-height halfH. */
   private overlayCard(cx: number, cy: number, halfH: number): void {
+    const T = getTheme()
     const g = this.add.graphics().setDepth(41)
-    g.fillStyle(0x8a7a52, 0.25)
+    g.fillStyle(T.shadow, 0.25)
     g.fillRoundedRect(cx - 260 + 4, cy - halfH + 8, 520, halfH * 2, 34)
-    g.fillStyle(0xfffdf8, 1)
+    g.fillStyle(T.cardFill, 1)
     g.fillRoundedRect(cx - 260, cy - halfH, 520, halfH * 2, 34)
-    g.lineStyle(4, 0xf2c14e, 1)
+    g.lineStyle(4, T.goldBezel, 1)
     g.strokeRoundedRect(cx - 260, cy - halfH, 520, halfH * 2, 34)
   }
 
@@ -2029,7 +2036,7 @@ export class GameScene extends Phaser.Scene {
     this.overlayCard(cx, cy, 230)
 
     this.add
-      .text(cx, cy - 160, 'OUT OF MOVES', { fontFamily: FONT, fontSize: '48px', fontStyle: '900', color: '#d3302f' })
+      .text(cx, cy - 160, 'OUT OF MOVES', { fontFamily: FONT, fontSize: '48px', fontStyle: '900', color: getTheme().warn })
       .setOrigin(0.5)
       .setDepth(42)
       .setShadow(0, 3, 'rgba(0,0,0,0.15)', 6, false, true)
@@ -2045,7 +2052,7 @@ export class GameScene extends Phaser.Scene {
         fontFamily: FONT,
         fontSize: '34px',
         fontStyle: '900',
-        color: '#2a2732',
+        color: getTheme().ink,
       })
       .setOrigin(0.5)
       .setDepth(42)
@@ -2069,6 +2076,7 @@ export class GameScene extends Phaser.Scene {
    * here). Never occludes the reward number or the Continue button.
    */
   private buildWinCard(stars: number, bonus: number, chipReward: number, animate: boolean): void {
+    const T = getTheme()
     const cx = DESIGN_W / 2
     const cy = 610
     const halfH = 300
@@ -2083,32 +2091,32 @@ export class GameScene extends Phaser.Scene {
 
     // Card panel (cream + gold bezel).
     const g = this.add.graphics()
-    g.fillStyle(0x8a7a52, 0.25)
+    g.fillStyle(T.shadow, 0.25)
     g.fillRoundedRect(-w / 2 + 4, -halfH + 8, w, halfH * 2, 34)
-    g.fillStyle(0xfffdf8, 1)
+    g.fillStyle(T.cardFill, 1)
     g.fillRoundedRect(-w / 2, -halfH, w, halfH * 2, 34)
-    g.lineStyle(4, 0xf2b234, 1)
+    g.lineStyle(4, T.gold, 1)
     g.strokeRoundedRect(-w / 2, -halfH, w, halfH * 2, 34)
     card.add(g)
 
     // "LEVEL N" gold pill tab straddling the top edge.
     const tab = this.add.container(0, -halfH)
     const tabLabel = this.add
-      .text(0, 0, `LEVEL ${this.level}`, { fontFamily: FONT, fontSize: '24px', fontStyle: '900', color: '#4a3305' })
+      .text(0, 0, `LEVEL ${this.level}`, { fontFamily: FONT, fontSize: '24px', fontStyle: '900', color: T.goldPillText })
       .setOrigin(0.5)
       .setLetterSpacing(1)
     const tw = tabLabel.width + 56
     const tg = this.add.graphics()
-    tg.fillStyle(0xf2b234, 1)
+    tg.fillStyle(T.gold, 1)
     tg.fillRoundedRect(-tw / 2, -26, tw, 52, 26)
-    tg.lineStyle(3, 0xc9930a, 1)
+    tg.lineStyle(3, T.goldDeep, 1)
     tg.strokeRoundedRect(-tw / 2, -26, tw, 52, 26)
     tab.add([tg, tabLabel])
     card.add(tab)
 
     // Rank-word title.
     const title = this.add
-      .text(0, -210, this.rankWord(stars), { fontFamily: FONT, fontSize: '52px', fontStyle: '900', color: '#c9930a' })
+      .text(0, -210, this.rankWord(stars), { fontFamily: FONT, fontSize: '52px', fontStyle: '900', color: T.goldText })
       .setOrigin(0.5)
       .setShadow(0, 3, 'rgba(0,0,0,0.15)', 6, false, true)
     card.add(title)
@@ -2141,13 +2149,13 @@ export class GameScene extends Phaser.Scene {
           fontFamily: FONT,
           fontSize: '34px',
           fontStyle: '900',
-          color: '#26304d',
+          color: T.navyText,
         })
         .setOrigin(0.5)
     )
     if (bonus > 0) {
       card.add(
-        this.add.text(0, -6, `+${bonus.toLocaleString()} moves bonus`, { fontFamily: FONT, fontSize: '20px', color: '#c9930a' }).setOrigin(0.5)
+        this.add.text(0, -6, `+${bonus.toLocaleString()} moves bonus`, { fontFamily: FONT, fontSize: '20px', color: T.goldText }).setOrigin(0.5)
       )
     }
 
@@ -2161,7 +2169,7 @@ export class GameScene extends Phaser.Scene {
       else startScene(this,'levelselect', { fromWin: true })
     })
     // Beat 5: a soft gold glow-ring pulse behind the Continue pill to lead the eye.
-    const glow = this.add.image(0, 176, 'bgglow').setTint(0xf2b234).setBlendMode(Phaser.BlendModes.ADD).setDisplaySize(360, 150).setAlpha(0.18)
+    const glow = this.add.image(0, 176, 'bgglow').setTint(T.gold).setBlendMode(Phaser.BlendModes.ADD).setDisplaySize(360, 150).setAlpha(0.18)
     card.add(glow)
     this.tweens.add({ targets: glow, alpha: 0.42, duration: 780, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' })
     card.add(nextBtn)
@@ -2171,11 +2179,11 @@ export class GameScene extends Phaser.Scene {
     if (animate) {
       const close = this.add.container(w / 2 - 40, -halfH + 40)
       const cg = this.add.graphics()
-      cg.fillStyle(0xd3304f, 1)
+      cg.fillStyle(T.rose, 1)
       cg.fillCircle(0, 0, 22)
-      cg.lineStyle(3, 0xa8213c, 1)
+      cg.lineStyle(3, T.roseDeep, 1)
       cg.strokeCircle(0, 0, 22)
-      const cIcon = this.add.text(0, 0, '»', { fontFamily: FONT, fontSize: '26px', fontStyle: '900', color: '#ffffff' }).setOrigin(0.5)
+      const cIcon = this.add.text(0, 0, '»', { fontFamily: FONT, fontSize: '26px', fontStyle: '900', color: T.onRose }).setOrigin(0.5)
       const cZone = this.add.circle(0, 0, 24, 0xffffff, 0.001).setInteractive({ useHandCursor: true })
       cZone.on('pointerup', () => this.overlaySettle?.())
       close.add([cg, cIcon, cZone])
@@ -2211,11 +2219,12 @@ export class GameScene extends Phaser.Scene {
     at: (ms: number, cb: () => void) => void,
     settleActions: Array<() => void>
   ): void {
+    const T = getTheme()
     const py = 74
     const pileX = -96
 
     // Soft gold disc behind the pile.
-    card.add(this.add.image(pileX, py, 'bgglow').setTint(0xf2c14e).setBlendMode(Phaser.BlendModes.ADD).setDisplaySize(150, 150).setAlpha(0.5))
+    card.add(this.add.image(pileX, py, 'bgglow').setTint(T.goldBezel).setBlendMode(Phaser.BlendModes.ADD).setDisplaySize(150, 150).setAlpha(0.5))
 
     // The resting pile (4–5 chips, slightly fanned).
     const pileOffsets: Array<[number, number]> = [
@@ -2241,7 +2250,7 @@ export class GameScene extends Phaser.Scene {
     // Reward label + rolling counter (navy on cream — legible under the celebration).
     card.add(this.add.text(58, py - 34, 'REWARD', { fontFamily: FONT, fontSize: '18px', color: '#8a8577' }).setOrigin(0, 0.5).setLetterSpacing(2))
     const counter = this.add
-      .text(58, py + 8, animate ? '0' : String(chipReward), { fontFamily: FONT, fontSize: '52px', fontStyle: '900', color: '#26304d' })
+      .text(58, py + 8, animate ? '0' : String(chipReward), { fontFamily: FONT, fontSize: '52px', fontStyle: '900', color: T.navyText })
       .setOrigin(0, 0.5)
     card.add(counter)
     settleActions.push(() => counter.setText(String(chipReward)))
@@ -2347,7 +2356,7 @@ export class GameScene extends Phaser.Scene {
         fontFamily: FONT,
         fontSize: '48px',
         fontStyle: '900',
-        color: isRecord ? '#c9930a' : '#26304d',
+        color: isRecord ? getTheme().goldText : getTheme().navyText,
       })
       .setOrigin(0.5)
       .setDepth(42)
@@ -2363,7 +2372,7 @@ export class GameScene extends Phaser.Scene {
         fontFamily: FONT,
         fontSize: '58px',
         fontStyle: '900',
-        color: '#2a2732',
+        color: getTheme().ink,
       })
       .setOrigin(0.5)
       .setDepth(42)
@@ -2379,7 +2388,7 @@ export class GameScene extends Phaser.Scene {
         fontFamily: FONT,
         fontSize: '34px',
         fontStyle: '900',
-        color: '#c9930a',
+        color: getTheme().goldText,
       })
       .setOrigin(0.5)
       .setDepth(42)
@@ -2419,8 +2428,8 @@ export class GameScene extends Phaser.Scene {
    */
   private scorePunch(gain: number): void {
     if (this.reducedMotion || gain < 120 || this.state !== 'resolving' || !this.scoreText) return
-    this.scoreText.setColor('#f2b234')
-    this.time.delayedCall(180, () => this.scoreText?.setColor('#2a2732'))
+    this.scoreText.setColor(css(getTheme().gold))
+    this.time.delayedCall(180, () => this.scoreText?.setColor(getTheme().onBackdropInk))
     this.scorePunchTween?.stop()
     this.scoreText.setScale(1)
     this.scorePunchTween = this.tweens.add({
@@ -2443,7 +2452,7 @@ export class GameScene extends Phaser.Scene {
       .text(DESIGN_W / 2, BOARD_Y + BOARD_W / 2 - 40, big ? 'MEGA WIN!' : `COMBO x${cascade}`, {
         fontFamily: FONT,
         fontSize: big ? '72px' : '52px',
-        color: big ? '#c9930a' : '#d3302f',
+        color: big ? getTheme().goldText : getTheme().warn,
         fontStyle: '900',
       })
       .setOrigin(0.5)
@@ -2479,12 +2488,12 @@ export class GameScene extends Phaser.Scene {
       .text(x, y, `+${points}`, {
         fontFamily: FONT,
         fontSize: big ? '40px' : '32px',
-        color: '#f2b234',
+        color: css(getTheme().gold),
         fontStyle: '900',
       })
       .setOrigin(0.5)
       .setDepth(28)
-      .setStroke('#26304d', 6)
+      .setStroke(getTheme().navyText, 6)
       .setShadow(0, 2, 'rgba(0,0,0,0.18)', 4, false, true)
     this.tweens.add({
       targets: t,
