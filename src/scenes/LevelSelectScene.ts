@@ -11,6 +11,9 @@ const GRID_COLS = 5
 const CHIP = 108
 const GAP = 18
 const ROW_H = CHIP + GAP
+/** Grid entrance cascade: per (visible) row delay + pop duration, tuned so the whole ripple lands under ~500ms. */
+const CASCADE_STAGGER = 36
+const CASCADE_DURATION = 200
 
 export class LevelSelectScene extends Phaser.Scene {
   /** Largest pointer travel during the current press — a tap on a chip only fires below this. */
@@ -42,12 +45,16 @@ export class LevelSelectScene extends Phaser.Scene {
     const gridW = GRID_COLS * CHIP + (GRID_COLS - 1) * GAP
     const startX = (DESIGN_W - gridW) / 2
     const topPad = 32
+    const reduced = this.prefersReducedMotion()
+    const chipEntries: { container: Phaser.GameObjects.Container; cy: number; current: boolean }[] = []
     for (let n = 1; n <= LEVEL_COUNT; n++) {
       const row = Math.floor((n - 1) / GRID_COLS)
       const col = (n - 1) % GRID_COLS
       const cx = startX + col * (CHIP + GAP) + CHIP / 2
       const cy = viewTop + topPad + row * ROW_H + CHIP / 2
-      content.add(this.buildChip(n, cx, cy, save.unlocked, save.stars[n] ?? 0, viewTop, viewBottom, content))
+      const chip = this.buildChip(n, cx, cy, save.unlocked, save.stars[n] ?? 0, viewTop, viewBottom, content)
+      content.add(chip)
+      chipEntries.push({ container: chip, cy, current: n === save.unlocked })
     }
     const rows = Math.ceil(LEVEL_COUNT / GRID_COLS)
     const contentBottom = viewTop + topPad + rows * ROW_H + 24
@@ -63,6 +70,29 @@ export class LevelSelectScene extends Phaser.Scene {
     const curRow = Math.floor((Math.min(save.unlocked, LEVEL_COUNT) - 1) / GRID_COLS)
     const curCy = viewTop + topPad + curRow * ROW_H + CHIP / 2
     content.y = Phaser.Math.Clamp((viewTop + viewBottom) / 2 - curCy, minScroll, maxScroll)
+
+    // Grid entrance cascade: chips (with their star icons, nested in each container) scale + fade
+    // in, rippling down by on-screen row. Runs after content.y is finalised so the stagger tracks
+    // what the player actually sees; rows clipped by the mask fall out harmlessly at the clamped
+    // ends. The current chip's idle pulse waits for its pop so the two scale tweens don't collide.
+    for (const { container, cy, current } of chipEntries) {
+      const startPulse = current ? () => this.startChipPulse(container) : undefined
+      if (reduced) {
+        startPulse?.()
+        continue
+      }
+      container.setScale(0.55).setAlpha(0)
+      const visRow = Phaser.Math.Clamp(Math.round((cy + content.y - viewTop) / ROW_H), 0, 10)
+      this.tweens.add({
+        targets: container,
+        scale: 1,
+        alpha: 1,
+        duration: CASCADE_DURATION,
+        delay: visRow * CASCADE_STAGGER,
+        ease: 'Back.easeOut',
+        onComplete: startPulse,
+      })
+    }
 
     // Drag to scroll (chip taps are suppressed once the press has travelled — see buildChip).
     let dragging = false
@@ -103,6 +133,19 @@ export class LevelSelectScene extends Phaser.Scene {
       })
       .setOrigin(0.5)
       .setLetterSpacing(2)
+  }
+
+  private prefersReducedMotion(): boolean {
+    try {
+      return typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
+    } catch {
+      return false
+    }
+  }
+
+  /** The current level's gentle "you are here" breathing pulse — started once its entrance pop settles. */
+  private startChipPulse(container: Phaser.GameObjects.Container): void {
+    this.tweens.add({ targets: container, scale: 1.06, duration: 600, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' })
   }
 
   private buildChip(
@@ -162,9 +205,6 @@ export class LevelSelectScene extends Phaser.Scene {
         this.scene.start('game', { level: n })
       })
       container.add(zone)
-      if (current) {
-        this.tweens.add({ targets: container, scale: 1.06, duration: 600, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' })
-      }
     } else {
       const lock = this.add.image(0, 0, 'lock').setAlpha(0.55)
       lock.setDisplaySize(36, 36)

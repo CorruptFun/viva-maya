@@ -48,6 +48,7 @@ export class DailyBonusScene extends Phaser.Scene {
     const params = new URLSearchParams(location.search)
     const forced = import.meta.env.DEV && params.has('spin')
     const available = spinAvailable(save) || forced
+    const reduced = this.prefersReducedMotion()
     if (import.meta.env.DEV) {
       const turbo = Number(params.get('turbo'))
       if (turbo > 0) {
@@ -97,6 +98,42 @@ export class DailyBonusScene extends Phaser.Scene {
       g.strokeRoundedRect(wx, wy, REEL_W, REEL_H, 18)
     }
 
+    // Gold PAYLINE across the center row of the three reels (static art, always shows).
+    const plLeft = windows[0].x - 6
+    const plRight = windows[2].x + REEL_W + 6
+    const plCenterY = windows[0].y + REEL_H / 2
+    const plBand = 16
+    g.fillStyle(0xf2b234, 0.08)
+    g.fillRoundedRect(plLeft, plCenterY - plBand / 2, plRight - plLeft, plBand, plBand / 2)
+    g.lineStyle(2.5, 0xf2b234, 0.9)
+    g.strokeRoundedRect(plLeft, plCenterY - plBand / 2, plRight - plLeft, plBand, plBand / 2)
+
+    // Marquee bulbs framing the cabinet top & bottom edges.
+    const bulbCols = 9
+    for (const by of [cabY, cabY + cabH]) {
+      for (let i = 0; i < bulbCols; i++) {
+        const bx = cabX + (cabW * i) / (bulbCols - 1)
+        const bulb = this.add
+          .image(bx, by, 'bulb')
+          .setDisplaySize(16, 16)
+          .setTint(i % 2 === 0 ? 0xf2b234 : 0xd3304f)
+        if (reduced) {
+          bulb.setAlpha(0.85)
+        } else {
+          bulb.setAlpha(0.5)
+          this.tweens.add({
+            targets: bulb,
+            alpha: 1,
+            duration: 650,
+            yoyo: true,
+            repeat: -1,
+            ease: 'Sine.easeInOut',
+            delay: (i % 5) * 200,
+          })
+        }
+      }
+    }
+
     if (!available) {
       this.add
         .text(DESIGN_W / 2, 720, '⏳  come back tomorrow', { fontFamily: FONT, fontSize: '30px', color: '#9a927e' })
@@ -133,6 +170,7 @@ export class DailyBonusScene extends Phaser.Scene {
   /** Scroll each reel through a strip of symbols and settle on the prize texture. */
   private runReels(windows: { x: number; y: number }[], prizeKinds: string[], onDone: () => void): void {
     const prizeTex = this.prizeTexture(prizeKinds[0])
+    const reduced = this.prefersReducedMotion()
     let settled = 0
     windows.forEach((w, i) => {
       const maskG = this.make.graphics({ x: 0, y: 0 }, false)
@@ -154,6 +192,24 @@ export class DailyBonusScene extends Phaser.Scene {
         onComplete: () => {
           sfx.invalidThud()
           this.cameras.main.shake(60, 0.004)
+          // Soft gold glow behind the settled winning symbol (separate object → not clipped by the reel mask).
+          const glow = this.add
+            .image(w.x + REEL_W / 2, w.y + REEL_H / 2, 'bgglow')
+            .setTint(0xf2c14e)
+            .setBlendMode(Phaser.BlendModes.ADD)
+            .setDisplaySize(150, 150)
+            .setAlpha(reduced ? 0.3 : 0.16)
+          if (!reduced) {
+            this.tweens.add({
+              targets: glow,
+              alpha: 0.4,
+              scale: glow.scale * 1.12,
+              duration: 900,
+              yoyo: true,
+              repeat: -1,
+              ease: 'Sine.easeInOut',
+            })
+          }
           settled++
           if (settled === windows.length) onDone()
         },
@@ -179,6 +235,40 @@ export class DailyBonusScene extends Phaser.Scene {
     hearts.explode(24, DESIGN_W / 2, 300)
     this.time.delayedCall(1600, () => hearts.destroy())
 
+    // Prize-reveal spark burst + confetti rain (skipped under reduced motion).
+    if (!this.prefersReducedMotion()) {
+      const sparks: Phaser.GameObjects.Particles.ParticleEmitter = this.add
+        .particles(0, 0, 'spark', {
+          speed: { min: 150, max: 450 },
+          angle: { min: 0, max: 360 },
+          scale: { start: 0.5, end: 0 },
+          alpha: { start: 0.95, end: 0 },
+          lifespan: { min: 700, max: 1100 },
+          gravityY: 120,
+          tint: 0xf2b234,
+          emitting: false,
+        })
+        .setDepth(46)
+      sparks.explode(16, DESIGN_W / 2, 300)
+      this.time.delayedCall(1600, () => sparks.destroy())
+
+      const confetti: Phaser.GameObjects.Particles.ParticleEmitter = this.add
+        .particles(0, 0, 'confetti', {
+          x: { min: 200, max: 520 },
+          y: 260,
+          speed: { min: 40, max: 140 },
+          angle: { min: 80, max: 100 },
+          gravityY: 220,
+          rotate: { min: -180, max: 180 },
+          lifespan: 1400,
+          tint: [0xf2b234, 0xd3304f, 0x26304d, 0xfffdf8],
+          emitting: false,
+        })
+        .setDepth(44)
+      confetti.explode(24)
+      this.time.delayedCall(1600, () => confetti.destroy())
+    }
+
     const title = this.add
       .text(DESIGN_W / 2, 700, labels.join('  +  '), {
         fontFamily: FONT,
@@ -198,5 +288,13 @@ export class DailyBonusScene extends Phaser.Scene {
     this.add
       .text(DESIGN_W / 2, 960, `come back tomorrow — ${todayKey()} claimed`, { fontFamily: FONT, fontSize: '18px', color: '#b3ab97' })
       .setOrigin(0.5)
+  }
+
+  private prefersReducedMotion(): boolean {
+    try {
+      return typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
+    } catch {
+      return false
+    }
   }
 }
