@@ -1258,7 +1258,6 @@ export class GameScene extends Phaser.Scene {
     let landed = 0
     for (let c = 0; c < COLS; c++) {
       // dropCells = ROWS → the whole column starts stacked just above the top edge and pours in.
-      // TODO(B14): sfx.land() — one height-mapped thunk per settling column.
       for (let r = 0; r < ROWS; r++) {
         const at = { row: r, col: c }
         const sprite = this.createSprite(this.board.get(at)!, at, ROWS)
@@ -1271,6 +1270,9 @@ export class GameScene extends Phaser.Scene {
           ease: 'Back.easeOut',
           onComplete: () => {
             this.settleSquash(sprite, ROWS)
+            // §E5/B14: ONE full-height landing thunk per settling column (r===0 fires once/col),
+            // panned by column — the board pours in left→right as a rain of thunks, not mush.
+            if (r === 0) sfx.land(1, this.colPan(c))
             if (++landed >= total) {
               this.state = 'idle'
               this.scheduleAutoplay()
@@ -1719,6 +1721,10 @@ export class GameScene extends Phaser.Scene {
       this.spawnScorePopup(wavePoints, ep.x, ep.y, cascade)
     }
     const promises: Promise<void>[] = []
+    // §E3/B14: a light glassy "tink" partners each clear pop, key-locked (an octave above pop's climb)
+    // + panned by column, so the cells you see clear right you hear right. Capped so a huge jackpot
+    // clear stays a shimmer, not a clatter; the outward stagger spreads them into an arpeggio.
+    let tinks = 0
     for (const { piece, at } of pops) {
       const sprite = this.sprites.get(piece.id)
       if (!sprite) continue
@@ -1726,7 +1732,10 @@ export class GameScene extends Phaser.Scene {
       // Cleared cells pop AFTER the charge wind-up (chargeMs) so the detonation reads charge→release.
       const delay = chargeMs + (epicenter ? (Math.abs(at.row - epicenter.row) + Math.abs(at.col - epicenter.col)) * 16 : 0)
       const pos = this.cellToXY(at)
+      const tink = tinks < 10
+      if (tink) tinks++
       this.time.delayedCall(delay, () => {
+        if (tink) sfx.clearTink(cascade, this.colPan(at.col))
         this.emitters[piece.symbol]?.explode(6, pos.x, pos.y)
         this.sparkEmitter.explode(4, pos.x, pos.y)
         // Subtle gloss pop — the emptied tile catches light on the clear. Reuses bgglow (ADD,
@@ -1870,6 +1879,7 @@ export class GameScene extends Phaser.Scene {
    * same window in playWave, so the two don't fight). No-op under reduced motion (instant release).
    */
   private chargeFlare(atCoord: Coord): void {
+    sfx.charge() // §E6/B14: a short rising tick under the wind-up — audio is never motion-gated
     if (this.reducedMotion) return
     const pos = this.cellToXY(atCoord)
     const piece = this.board.get(atCoord)
@@ -2125,6 +2135,13 @@ export class GameScene extends Phaser.Scene {
 
   private animateFalls(falls: FallMove[], spawns: Spawn[]): Promise<void[]> {
     const tweens: Promise<void>[] = []
+    // §E5/B14: throttle landing thunks to ONE voice per settling COLUMN (≤COLS=8/refill) so the
+    // refill reads as a rain of thunks, not mush. Track the deepest drop per column + when it lands.
+    const colDrop = new Map<number, { dist: number; ms: number }>()
+    const noteCol = (col: number, dist: number): void => {
+      const cur = colDrop.get(col)
+      if (!cur || dist > cur.dist) colDrop.set(col, { dist, ms: FALL_BASE_MS + FALL_PER_CELL_MS * dist })
+    }
     for (const move of falls) {
       const sprite = this.sprites.get(move.piece.id)
       if (!sprite) {
@@ -2133,6 +2150,7 @@ export class GameScene extends Phaser.Scene {
       }
       const to = this.cellToXY(move.to)
       const dist = move.to.row - move.from.row
+      noteCol(move.to.col, dist)
       tweens.push(
         this.t({
           targets: sprite,
@@ -2145,6 +2163,7 @@ export class GameScene extends Phaser.Scene {
     for (const spawn of spawns) {
       const sprite = this.createSprite(spawn.piece, spawn.at, spawn.dropCells)
       const to = this.cellToXY(spawn.at)
+      noteCol(spawn.at.col, spawn.dropCells)
       tweens.push(
         this.t({
           targets: sprite,
@@ -2153,6 +2172,10 @@ export class GameScene extends Phaser.Scene {
           ease: 'Back.easeOut',
         }).then(() => this.settleSquash(sprite, spawn.dropCells)) // E5: squash-&-settle on landing
       )
+    }
+    // One height-mapped thunk per column, fired as that column's deepest piece settles, panned by column.
+    for (const [col, { dist, ms }] of colDrop) {
+      this.time.delayedCall(ms, () => sfx.land(Phaser.Math.Clamp(dist / ROWS, 0.15, 1), this.colPan(col)))
     }
     return Promise.all(tweens)
   }
@@ -3125,6 +3148,10 @@ export class GameScene extends Phaser.Scene {
 
   private addScore(points: number): void {
     const gain = points * this.scoreMult
+    // §E3/B14: a tiny key-locked tick partners a CHUNKY climb (the in-game readout roll is otherwise
+    // silent — the win-card coin roll-up already has coinCount, so we don't double up there). ≥120
+    // mirrors scorePunch's chunky threshold, but audio fires in both motion modes.
+    if (gain >= 120) sfx.scoreTick()
     this.score += gain
     this.scoreTween?.stop()
     const counter = { v: this.shownScore }
@@ -3176,7 +3203,10 @@ export class GameScene extends Phaser.Scene {
       this.vibrate([60, 40, 120])
       this.flashCabinet() // mega peak: pop the marquee lights
     }
-    // TODO(B14): sfx.cascadeRiser() — a low bass bed ratcheting up per wave, resolving into winFanfare.
+    // §E3/E11/B14: a low bass bed ratchets UP a step per cascade wave and resolves into winFanfare —
+    // the audio arc mirrors the visual combo arc. ONE voice, retriggered per wave (never accumulates).
+    // Reduced motion drops this sustained riser (E11), matching its dropped colour-pulse.
+    if (!this.reducedMotion) sfx.cascadeRiser(cascade)
     const label = big ? 'MEGA WIN!' : `COMBO x${cascade}`
     // Heat ramp: x2 warm gold → x3 hot amber → x4+ hot rose/red.
     const heat = cascade <= 2 ? getTheme().goldText : cascade === 3 ? css(getTheme().gold) : css(getTheme().rose)
@@ -3216,6 +3246,7 @@ export class GameScene extends Phaser.Scene {
    * Reduced motion: a brief hold, then an instant hide.
    */
   private fadeCombo(): void {
+    sfx.riserResolve() // §E11: the cascade settled — resolve the riser (fades into winFanfare on a win)
     const t = this.comboText
     if (!t || !t.active || t.alpha === 0) return
     this.comboTween?.stop()
@@ -3272,6 +3303,11 @@ export class GameScene extends Phaser.Scene {
     return new Promise(resolve => {
       this.tweens.add({ ...config, onComplete: () => resolve() } as unknown as Phaser.Types.Tweens.TweenBuilderConfig)
     })
+  }
+
+  /** Board column → equal-power stereo pan (§A8): left column hears left, right hears right (softened 0.7). */
+  private colPan(col: number): number {
+    return COLS > 1 ? ((col / (COLS - 1)) * 2 - 1) * 0.7 : 0
   }
 
   /** Haptic buzz, guarded for browsers without the Vibration API + the a11y haptics-off switch (§E8). */
