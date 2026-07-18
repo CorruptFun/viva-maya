@@ -128,11 +128,6 @@ export class GameScene extends Phaser.Scene {
   private reduceFlashing = false
 
   // --- P6 idle micro-life (all reduced-motion-gated, governor-capped) ---
-  /** 3a: masked cream gloss that glides across the 8×8 while idle; paused off-idle (see update). */
-  private boardShimmer?: Phaser.GameObjects.Image
-  private boardShimmerTween?: Phaser.Tweens.Tween
-  /** Tracks the shimmer's idle on/off edge so update() only toggles it on a state change. */
-  private shimmerOn = false
   /** 3c: score-text punch tween — killed + restarted so overlapping chunky gains don't stack scale. */
   private scorePunchTween: Phaser.Tweens.Tween | null = null
   /** 3d: idle-hint nudge — armed on entering idle, disarmed on the first board touch / swap-start. */
@@ -308,7 +303,6 @@ export class GameScene extends Phaser.Scene {
     this.buildHud()
     this.buildPieceLayer()
     this.buildParticles()
-    this.buildBoardShimmer()
 
     if (this.scoreMult > 1) {
       this.add
@@ -726,40 +720,6 @@ export class GameScene extends Phaser.Scene {
   }
 
   // ------------------------------------------------------------ idle micro-life (§3d)
-
-  /**
-   * 3a: a masked cream gloss that glides across the whole 8×8 every ~6s while the board is idle
-   * (paused off-idle in update). One `sweep` sprite, ADD, α ≤ 0.16, geometry-masked to the board
-   * rect at depth 3 so it catches light on tiles + pieces without crossing the bezel. Skipped
-   * under reduced motion / on the weakest governor tier.
-   */
-  private buildBoardShimmer(): void {
-    if (this.reducedMotion || quality.count(1) === 0) return
-    const maskShape = this.make.graphics({ x: 0, y: 0 }, false)
-    maskShape.fillStyle(0xffffff)
-    maskShape.fillRect(BOARD_X, BOARD_Y, BOARD_W, BOARD_W)
-    const sweep = this.add
-      .image(BOARD_X - CELL * 1.5, BOARD_Y + BOARD_W / 2, 'sweep')
-      .setDepth(3)
-      .setBlendMode(Phaser.BlendModes.ADD)
-      .setTint(0xfff6e8)
-      .setAlpha(0.15)
-      .setVisible(false)
-    sweep.setDisplaySize(CELL * 2.2, BOARD_W + 40)
-    sweep.setAngle(12)
-    sweep.setMask(maskShape.createGeometryMask())
-    this.boardShimmer = sweep
-    // Travels off the left edge → off the right edge (mask clips the entry/exit); ~6s cadence.
-    this.boardShimmerTween = this.tweens.add({
-      targets: sweep,
-      x: BOARD_X + BOARD_W + CELL * 1.5,
-      duration: 1200,
-      ease: 'Sine.easeInOut',
-      repeat: -1,
-      repeatDelay: 4800,
-      paused: true,
-    })
-  }
 
   /** 3d: (re)arm the ~5s idle-hint timer. Idempotent — clears any pending/active nudge first. */
   private armHint(): void {
@@ -1388,21 +1348,6 @@ export class GameScene extends Phaser.Scene {
       }
     } else if (this.cameras.main.scrollX !== 0 || this.cameras.main.scrollY !== 0) {
       this.cameras.main.setScroll(0, 0)
-    }
-    // 3a shimmer yields to the game: it only glides while the board is settled (idle). Toggle
-    // only on the idle edge so we're not restarting a tween every frame.
-    if (this.boardShimmer && this.boardShimmerTween) {
-      const idleNow = this.state === 'idle'
-      if (idleNow !== this.shimmerOn) {
-        this.shimmerOn = idleNow
-        if (idleNow) {
-          this.boardShimmer.setVisible(true)
-          this.boardShimmerTween.restart()
-        } else {
-          this.boardShimmerTween.pause()
-          this.boardShimmer.setVisible(false)
-        }
-      }
     }
     if (this.armedGlows.size > 0) {
       const a = 0.16 + 0.14 * (0.5 + 0.5 * Math.sin(time / 300))
