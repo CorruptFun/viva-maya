@@ -462,6 +462,29 @@ class Sfx {
     })
   }
 
+  /**
+   * Coin roll-up tally — ~8 ascending metallic pings (a brighter, pitched-up cousin of
+   * reelSweep's tick train) closed by a 2-note "cha-ching" (the top two winFanfare notes).
+   * Scores the payout counter as it rolls 0→reward.
+   */
+  coinCount(): void {
+    this.voice((ctx, t, out) => {
+      const pings = 8
+      for (let i = 0; i < pings; i++) {
+        const f = 880 * Math.pow(2, i / 12) // bright chromatic climb
+        const delay = i * 0.07
+        this.tone(ctx, out, t, { type: 'triangle', freq: f, endFreq: f * 1.5, peak: 0.16, dur: 0.07, attack: 0.003, delay })
+        this.tone(ctx, out, t, { type: 'sine', freq: f * 2, peak: 0.07, dur: 0.05, attack: 0.003, delay })
+      }
+      // 2-note "cha-ching" (G5 → C6, the top two winFanfare notes) on completion.
+      const end = pings * 0.07 + 0.04
+      this.tone(ctx, out, t, { type: 'triangle', freq: 783.99, peak: 0.24, dur: 0.14, attack: 0.004, delay: end })
+      this.tone(ctx, out, t, { type: 'sine', freq: 1567.98, peak: 0.1, dur: 0.12, attack: 0.004, delay: end })
+      this.tone(ctx, out, t, { type: 'triangle', freq: 1046.5, peak: 0.26, dur: 0.32, attack: 0.004, delay: end + 0.12 })
+      this.tone(ctx, out, t, { type: 'sine', freq: 2093.0, peak: 0.11, dur: 0.26, attack: 0.004, delay: end + 0.12 })
+    })
+  }
+
   /** Two-note descending "wah-wah" — the lose sting (~700ms). */
   loseWah(): void {
     this.voice((ctx, t, out) => {
