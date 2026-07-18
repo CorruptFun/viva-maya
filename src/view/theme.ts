@@ -8,15 +8,19 @@
  * Bridge a number → CSS string with `css()`.
  *
  * Persistence mirrors `audio/sfx.ts`: one shape-tolerant `localStorage` key,
- * decoupled from `core/save.ts` (no save-schema migration). Theme selection is
- * ALWAYS FREE — there is no gating / price logic in this module; the picker
- * enforces any soft unlocks at selection time, never `getTheme()`.
+ * decoupled from `core/save.ts` for STORAGE (no save-schema migration). Theme
+ * selection is ALWAYS FREE — never chip-priced. `getTheme()`/`setTheme()` never
+ * gate; the picker consults the read-only `themeUnlocked(id, save)` helper (the only
+ * save coupling, and read-only) for the two soft level-unlocks, at selection time.
  *
  * Apply model (§2.4): themes only change colours read at `create()`. Picking a
  * theme calls `setTheme(id)` then the scene restarts — there is no live re-tint.
  * Boot textures (symbols/chip/spark/…) are never re-baked; they carry Golden-Hour
  * warmth permanently and read fine on all four washes.
  */
+
+import { endlessUnlocked } from '../core/endless'
+import type { SaveData } from '../core/save'
 
 export type ThemeId = 'golden' | 'roseMidnight' | 'neonVegas' | 'mayaHeart'
 
@@ -257,6 +261,34 @@ const neonVegas: Theme = {
 }
 
 export const THEMES: Record<ThemeId, Theme> = { golden, mayaHeart, roseMidnight, neonVegas }
+
+/** Picker-facing metadata for each theme (§3e). Cosmetic only — `unlockLevel` gates DISPLAY, never price. */
+export interface ThemeMeta {
+  /** Display name for the picker row (mirrors `THEMES[id].name`). */
+  name: string
+  /** One-line mood line shown under the name. */
+  feel: string
+  /** Level the player must reach before the theme unlocks; `0` = free from the start. */
+  unlockLevel: number
+}
+
+export const THEME_META: Record<ThemeId, ThemeMeta> = {
+  golden: { name: 'Golden Hour', feel: 'the warm default', unlockLevel: 0 },
+  mayaHeart: { name: "Maya's Heart", feel: 'a tender valentine', unlockLevel: 0 },
+  roseMidnight: { name: 'Rose Midnight', feel: 'after-hours velvet', unlockLevel: 10 },
+  neonVegas: { name: 'Neon Vegas', feel: 'the strip at night', unlockLevel: 30 },
+}
+
+/**
+ * Read-only unlock gate for the picker (§3e / §7 #1). Cosmetic + ALWAYS FREE — this never gates
+ * `getTheme()`/`setTheme()`; it only tells the picker which rows to render as locked. `golden` +
+ * `mayaHeart` are free (`unlockLevel 0`); `roseMidnight` opens at `save.unlocked ≥ 10`; `neonVegas`
+ * mirrors `endlessUnlocked` (`save.unlocked > 30`) so it lands together with the endless race.
+ */
+export function themeUnlocked(id: ThemeId, save: SaveData): boolean {
+  if (id === 'neonVegas') return endlessUnlocked(save)
+  return save.unlocked >= THEME_META[id].unlockLevel
+}
 
 /** Read + validate the persisted id. Shape-tolerant; any bad/absent value → default. */
 function readThemeId(): ThemeId {
