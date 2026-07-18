@@ -36,12 +36,53 @@
       body {
         margin: 0;
         padding: 0;
+        width: 100%;
         height: 100%;
-        background: #f6f3ec;
         overflow: hidden;
+        /* No scroll, no iOS rubber-band bounce. */
         overscroll-behavior: none;
+        touch-action: none;
+        /* Solid warm fallback in case the gradient can't paint (also fills the
+           browser overscroll gutter on the rare frame it shows). */
+        background-color: #efe7d6;
       }
-      /* Phaser's autoCenter owns centering — no flex here or it double-offsets. */
+      /* Lock the page to the layout viewport so URL-bar resize / notches never
+         introduce scroll, and the warm frame always covers the whole screen —
+         safe-area zones (notch, Dynamic Island, home indicator) included. */
+      body {
+        position: fixed;
+        inset: 0;
+        /* Warm brand vignette: cream at the center spotlight, easing to a warmer
+           tone at the edges so tablet/odd-aspect letterbox reads as an intentional
+           frame instead of empty bars. */
+        background:
+          radial-gradient(
+            ellipse 118% 92% at 50% 40%,
+            #f7f4ee 0%,
+            #f1eadb 46%,
+            #ebe1cd 74%,
+            #e3d7bf 100%
+          );
+        background-repeat: no-repeat;
+        background-attachment: fixed;
+      }
+      /* The safe region. #frame is inset by the device insets so the game fits +
+         centers clear of the notch / Dynamic Island / home indicator; the warm
+         body gradient shows through the insets and the letterbox margins.
+         Phaser owns #app — on boot it forces `width/height:100%` inline on its
+         parent, so the insets MUST live on this outer wrapper: a fixed element's
+         `height:100%` resolves against the viewport (ignoring its own top/bottom),
+         which would defeat the bottom/right insets if they sat on #app directly. */
+      #frame {
+        position: fixed;
+        top: env(safe-area-inset-top, 0px);
+        right: env(safe-area-inset-right, 0px);
+        bottom: env(safe-area-inset-bottom, 0px);
+        left: env(safe-area-inset-left, 0px);
+      }
+      /* Phaser measures & centers the canvas within #app; #app fills the safe
+         region (#frame is its containing block). No flex here or autoCenter
+         double-offsets. */
       #app {
         width: 100%;
         height: 100%;
@@ -51,11 +92,19 @@
         user-select: none;
         -webkit-user-select: none;
         -webkit-tap-highlight-color: transparent;
+        /* Soft warm shadow so the centered game reads as a framed screen resting
+           on the warm surface (visible in the letterbox margins on tablets / odd
+           aspects; harmlessly clipped at the viewport edge when there's no margin). */
+        box-shadow:
+          0 10px 44px rgba(74, 58, 30, 0.2),
+          0 2px 10px rgba(74, 58, 30, 0.12);
       }
     </style>
   </head>
   <body>
-    <div id="app"></div>
+    <div id="frame">
+      <div id="app"></div>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
