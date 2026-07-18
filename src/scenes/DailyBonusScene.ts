@@ -2,8 +2,9 @@ import Phaser from 'phaser'
 import { sfx } from '../audio/sfx'
 import { DESIGN_W } from '../config'
 import { performSpin, spinAvailable, todayKey } from '../core/daily'
+import { occasionFor, pendingOccasion } from '../core/maya'
 import { mulberry32 } from '../core/rng'
-import { loadSave } from '../core/save'
+import { loadSave, markOccasionSeen } from '../core/save'
 import { SYMBOLS } from '../core/types'
 import type { Piece, PieceKind } from '../core/types'
 import { addCasinoBackdrop } from '../view/background'
@@ -137,6 +138,33 @@ export class DailyBonusScene extends Phaser.Scene {
             ease: 'Sine.easeInOut',
             delay: (i % 5) * 200,
           })
+        }
+      }
+    }
+
+    // §E9 special-date dress-up (signature moment #5) — DORMANT unless an occasion is configured for
+    // today. Dress the subtitle up with the occasion greeting, and once per day fire a heart-shower.
+    const occToday = occasionFor(todayKey().slice(5))
+    if (occToday) {
+      streakText.setText(occToday.label)
+      if (pendingOccasion(todayKey(), save.occasionsSeen)) {
+        markOccasionSeen(todayKey())
+        sfx.starDing(2)
+        if (!reduced) {
+          const hearts = this.add
+            .particles(0, 0, 'heart', {
+              speed: { min: 130, max: 400 },
+              angle: { min: 220, max: 320 },
+              scale: { start: 0.55, end: 0.14 },
+              alpha: { start: 1, end: 0 },
+              lifespan: { min: 800, max: 1500 },
+              gravityY: 420,
+              rotate: { min: -120, max: 120 },
+              emitting: false,
+            })
+            .setDepth(45)
+          hearts.explode(24, DESIGN_W / 2, 300)
+          this.time.delayedCall(1700, () => hearts.destroy())
         }
       }
     }

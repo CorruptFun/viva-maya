@@ -1,10 +1,12 @@
 import Phaser from 'phaser'
+import { sfx } from '../audio/sfx'
 import { DESIGN_W } from '../config'
-import { spinAvailable } from '../core/daily'
+import { spinAvailable, todayKey } from '../core/daily'
 import { endlessBestThisWeek, endlessUnlocked } from '../core/endless'
 import { LEVEL_COUNT } from '../core/levels'
 import { refreshLives } from '../core/lives'
-import { loadSave } from '../core/save'
+import { greeting, occasionFor, pendingOccasion, secretNote, withName } from '../core/maya'
+import { loadSave, markOccasionSeen, touchOpen } from '../core/save'
 import { addCasinoBackdrop } from '../view/background'
 import { quality } from '../view/quality'
 import { getTheme } from '../view/theme'
@@ -28,14 +30,21 @@ import {
 } from '../view/ui'
 
 export class HomeScene extends Phaser.Scene {
+  /** Guards the discovered secret-note overlay so long-press/4-tap can't stack copies. */
+  private noteOpen = false
+
   constructor() {
     super('home')
   }
 
   create(): void {
+    this.noteOpen = false // reset per entry (scene.start reuses the instance)
     // Warm cream fade-in (never black) — the receiving half of every startScene cross-fade.
     this.cameras.main.fadeIn(this.prefersReducedMotion() ? 90 : 180, 255, 253, 248)
     const save = loadSave()
+    // §E9 — stamp first/last open dates (safe: touches only those two fields). Enables future
+    // "welcome back" warmth; never alters progress.
+    const today = touchOpen(todayKey()).lastOpenDate ?? todayKey()
     const currentLevel = Math.min(save.unlocked, LEVEL_COUNT)
     const reduced = this.prefersReducedMotion()
     // Stacked pill buttons that fade + slide up into place on entrance (see below).
@@ -67,6 +76,24 @@ export class HomeScene extends Phaser.Scene {
     // Daily-spin streak flame — hidden at streak 0.
     addStreakBadge(this, DESIGN_W / 2, 176, save.streak)
 
+    // §E9 time-of-day greeting — NAMELESS by default; the name appears ONLY when maya.showName.
+    // On a configured special date it becomes the occasion greeting (the app "already knew").
+    // Backdrop-drawn → routed through onBackdrop* tokens (legible on the dark themes too).
+    const occToday = occasionFor(today.slice(5))
+    const greetLine = occToday ? withName(occToday.label) : greeting(new Date().getHours())
+    this.add
+      .text(DESIGN_W / 2, 214, greetLine, { fontFamily: FONT, fontSize: '23px', color: getTheme().onBackdropInk })
+      .setOrigin(0.5)
+      .setLetterSpacing(1)
+
+    // §E9 special-date dress-up (signature moment #5) — DORMANT unless an occasion is configured,
+    // matches today, and hasn't fired today. Fires a once-that-day heart-shower and marks it seen.
+    const occFire = pendingOccasion(today, save.occasionsSeen)
+    if (occFire) {
+      markOccasionSeen(today)
+      this.occasionShower()
+    }
+
     // Big heart emblem with a heartbeat pulse.
     const emblemY = 330
     const heart = this.add.image(DESIGN_W / 2, emblemY, 'heart')
@@ -81,6 +108,9 @@ export class HomeScene extends Phaser.Scene {
       repeatDelay: 340,
       ease: 'Sine.easeInOut',
     })
+    // §E9 secret love note — DISCOVERED, never advertised: a long-press (~620ms) or 4 quick taps
+    // on the emblem opens it. Nothing on the front door hints at it beyond the tappable heart.
+    this.wireSecretNote(heart)
     // 3f Home emblem sparkle: sparse drifting hearts near the emblem. Reconciled with the existing
     // satellites (not a second emitter) — governor-capped (fewer on weak tiers) and reduced-motion
     // gated (placed static, no drift).
@@ -223,6 +253,161 @@ export class HomeScene extends Phaser.Scene {
         })
       })
     }
+  }
+
+  /**
+   * §E9 — wire the discoverable secret note onto the heart emblem. Two intentionally-hidden
+   * gestures open it: a long-press (~620ms) OR four quick taps. Deliberately no hand cursor and no
+   * on-screen hint — only someone who lingers on the heart finds it.
+   */
+  private wireSecretNote(heart: Phaser.GameObjects.Image): void {
+    heart.setInteractive({ useHandCursor: false })
+    let pressTimer: Phaser.Time.TimerEvent | null = null
+    let taps = 0
+    let tapWindow: Phaser.Time.TimerEvent | null = null
+    const trigger = (): void => {
+      pressTimer?.remove(false)
+      pressTimer = null
+      taps = 0
+      this.openSecretNote()
+    }
+    heart.on('pointerdown', () => {
+      if (this.noteOpen) return
+      pressTimer?.remove(false)
+      pressTimer = this.time.delayedCall(620, trigger)
+      taps += 1
+      tapWindow?.remove(false)
+      tapWindow = this.time.delayedCall(900, () => (taps = 0))
+      if (taps >= 4) trigger()
+    })
+    const cancel = (): void => {
+      pressTimer?.remove(false)
+      pressTimer = null
+    }
+    heart.on('pointerup', cancel)
+    heart.on('pointerout', cancel)
+  }
+
+  /**
+   * The discovered heart note: a scrim + cream+gold card with a slow-BEATING heart, a heart-shower,
+   * and the owner's `secretMessage` (or a tasteful generic "made with ♥" when unconfigured). Tap the
+   * scrim or CLOSE to dismiss. Reduced motion: static heart + static hearts, no beat, no shower.
+   */
+  private openSecretNote(): void {
+    if (this.noteOpen) return
+    this.noteOpen = true
+    sfx.uiTap()
+    const reduced = this.prefersReducedMotion()
+    const T = getTheme()
+    const W = DESIGN_W
+    const H = 1280
+    const cx = W / 2
+    const cy = 640
+    const layer = this.add.container(0, 0).setDepth(70)
+
+    const scrim = this.add.rectangle(cx, H / 2, W, H, T.scrim, 0.62).setInteractive()
+    const close = (): void => {
+      this.noteOpen = false
+      layer.destroy()
+    }
+    scrim.on('pointerup', close)
+    layer.add(scrim)
+
+    // Cream + gold card.
+    const cardW = 560
+    const cardH = 620
+    const g = this.add.graphics()
+    g.fillStyle(T.shadow, 0.28)
+    g.fillRoundedRect(cx - cardW / 2 + 4, cy - cardH / 2 + 10, cardW, cardH, 34)
+    g.fillStyle(T.cardFillWarm, 1)
+    g.fillRoundedRect(cx - cardW / 2, cy - cardH / 2, cardW, cardH, 34)
+    g.lineStyle(4, T.goldBezel, 1)
+    g.strokeRoundedRect(cx - cardW / 2, cy - cardH / 2, cardW, cardH, 34)
+    layer.add(g)
+
+    // Blocker so taps on the card don't fall through to the scrim (which closes).
+    layer.add(this.add.rectangle(cx, cy, cardW, cardH, 0xffffff, 0.001).setInteractive())
+
+    // Soft heart-glow halo behind the beating heart.
+    const halo = this.add
+      .image(cx, cy - 156, 'heartglow')
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setTint(T.bloom)
+      .setDisplaySize(340, 340)
+      .setAlpha(reduced ? 0.3 : 0.24)
+    layer.add(halo)
+
+    // Slow-BEATING heart — the intimate heartbeat (lub-dub cadence borrowed from the emblem).
+    const noteHeart = this.add.image(cx, cy - 156, 'heart').setDisplaySize(130, 130)
+    layer.add(noteHeart)
+    if (!reduced) {
+      const hb = noteHeart.scaleX
+      this.tweens.add({ targets: noteHeart, scale: hb * 1.12, duration: 640, yoyo: true, repeat: -1, repeatDelay: 360, ease: 'Sine.easeInOut' })
+      this.tweens.add({ targets: halo, alpha: 0.4, scale: halo.scaleX * 1.08, duration: 640, yoyo: true, repeat: -1, repeatDelay: 360, ease: 'Sine.easeInOut' })
+    }
+
+    // The message — owner's words, or the generic fallback.
+    layer.add(
+      this.add
+        .text(cx, cy + 46, secretNote(), {
+          fontFamily: FONT,
+          fontSize: '30px',
+          fontStyle: '700',
+          color: T.ink,
+          align: 'center',
+          wordWrap: { width: cardW - 96 },
+          lineSpacing: 10,
+        })
+        .setOrigin(0.5)
+    )
+
+    layer.add(addPillButton(this, cx, cy + cardH / 2 - 58, 220, 64, 'CLOSE', GHOST_PILL, close))
+
+    // Heart-shower (static hearts under reduced motion).
+    if (reduced) {
+      const spots: Array<[number, number, number]> = [
+        [-190, -80, 34],
+        [196, -40, 28],
+        [168, 150, 24],
+        [-196, 150, 22],
+      ]
+      for (const [dx, dy, s] of spots) layer.add(this.add.image(cx + dx, cy + dy, 'heart').setDisplaySize(s, s).setAlpha(0.5))
+    } else {
+      const hearts = this.add.particles(0, 0, 'heart', {
+        speed: { min: 120, max: 360 },
+        angle: { min: 220, max: 320 },
+        scale: { start: 0.5, end: 0.12 },
+        alpha: { start: 1, end: 0 },
+        lifespan: { min: 800, max: 1500 },
+        gravityY: 380,
+        rotate: { min: -120, max: 120 },
+        emitting: false,
+      })
+      layer.add(hearts)
+      hearts.explode(20, cx, cy - 230)
+      layer.setAlpha(0)
+      this.tweens.add({ targets: layer, alpha: 1, duration: 200, ease: 'Quad.easeOut' })
+    }
+  }
+
+  /** §E9 special-date beat: a once-that-day heart-shower over the emblem (skipped under reduced motion). */
+  private occasionShower(): void {
+    sfx.starDing(2)
+    if (this.prefersReducedMotion()) return
+    const hearts = this.add
+      .particles(0, 0, 'heart', {
+        speed: { min: 130, max: 400 },
+        angle: { min: 220, max: 320 },
+        scale: { start: 0.55, end: 0.14 },
+        alpha: { start: 1, end: 0 },
+        lifespan: { min: 800, max: 1500 },
+        gravityY: 420,
+        rotate: { min: -120, max: 120 },
+        emitting: false,
+      })
+      .setDepth(50)
+    hearts.explode(26, DESIGN_W / 2, 300)
+    this.time.delayedCall(1700, () => hearts.destroy())
   }
 
   private prefersReducedMotion(): boolean {
