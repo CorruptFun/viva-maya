@@ -245,7 +245,7 @@ const HELP_SECTIONS: HelpSection[] = [
   { icon: 'clover', title: 'THE GOAL', body: 'Match 3+ of the same symbol in a row. Collect the goal symbols up top before your moves run out.' },
   { icon: 'diamond', title: 'MAKE A MOVE', body: 'Swipe a symbol into a neighbour, or tap two that touch, to swap. A swap only sticks if it makes a match.' },
   { icon: 'jackpot', title: 'POWER-UPS', body: 'Match 4 → Wild Reel (clears a line). L or T → Dice Bomb (3×3). Match 5 → Jackpot Chip (clears a colour).' },
-  { icon: 'heart', title: 'LIVES', body: 'Losing a level costs a heart — winning is free. Out of hearts? One returns every 30 minutes.' },
+  { icon: 'heart', title: 'LIVES', body: 'Losing a level costs a heart — winning is free. Out of hearts? One returns every 8 minutes.' },
   { icon: 'chip', title: 'DAILY BONUS', body: 'Spin once a day for a free boost. Come back daily to grow your streak.' },
   { icon: 'star', title: 'STARS', body: 'Finish with moves to spare for up to 3 stars. Every 10th level is a milestone.' },
   { icon: 'card', title: 'ENDLESS', body: 'After Level 30, race the weekly board — same for everyone. Beat your best score!' },

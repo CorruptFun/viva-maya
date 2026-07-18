@@ -28,10 +28,15 @@ input, and tweens live in `src/scenes/` and `src/view/`.
 - [x] **Phase 4** — power-ups: Wild Reel (match-4), Dice Bomb (L/T), Jackpot Chip (match-5),
       full combo matrix (reel+reel cross, bomb+bomb 5x5, reel+bomb triple-cross,
       jackpot+reel/bomb color conversion, jackpot+jackpot board wipe), chain detonations
-- [x] **MVP levels** — 30 levels, seeded per-level collect objectives + move limits with a
-      difficulty curve (`src/core/levels.ts`), level select with stars/unlocks, win/lose
-      overlays, persistent progress (localStorage v2 save)
-- [ ] **Phase 5** — audio (pitch-shifting cascades, sirens), MEGA WIN choreography, heavier juice
+- [x] **Levels** — 100 seeded levels with per-level collect objectives + move limits and a
+      difficulty curve (`src/core/levels.ts`), drag-scrollable level select with stars/unlocks,
+      win/lose overlays, persistent progress (localStorage v6 save)
+- [x] **Phase 5 — audio & juice** — procedural WebAudio SFX (pitch-shifting cascades, sirens),
+      MEGA WIN choreography, haptics, mute toggle, selectable move sounds
+- [x] **Return hooks** — lives/energy pool (lose-only, self-refilling), daily bonus spin with
+      streaks, star milestones every 10 levels, endless weekly-seed score race (unlocks at L30)
+- [x] **Presentation** — slot-cabinet visuals + ambient casino backdrop, home screen,
+      how-to-play panel
 
 ## Dev / test knobs (DEV builds only)
 
