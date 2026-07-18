@@ -7,6 +7,7 @@ import { loadSave } from '../core/save'
 import { SYMBOLS } from '../core/types'
 import type { Piece, PieceKind } from '../core/types'
 import { addCasinoBackdrop } from '../view/background'
+import { getTheme } from '../view/theme'
 import { ensurePieceTexture } from '../view/textures'
 import { FONT, GHOST_PILL, GOLD_PILL, addPillButton, startScene } from '../view/ui'
 
@@ -51,6 +52,7 @@ export class DailyBonusScene extends Phaser.Scene {
     const forced = import.meta.env.DEV && params.has('spin')
     const available = spinAvailable(save) || forced
     const reduced = this.prefersReducedMotion()
+    const T = getTheme()
     if (import.meta.env.DEV) {
       const turbo = Number(params.get('turbo'))
       if (turbo > 0) {
@@ -67,12 +69,12 @@ export class DailyBonusScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setLetterSpacing(4)
       .setShadow(0, 3, 'rgba(90,70,20,0.25)', 6, false, true)
-      .setTint(0xffd75e, 0xffd75e, 0xc9930a, 0xc9930a)
+      .setTint(T.goldBright, T.goldBright, T.goldDeep, T.goldDeep)
     const streakText = this.add
       .text(DESIGN_W / 2, 186, save.streak > 0 ? `🔥 day ${save.streak}` : 'one free spin, every day', {
         fontFamily: FONT,
         fontSize: '26px',
-        color: '#9a927e',
+        color: T.onBackdropMuted,
       })
       .setOrigin(0.5)
 
@@ -82,11 +84,11 @@ export class DailyBonusScene extends Phaser.Scene {
     const cabH = 340
     const cabX = (DESIGN_W - cabW) / 2
     const cabY = 280
-    g.fillStyle(0x8a7a52, 0.14)
+    g.fillStyle(T.shadow, 0.14)
     g.fillRoundedRect(cabX + 4, cabY + 8, cabW, cabH, 30)
-    g.fillStyle(0xfffdf8, 1)
+    g.fillStyle(T.cardFill, 1)
     g.fillRoundedRect(cabX, cabY, cabW, cabH, 30)
-    g.lineStyle(3, 0xf2c14e, 0.9)
+    g.lineStyle(3, T.goldBezel, 0.9)
     g.strokeRoundedRect(cabX, cabY, cabW, cabH, 30)
     const slotGap = (cabW - 3 * REEL_W) / 4
     const windows: { x: number; y: number }[] = []
@@ -94,9 +96,9 @@ export class DailyBonusScene extends Phaser.Scene {
       const wx = cabX + slotGap + i * (REEL_W + slotGap)
       const wy = cabY + (cabH - REEL_H) / 2
       windows.push({ x: wx, y: wy })
-      g.fillStyle(0xf3ece0, 1)
+      g.fillStyle(T.cardFillAlt, 1)
       g.fillRoundedRect(wx, wy, REEL_W, REEL_H, 18)
-      g.lineStyle(2, 0xe8dfc9, 1)
+      g.lineStyle(2, T.border, 1)
       g.strokeRoundedRect(wx, wy, REEL_W, REEL_H, 18)
     }
 
@@ -105,9 +107,9 @@ export class DailyBonusScene extends Phaser.Scene {
     const plRight = windows[2].x + REEL_W + 6
     const plCenterY = windows[0].y + REEL_H / 2
     const plBand = 16
-    g.fillStyle(0xf2b234, 0.08)
+    g.fillStyle(T.gold, 0.08)
     g.fillRoundedRect(plLeft, plCenterY - plBand / 2, plRight - plLeft, plBand, plBand / 2)
-    g.lineStyle(2.5, 0xf2b234, 0.9)
+    g.lineStyle(2.5, T.gold, 0.9)
     g.strokeRoundedRect(plLeft, plCenterY - plBand / 2, plRight - plLeft, plBand, plBand / 2)
 
     // Marquee bulbs framing the cabinet top & bottom edges.
@@ -118,7 +120,7 @@ export class DailyBonusScene extends Phaser.Scene {
         const bulb = this.add
           .image(bx, by, 'bulb')
           .setDisplaySize(16, 16)
-          .setTint(i % 2 === 0 ? 0xf2b234 : 0xd3304f)
+          .setTint(i % 2 === 0 ? T.gold : T.rose)
         if (reduced) {
           bulb.setAlpha(0.85)
         } else {
@@ -138,7 +140,7 @@ export class DailyBonusScene extends Phaser.Scene {
 
     if (!available) {
       this.add
-        .text(DESIGN_W / 2, 720, '⏳  come back tomorrow', { fontFamily: FONT, fontSize: '30px', color: '#9a927e' })
+        .text(DESIGN_W / 2, 720, '⏳  come back tomorrow', { fontFamily: FONT, fontSize: '30px', color: T.onBackdropMuted })
         .setOrigin(0.5)
       for (const w of windows) {
         this.add.image(w.x + REEL_W / 2, w.y + REEL_H / 2, SYMBOLS[Math.floor(Math.random() * 6)]).setDisplaySize(96, 96).setAlpha(0.5)
@@ -197,7 +199,7 @@ export class DailyBonusScene extends Phaser.Scene {
           // Soft gold glow behind the settled winning symbol (separate object → not clipped by the reel mask).
           const glow = this.add
             .image(w.x + REEL_W / 2, w.y + REEL_H / 2, 'bgglow')
-            .setTint(0xf2c14e)
+            .setTint(getTheme().goldBezel)
             .setBlendMode(Phaser.BlendModes.ADD)
             .setDisplaySize(150, 150)
             .setAlpha(reduced ? 0.3 : 0.16)
@@ -276,19 +278,19 @@ export class DailyBonusScene extends Phaser.Scene {
         fontFamily: FONT,
         fontSize: labels.length > 1 ? '34px' : '44px',
         fontStyle: '900',
-        color: '#c9930a',
+        color: getTheme().goldText,
       })
       .setOrigin(0.5)
       .setShadow(0, 3, 'rgba(0,0,0,0.15)', 6, false, true)
       .setScale(0)
     this.tweens.add({ targets: title, scale: 1, duration: 300, ease: 'Back.easeOut' })
     this.add
-      .text(DESIGN_W / 2, 760, blurbs.join('\n'), { fontFamily: FONT, fontSize: '22px', color: '#9a927e', align: 'center' })
+      .text(DESIGN_W / 2, 760, blurbs.join('\n'), { fontFamily: FONT, fontSize: '22px', color: getTheme().onBackdropMuted, align: 'center' })
       .setOrigin(0.5)
     addPillButton(this, DESIGN_W / 2, 880, 300, 80, 'CLAIM', GOLD_PILL, () => startScene(this,'home'))
     this.spinning = false
     this.add
-      .text(DESIGN_W / 2, 960, `come back tomorrow — ${todayKey()} claimed`, { fontFamily: FONT, fontSize: '18px', color: '#b3ab97' })
+      .text(DESIGN_W / 2, 960, `come back tomorrow — ${todayKey()} claimed`, { fontFamily: FONT, fontSize: '18px', color: getTheme().inkFaint })
       .setOrigin(0.5)
   }
 

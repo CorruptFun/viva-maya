@@ -5,6 +5,7 @@ import { endlessBestThisWeek, endlessUnlocked } from '../core/endless'
 import { LEVEL_COUNT } from '../core/levels'
 import { loadSave } from '../core/save'
 import { addCasinoBackdrop } from '../view/background'
+import { getTheme } from '../view/theme'
 import { FONT, GHOST_PILL, ROSE_PILL, addMarquee, addMuteChip, addPillButton, startScene } from '../view/ui'
 
 const GRID_COLS = 5
@@ -122,7 +123,7 @@ export class LevelSelectScene extends Phaser.Scene {
         .text(DESIGN_W / 2, 1196, wkBest > 0 ? `weekly board  ·  best ${wkBest.toLocaleString()}` : `new weekly board`, {
           fontFamily: FONT,
           fontSize: '19px',
-          color: '#9a927e',
+          color: getTheme().onBackdropMuted,
         })
         .setOrigin(0.5)
     }
@@ -131,7 +132,7 @@ export class LevelSelectScene extends Phaser.Scene {
         fontFamily: FONT,
         fontSize: '26px',
         fontStyle: '900',
-        color: '#c9930a',
+        color: getTheme().goldText,
       })
       .setOrigin(0.5)
       .setLetterSpacing(2)
@@ -162,14 +163,15 @@ export class LevelSelectScene extends Phaser.Scene {
   ): Phaser.GameObjects.Container {
     const playable = n <= unlocked
     const current = n === unlocked
+    const T = getTheme()
     const container = this.add.container(cx, cy)
     const g = this.add.graphics()
     if (playable) {
-      g.fillStyle(0x8a7a52, 0.12)
+      g.fillStyle(T.shadow, 0.12)
       g.fillRoundedRect(-CHIP / 2 + 2, -CHIP / 2 + 5, CHIP, CHIP, 20)
       g.fillStyle(0xffffff, 1)
       g.fillRoundedRect(-CHIP / 2, -CHIP / 2, CHIP, CHIP, 20)
-      g.lineStyle(current ? 4 : 2, current ? 0xf2b234 : 0xe8dfc9, 1)
+      g.lineStyle(current ? 4 : 2, current ? T.gold : T.border, 1)
       g.strokeRoundedRect(-CHIP / 2, -CHIP / 2, CHIP, CHIP, 20)
     } else {
       g.fillStyle(0xefe8da, 1)
@@ -184,7 +186,7 @@ export class LevelSelectScene extends Phaser.Scene {
           fontFamily: FONT,
           fontSize: '40px',
           fontStyle: '900',
-          color: current ? '#c9930a' : '#2a2732',
+          color: current ? T.goldText : T.ink,
         })
         .setOrigin(0.5)
       container.add(numText)
@@ -229,7 +231,7 @@ export class LevelSelectScene extends Phaser.Scene {
     content: Phaser.GameObjects.Container
   ): void {
     // Gold glow ring haloing the chip.
-    const ring = this.add.image(0, 0, 'ring').setDisplaySize(CHIP + 34, CHIP + 34).setTint(0xf2b234).setAlpha(0.85)
+    const ring = this.add.image(0, 0, 'ring').setDisplaySize(CHIP + 34, CHIP + 34).setTint(getTheme().gold).setAlpha(0.85)
     container.addAt(ring, 0)
     this.tweens.add({ targets: ring, alpha: 0.35, scale: ring.scale * 1.08, duration: 700, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' })
 
