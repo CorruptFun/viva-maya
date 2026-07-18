@@ -60,6 +60,10 @@ export class GameScene extends Phaser.Scene {
   private pieceLayer!: Phaser.GameObjects.Container
   private emitters!: Record<SymbolType, Phaser.GameObjects.Particles.ParticleEmitter>
   private sparkEmitter!: Phaser.GameObjects.Particles.ParticleEmitter
+  /** Looping additive halo behind each on-board special sprite (the "armed/loaded" tell). */
+  private armedGlows = new Map<number, Phaser.GameObjects.Image>()
+  /** Cached prefers-reduced-motion — tones down detonation particle counts + the armed pulse. */
+  private reducedMotion = false
   private cabinetBulbs: Phaser.GameObjects.Image[] = []
   private cabinetGlow?: Phaser.GameObjects.Image
   private state: GameState = 'idle'
@@ -162,6 +166,8 @@ export class GameScene extends Phaser.Scene {
     this.shownScore = 0
     this.state = 'idle'
     this.sprites.clear()
+    this.armedGlows.clear()
+    this.reducedMotion = this.prefersReducedMotion()
     this.selected = null
     this.selectedSprite = null
     this.selectPulse = null
@@ -695,11 +701,44 @@ export class GameScene extends Phaser.Scene {
 
   private createSprite(piece: Piece, at: Coord, dropCells = 0): Phaser.GameObjects.Sprite {
     const pos = this.cellToXY(at)
-    const sprite = this.add.sprite(pos.x, pos.y - dropCells * CELL, ensurePieceTexture(this, piece))
+    const y = pos.y - dropCells * CELL
+    const sprite = this.add.sprite(pos.x, y, ensurePieceTexture(this, piece))
     sprite.setDisplaySize(PIECE_SIZE, PIECE_SIZE)
+    // Specials read as "armed" on the board via a soft additive halo that trails them (synced in
+    // update). Added BEFORE the sprite so it sits behind it; keyed by id so it never stacks.
+    if (piece.kind !== 'normal' && !this.armedGlows.has(piece.id)) {
+      const glow = this.add
+        .image(pos.x, y, 'bgglow')
+        .setTint(0xf2b234)
+        .setBlendMode(Phaser.BlendModes.ADD)
+        .setDisplaySize(PIECE_SIZE * 1.25, PIECE_SIZE * 1.25)
+        .setAlpha(this.reducedMotion ? 0.16 : 0.22)
+      this.pieceLayer.add(glow)
+      this.armedGlows.set(piece.id, glow)
+    }
     this.pieceLayer.add(sprite)
     this.sprites.set(piece.id, sprite)
     return sprite
+  }
+
+  /**
+   * Per-frame sync for the "armed" halos: keep each glow under its special sprite and breathe its
+   * alpha (shared sine so they pulse in step — cheap, no per-glow tween). When a special's sprite
+   * is gone (cleared / transformed / reshuffled) its halo is destroyed, so nothing leaks.
+   */
+  update(time: number): void {
+    if (this.armedGlows.size === 0) return
+    const a = 0.16 + 0.14 * (0.5 + 0.5 * Math.sin(time / 300))
+    for (const [id, glow] of this.armedGlows) {
+      const sprite = this.sprites.get(id)
+      if (sprite && sprite.active) {
+        glow.setPosition(sprite.x, sprite.y)
+        if (!this.reducedMotion) glow.setAlpha(a)
+      } else {
+        glow.destroy()
+        this.armedGlows.delete(id)
+      }
+    }
   }
 
   // ----------------------------------------------------------------- input
@@ -882,32 +921,11 @@ export class GameScene extends Phaser.Scene {
     let effectMs = 0
     for (const e of wave.events) {
       if (e.type === 'reel') {
-        sfx.reelSweep()
-        const at = this.cellToXY(e.at)
-        const sweep = this.add.image(e.horizontal ? BOARD_X + BOARD_W / 2 : at.x, e.horizontal ? at.y : BOARD_Y + BOARD_W / 2, 'sweep')
-        sweep.setDepth(25)
-        if (e.horizontal) sweep.setDisplaySize(BOARD_W + 24, CELL * 0.72)
-        else {
-          sweep.setDisplaySize(BOARD_W + 24, CELL * 0.72)
-          sweep.setAngle(90)
-        }
-        sweep.setAlpha(0)
-        this.tweens.add({
-          targets: sweep,
-          alpha: { from: 0, to: 0.95 },
-          duration: 90,
-          yoyo: true,
-          hold: 110,
-          onComplete: () => sweep.destroy(),
-        })
-        effectMs = Math.max(effectMs, 290)
+        this.detonateReel(e.at, e.horizontal, cascade)
+        effectMs = Math.max(effectMs, 320)
       } else if (e.type === 'bomb') {
-        sfx.bombBoom()
-        this.vibrate(30)
-        const at = this.cellToXY(e.at)
-        this.cameras.main.shake(140 + e.radius * 60, 0.006 + e.radius * 0.004)
-        this.sparkEmitter.explode(18 + e.radius * 14, at.x, at.y)
-        effectMs = Math.max(effectMs, 220)
+        this.detonateBomb(e.at, e.radius, cascade)
+        effectMs = Math.max(effectMs, 300)
       } else {
         sfx.jackpotStrike()
         this.cameras.main.flash(280, 255, 214, 90)
@@ -992,6 +1010,165 @@ export class GameScene extends Phaser.Scene {
 
     promises.push(new Promise(resolve => this.time.delayedCall(effectMs, () => resolve())))
     await Promise.all(promises)
+  }
+
+  /** Tone particle counts down under prefers-reduced-motion (kept ≥1 so the beat still lands). */
+  private motionCount(n: number): number {
+    return this.reducedMotion ? Math.max(1, Math.ceil(n * 0.4)) : Math.round(n)
+  }
+
+  /**
+   * Wild-reel line clear as a MISSILE strike: a fireball head streaks out of the epicenter to each
+   * end of the row/col trailing sparks, and the whole line ignites in a fire streak. Faster/thicker
+   * on higher cascades. Trails cap ~11 sparks each; total ≲30 for the event.
+   */
+  private detonateReel(atCoord: Coord, horizontal: boolean, cascade: number): void {
+    sfx.reelSweep()
+    const at = this.cellToXY(atCoord)
+    const boost = Math.min(cascade - 1, 4)
+
+    // The line ignites — a warm fire streak flashing across the whole row/col.
+    const sweep = this.add
+      .image(horizontal ? BOARD_X + BOARD_W / 2 : at.x, horizontal ? at.y : BOARD_Y + BOARD_W / 2, 'sweep')
+      .setDepth(25)
+      .setBlendMode(Phaser.BlendModes.ADD)
+    sweep.setDisplaySize(BOARD_W + 24, CELL * (0.72 + boost * 0.05))
+    if (!horizontal) sweep.setAngle(90)
+    sweep.setAlpha(0)
+    this.tweens.add({
+      targets: sweep,
+      alpha: { from: 0, to: 1 },
+      scaleY: sweep.scaleY * 1.3,
+      duration: 90,
+      yoyo: true,
+      hold: 120,
+      onComplete: () => sweep.destroy(),
+    })
+
+    // Missile heads streak out to each end of the line, trailing sparks.
+    const dur = 240 - boost * 26
+    const dirs: Array<[number, number]> = horizontal ? [[-1, 0], [1, 0]] : [[0, -1], [0, 1]]
+    for (const [dx, dy] of dirs) {
+      const endX = horizontal ? (dx < 0 ? BOARD_X - 12 : BOARD_X + BOARD_W + 12) : at.x
+      const endY = horizontal ? at.y : dy < 0 ? BOARD_Y - 12 : BOARD_Y + BOARD_W + 12
+      const missile = this.add
+        .image(at.x, at.y, 'fireball')
+        .setDepth(27)
+        .setBlendMode(Phaser.BlendModes.ADD)
+        .setScale(0.85 + boost * 0.08)
+      const trail = this.add
+        .particles(0, 0, 'spark', {
+          speed: { min: 20, max: 130 },
+          scale: { start: 0.6, end: 0 },
+          alpha: { start: 0.9, end: 0 },
+          lifespan: { min: 160, max: 320 },
+          gravityY: 140,
+          tint: [0xf2b234, 0xffd75e],
+          quantity: 1,
+          frequency: this.reducedMotion ? 44 : 22,
+          emitting: true,
+        })
+        .setDepth(26)
+      trail.startFollow(missile)
+      this.tweens.add({
+        targets: missile,
+        x: endX,
+        y: endY,
+        duration: dur,
+        ease: 'Sine.easeIn',
+        onComplete: () => {
+          trail.stop()
+          trail.stopFollow()
+          missile.destroy()
+          this.time.delayedCall(340, () => trail.destroy())
+        },
+      })
+    }
+  }
+
+  /**
+   * Dice-bomb cell blast as a real EXPLOSION: a white-hot flash core, a fireball bloom, an expanding
+   * shockwave ring and a capped fire/debris burst — all scaled by the blast radius + cascade, with
+   * a camera punch that hits harder on bigger combos. Particle budget ≤30 (spark ≤20 + fire ≤10).
+   */
+  private detonateBomb(atCoord: Coord, radius: number, cascade: number): void {
+    sfx.bombBoom()
+    this.vibrate(30 + Math.min(radius, 3) * 12)
+    const at = this.cellToXY(atCoord)
+    const boost = Math.min(cascade - 1, 4)
+    const power = radius + boost * 0.4
+
+    // Camera punch — bigger blasts / combos hit harder.
+    this.cameras.main.shake(150 + radius * 70 + boost * 25, 0.007 + radius * 0.0045 + boost * 0.001)
+
+    // White-hot flash core.
+    const flash = this.add
+      .image(at.x, at.y, 'bgglow')
+      .setTint(0xfff6d9)
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setDepth(28)
+      .setAlpha(0.9)
+      .setDisplaySize(CELL * 1.2, CELL * 1.2)
+    this.tweens.add({
+      targets: flash,
+      alpha: 0,
+      scaleX: flash.scaleX * (2.2 + power * 0.4),
+      scaleY: flash.scaleY * (2.2 + power * 0.4),
+      duration: 220,
+      ease: 'Quad.easeOut',
+      onComplete: () => flash.destroy(),
+    })
+
+    // Fireball bloom.
+    const ball = this.add
+      .image(at.x, at.y, 'fireball')
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setDepth(27)
+      .setScale(0.5)
+      .setAlpha(1)
+    this.tweens.add({
+      targets: ball,
+      alpha: 0,
+      scaleX: 1.6 + power * 0.6,
+      scaleY: 1.6 + power * 0.6,
+      duration: 380,
+      ease: 'Quad.easeOut',
+      onComplete: () => ball.destroy(),
+    })
+
+    // Expanding shockwave ring.
+    const ring = this.add
+      .image(at.x, at.y, 'shockwave')
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setDepth(26)
+      .setAlpha(0.9)
+      .setDisplaySize(CELL, CELL)
+    this.tweens.add({
+      targets: ring,
+      alpha: 0,
+      scaleX: ring.scaleX * (3.2 + power * 0.6),
+      scaleY: ring.scaleY * (3.2 + power * 0.6),
+      duration: 440,
+      ease: 'Cubic.easeOut',
+      onComplete: () => ring.destroy(),
+    })
+
+    // Debris sparks + fiery chunks (capped, one-shot self-destructing emitter).
+    this.sparkEmitter.explode(this.motionCount(Math.min(20, 8 + radius * 4 + boost)), at.x, at.y)
+    const fire = this.add
+      .particles(0, 0, 'fireball', {
+        speed: { min: 90, max: 240 + radius * 40 },
+        angle: { min: 0, max: 360 },
+        scale: { start: 0.5, end: 0 },
+        alpha: { start: 0.9, end: 0 },
+        lifespan: { min: 300, max: 560 },
+        gravityY: 380,
+        tint: [0xf2b234, 0xffcf6a, 0xd3304f],
+        emitting: false,
+      })
+      .setDepth(27)
+    fire.explode(this.motionCount(Math.min(10, 5 + radius * 2)), at.x, at.y)
+    this.time.delayedCall(680, () => fire.destroy())
   }
 
   private animateFalls(falls: FallMove[], spawns: Spawn[]): Promise<void[]> {
