@@ -105,7 +105,7 @@ export class HomeScene extends Phaser.Scene {
     }
 
     // Persistent chip balance (earned reward token) — top-center, between the ? and ♪ corner
-    // chips and above the lives pool. A read-out only; chips are never spent in Phase 1.
+    // chips and above the lives pool. A read-out here; chips are spent in the Gift Store.
     addChipPill(this, DESIGN_W / 2, 44)
 
     // Top status: lives pool (with a live "next life" countdown) above the streak flame.
@@ -264,10 +264,15 @@ export class HomeScene extends Phaser.Scene {
       .text(DESIGN_W / 2, 790, sub, { fontFamily: FONT, fontSize: '22px', color: getTheme().onBackdropMuted })
       .setOrigin(0.5)
 
-    const levels = addPillButton(this, DESIGN_W / 2, 872, 280, 64, 'LEVELS', GHOST_PILL, () =>
-      startScene(this,'levelselect')
+    // LEVELS + GIFT STORE share a row so the store gets a first-class entry without growing the stack.
+    const levels = addPillButton(this, DESIGN_W / 2 - 158, 872, 300, 64, 'LEVELS', GHOST_PILL, () =>
+      startScene(this, 'levelselect')
     )
     menuButtons.push(levels)
+    const store = addPillButton(this, DESIGN_W / 2 + 158, 872, 300, 64, 'GIFT STORE', GHOST_PILL, () =>
+      startScene(this, 'store')
+    )
+    menuButtons.push(store)
 
     // Daily bonus entry: glowing when the spin is ready, quiet when claimed.
     // NOTE: no emoji in pill labels — addPillButton's letterSpacing splits
