@@ -48,6 +48,10 @@ interface ObjectiveState {
   total: number
   text?: Phaser.GameObjects.Text
   chip?: Phaser.GameObjects.Container
+  /** Soft gold halo behind the chip that breathes while this objective is INCOMPLETE. */
+  glow?: Phaser.GameObjects.Image
+  /** The breathe tween on `glow` — stopped when the objective completes. */
+  pulse?: Phaser.Tweens.Tween
 }
 
 const PIECE_SCALE = PIECE_SIZE / TEX_SIZE
@@ -63,6 +67,13 @@ export class GameScene extends Phaser.Scene {
   private sparkEmitter!: Phaser.GameObjects.Particles.ParticleEmitter
   /** Looping additive halo behind each on-board special sprite (the "armed/loaded" tell). */
   private armedGlows = new Map<number, Phaser.GameObjects.Image>()
+  /**
+   * Soft CREAM shimmer halo behind each on-board NORMAL piece whose symbol is still a needed
+   * objective — the "collect me" tell. Deliberately cool/white and phase-shimmered (see update)
+   * so it never reads as the specials' warm-gold armed glow. Keyed by piece id; position +
+   * alpha are synced per-frame, so there are no per-piece tweens and no graphics redraws.
+   */
+  private goalGlows = new Map<number, Phaser.GameObjects.Image>()
   /** Cached prefers-reduced-motion — tones down detonation particle counts + the armed pulse. */
   private reducedMotion = false
   private cabinetBulbs: Phaser.GameObjects.Image[] = []
@@ -168,6 +179,7 @@ export class GameScene extends Phaser.Scene {
     this.state = 'idle'
     this.sprites.clear()
     this.armedGlows.clear()
+    this.goalGlows.clear()
     this.reducedMotion = this.prefersReducedMotion()
     this.selected = null
     this.selectedSprite = null
@@ -214,6 +226,7 @@ export class GameScene extends Phaser.Scene {
         .setOrigin(1, 0)
     }
     if (this.activeBoosts.length > 0) this.showBoostBanner(this.activeBoosts)
+    this.showGoalCallout()
 
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => this.onDown(p))
     this.input.on('pointermove', (p: Phaser.Input.Pointer) => this.onMove(p))
@@ -394,6 +407,99 @@ export class GameScene extends Phaser.Scene {
       duration: 500,
       onComplete: () => banner.destroy(),
     })
+  }
+
+  /**
+   * Level-start "COLLECT" callout: a brief cream card over the board naming the goal symbol(s)
+   * large the moment the level opens, then it pops in, holds, and fades up/out (~1.5s). Reuses the
+   * showBoostBanner pattern; shown instantly (no pop, no fade) under reduced-motion. No-op in
+   * endless / when there are no objectives.
+   */
+  private showGoalCallout(): void {
+    if (this.endless || this.objectives.length === 0) return
+    const cx = DESIGN_W / 2
+    const cy = BOARD_Y + BOARD_W * 0.36
+    const layer = this.add.container(cx, cy).setDepth(34)
+
+    const header = this.add
+      .text(0, -66, 'COLLECT', { fontFamily: FONT, fontSize: '32px', fontStyle: '900', color: '#c9930a' })
+      .setOrigin(0.5)
+      .setLetterSpacing(5)
+      .setShadow(0, 3, 'rgba(90,70,20,0.22)', 5, false, true)
+    const content: Phaser.GameObjects.GameObject[] = [header]
+
+    const iconSize = 80
+    const gap = 34
+    const n = this.objectives.length
+    const rowW = n * iconSize + (n - 1) * gap
+    const startX = -rowW / 2 + iconSize / 2
+    this.objectives.forEach((o, i) => {
+      const ix = startX + i * (iconSize + gap)
+      content.push(this.add.image(ix, 8, o.symbol).setDisplaySize(iconSize, iconSize))
+      content.push(
+        this.add
+          .text(ix, 8 + iconSize / 2 + 22, `×${o.total}`, { fontFamily: FONT, fontSize: '24px', fontStyle: '900', color: '#26304d' })
+          .setOrigin(0.5)
+      )
+    })
+
+    const w = Math.max(header.width, rowW) + 84
+    const halfH = 96
+    const g = this.add.graphics()
+    g.fillStyle(0x8a7a52, 0.22)
+    g.fillRoundedRect(-w / 2 + 3, -halfH + 8, w, halfH * 2, 30)
+    g.fillStyle(0xfffdf8, 0.98)
+    g.fillRoundedRect(-w / 2, -halfH, w, halfH * 2, 30)
+    g.lineStyle(3, 0xf2c14e, 1)
+    g.strokeRoundedRect(-w / 2, -halfH, w, halfH * 2, 30)
+    layer.add(g)
+    layer.add(content)
+
+    const fit = Math.min(1, (BOARD_W + 16) / w)
+    if (this.reducedMotion) {
+      layer.setScale(fit)
+      this.time.delayedCall(1400, () => layer.destroy())
+      return
+    }
+    layer.setScale(0)
+    this.tweens.add({ targets: layer, scale: fit, duration: 320, ease: 'Back.easeOut' })
+    this.tweens.add({
+      targets: layer,
+      alpha: 0,
+      y: cy - 30,
+      delay: 1200,
+      duration: 420,
+      ease: 'Sine.easeIn',
+      onComplete: () => layer.destroy(),
+    })
+  }
+
+  /**
+   * An objective just hit zero: retire its "target" emphasis. Stops + fades the chip's gold
+   * breathe glow and drops every on-board goal halo for that symbol (the chip's green ✓ is set by
+   * the caller and stays). New spawns of a completed symbol never re-highlight (createSprite gates
+   * on remaining > 0).
+   */
+  private onObjectiveComplete(o: ObjectiveState): void {
+    o.pulse?.stop()
+    o.pulse = undefined
+    if (o.glow) {
+      const glow = o.glow
+      o.glow = undefined
+      this.tweens.add({
+        targets: glow,
+        alpha: 0,
+        duration: 260,
+        ease: 'Quad.easeOut',
+        onComplete: () => glow.destroy(),
+      })
+    }
+    for (const [id, halo] of this.goalGlows) {
+      if (halo.getData('sym') === o.symbol) {
+        halo.destroy()
+        this.goalGlows.delete(id)
+      }
+    }
   }
 
   private scheduleAutoplay(): void {
@@ -652,9 +758,40 @@ export class GameScene extends Phaser.Scene {
     } else {
       const chipW = 118
       const chipGap = 12
+      const n = this.objectives.length
+      // A "COLLECT" tag over the objective cluster — names the chips unmistakably as TARGETS.
+      const clusterCx = BOARD_X + BOARD_W - chipW / 2 - ((n - 1) * (chipW + chipGap)) / 2
+      this.add
+        .text(clusterCx, cardY - 70, 'COLLECT', { fontFamily: FONT, fontSize: '18px', fontStyle: '900', color: '#c9930a' })
+        .setOrigin(0.5)
+        .setLetterSpacing(4)
+        .setShadow(0, 2, 'rgba(90,70,20,0.18)', 3, false, true)
       this.objectives.forEach((o, i) => {
-        const cx = BOARD_X + BOARD_W - chipW / 2 - (this.objectives.length - 1 - i) * (chipW + chipGap)
+        const cx = BOARD_X + BOARD_W - chipW / 2 - (n - 1 - i) * (chipW + chipGap)
         const chip = this.add.container(cx, cardY)
+        // Soft gold halo bleeding out around the (opaque) chip — breathes to pull the eye to an
+        // incomplete target. A separate object from the chip so it never touches chip.scale (the
+        // decrement "pop" guards on chip.scale === 1). Static + fainter under reduced-motion.
+        const glow = this.add
+          .image(0, 0, 'bgglow')
+          .setTint(0xf2b234)
+          .setBlendMode(Phaser.BlendModes.ADD)
+          .setDisplaySize(chipW + 56, 104 + 44)
+          .setAlpha(this.reducedMotion ? 0.22 : 0.3)
+        chip.add(glow)
+        o.glow = glow
+        if (!this.reducedMotion) {
+          o.pulse = this.tweens.add({
+            targets: glow,
+            alpha: 0.52,
+            scaleX: glow.scaleX * 1.06,
+            scaleY: glow.scaleY * 1.06,
+            duration: 1100,
+            yoyo: true,
+            repeat: -1,
+            ease: 'Sine.easeInOut',
+          })
+        }
         const cg = this.add.graphics()
         cg.fillStyle(0x8a7a52, 0.12)
         cg.fillRoundedRect(-chipW / 2 + 2, -52 + 5, chipW, 104, 20)
@@ -663,11 +800,11 @@ export class GameScene extends Phaser.Scene {
         cg.lineStyle(2, 0xe8dfc9, 1)
         cg.strokeRoundedRect(-chipW / 2, -52, chipW, 104, 20)
         chip.add(cg)
-        const icon = this.add.image(0, -18, o.symbol)
-        icon.setDisplaySize(46, 46)
+        const icon = this.add.image(0, -20, o.symbol)
+        icon.setDisplaySize(54, 54)
         chip.add(icon)
         o.text = this.add
-          .text(0, 26, String(o.remaining), { fontFamily: FONT, fontSize: '30px', fontStyle: '900', color: '#2a2732' })
+          .text(0, 27, String(o.remaining), { fontFamily: FONT, fontSize: '30px', fontStyle: '900', color: '#2a2732' })
           .setOrigin(0.5)
         chip.add(o.text)
         o.chip = chip
@@ -678,7 +815,7 @@ export class GameScene extends Phaser.Scene {
       .text(
         DESIGN_W / 2,
         988,
-        this.endless ? "Biggest score wins this week's board" : 'Collect the goal symbols before moves run out',
+        this.endless ? "Biggest score wins this week's board" : 'Match the highlighted goal symbols before moves run out',
         { fontFamily: 'Arial, sans-serif', fontSize: '22px', color: '#9a927e' }
       )
       .setOrigin(0.5)
@@ -751,6 +888,26 @@ export class GameScene extends Phaser.Scene {
       this.pieceLayer.add(glow)
       this.armedGlows.set(piece.id, glow)
     }
+    // Goal-piece "collect me" tell: a soft cream halo on NORMAL pieces whose symbol is still a
+    // needed objective (specials already glow gold — skip them so the two tells never stack).
+    // Governor-gated (off at the low tier via count(1)), softened to a static faint halo under
+    // reduced-motion; the shimmer + upkeep run in update(). Added behind the sprite.
+    if (
+      piece.kind === 'normal' &&
+      !this.goalGlows.has(piece.id) &&
+      quality.count(1) > 0 &&
+      this.objectives.some(o => o.remaining > 0 && o.symbol === piece.symbol)
+    ) {
+      const halo = this.add
+        .image(pos.x, y, 'bgglow')
+        .setTint(0xfff6e8)
+        .setBlendMode(Phaser.BlendModes.ADD)
+        .setDisplaySize(PIECE_SIZE * 1.4, PIECE_SIZE * 1.4)
+        .setAlpha(this.reducedMotion ? 0.14 : 0.18)
+      halo.setData('sym', piece.symbol)
+      this.pieceLayer.add(halo)
+      this.goalGlows.set(piece.id, halo)
+    }
     this.pieceLayer.add(sprite)
     this.sprites.set(piece.id, sprite)
     return sprite
@@ -762,16 +919,33 @@ export class GameScene extends Phaser.Scene {
    * is gone (cleared / transformed / reshuffled) its halo is destroyed, so nothing leaks.
    */
   update(time: number): void {
-    if (this.armedGlows.size === 0) return
-    const a = 0.16 + 0.14 * (0.5 + 0.5 * Math.sin(time / 300))
-    for (const [id, glow] of this.armedGlows) {
-      const sprite = this.sprites.get(id)
-      if (sprite && sprite.active) {
-        glow.setPosition(sprite.x, sprite.y)
-        if (!this.reducedMotion) glow.setAlpha(a)
-      } else {
-        glow.destroy()
-        this.armedGlows.delete(id)
+    if (this.armedGlows.size > 0) {
+      const a = 0.16 + 0.14 * (0.5 + 0.5 * Math.sin(time / 300))
+      for (const [id, glow] of this.armedGlows) {
+        const sprite = this.sprites.get(id)
+        if (sprite && sprite.active) {
+          glow.setPosition(sprite.x, sprite.y)
+          if (!this.reducedMotion) glow.setAlpha(a)
+        } else {
+          glow.destroy()
+          this.armedGlows.delete(id)
+        }
+      }
+    }
+    // Goal halos: keep each under its piece and shimmer its alpha. A per-piece phase (off the
+    // stable id) desyncs them into a gentle TWINKLE across the board — visually apart from the
+    // armed glow's in-step breathe — and it's lower/cooler so a goal never reads as "armed".
+    if (this.goalGlows.size > 0) {
+      const gt = time / 480
+      for (const [id, glow] of this.goalGlows) {
+        const sprite = this.sprites.get(id)
+        if (sprite && sprite.active) {
+          glow.setPosition(sprite.x, sprite.y)
+          if (!this.reducedMotion) glow.setAlpha(0.09 + 0.12 * (0.5 + 0.5 * Math.sin(gt + (id % 13) * 0.5)))
+        } else {
+          glow.destroy()
+          this.goalGlows.delete(id)
+        }
       }
     }
   }
@@ -991,6 +1165,8 @@ export class GameScene extends Phaser.Scene {
         o.text.setColor('#f2b234')
         this.time.delayedCall(160, () => o.remaining > 0 && o.text?.setColor('#2a2732'))
       }
+      // Done: retire the "target" emphasis (green ✓ already set above stays).
+      if (o.remaining === 0) this.onObjectiveComplete(o)
     }
     const wavePoints = wave.cleared.length * POINTS_PER_PIECE * cascade
     this.addScore(wavePoints)
