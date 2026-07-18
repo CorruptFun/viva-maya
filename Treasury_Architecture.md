@@ -5,11 +5,15 @@
 The core tokenomics rely on an **Isolated Mint + Centralized Game Bridge** model. We do not use cross-chain bridging contracts to avoid security risks and high gas fees. The Game Relay acts as the unified ledger.
 
 *   **Total Supply:** 1,000,000,000 (1 Billion) `$VIVA`
-*   **Chain Allocation:** 
+*   **Chain Allocation (Minted across 3 chains):** 
     *   **Solana (Native SPL):** 334,000,000 `$VIVA` (Decimals: 6)
     *   **Base (ERC-20):** 333,000,000 `$VIVA` (Decimals: 18)
     *   **Sui (Native Coin):** 333,000,000 `$VIVA` (Decimals: 9)
-*   **Custody Strategy:** Upon minting, 100% of the supply on each chain is sent directly to the Game Relay's secure Treasury (split between Cold Storage multi-sig and automated Hot Wallets). 
+*   **Tokenomics Distribution (The Pie):** 
+    *   **Game Rewards (50% - 500M):** Custodied in the automated Game Relay Hot Wallets to pay out players cashing in their DB points.
+    *   **Market Making & Liquidity (20% - 200M):** Dedicated supply to pair with Fiat ad-revenue to seed initial Decentralized Exchange (DEX) liquidity pools (Raydium/Aerodrome), and to deploy via Market Making bots (e.g., Hummingbot) to maintain price stability.
+    *   **Founder & Team (15% - 150M):** Your controlled allocation for personal profit, equity, and strategic voting power. Stored in a Cold Wallet (Multi-sig).
+    *   **Infrastructure & Marketing (15% - 150M):** Capital reserve designed to be slowly sold (TWAP - Time Weighted Average Price) into the market during high-volume periods to pay for Supabase, RPC nodes, ad campaigns, and development costs. 
 
 ## 2. Server-Side Treasury Architecture
 
