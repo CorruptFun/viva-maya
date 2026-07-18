@@ -1,5 +1,5 @@
 import Phaser from 'phaser'
-import { sfx } from '../audio/sfx'
+import { SWAP_SOUNDS, SWAP_SOUND_LABELS, sfx } from '../audio/sfx'
 import { LIVES_MAX } from '../config'
 import { formatCountdown } from '../core/lives'
 import type { LivesState } from '../core/lives'
@@ -322,4 +322,94 @@ export function openHelpPanel(scene: Phaser.Scene): void {
       })
       .setOrigin(0.5)
   )
+}
+
+/** Round "♪" sound chip styled like GHOST_PILL — opens the move-sound picker. */
+export function addSoundChip(scene: Phaser.Scene, x: number, y: number, size = 52): Phaser.GameObjects.Container {
+  const r = size / 2
+  const container = scene.add.container(x, y).setDepth(50)
+  const g = scene.add.graphics()
+  g.fillStyle(0x8a7a52, 0.18)
+  g.fillCircle(2, 3, r)
+  g.fillStyle(GHOST_PILL.fill, 1)
+  g.fillCircle(0, 0, r)
+  g.lineStyle(2, GHOST_PILL.border ?? 0xe8dfc9, 1)
+  g.strokeCircle(0, 0, r)
+  const icon = scene.add
+    .text(0, 1, '♪', { fontFamily: FONT, fontSize: `${Math.round(size * 0.56)}px`, fontStyle: '900', color: '#8a8577' })
+    .setOrigin(0.5)
+  const zone = scene.add.rectangle(0, 0, size, size, 0xffffff, 0.001).setInteractive({ useHandCursor: true })
+  zone.on('pointerdown', () => container.setScale(0.9))
+  zone.on('pointerout', () => container.setScale(1))
+  zone.on('pointerup', () => {
+    container.setScale(1)
+    sfx.uiTap()
+    openSoundPanel(scene)
+  })
+  container.add([g, icon, zone])
+  return container
+}
+
+/**
+ * Move-sound picker overlay: a scrim + cream card titled "MOVE SOUND" with one
+ * full-width pill per selectable swap sound. Tapping a row auditions it and
+ * persists the choice, re-rendering so the gold highlight follows the selection.
+ * A transparent blocker over the card stops panel taps from closing it, and a
+ * DONE button (or a tap on the scrim) dismisses. Everything lives in one
+ * container rebuilt on each pick and destroyed on close — mirrors openHelpPanel.
+ */
+export function openSoundPanel(scene: Phaser.Scene): void {
+  const W = 720
+  const H = 1280
+  const layer = scene.add.container(0, 0).setDepth(60)
+
+  const scrim = scene.add.rectangle(W / 2, H / 2, W, H, 0x2a2417, 0.6).setInteractive()
+  scrim.on('pointerup', () => layer.destroy())
+
+  const px = 40
+  const pw = W - 80
+  const ph = 640
+  const pyTop = (H - ph) / 2
+  const g = scene.add.graphics()
+  g.fillStyle(0x8a7a52, 0.3)
+  g.fillRoundedRect(px + 4, pyTop + 8, pw, ph, 30)
+  g.fillStyle(0xfffdf8, 1)
+  g.fillRoundedRect(px, pyTop, pw, ph, 30)
+  g.lineStyle(4, 0xf2c14e, 1)
+  g.strokeRoundedRect(px, pyTop, pw, ph, 30)
+
+  // Blocker so taps on the card don't fall through to the scrim (which closes).
+  const block = scene.add.rectangle(W / 2, pyTop + ph / 2, pw, ph, 0xffffff, 0.001).setInteractive()
+
+  const title = scene.add
+    .text(W / 2, pyTop + 56, 'MOVE SOUND', { fontFamily: FONT, fontSize: '46px', fontStyle: '900', color: '#c9930a' })
+    .setOrigin(0.5)
+    .setLetterSpacing(2)
+    .setShadow(0, 2, 'rgba(0,0,0,0.12)', 4, false, true)
+  const subtitle = scene.add
+    .text(W / 2, pyTop + 104, 'Tap to hear — pick your favourite.', {
+      fontFamily: 'Arial, sans-serif',
+      fontSize: '22px',
+      color: '#6a6459',
+    })
+    .setOrigin(0.5)
+  layer.add([scrim, g, block, title, subtitle])
+
+  let y = pyTop + 176
+  const rowH = 96
+  for (const s of SWAP_SOUNDS) {
+    const selected = s === sfx.swapSound
+    layer.add(
+      addPillButton(scene, W / 2, y, pw - 80, 72, SWAP_SOUND_LABELS[s], selected ? GOLD_PILL : GHOST_PILL, () => {
+        sfx.previewSwap(s) // audition
+        sfx.setSwapSound(s) // persist
+        // Rebuild so the gold highlight moves to the tapped row.
+        layer.destroy()
+        openSoundPanel(scene)
+      })
+    )
+    y += rowH
+  }
+
+  layer.add(addPillButton(scene, W / 2, pyTop + ph - 72, 240, 68, 'DONE', GOLD_PILL, () => layer.destroy()))
 }
