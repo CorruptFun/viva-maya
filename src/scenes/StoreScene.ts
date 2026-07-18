@@ -38,6 +38,7 @@ export class StoreScene extends Phaser.Scene {
   }
 
   create(): void {
+    this.activeToast = undefined // scenes are reused via scene.start — clear the stale per-entry ref
     // Warm cream fade-in + directional rise (the receiving half of startScene's cross-fade).
     this.cameras.main.fadeIn(prefersReducedMotion() ? 90 : 180, 255, 253, 248)
     applyEntrance(this)
@@ -89,27 +90,30 @@ export class StoreScene extends Phaser.Scene {
   }
 
   private boostRow(item: BoostStoreItem, cy: number): void {
-    // Cream card frame with a gold bezel + soft drop shadow (matches the help/sound panels).
+    // Cream card frame with a gold bezel + soft drop shadow (matches the help/sound panels). Cards stay
+    // cream on every theme, so route through tokens: identical on the light themes, and it fixes the
+    // drop-shadow tint on the dark themes (T.shadow is near-black there, not the warm literal).
+    const T = getTheme()
     const g = this.hold(this.add.graphics())
     const h = 88
     const y = cy - h / 2
-    g.fillStyle(0x8a7a52, 0.16)
+    g.fillStyle(T.shadow, 0.16)
     g.fillRoundedRect(CARD_X + 3, y + 6, CARD_W, h, 24)
-    g.fillStyle(0xfffdf8, 1)
+    g.fillStyle(T.cardFill, 1)
     g.fillRoundedRect(CARD_X, y, CARD_W, h, 24)
-    g.lineStyle(2.5, 0xf2c14e, 0.9)
+    g.lineStyle(2.5, T.goldBezel, 0.9)
     g.strokeRoundedRect(CARD_X, y, CARD_W, h, 24)
 
     this.hold(this.add.image(80, cy, this.boostIcon(item.type)).setDisplaySize(58, 58))
     this.hold(
-      this.add.text(124, cy - 30, item.label, { fontFamily: FONT, fontSize: '26px', fontStyle: '900', color: '#2a2732' }).setOrigin(0, 0)
+      this.add.text(124, cy - 30, item.label, { fontFamily: FONT, fontSize: '26px', fontStyle: '900', color: T.ink }).setOrigin(0, 0)
     )
     this.hold(
       this.add
         .text(124, cy + 4, item.blurb, {
           fontFamily: 'Arial, sans-serif',
           fontSize: '17px',
-          color: '#6a6459',
+          color: T.inkSoft,
           wordWrap: { width: 360 },
           lineSpacing: 2,
         })
