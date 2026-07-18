@@ -15,8 +15,10 @@ import {
   addLivesHud,
   addMarquee,
   addPillButton,
+  addSoundChip,
   addStreakBadge,
   openHelpPanel,
+  openSoundPanel,
 } from '../view/ui'
 
 export class HomeScene extends Phaser.Scene {
@@ -33,6 +35,10 @@ export class HomeScene extends Phaser.Scene {
     // How-to-play / FAQ, tucked in the top-left corner.
     addHelpChip(this, 60, 44)
     if (import.meta.env.DEV && new URLSearchParams(location.search).has('help')) openHelpPanel(this)
+
+    // Move-sound picker, mirrored in the top-right corner.
+    addSoundChip(this, 676, 44)
+    if (import.meta.env.DEV && new URLSearchParams(location.search).has('sound')) openSoundPanel(this)
 
     // Top status: lives pool (with a live "next life" countdown) above the streak flame.
     const livesHud = addLivesHud(this, DESIGN_W / 2, 100, { size: 32 })
