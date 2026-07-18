@@ -2699,11 +2699,30 @@ export class GameScene extends Phaser.Scene {
       .setDepth(42)
       .setShadow(0, 3, 'rgba(0,0,0,0.15)', 6, false, true)
 
-    const goals = this.objectives.map(o => `${o.remaining > 0 ? o.remaining : '✓'}`).join('   ')
+    // Show WHICH symbols still need collecting (icon + count), not bare numbers — a learning player
+    // reads "which ones do I still need?" at a glance. A finished goal dims to a green check.
+    const objs = this.objectives
     this.add
-      .text(cx, cy - 70, `Still needed:  ${goals}`, { fontFamily: FONT, fontSize: '26px', color: getTheme().inkMuted })
+      .text(cx, cy - 112, 'STILL NEEDED', { fontFamily: FONT, fontSize: '18px', color: getTheme().inkMuted })
       .setOrigin(0.5)
+      .setLetterSpacing(3)
       .setDepth(42)
+    const slotW = 94
+    const x0 = cx - ((objs.length - 1) * slotW) / 2
+    objs.forEach((o, i) => {
+      const ox = x0 + i * slotW
+      const done = o.remaining <= 0
+      this.add.image(ox, cy - 66, o.symbol).setDisplaySize(48, 48).setDepth(42).setAlpha(done ? 0.4 : 1)
+      this.add
+        .text(ox, cy - 30, done ? '✓' : String(o.remaining), {
+          fontFamily: FONT,
+          fontSize: '26px',
+          fontStyle: '900',
+          color: done ? getTheme().ok : getTheme().ink,
+        })
+        .setOrigin(0.5)
+        .setDepth(42)
+    })
 
     this.add
       .text(cx, cy + 10, `SCORE  ${this.score.toLocaleString()}`, {

@@ -366,11 +366,22 @@ export function setTheme(id: ThemeId): void {
   applyPageChrome(THEMES[id])
 }
 
-/** Paint the body background + `<meta theme-color>` to match the theme (best-effort, no-DOM safe). */
+/**
+ * Paint the body background + `<meta theme-color>` to match the theme (best-effort, no-DOM safe).
+ *
+ * Full-bleed fix: the 720×1280 canvas is FIT-letterboxed, so a taller-than-9:16 phone shows a strip
+ * of body above and below (and a tablet shows strips left/right). We paint the body with the SAME
+ * vertical wash the backdrop draws (washTop→washBottom) instead of a flat `pageBg`, so those strips
+ * read as a seamless continuation of the scene rather than dead bars. The wash varies only on Y, so a
+ * single full-height vertical gradient lines up with the canvas edge on every side. `<meta
+ * theme-color>` tints the iOS status-bar / notch region at the very top → point it at washTop.
+ */
 export function applyPageChrome(T: Theme): void {
   try {
-    document.body.style.background = T.pageBg
-    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', T.pageBg)
+    const top = css(T.washTop)
+    const bottom = css(T.washBottom)
+    document.body.style.background = `linear-gradient(180deg, ${top} 0%, ${bottom} 100%)`
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', top)
   } catch {
     // no DOM (tests / SSR) — chrome just isn't repainted
   }

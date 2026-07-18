@@ -651,10 +651,20 @@ function ensureBaseTexture(scene: Phaser.Scene, key: string, w: number, h: numbe
   g.fillRoundedRect(ox + 2, oy + 2, w - 4, H - 4, safeR(r - 2, w - 4, h - 4))
   // Dark interior well at the top (revealed as the cap sinks); its rounded bottom stays hidden under the cap.
   const wellH = Math.round(h * 0.6)
+  // The well strips sit at the pedestal's TOP edge, so — exactly like the cap's gloss bands above —
+  // each MUST be inset by its (radius − height-clamped-radius) shortfall. A short strip clamps to a
+  // small radius, so its near-square top corners would poke past the cap's ROUNDED top corners as dark
+  // "horns" (hidden on the dark themes where dark-on-dark masks them, obvious on the light ones). The
+  // inset slides those corners inward to follow the pedestal's corner curve, tucking them under the cap.
+  const wellRb = safeR(r - 4, w - 8, wellH)
+  const wellIns = Math.max(0, r - 4 - wellRb)
   g.fillStyle(tok.well, 1)
-  g.fillRoundedRect(ox + 4, oy + 3, w - 8, wellH, safeR(r - 4, w - 8, wellH))
+  g.fillRoundedRect(ox + 4 + wellIns, oy + 3, w - 8 - wellIns * 2, wellH, wellRb)
+  const wellHiH = Math.max(3, Math.round(press * 0.7))
+  const hiRb = safeR(r - 4, w - 8, wellHiH)
+  const hiIns = Math.max(0, r - 4 - hiRb)
   g.fillStyle(shade(tok.well, -0.35), 1)
-  g.fillRoundedRect(ox + 4, oy + 3, w - 8, Math.max(3, Math.round(press * 0.7)), safeR(r - 4, w - 8, wellH))
+  g.fillRoundedRect(ox + 4 + hiIns, oy + 3, w - 8 - hiIns * 2, wellHiH, hiRb)
   g.generateTexture(key, texW, texH)
   g.destroy()
 }

@@ -193,3 +193,8 @@ if (typeof document !== 'undefined') {
     else game.loop?.wake()
   })
 }
+
+// DEV-only game handle: expose the Phaser game on `window.__vm` so an in-browser UI audit can pump
+// frames manually (`game.step(t, dt)`) when the preview pane throttles requestAnimationFrame — the
+// only way to settle entrance/idle tweens for a screenshot in that environment. Stripped from prod.
+if (import.meta.env.DEV) (window as any).__vm = game
