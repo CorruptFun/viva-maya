@@ -4,16 +4,9 @@ import { LIVES_MAX } from '../config'
 import { formatCountdown } from '../core/lives'
 import type { LivesState } from '../core/lives'
 import { loadSave } from '../core/save'
+import { css, getTheme, prefersReducedMotion } from './theme'
 
 export const FONT = '"Arial Black", "Helvetica Neue", Arial, sans-serif'
-
-function prefersReducedMotion(): boolean {
-  try {
-    return typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
-  } catch {
-    return false
-  }
-}
 
 export interface LivesHud {
   container: Phaser.GameObjects.Container
@@ -147,12 +140,7 @@ export function addStreakBadge(
   const h = 54
   const w = flame.width + gap + label.width + padX * 2
   const g = scene.add.graphics()
-  g.fillStyle(0x8a7a52, 0.16)
-  g.fillRoundedRect(-w / 2 + 2, -h / 2 + 4, w, h, h / 2)
-  g.fillStyle(0xfff3d6, 1)
-  g.fillRoundedRect(-w / 2, -h / 2, w, h, h / 2)
-  g.lineStyle(2, 0xf2c14e, 1)
-  g.strokeRoundedRect(-w / 2, -h / 2, w, h, h / 2)
+  drawPillFace(g, -w / 2, -h / 2, w, h, READOUT_STYLE)
   flame.setPosition(-w / 2 + padX + flame.width / 2, 0)
   label.setPosition(flame.x + flame.width / 2 + gap, 0)
   container.add([g, flame, label])
@@ -173,12 +161,316 @@ export interface PillStyle {
   fill: number
   border?: number
   textColor: string
+  /** Stable texture-cache id (keeps `btnface:{id}:{w}x{h}` keys short + shared across scenes). */
+  id?: string
+  /** Art-direction overrides for the chunky-3D bake (all optional — derived from fill/border when omitted). */
+  top?: number
+  bottom?: number
+  pedestal?: number
+  pedestalDeep?: number
+  well?: number
+  outline?: number
+  rim?: number
+  spec?: number
+  emboss?: string
 }
 
-export const GOLD_PILL: PillStyle = { fill: 0xf2b234, border: 0xc9930a, textColor: '#4a3305' }
-export const GHOST_PILL: PillStyle = { fill: 0xffffff, border: 0xe8dfc9, textColor: '#8a8577' }
+export const GOLD_PILL: PillStyle = { id: 'gold', fill: 0xf2b234, border: 0xc9930a, textColor: '#4a3305' }
+export const GHOST_PILL: PillStyle = { id: 'ghost', fill: 0xffffff, border: 0xe8dfc9, textColor: '#8a8577' }
 /** Rose "special mode" pill — sets the endless weekly race apart from the gold progression buttons. */
-export const ROSE_PILL: PillStyle = { fill: 0xd3304f, border: 0xa8213c, textColor: '#ffffff' }
+export const ROSE_PILL: PillStyle = { id: 'rose', fill: 0xd3304f, border: 0xa8213c, textColor: '#ffffff' }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Chunky 3D pressable controls (visual-overhaul §3a / §4).
+//
+// Every button/chip is a glossy beveled CAP (`btnface:*`) seated on a darker
+// PEDESTAL (`btnbase:*` — dark interior well up top, lit 3D lip at the bottom,
+// soft contact shadow beneath). On press the inner `face` container sinks into
+// the base and squashes, revealing the well; the OUTER container never moves, so
+// caller breathing/entrance tweens and `.setDepth(...)` compose cleanly. Both
+// textures are baked once via generateTexture and cached in the global
+// TextureManager keyed `{id}:{w}x{h}`, so identical buttons batch to one draw.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const TEX_PAD = 12
+
+/** Mix a colour toward white (t > 0) or black (t < 0) by |t| ∈ [0,1]. */
+function shade(color: number, t: number): number {
+  const r = (color >> 16) & 0xff
+  const g = (color >> 8) & 0xff
+  const b = color & 0xff
+  const to = t >= 0 ? 255 : 0
+  const a = Math.min(1, Math.abs(t))
+  const mix = (c: number): number => Math.round(c + (to - c) * a)
+  return (mix(r) << 16) | (mix(g) << 8) | mix(b)
+}
+
+/** Radius clamped to never exceed half the smallest side (avoids Phaser arc artifacts). */
+function safeR(r: number, w: number, h: number): number {
+  return Math.max(1, Math.min(r, w / 2, h / 2))
+}
+
+interface PillTokens {
+  top: number
+  bottom: number
+  pedestal: number
+  pedestalDeep: number
+  well: number
+  outline: number
+  rim: number
+  spec: number
+  shadow: number
+  emboss: string
+}
+
+/** Resolve a PillStyle's depth tokens: explicit fields win, else derive from fill/border + theme gloss. */
+function resolvePillTokens(style: PillStyle): PillTokens {
+  const T = getTheme()
+  const F = style.fill
+  const B = style.border ?? shade(F, -0.35)
+  return {
+    top: style.top ?? shade(F, 0.24),
+    bottom: style.bottom ?? shade(F, -0.16),
+    pedestal: style.pedestal ?? shade(F, -0.36),
+    pedestalDeep: style.pedestalDeep ?? shade(F, -0.54),
+    well: style.well ?? shade(F, -0.68),
+    outline: style.outline ?? B,
+    rim: style.rim ?? T.rim,
+    spec: style.spec ?? T.glossHi,
+    shadow: T.shadow,
+    emboss: style.emboss ?? css(shade(F, -0.5)),
+  }
+}
+
+/** height-derived geometry (so 56→96 all read right): pedestal depth, sink distance, corner radius. */
+function pillGeom(h: number): { ext: number; press: number; r: number } {
+  const ext = Math.max(5, Math.min(13, Math.round(h * 0.12)))
+  return { ext, press: Math.round(ext * 0.7), r: h / 2 }
+}
+
+function pillId(style: PillStyle, w: number, h: number): string {
+  const id = style.id ?? `${(style.fill & 0xffffff).toString(16)}-${((style.border ?? 0) & 0xffffff).toString(16)}`
+  return `${id}:${w}x${h}`
+}
+
+/** Bake the STATIC pedestal texture (`btnbase:*`): contact shadow + 3D lip + dark top well. */
+function ensureBaseTexture(scene: Phaser.Scene, key: string, w: number, h: number, tok: PillTokens): void {
+  if (scene.textures.exists(key)) return
+  const { ext, press, r } = pillGeom(h)
+  const H = h + ext
+  const texW = w + TEX_PAD * 2
+  const texH = H + TEX_PAD * 2
+  const ox = TEX_PAD
+  const oy = TEX_PAD
+  const g = scene.make.graphics({ x: 0, y: 0 }, false)
+  // Soft contact shadow — a couple of footprint copies nudged straight down (only the bottom edge peeks out).
+  for (let i = 3; i >= 1; i--) {
+    g.fillStyle(tok.shadow, 0.07)
+    g.fillRoundedRect(ox, oy + i * 1.5, w, H, r)
+  }
+  // Pedestal: darkest outer rim (the thickness) → mid inner wall.
+  g.fillStyle(tok.pedestalDeep, 1)
+  g.fillRoundedRect(ox, oy, w, H, r)
+  g.fillStyle(tok.pedestal, 1)
+  g.fillRoundedRect(ox + 2, oy + 2, w - 4, H - 4, safeR(r - 2, w - 4, H - 4))
+  // Dark interior well at the top (revealed as the cap sinks); its rounded bottom stays hidden under the cap.
+  const wellH = Math.round(h * 0.6)
+  g.fillStyle(tok.well, 1)
+  g.fillRoundedRect(ox + 4, oy + 3, w - 8, wellH, safeR(r - 4, w - 8, wellH))
+  g.fillStyle(shade(tok.well, -0.35), 1)
+  g.fillRoundedRect(ox + 4, oy + 3, w - 8, Math.max(3, Math.round(press * 0.7)), safeR(r - 4, w - 8, wellH))
+  g.generateTexture(key, texW, texH)
+  g.destroy()
+}
+
+/** Bake the glossy CAP texture (`btnface:*`): top-lit gradient + specular sheen + rim bevel + outline. */
+function ensureFaceTexture(scene: Phaser.Scene, key: string, w: number, h: number, tok: PillTokens): void {
+  if (scene.textures.exists(key)) return
+  const r = h / 2
+  const texW = w + TEX_PAD * 2
+  const texH = h + TEX_PAD * 2
+  const ox = TEX_PAD
+  const oy = TEX_PAD
+  const g = scene.make.graphics({ x: 0, y: 0 }, false)
+  // Base (darker bottom colour).
+  g.fillStyle(tok.bottom, 1)
+  g.fillRoundedRect(ox, oy, w, h, r)
+  // Top-lit gradient — stacked falling-alpha `top` bands anchored to the top edge (gradient without a live fill).
+  const bands = 9
+  for (let i = 0; i < bands; i++) {
+    const bh = h * (0.94 - 0.82 * (i / (bands - 1)))
+    g.fillStyle(tok.top, 0.15)
+    g.fillRoundedRect(ox, oy, w, bh, safeR(r, w, bh))
+  }
+  // Specular sheen, concentrated over the top ~45%.
+  for (let i = 0; i < 5; i++) {
+    const bh = h * (0.46 - i * 0.09)
+    if (bh < 3) break
+    g.fillStyle(tok.spec, 0.1)
+    g.fillRoundedRect(ox + 3, oy + 2, w - 6, bh, safeR(r, w - 6, bh))
+  }
+  // Crisp outline + a top-biased inner rim-light (the bevel).
+  g.lineStyle(2, tok.outline, 1)
+  g.strokeRoundedRect(ox + 1, oy + 1, w - 2, h - 2, safeR(r - 1, w - 2, h - 2))
+  g.lineStyle(1.5, tok.rim, 0.5)
+  g.strokeRoundedRect(ox + 3, oy + 2, w - 6, h - 5, safeR(r - 3, w - 6, h - 5))
+  g.generateTexture(key, texW, texH)
+  g.destroy()
+}
+
+/** Shared shallow glossy face (NON-pressable) for read-outs — the balance pill + streak badge. */
+function drawPillFace(g: Phaser.GameObjects.Graphics, x: number, y: number, w: number, h: number, style: PillStyle): void {
+  const tok = resolvePillTokens(style)
+  const r = h / 2
+  g.fillStyle(tok.shadow, 0.18)
+  g.fillRoundedRect(x, y + 4, w, h, r)
+  g.fillStyle(tok.bottom, 1)
+  g.fillRoundedRect(x, y, w, h, r)
+  for (let i = 0; i < 7; i++) {
+    const bh = h * (0.9 - 0.8 * (i / 6))
+    g.fillStyle(tok.top, 0.14)
+    g.fillRoundedRect(x, y, w, bh, safeR(r, w, bh))
+  }
+  for (let i = 0; i < 3; i++) {
+    const bh = h * (0.42 - i * 0.1)
+    if (bh < 3) break
+    g.fillStyle(tok.spec, 0.09)
+    g.fillRoundedRect(x + 3, y + 2, w - 6, bh, safeR(r, w - 6, bh))
+  }
+  g.lineStyle(Math.max(2, Math.round(h * 0.05)), tok.outline, 1)
+  g.strokeRoundedRect(x, y, w, h, r)
+  g.lineStyle(1.5, tok.rim, 0.5)
+  g.strokeRoundedRect(x + 2, y + 2, w - 4, h - 4, safeR(r - 2, w - 4, h - 4))
+}
+
+/** Cream + gold gloss face shared by the balance read-out and the streak badge (non-pressable). */
+const READOUT_STYLE: PillStyle = { id: 'readout', fill: 0xfff3d6, border: 0xf2c14e, textColor: '#4a3305' }
+
+/** Opt-in extras for a pressable control (additive — every call site works without passing this). */
+export interface PillOpts {
+  /** Hero flag (PLAY / SPIN): a soft breathing glow ring behind the pedestal. */
+  juice?: boolean
+  /** Start dimmed + inert; toggle later via the returned container's `setDisabled`. */
+  disabled?: boolean
+}
+
+/** A pressable container that also exposes `setDisabled` (Daily's spin button dims mid-spin). */
+export interface PressablePill extends Phaser.GameObjects.Container {
+  setDisabled?: (v: boolean) => void
+}
+
+/**
+ * Core pressable: stacks glow(optional) → static base → moving `face` → hit-zone, wires the
+ * press/depress on the inner `face` (never the outer container), and returns both so the caller
+ * can seat its own label/icon inside `face` (so the glyph sinks with the cap).
+ */
+function buildPressable(
+  scene: Phaser.Scene,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  style: PillStyle,
+  onPress: () => void,
+  opts: PillOpts = {}
+): { container: PressablePill; face: Phaser.GameObjects.Container } {
+  const reduced = prefersReducedMotion()
+  const tok = resolvePillTokens(style)
+  const { ext, press } = pillGeom(h)
+  const id = pillId(style, w, h)
+  ensureBaseTexture(scene, `btnbase:${id}`, w, h, tok)
+  ensureFaceTexture(scene, `btnface:${id}`, w, h, tok)
+
+  // Seat the CAP a touch above the container origin so the whole cap+pedestal composite is roughly
+  // centred on (x,y) — keeps the pedestal's downward footprint close to the old flat button's, so
+  // caller-positioned sub-labels underneath don't get clipped by the new 3D thickness.
+  const capY = -Math.round(ext / 2)
+
+  const container = scene.add.container(x, y) as PressablePill
+
+  if (opts.juice && scene.textures.exists('bgglow')) {
+    const glow = scene.add
+      .image(0, capY, 'bgglow')
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setTint(shade(style.fill, 0.12))
+      .setDisplaySize(w * 1.16, h * 1.95)
+      .setAlpha(0.24)
+    container.add(glow)
+    if (!reduced) {
+      scene.tweens.add({
+        targets: glow,
+        alpha: 0.42,
+        scaleX: glow.scaleX * 1.08,
+        scaleY: glow.scaleY * 1.08,
+        duration: 1100,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut',
+      })
+    }
+  }
+
+  const baseImg = scene.add.image(0, capY + ext / 2, `btnbase:${id}`)
+  const face = scene.add.container(0, capY)
+  face.add(scene.add.image(0, 0, `btnface:${id}`))
+  const zone = scene.add.rectangle(0, capY, w, h, 0xffffff, 0.001).setInteractive({ useHandCursor: true })
+  container.add([baseImg, face, zone])
+
+  let disabled = opts.disabled ?? false
+  if (disabled) face.setAlpha(0.5)
+  let pressTween: Phaser.Tweens.Tween | undefined
+  const animate = (toY: number, sy: number, sx: number, dur: number, ease: string): void => {
+    pressTween?.stop()
+    if (reduced) {
+      face.setY(toY).setScale(sx, sy)
+      return
+    }
+    pressTween = scene.tweens.add({ targets: face, y: toY, scaleY: sy, scaleX: sx, duration: dur, ease })
+  }
+  const sink = (): void => {
+    if (disabled) return
+    animate(capY + press, 0.95, 1.02, 60, 'Quad.easeOut')
+  }
+  const rise = (): void => animate(capY, 1, 1, 200, 'Back.easeOut')
+  zone.on('pointerdown', sink)
+  zone.on('pointerout', rise)
+  zone.on('pointerup', () => {
+    rise()
+    if (disabled) return
+    onPress()
+  })
+
+  container.setDisabled = (v: boolean): void => {
+    disabled = v
+    face.setAlpha(v ? 0.5 : 1)
+    if (v) rise()
+  }
+
+  return { container, face }
+}
+
+/**
+ * Pre-bake the most common button/chip signatures so the first Boot→Home paint doesn't hitch on
+ * generateTexture. Optional — every helper lazily bakes on demand; this just front-loads it.
+ */
+export function warmButtonTextures(scene: Phaser.Scene): void {
+  const sigs: Array<[PillStyle, number, number]> = [
+    [GOLD_PILL, 340, 96],
+    [GOLD_PILL, 300, 72],
+    [GOLD_PILL, 240, 68],
+    [GHOST_PILL, 280, 64],
+    [GHOST_PILL, 300, 60],
+    [GHOST_PILL, 84, 56],
+    [GHOST_PILL, 52, 52],
+    [ROSE_PILL, 340, 72],
+  ]
+  for (const [style, w, h] of sigs) {
+    const tok = resolvePillTokens(style)
+    const id = pillId(style, w, h)
+    ensureBaseTexture(scene, `btnbase:${id}`, w, h, tok)
+    ensureFaceTexture(scene, `btnface:${id}`, w, h, tok)
+  }
+}
 
 export interface ChipPill {
   container: Phaser.GameObjects.Container
@@ -217,12 +509,7 @@ export function addChipPill(
     label.setText(chips.toLocaleString())
     const w = padX + iconSize + gap + label.width + padX
     g.clear()
-    g.fillStyle(0x8a7a52, 0.18)
-    g.fillRoundedRect(-w / 2 + 2, -h / 2 + 4, w, h, h / 2)
-    g.fillStyle(0xfff3d6, 1)
-    g.fillRoundedRect(-w / 2, -h / 2, w, h, h / 2)
-    g.lineStyle(compact ? 2 : 3, 0xf2c14e, 1)
-    g.strokeRoundedRect(-w / 2, -h / 2, w, h, h / 2)
+    drawPillFace(g, -w / 2, -h / 2, w, h, READOUT_STYLE)
     icon.setPosition(-w / 2 + padX + iconSize / 2, 0)
     label.setPosition(icon.x + iconSize / 2 + gap, 1)
   }
@@ -236,7 +523,12 @@ export function addChipPill(
   return { container, update }
 }
 
-/** Rounded tappable button with press feedback. Returns the container. */
+/**
+ * Chunky, beveled, tactile button that visibly DEPRESSES into its pedestal on press. Signature is
+ * unchanged (an optional trailing `opts` is additive) so every call site keeps working; `opts.juice`
+ * gives PLAY/SPIN-type heroes a breathing glow ring. Returns the outer container (safe to
+ * `.setDepth`/`.setVisible`/tween scale — the press animates an inner face, never this container).
+ */
 export function addPillButton(
   scene: Phaser.Scene,
   x: number,
@@ -245,32 +537,52 @@ export function addPillButton(
   height: number,
   label: string,
   style: PillStyle,
-  onTap: () => void
+  onTap: () => void,
+  opts: PillOpts = {}
 ): Phaser.GameObjects.Container {
-  const container = scene.add.container(x, y)
-  const g = scene.add.graphics()
-  g.fillStyle(0x8a7a52, 0.18)
-  g.fillRoundedRect(-width / 2 + 2, -height / 2 + 4, width, height, height / 2)
-  g.fillStyle(style.fill, 1)
-  g.fillRoundedRect(-width / 2, -height / 2, width, height, height / 2)
-  if (style.border !== undefined) {
-    g.lineStyle(3, style.border, 1)
-    g.strokeRoundedRect(-width / 2, -height / 2, width, height, height / 2)
-  }
+  const tok = resolvePillTokens(style)
+  const { container, face } = buildPressable(
+    scene,
+    x,
+    y,
+    width,
+    height,
+    style,
+    () => {
+      sfx.uiTap()
+      onTap()
+    },
+    opts
+  )
   const text = scene.add
     .text(0, 0, label, { fontFamily: FONT, fontSize: `${Math.round(height * 0.42)}px`, fontStyle: '900', color: style.textColor })
     .setOrigin(0.5)
     .setLetterSpacing(2)
-  const zone = scene.add.rectangle(0, 0, width, height, 0xffffff, 0.001).setInteractive({ useHandCursor: true })
-  zone.on('pointerdown', () => container.setScale(0.94))
-  zone.on('pointerout', () => container.setScale(1))
-  zone.on('pointerup', () => {
-    container.setScale(1)
-    sfx.uiTap()
-    onTap()
-  })
-  container.add([g, text, zone])
+    .setShadow(0, 2, tok.emboss, 2, false, true)
+  face.add(text)
   return container
+}
+
+/**
+ * Shared round-chip builder — a GHOST-subtle circular twin of the pill button (same beveled
+ * cap on a pedestal, same press/depress). A round chip is literally a square pill (w = h = size),
+ * so it reuses the exact bake path; the glyph is seated in the moving `face` so it sinks on press.
+ */
+function addRoundChip(
+  scene: Phaser.Scene,
+  x: number,
+  y: number,
+  size: number,
+  glyph: string,
+  glyphStyle: Phaser.Types.GameObjects.Text.TextStyle,
+  onPress: (icon: Phaser.GameObjects.Text) => void
+): { container: Phaser.GameObjects.Container; icon: Phaser.GameObjects.Text } {
+  let icon!: Phaser.GameObjects.Text
+  const { container, face } = buildPressable(scene, x, y, size, size, GHOST_PILL, () => onPress(icon))
+  container.setDepth(50)
+  icon = scene.add.text(0, 1, glyph, glyphStyle).setOrigin(0.5)
+  face.add(icon)
+  return { container, icon }
 }
 
 /**
@@ -278,54 +590,36 @@ export function addPillButton(
  * sfx mute flag; plays a tap only when re-enabling sound. Returns the container.
  */
 export function addMuteChip(scene: Phaser.Scene, x: number, y: number, size = 52): Phaser.GameObjects.Container {
-  const r = size / 2
-  const container = scene.add.container(x, y).setDepth(50)
-  const g = scene.add.graphics()
-  g.fillStyle(0x8a7a52, 0.18)
-  g.fillCircle(2, 3, r)
-  g.fillStyle(GHOST_PILL.fill, 1)
-  g.fillCircle(0, 0, r)
-  g.lineStyle(2, GHOST_PILL.border ?? 0xe8dfc9, 1)
-  g.strokeCircle(0, 0, r)
-  const icon = scene.add
-    .text(0, 1, sfx.muted ? '🔇' : '🔊', { fontFamily: 'sans-serif', fontSize: `${Math.round(size * 0.5)}px` })
-    .setOrigin(0.5)
-  const zone = scene.add.rectangle(0, 0, size, size, 0xffffff, 0.001).setInteractive({ useHandCursor: true })
-  zone.on('pointerdown', () => container.setScale(0.9))
-  zone.on('pointerout', () => container.setScale(1))
-  zone.on('pointerup', () => {
-    container.setScale(1)
-    const muted = sfx.toggleMuted()
-    icon.setText(muted ? '🔇' : '🔊')
-    if (!muted) sfx.uiTap()
-  })
-  container.add([g, icon, zone])
+  const { container } = addRoundChip(
+    scene,
+    x,
+    y,
+    size,
+    sfx.muted ? '🔇' : '🔊',
+    { fontFamily: 'sans-serif', fontSize: `${Math.round(size * 0.5)}px` },
+    (icon) => {
+      const muted = sfx.toggleMuted()
+      icon.setText(muted ? '🔇' : '🔊')
+      if (!muted) sfx.uiTap()
+    }
+  )
   return container
 }
 
 /** Round "?" help chip styled like GHOST_PILL — opens the how-to-play panel. */
 export function addHelpChip(scene: Phaser.Scene, x: number, y: number, size = 52): Phaser.GameObjects.Container {
-  const r = size / 2
-  const container = scene.add.container(x, y).setDepth(50)
-  const g = scene.add.graphics()
-  g.fillStyle(0x8a7a52, 0.18)
-  g.fillCircle(2, 3, r)
-  g.fillStyle(GHOST_PILL.fill, 1)
-  g.fillCircle(0, 0, r)
-  g.lineStyle(2, GHOST_PILL.border ?? 0xe8dfc9, 1)
-  g.strokeCircle(0, 0, r)
-  const icon = scene.add
-    .text(0, 1, '?', { fontFamily: FONT, fontSize: `${Math.round(size * 0.56)}px`, fontStyle: '900', color: '#8a8577' })
-    .setOrigin(0.5)
-  const zone = scene.add.rectangle(0, 0, size, size, 0xffffff, 0.001).setInteractive({ useHandCursor: true })
-  zone.on('pointerdown', () => container.setScale(0.9))
-  zone.on('pointerout', () => container.setScale(1))
-  zone.on('pointerup', () => {
-    container.setScale(1)
-    sfx.uiTap()
-    openHelpPanel(scene)
-  })
-  container.add([g, icon, zone])
+  const { container } = addRoundChip(
+    scene,
+    x,
+    y,
+    size,
+    '?',
+    { fontFamily: FONT, fontSize: `${Math.round(size * 0.56)}px`, fontStyle: '900', color: GHOST_PILL.textColor },
+    () => {
+      sfx.uiTap()
+      openHelpPanel(scene)
+    }
+  )
   return container
 }
 
@@ -420,27 +714,18 @@ export function openHelpPanel(scene: Phaser.Scene): void {
 
 /** Round "♪" sound chip styled like GHOST_PILL — opens the move-sound picker. */
 export function addSoundChip(scene: Phaser.Scene, x: number, y: number, size = 52): Phaser.GameObjects.Container {
-  const r = size / 2
-  const container = scene.add.container(x, y).setDepth(50)
-  const g = scene.add.graphics()
-  g.fillStyle(0x8a7a52, 0.18)
-  g.fillCircle(2, 3, r)
-  g.fillStyle(GHOST_PILL.fill, 1)
-  g.fillCircle(0, 0, r)
-  g.lineStyle(2, GHOST_PILL.border ?? 0xe8dfc9, 1)
-  g.strokeCircle(0, 0, r)
-  const icon = scene.add
-    .text(0, 1, '♪', { fontFamily: FONT, fontSize: `${Math.round(size * 0.56)}px`, fontStyle: '900', color: '#8a8577' })
-    .setOrigin(0.5)
-  const zone = scene.add.rectangle(0, 0, size, size, 0xffffff, 0.001).setInteractive({ useHandCursor: true })
-  zone.on('pointerdown', () => container.setScale(0.9))
-  zone.on('pointerout', () => container.setScale(1))
-  zone.on('pointerup', () => {
-    container.setScale(1)
-    sfx.uiTap()
-    openSoundPanel(scene)
-  })
-  container.add([g, icon, zone])
+  const { container } = addRoundChip(
+    scene,
+    x,
+    y,
+    size,
+    '♪',
+    { fontFamily: FONT, fontSize: `${Math.round(size * 0.56)}px`, fontStyle: '900', color: GHOST_PILL.textColor },
+    () => {
+      sfx.uiTap()
+      openSoundPanel(scene)
+    }
+  )
   return container
 }
 
