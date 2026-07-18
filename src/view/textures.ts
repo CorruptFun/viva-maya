@@ -415,9 +415,9 @@ function drawBomb(scene: Phaser.Scene, dt: Phaser.Textures.DynamicTexture, symbo
   g.fillRoundedRect(cx - 8, cy - r - 7, 16, 11, 4)
   dt.draw(g)
   g.destroy()
-  // Symbol emoji on the belly — the smaller colour accent.
+  // Symbol emoji on the belly — the smaller colour accent (enlarged for legibility).
   const base = scene.make.image({ x: 0, y: 0, key: symbol }, false)
-  base.setScale(0.4)
+  base.setScale(0.46)
   dt.draw(base, cx, cy + 4)
   base.destroy()
   // Top pass: gloss, lit fuse and spark render above the symbol.
@@ -461,6 +461,8 @@ function drawBomb(scene: Phaser.Scene, dt: Phaser.Textures.DynamicTexture, symbo
   }
   dt.draw(g2)
   g2.destroy()
+  // High-contrast corner badge naming the colour this bomb clears (colourblind/low-vision read).
+  stampSymbolBadge(scene, dt, symbol, tint)
 }
 
 /**
@@ -544,6 +546,39 @@ function drawRocket(
   chevron(-53, -1)
   dt.draw(g2)
   g2.destroy()
+  // High-contrast corner badge naming the colour this reel clears (colourblind/low-vision read).
+  stampSymbolBadge(scene, dt, symbol, tint)
+}
+
+/**
+ * A11y legibility badge (E12): a high-contrast corner chip — dark ring + cream disc + a
+ * symbol-coloured ring + the actual symbol glyph at a readable size — baked into the TOP-LEFT
+ * corner of a special's texture, always upright (so it reads the same whether the reel points
+ * across or down). This is the reliable "which symbol does this clear?" read that the thin
+ * accent ring + tiny embedded glyph can't carry on their own.
+ */
+function stampSymbolBadge(
+  scene: Phaser.Scene,
+  dt: Phaser.Textures.DynamicTexture,
+  symbol: SymbolType,
+  tint: number
+): void {
+  const bx = 27
+  const by = 27
+  const br = 21
+  const g = scene.make.graphics({ x: 0, y: 0 }, false)
+  g.fillStyle(0x0b0e18, 0.9)
+  g.fillCircle(bx, by, br + 3) // dark contrast ring (reads on any shell/backdrop)
+  g.fillStyle(0xfffdf8, 1)
+  g.fillCircle(bx, by, br) // cream disc
+  g.lineStyle(3, tint, 1)
+  g.strokeCircle(bx, by, br) // symbol-colour ring (keeps the colour cue)
+  dt.draw(g)
+  g.destroy()
+  const sym = scene.make.image({ x: 0, y: 0, key: symbol }, false)
+  sym.setScale(0.34) // ~34px glyph — clearly readable at cell size
+  dt.draw(sym, bx, by)
+  sym.destroy()
 }
 
 export function ensurePieceTexture(scene: Phaser.Scene, piece: Piece): string {
@@ -559,6 +594,43 @@ export function ensurePieceTexture(scene: Phaser.Scene, piece: Piece): string {
     drawRocket(scene, dt, piece.symbol, tint, piece.kind === 'wildReelRow')
   }
   return key
+}
+
+/**
+ * Points tracing a classic heart curve, centred on (cx,cy) and normalised to `scale` (roughly the
+ * heart's half-width). Screen-space y is flipped so the cusp sits up top and the tip points down.
+ */
+function heartPoints(cx: number, cy: number, scale: number): Array<{ x: number; y: number }> {
+  const pts: Array<{ x: number; y: number }> = []
+  const steps = 46
+  for (let i = 0; i <= steps; i++) {
+    const t = (Math.PI * 2 * i) / steps
+    const hx = 16 * Math.pow(Math.sin(t), 3)
+    const hy = 13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t)
+    pts.push({ x: cx + (hx / 16) * scale, y: cy - (hy / 16) * scale })
+  }
+  return pts
+}
+
+/**
+ * Soft feathered HEART of light — a warm-white heart baked as ~10 stacked falling-alpha passes
+ * (the same feathering trick as `bgglow`), pure white so it tints cleanly under ADD blend. This is
+ * the foundation texture for the upcoming "Heartbloom" hero-win moment (E4); nothing consumes it
+ * yet — a later phase does. Baked once (generate-once guarded), zero runtime cost.
+ */
+function makeHeartglow(scene: Phaser.Scene): void {
+  if (scene.textures.exists('heartglow')) return
+  const S = 256
+  const cx = S / 2
+  const cy = S / 2 - 10 // nudge up so the downward tip has room
+  const passes = 10
+  const g = scene.make.graphics({ x: 0, y: 0 }, false)
+  for (let i = passes; i >= 1; i--) {
+    g.fillStyle(0xffffff, 0.03 * (passes + 1 - i)) // outer passes = larger + fainter, inner = brighter
+    g.fillPoints(heartPoints(cx, cy, S * 0.4 * (i / passes)), true)
+  }
+  g.generateTexture('heartglow', S, S)
+  g.destroy()
 }
 
 export function createAllTextures(scene: Phaser.Scene): void {
@@ -579,6 +651,7 @@ export function createAllTextures(scene: Phaser.Scene): void {
   makeBulb(scene)
   makeTile(scene)
   makeRaybeam(scene)
+  makeHeartglow(scene)
   makeGlyphTexture(scene, 'star', '⭐', 44, 64)
   makeGlyphTexture(scene, 'lock', '🔒', 40, 64)
   makeGlyphTexture(scene, 'heart', '❤️', 44, 64)
