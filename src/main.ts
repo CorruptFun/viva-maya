@@ -6,6 +6,7 @@ import { DailyBonusScene } from './scenes/DailyBonusScene'
 import { GameScene } from './scenes/GameScene'
 import { HomeScene } from './scenes/HomeScene'
 import { LevelSelectScene } from './scenes/LevelSelectScene'
+import { installQualityGovernor } from './view/quality'
 
 registerSW({ immediate: true })
 
@@ -28,7 +29,7 @@ if (import.meta.env.DEV) {
   window.addEventListener('unhandledrejection', e => show(`unhandled rejection: ${e.reason}`))
 }
 
-new Phaser.Game({
+const game = new Phaser.Game({
   type: Phaser.AUTO,
   parent: 'app',
   width: DESIGN_W,
@@ -42,3 +43,20 @@ new Phaser.Game({
   },
   scene: [BootScene, HomeScene, LevelSelectScene, DailyBonusScene, GameScene],
 })
+
+// Adaptive quality governor (E2): ticks every frame off the game loop and samples
+// frame time to auto-adjust a quality tier. Read-only for now — consumers land in
+// later phases. Ticking pauses automatically while the loop is asleep (below).
+installQualityGovernor(game)
+
+// Anti-drain: fully stop the game loop while the app is backgrounded — the biggest
+// battery win. `sleep()` halts requestAnimationFrame, so NOTHING renders, tweens,
+// or steps until the tab is visible again; `wake()` resumes it. Wall-clock logic
+// (daily spin / lives) reads Date.now() on demand, so it self-corrects on resume;
+// SFX are transient one-shots whose AudioContext resumes on the next input.
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) game.loop?.sleep()
+    else game.loop?.wake()
+  })
+}
