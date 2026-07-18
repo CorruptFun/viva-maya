@@ -5,8 +5,16 @@ import type { Piece, SymbolType } from '../core/types'
  * Symbol art = system emoji rendered into textures at boot — crisp, high-quality
  * platform artwork (Apple's on iOS/macOS) with zero asset files. The 7 and BAR
  * are composed in-engine to read like classic slot glyphs.
+ *
+ * Hi-DPI: all symbol/special art is AUTHORED in a 128² logical space (BASE), but
+ * BAKED into a TEX_SIZE² physical texture (supersampled by SS) so it stays crisp
+ * when the canvas renders at device pixel ratio. Pieces still downscale from
+ * TEX_SIZE (PIECE_SCALE = PIECE_SIZE / TEX_SIZE), so nothing moves in world space.
  */
-export const TEX_SIZE = 128
+const BASE = 128
+/** Supersample factor: symbol/special textures bake at BASE×SS px (256²). */
+const SS = 2
+export const TEX_SIZE = BASE * SS
 
 const EMOJI: Partial<Record<SymbolType, string>> = {
   cherry: '🍒',
@@ -15,8 +23,24 @@ const EMOJI: Partial<Record<SymbolType, string>> = {
   clover: '🍀',
 }
 
-function intoTexture(scene: Phaser.Scene, key: string, draw: (dt: Phaser.Textures.DynamicTexture) => void): void {
+/**
+ * Create a symbol/special DynamicTexture that bakes 128²-authored art into a TEX_SIZE² physical
+ * texture. Every draw call stays in the 128 logical space; the DT's own camera is zoomed by SS
+ * (anchored top-left) so all drawing is supersampled into the larger texture — crisp on hi-DPI
+ * with zero coordinate changes. Pieces downscale from TEX_SIZE, so nothing moves in world space.
+ */
+function makeDT(scene: Phaser.Scene, key: string): Phaser.Textures.DynamicTexture | null {
   const dt = scene.textures.addDynamicTexture(key, TEX_SIZE, TEX_SIZE)
+  if (dt) {
+    dt.camera.setZoom(SS)
+    dt.camera.originX = 0
+    dt.camera.originY = 0
+  }
+  return dt
+}
+
+function intoTexture(scene: Phaser.Scene, key: string, draw: (dt: Phaser.Textures.DynamicTexture) => void): void {
+  const dt = makeDT(scene, key)
   if (!dt) return
   draw(dt)
 }
@@ -51,7 +75,7 @@ function makeEmoji(scene: Phaser.Scene, key: SymbolType, glyph: string): void {
   )
   intoTexture(scene, key, dt => {
     seatShadow(scene, dt)
-    dt.draw(text, (TEX_SIZE - text.width) / 2, (TEX_SIZE - text.height) / 2)
+    dt.draw(text, (BASE - text.width) / 2, (BASE - text.height) / 2)
   })
   text.destroy()
 }
@@ -75,7 +99,7 @@ function makeSeven(scene: Phaser.Scene): void {
   )
   intoTexture(scene, 'seven', dt => {
     seatShadow(scene, dt)
-    dt.draw(text, (TEX_SIZE - text.width) / 2, (TEX_SIZE - text.height) / 2)
+    dt.draw(text, (BASE - text.width) / 2, (BASE - text.height) / 2)
   })
   text.destroy()
 }
@@ -106,7 +130,7 @@ function makeBar(scene: Phaser.Scene): void {
   intoTexture(scene, 'bar', dt => {
     seatShadow(scene, dt)
     dt.draw(g)
-    dt.draw(text, (TEX_SIZE - text.width) / 2, 36 + (54 - text.height) / 2)
+    dt.draw(text, (BASE - text.width) / 2, 36 + (54 - text.height) / 2)
   })
   text.destroy()
   g.destroy()
@@ -178,10 +202,10 @@ function makeJackpot(scene: Phaser.Scene): void {
     },
     false
   )
-  const dt = scene.textures.addDynamicTexture('jackpot', TEX_SIZE, TEX_SIZE)
+  const dt = makeDT(scene, 'jackpot')
   if (dt) {
     dt.draw(g)
-    dt.draw(text, (TEX_SIZE - text.width) / 2, (TEX_SIZE - text.height) / 2)
+    dt.draw(text, (BASE - text.width) / 2, (BASE - text.height) / 2)
   }
   text.destroy()
   g.destroy()
@@ -270,7 +294,10 @@ function makeConfetti(scene: Phaser.Scene): void {
  */
 function makeTile(scene: Phaser.Scene): void {
   const g = scene.make.graphics({ x: 0, y: 0 }, false)
-  const S = TEX_SIZE
+  // Pinned to the 128 base (not TEX_SIZE): the tile's gutter/radius/shadow are absolute constants
+  // tuned for this size, and it's a smooth gloss cushion (shown at CELL, downscaled) so it needs no
+  // supersample. Keeping it at 128 preserves the exact board look after the symbol bump to 256.
+  const S = BASE
   const m = 4 // inset → the dark-floor gutter that shows between tiles when drawn at CELL size
   const bw = S - m * 2
   const r = 22
@@ -416,8 +443,9 @@ function drawBomb(scene: Phaser.Scene, dt: Phaser.Textures.DynamicTexture, symbo
   dt.draw(g)
   g.destroy()
   // Symbol emoji on the belly — the smaller colour accent (enlarged for legibility).
+  // ÷SS: the symbol texture is itself supersampled, so halve the scale to keep the same size.
   const base = scene.make.image({ x: 0, y: 0, key: symbol }, false)
-  base.setScale(0.46)
+  base.setScale(0.46 / SS)
   dt.draw(base, cx, cy + 4)
   base.destroy()
   // Top pass: gloss, lit fuse and spark render above the symbol.
@@ -525,9 +553,9 @@ function drawRocket(
   dt.draw(g)
   g.destroy()
 
-  // Symbol emoji inside the window — the colour accent.
+  // Symbol emoji inside the window — the colour accent (÷SS: the symbol texture is supersampled).
   const base = scene.make.image({ x: 0, y: 0, key: symbol }, false)
-  base.setScale(0.18)
+  base.setScale(0.18 / SS)
   dt.draw(base, win.x, win.y)
   base.destroy()
 
@@ -576,7 +604,7 @@ function stampSymbolBadge(
   dt.draw(g)
   g.destroy()
   const sym = scene.make.image({ x: 0, y: 0, key: symbol }, false)
-  sym.setScale(0.34) // ~34px glyph — clearly readable at cell size
+  sym.setScale(0.34 / SS) // ~34px glyph — clearly readable at cell size (÷SS: supersampled source)
   dt.draw(sym, bx, by)
   sym.destroy()
 }
@@ -584,7 +612,7 @@ function stampSymbolBadge(
 export function ensurePieceTexture(scene: Phaser.Scene, piece: Piece): string {
   const key = pieceTextureKey(piece)
   if (scene.textures.exists(key)) return key
-  const dt = scene.textures.addDynamicTexture(key, TEX_SIZE, TEX_SIZE)
+  const dt = makeDT(scene, key)
   if (!dt) return piece.symbol
   const tint = SYMBOL_TINT[piece.symbol] ?? 0xf2b234
   if (piece.kind === 'diceBomb') {
@@ -652,7 +680,11 @@ export function createAllTextures(scene: Phaser.Scene): void {
   makeTile(scene)
   makeRaybeam(scene)
   makeHeartglow(scene)
-  makeGlyphTexture(scene, 'star', '⭐', 44, 64)
-  makeGlyphTexture(scene, 'lock', '🔒', 40, 64)
+  // Glyphs baked at a larger native size so they stay crisp on hi-DPI. 'heart' stays small (it's
+  // only used tiny — satellites, lives pips, particle bursts); the big Home/GameScene emblems use
+  // 'heartbig' (baked large) via setDisplaySize, so the small-heart particle scales are untouched.
+  makeGlyphTexture(scene, 'star', '⭐', 112, 128)
+  makeGlyphTexture(scene, 'lock', '🔒', 104, 128)
   makeGlyphTexture(scene, 'heart', '❤️', 44, 64)
+  makeGlyphTexture(scene, 'heartbig', '❤️', 330, 384)
 }

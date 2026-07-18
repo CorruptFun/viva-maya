@@ -66,18 +66,21 @@
         background-repeat: no-repeat;
         background-attachment: fixed;
       }
-      /* The safe region. #frame is inset by the device insets so the game fits +
-         centers clear of the notch / Dynamic Island / home indicator; the warm
-         body gradient shows through the insets and the letterbox margins.
+      /* The safe region. #frame keeps only the LEFT/RIGHT device insets (landscape
+         notch protection). Top/bottom insets are dropped so the canvas extends to
+         the true screen edges and fills a tall phone far better — safe because the
+         720×1280 design's top (0–300) and bottom (940–1280) are empty margin, and
+         the FIT letterbox adds further buffer, so the board (40–680 × 300–940) and
+         HUD never reach the notch / Dynamic Island / home indicator.
          Phaser owns #app — on boot it forces `width/height:100%` inline on its
          parent, so the insets MUST live on this outer wrapper: a fixed element's
          `height:100%` resolves against the viewport (ignoring its own top/bottom),
-         which would defeat the bottom/right insets if they sat on #app directly. */
+         which would defeat the right inset if it sat on #app directly. */
       #frame {
         position: fixed;
-        top: env(safe-area-inset-top, 0px);
+        top: 0;
         right: env(safe-area-inset-right, 0px);
-        bottom: env(safe-area-inset-bottom, 0px);
+        bottom: 0;
         left: env(safe-area-inset-left, 0px);
       }
       /* Phaser measures & centers the canvas within #app; #app fills the safe

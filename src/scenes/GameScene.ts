@@ -370,7 +370,7 @@ export class GameScene extends Phaser.Scene {
       .text(DESIGN_W / 2, 384, 'Out of lives — they refill on their own', { fontFamily: FONT, fontSize: '24px', color: T.onBackdropMuted })
       .setOrigin(0.5)
 
-    const emblem = this.add.image(DESIGN_W / 2, 560, 'heart').setDisplaySize(150, 150).setTint(0x8a7a52).setAlpha(reduced ? 0.5 : 0.4)
+    const emblem = this.add.image(DESIGN_W / 2, 560, 'heartbig').setDisplaySize(150, 150).setTint(0x8a7a52).setAlpha(reduced ? 0.5 : 0.4)
     if (!reduced) {
       this.tweens.add({ targets: emblem, alpha: 0.65, scale: emblem.scaleX * 1.05, duration: 900, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' })
     }
@@ -1251,7 +1251,9 @@ export class GameScene extends Phaser.Scene {
         .particles(0, 0, symbol, {
           speed: { min: 90, max: 280 },
           angle: { min: 0, max: 360 },
-          scale: { start: 0.3, end: 0.1 },
+          // ÷2: symbol textures are now baked at 2× native (TEX_SIZE 128→256), so halve the
+          // particle scale to keep the burst fragments the same on-screen size.
+          scale: { start: 0.15, end: 0.05 },
           alpha: { start: 1, end: 0 },
           lifespan: { min: 300, max: 600 },
           gravityY: 800,
@@ -2625,7 +2627,7 @@ export class GameScene extends Phaser.Scene {
     if (!pendingOccasion(today, loadSave().occasionsSeen)) return
     markOccasionSeen(today)
     if (this.reducedMotion) {
-      const h = this.add.image(DESIGN_W / 2, BOARD_Y + BOARD_W / 2, 'heart').setDisplaySize(90, 90).setDepth(45).setAlpha(0.85)
+      const h = this.add.image(DESIGN_W / 2, BOARD_Y + BOARD_W / 2, 'heartbig').setDisplaySize(90, 90).setDepth(45).setAlpha(0.85)
       this.time.delayedCall(1400, () => h.destroy())
       return
     }
@@ -2815,7 +2817,7 @@ export class GameScene extends Phaser.Scene {
     for (let i = 0; i < 3; i++) {
       const earned = i < stars
       const star = this.add.image((i - 1) * 84, -122, 'star').setAlpha(earned ? 1 : 0.22)
-      const finalScale = (earned ? 1 : 0.8) * (68 / 64)
+      const finalScale = (earned ? 1 : 0.8) * (68 / 128) // 128 = 'star' native size (baked larger for hi-DPI)
       card.add(star)
       if (animate) {
         star.setScale(0)
