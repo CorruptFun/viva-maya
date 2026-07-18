@@ -10,8 +10,12 @@ import { FONT, GHOST_PILL, ROSE_PILL, addMarquee, addMuteChip, addPillButton } f
 const GRID_COLS = 5
 const CHIP = 108
 const GAP = 18
+const ROW_H = CHIP + GAP
 
 export class LevelSelectScene extends Phaser.Scene {
+  /** Largest pointer travel during the current press — a tap on a chip only fires below this. */
+  private dragMoved = 0
+
   constructor() {
     super('levelselect')
   }
@@ -23,55 +27,88 @@ export class LevelSelectScene extends Phaser.Scene {
     addPillButton(this, 64, 84, 84, 56, '‹', GHOST_PILL, () => this.scene.start('home'))
     addMuteChip(this, 676, 40)
 
+    const unlocked = endlessUnlocked(save)
+    const viewTop = 156
+    const viewBottom = unlocked ? 1092 : 1176
+
+    // Scrollable grid of level chips.
+    const content = this.add.container(0, 0)
     const gridW = GRID_COLS * CHIP + (GRID_COLS - 1) * GAP
     const startX = (DESIGN_W - gridW) / 2
-    const startY = 210
-
+    const topPad = 32
     for (let n = 1; n <= LEVEL_COUNT; n++) {
       const row = Math.floor((n - 1) / GRID_COLS)
       const col = (n - 1) % GRID_COLS
       const cx = startX + col * (CHIP + GAP) + CHIP / 2
-      const cy = startY + row * (CHIP + GAP) + CHIP / 2
-      this.addChip(n, cx, cy, save.unlocked, save.stars[n] ?? 0)
+      const cy = viewTop + topPad + row * ROW_H + CHIP / 2
+      content.add(this.buildChip(n, cx, cy, save.unlocked, save.stars[n] ?? 0, viewTop, viewBottom, content))
     }
+    const rows = Math.ceil(LEVEL_COUNT / GRID_COLS)
+    const contentBottom = viewTop + topPad + rows * ROW_H + 24
 
-    // Endless weekly race sits just past the numbered grid, once level 30 is cleared.
-    let footY = 1024
-    if (endlessUnlocked(save, LEVEL_COUNT)) {
+    const maskG = this.make.graphics({ x: 0, y: 0 }, false)
+    maskG.fillStyle(0xffffff)
+    maskG.fillRect(0, viewTop, DESIGN_W, viewBottom - viewTop)
+    content.setMask(maskG.createGeometryMask())
+
+    const minScroll = Math.min(0, viewBottom - contentBottom)
+    const maxScroll = 0
+    // Open scrolled so the current level sits mid-viewport.
+    const curRow = Math.floor((Math.min(save.unlocked, LEVEL_COUNT) - 1) / GRID_COLS)
+    const curCy = viewTop + topPad + curRow * ROW_H + CHIP / 2
+    content.y = Phaser.Math.Clamp((viewTop + viewBottom) / 2 - curCy, minScroll, maxScroll)
+
+    // Drag to scroll (chip taps are suppressed once the press has travelled — see buildChip).
+    let dragging = false
+    let startPointerY = 0
+    let startContentY = 0
+    this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
+      dragging = true
+      startPointerY = p.y
+      startContentY = content.y
+      this.dragMoved = 0
+    })
+    this.input.on('pointermove', (p: Phaser.Input.Pointer) => {
+      if (!dragging || !p.isDown) return
+      const dy = p.y - startPointerY
+      this.dragMoved = Math.max(this.dragMoved, Math.abs(dy))
+      content.y = Phaser.Math.Clamp(startContentY + dy, minScroll, maxScroll)
+    })
+    this.input.on('pointerup', () => (dragging = false))
+
+    // Fixed footer.
+    if (unlocked) {
       const wkBest = endlessBestThisWeek(save)
-      addPillButton(this, DESIGN_W / 2, 998, 420, 72, 'ENDLESS', ROSE_PILL, () =>
-        this.scene.start('game', { endless: true })
-      )
+      addPillButton(this, DESIGN_W / 2, 1150, 420, 68, 'ENDLESS', ROSE_PILL, () => this.scene.start('game', { endless: true }))
       this.add
-        .text(
-          DESIGN_W / 2,
-          1046,
-          wkBest > 0 ? `this week's board  ·  best ${wkBest.toLocaleString()}` : `new weekly board  ·  set the pace`,
-          { fontFamily: FONT, fontSize: '20px', color: '#9a927e' }
-        )
+        .text(DESIGN_W / 2, 1196, wkBest > 0 ? `weekly board  ·  best ${wkBest.toLocaleString()}` : `new weekly board`, {
+          fontFamily: FONT,
+          fontSize: '19px',
+          color: '#9a927e',
+        })
         .setOrigin(0.5)
-      footY = 1104
     }
-
     this.add
-      .text(DESIGN_W / 2, footY, `BEST  ${save.best.toLocaleString()}`, {
+      .text(DESIGN_W / 2, 1238, `BEST  ${save.best.toLocaleString()}`, {
         fontFamily: FONT,
-        fontSize: '30px',
+        fontSize: '26px',
         fontStyle: '900',
         color: '#c9930a',
       })
       .setOrigin(0.5)
       .setLetterSpacing(2)
-    this.add
-      .text(DESIGN_W / 2, footY + 46, 'Collect the goal symbols before moves run out', {
-        fontFamily: 'Arial, sans-serif',
-        fontSize: '22px',
-        color: '#9a927e',
-      })
-      .setOrigin(0.5)
   }
 
-  private addChip(n: number, cx: number, cy: number, unlocked: number, stars: number): void {
+  private buildChip(
+    n: number,
+    cx: number,
+    cy: number,
+    unlocked: number,
+    stars: number,
+    viewTop: number,
+    viewBottom: number,
+    content: Phaser.GameObjects.Container
+  ): Phaser.GameObjects.Container {
     const playable = n <= unlocked
     const current = n === unlocked
     const container = this.add.container(cx, cy)
@@ -110,24 +147,22 @@ export class LevelSelectScene extends Phaser.Scene {
       zone.on('pointerdown', () => container.setScale(0.94))
       zone.on('pointerout', () => container.setScale(1))
       zone.on('pointerup', () => {
+        container.setScale(1)
+        // Ignore taps that were really a scroll, or land on a chip clipped outside the viewport.
+        const screenY = cy + content.y
+        if (this.dragMoved >= 12 || screenY < viewTop || screenY > viewBottom) return
         sfx.uiTap()
         this.scene.start('game', { level: n })
       })
       container.add(zone)
       if (current) {
-        this.tweens.add({
-          targets: container,
-          scale: 1.06,
-          duration: 600,
-          yoyo: true,
-          repeat: -1,
-          ease: 'Sine.easeInOut',
-        })
+        this.tweens.add({ targets: container, scale: 1.06, duration: 600, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' })
       }
     } else {
       const lock = this.add.image(0, 0, 'lock').setAlpha(0.55)
       lock.setDisplaySize(36, 36)
       container.add(lock)
     }
+    return container
   }
 }

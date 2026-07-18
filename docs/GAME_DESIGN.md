@@ -56,7 +56,9 @@ clears a RANDOM present color. Swap-combos (both consumed, epicenter = drag dest
 
 ## Levels (src/core/levels.ts)
 - levelSpec(n) is deterministic per level (seed 0xC0FFEE ^ n·2654435761): same goals every
-  attempt; boards are random per attempt. LEVEL_COUNT = 30 (UI); spec works for any n.
+  attempt; boards are random per attempt. LEVEL_COUNT = 100 (UI; procedural spec works for any n —
+  difficulty naturally plateaus by ~L24, so L24+ are a steady hard challenge until curve tuning).
+  LevelSelect is a masked, drag-scrollable grid that auto-scrolls to the current level.
 - Objectives: collect N of 1 symbol (L1–2), 2 symbols (L3–7), 3 (L8+); per-objective
   N = min(45, 10 + round(2.2n)). Collected = cleared pieces of that symbol (jackpot pieces excluded).
 - Moves: max(14, 26 − floor(n/2)) + 2·objectiveCount, +4 breather on every 5th level.

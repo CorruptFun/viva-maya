@@ -2,7 +2,7 @@ import { SYMBOLS } from './types'
 import type { LevelSpec, SymbolType } from './types'
 import { mulberry32, randInt } from './rng'
 
-export const LEVEL_COUNT = 30
+export const LEVEL_COUNT = 100
 
 /**
  * Deterministic difficulty curve: level N always has the same goals/moves
