@@ -468,9 +468,15 @@ function shade(color: number, t: number): number {
   return (mix(r) << 16) | (mix(g) << 8) | mix(b)
 }
 
-/** Radius clamped to never exceed half the smallest side (avoids Phaser arc artifacts). */
+/**
+ * Radius clamped to just UNDER half the smallest side. Phaser's `fillRoundedRect`/`strokeRoundedRect`
+ * spike at the corners when the radius equals exactly half a side (a perfect semicircle end): the arc
+ * tessellation overshoots the tangent and bakes a sharp "ear" into the texture. Staying 1px under the
+ * half keeps a hair of straight edge at each end so the arcs never degenerate — visually identical,
+ * artifact-free at every DPR.
+ */
 function safeR(r: number, w: number, h: number): number {
-  return Math.max(1, Math.min(r, w / 2, h / 2))
+  return Math.max(1, Math.min(r, w / 2 - 1, h / 2 - 1))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -636,11 +642,11 @@ function ensureBaseTexture(scene: Phaser.Scene, key: string, w: number, h: numbe
   // Soft contact shadow — a couple of footprint copies nudged straight down (only the bottom edge peeks out).
   for (let i = 3; i >= 1; i--) {
     g.fillStyle(tok.shadow, 0.07)
-    g.fillRoundedRect(ox, oy + i * 1.5, w, H, r)
+    g.fillRoundedRect(ox, oy + i * 1.5, w, H, safeR(r, w, H))
   }
   // Pedestal: darkest outer rim (the thickness) → mid inner wall.
   g.fillStyle(tok.pedestalDeep, 1)
-  g.fillRoundedRect(ox, oy, w, H, r)
+  g.fillRoundedRect(ox, oy, w, H, safeR(r, w, H))
   g.fillStyle(tok.pedestal, 1)
   g.fillRoundedRect(ox + 2, oy + 2, w - 4, H - 4, safeR(r - 2, w - 4, H - 4))
   // Dark interior well at the top (revealed as the cap sinks); its rounded bottom stays hidden under the cap.
@@ -656,7 +662,7 @@ function ensureBaseTexture(scene: Phaser.Scene, key: string, w: number, h: numbe
 /** Bake the glossy CAP texture (`btnface:*`): top-lit gradient + specular sheen + rim bevel + outline. */
 function ensureFaceTexture(scene: Phaser.Scene, key: string, w: number, h: number, tok: PillTokens): void {
   if (scene.textures.exists(key)) return
-  const r = h / 2
+  const r = safeR(h / 2, w, h)
   const texW = w + TEX_PAD * 2
   const texH = h + TEX_PAD * 2
   const ox = TEX_PAD
@@ -666,18 +672,24 @@ function ensureFaceTexture(scene: Phaser.Scene, key: string, w: number, h: numbe
   g.fillStyle(tok.bottom, 1)
   g.fillRoundedRect(ox, oy, w, h, r)
   // Top-lit gradient — stacked falling-alpha `top` bands anchored to the top edge (gradient without a live fill).
+  // Each short band is INSET so its (necessarily smaller-radius) top corners can't poke past the face's
+  // rounded corners — otherwise the near-square corners of the short top bands read as light "ears".
   const bands = 9
   for (let i = 0; i < bands; i++) {
     const bh = h * (0.94 - 0.82 * (i / (bands - 1)))
+    const rb = safeR(r, w, bh)
+    const ins = Math.max(0, r - rb)
     g.fillStyle(tok.top, 0.15)
-    g.fillRoundedRect(ox, oy, w, bh, safeR(r, w, bh))
+    g.fillRoundedRect(ox + ins, oy, w - ins * 2, bh, rb)
   }
-  // Specular sheen, concentrated over the top ~45%.
+  // Specular sheen, concentrated over the top ~45% (same inset guard so the sheen stays inside the cap).
   for (let i = 0; i < 5; i++) {
     const bh = h * (0.46 - i * 0.09)
     if (bh < 3) break
+    const rb = safeR(r, w - 6, bh)
+    const ins = Math.max(3, r - rb)
     g.fillStyle(tok.spec, 0.1)
-    g.fillRoundedRect(ox + 3, oy + 2, w - 6, bh, safeR(r, w - 6, bh))
+    g.fillRoundedRect(ox + ins, oy + 2, w - ins * 2, bh, rb)
   }
   // Crisp outline + a top-biased inner rim-light (the bevel).
   g.lineStyle(2, tok.outline, 1)
@@ -691,20 +703,24 @@ function ensureFaceTexture(scene: Phaser.Scene, key: string, w: number, h: numbe
 /** Shared shallow glossy face (NON-pressable) for read-outs — the balance pill + streak badge. */
 function drawPillFace(g: Phaser.GameObjects.Graphics, x: number, y: number, w: number, h: number, style: PillStyle): void {
   const tok = resolvePillTokens(style)
-  const r = h / 2
+  const r = safeR(h / 2, w, h)
   dropShadow(g, x, y, w, h, r, tok.shadow, { alpha: 0.08, dist: 5 })
   g.fillStyle(tok.bottom, 1)
   g.fillRoundedRect(x, y, w, h, r)
   for (let i = 0; i < 7; i++) {
     const bh = h * (0.9 - 0.8 * (i / 6))
+    const rb = safeR(r, w, bh)
+    const ins = Math.max(0, r - rb)
     g.fillStyle(tok.top, 0.14)
-    g.fillRoundedRect(x, y, w, bh, safeR(r, w, bh))
+    g.fillRoundedRect(x + ins, y, w - ins * 2, bh, rb)
   }
   for (let i = 0; i < 3; i++) {
     const bh = h * (0.42 - i * 0.1)
     if (bh < 3) break
+    const rb = safeR(r, w - 6, bh)
+    const ins = Math.max(3, r - rb)
     g.fillStyle(tok.spec, 0.09)
-    g.fillRoundedRect(x + 3, y + 2, w - 6, bh, safeR(r, w - 6, bh))
+    g.fillRoundedRect(x + ins, y + 2, w - ins * 2, bh, rb)
   }
   g.lineStyle(Math.max(2, Math.round(h * 0.05)), tok.outline, 1)
   g.strokeRoundedRect(x, y, w, h, r)
