@@ -8,7 +8,7 @@ import { SYMBOLS } from '../core/types'
 import type { Piece, PieceKind } from '../core/types'
 import { addCasinoBackdrop } from '../view/background'
 import { ensurePieceTexture } from '../view/textures'
-import { FONT, GHOST_PILL, GOLD_PILL, addPillButton } from '../view/ui'
+import { FONT, GHOST_PILL, GOLD_PILL, addPillButton, startScene } from '../view/ui'
 
 const REEL_W = 150
 const REEL_H = 210
@@ -43,6 +43,8 @@ export class DailyBonusScene extends Phaser.Scene {
   }
 
   create(): void {
+    // Warm cream fade-in (never black) — the receiving half of every startScene cross-fade.
+    this.cameras.main.fadeIn(this.prefersReducedMotion() ? 90 : 180, 255, 253, 248)
     addCasinoBackdrop(this, 'home')
     const save = loadSave()
     const params = new URLSearchParams(location.search)
@@ -58,7 +60,7 @@ export class DailyBonusScene extends Phaser.Scene {
     }
 
     addPillButton(this, 64, 84, 84, 56, '‹', GHOST_PILL, () => {
-      if (!this.spinning) this.scene.start('home')
+      if (!this.spinning) startScene(this,'home')
     })
     this.add
       .text(DESIGN_W / 2, 130, 'DAILY BONUS', { fontFamily: FONT, fontSize: '54px', fontStyle: '900', color: '#ffffff' })
@@ -141,7 +143,7 @@ export class DailyBonusScene extends Phaser.Scene {
       for (const w of windows) {
         this.add.image(w.x + REEL_W / 2, w.y + REEL_H / 2, SYMBOLS[Math.floor(Math.random() * 6)]).setDisplaySize(96, 96).setAlpha(0.5)
       }
-      addPillButton(this, DESIGN_W / 2, 830, 280, 72, 'HOME', GOLD_PILL, () => this.scene.start('home'))
+      addPillButton(this, DESIGN_W / 2, 830, 280, 72, 'HOME', GOLD_PILL, () => startScene(this,'home'))
       return
     }
 
@@ -283,7 +285,7 @@ export class DailyBonusScene extends Phaser.Scene {
     this.add
       .text(DESIGN_W / 2, 760, blurbs.join('\n'), { fontFamily: FONT, fontSize: '22px', color: '#9a927e', align: 'center' })
       .setOrigin(0.5)
-    addPillButton(this, DESIGN_W / 2, 880, 300, 80, 'CLAIM', GOLD_PILL, () => this.scene.start('home'))
+    addPillButton(this, DESIGN_W / 2, 880, 300, 80, 'CLAIM', GOLD_PILL, () => startScene(this,'home'))
     this.spinning = false
     this.add
       .text(DESIGN_W / 2, 960, `come back tomorrow — ${todayKey()} claimed`, { fontFamily: FONT, fontSize: '18px', color: '#b3ab97' })

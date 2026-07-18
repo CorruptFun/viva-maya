@@ -6,6 +6,7 @@ import { LEVEL_COUNT } from '../core/levels'
 import { refreshLives } from '../core/lives'
 import { loadSave } from '../core/save'
 import { addCasinoBackdrop } from '../view/background'
+import { quality } from '../view/quality'
 import {
   FONT,
   GHOST_PILL,
@@ -20,6 +21,7 @@ import {
   addStreakBadge,
   openHelpPanel,
   openSoundPanel,
+  startScene,
 } from '../view/ui'
 
 export class HomeScene extends Phaser.Scene {
@@ -28,6 +30,8 @@ export class HomeScene extends Phaser.Scene {
   }
 
   create(): void {
+    // Warm cream fade-in (never black) — the receiving half of every startScene cross-fade.
+    this.cameras.main.fadeIn(this.prefersReducedMotion() ? 90 : 180, 255, 253, 248)
     const save = loadSave()
     const currentLevel = Math.min(save.unlocked, LEVEL_COUNT)
     const reduced = this.prefersReducedMotion()
@@ -70,14 +74,18 @@ export class HomeScene extends Phaser.Scene {
       repeatDelay: 340,
       ease: 'Sine.easeInOut',
     })
-    // A couple of tiny satellites to make the emblem feel alive.
-    for (const [dx, dy, size, delay] of [
+    // 3f Home emblem sparkle: sparse drifting hearts near the emblem. Reconciled with the existing
+    // satellites (not a second emitter) — governor-capped (fewer on weak tiers) and reduced-motion
+    // gated (placed static, no drift).
+    const satellites: Array<[number, number, number, number]> = [
       [-130, -60, 30, 0],
       [138, -30, 24, 500],
       [110, 84, 20, 900],
-    ]) {
-      const mini = this.add.image(DESIGN_W / 2 + dx, emblemY + dy, 'heart').setAlpha(0.5)
+    ]
+    for (const [dx, dy, size, delay] of satellites.slice(0, Math.max(1, quality.count(satellites.length)))) {
+      const mini = this.add.image(DESIGN_W / 2 + dx, emblemY + dy, 'heart').setAlpha(reduced ? 0.4 : 0.5)
       mini.setDisplaySize(size, size)
+      if (reduced) continue
       this.tweens.add({
         targets: mini,
         y: emblemY + dy - 14,
@@ -130,7 +138,7 @@ export class HomeScene extends Phaser.Scene {
     }
 
     const play = addPillButton(this, DESIGN_W / 2, 720, 340, 96, 'PLAY', GOLD_PILL, () =>
-      this.scene.start('game', { level: currentLevel })
+      startScene(this,'game', { level: currentLevel })
     )
     menuButtons.push(play)
     this.tweens.add({
@@ -150,7 +158,7 @@ export class HomeScene extends Phaser.Scene {
       .setOrigin(0.5)
 
     const levels = addPillButton(this, DESIGN_W / 2, 872, 280, 64, 'LEVELS', GHOST_PILL, () =>
-      this.scene.start('levelselect')
+      startScene(this,'levelselect')
     )
     menuButtons.push(levels)
 
@@ -160,7 +168,7 @@ export class HomeScene extends Phaser.Scene {
     const ready = spinAvailable(save)
     const label = ready ? 'DAILY BONUS' : `SPUN · DAY ${Math.max(1, save.streak)}`
     const daily = addPillButton(this, DESIGN_W / 2, 986, 340, 76, label, ready ? GOLD_PILL : GHOST_PILL, () =>
-      this.scene.start('daily')
+      startScene(this,'daily')
     )
     menuButtons.push(daily)
     if (ready) {
@@ -176,7 +184,7 @@ export class HomeScene extends Phaser.Scene {
     if (endlessUnlocked(save)) {
       const wkBest = endlessBestThisWeek(save)
       const endless = addPillButton(this, DESIGN_W / 2, 1108, 340, 72, 'ENDLESS', ROSE_PILL, () =>
-        this.scene.start('game', { endless: true })
+        startScene(this,'game', { endless: true })
       )
       menuButtons.push(endless)
       this.add
