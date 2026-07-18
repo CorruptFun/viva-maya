@@ -22,7 +22,7 @@ export interface SaveData {
   lives: number
   /** Epoch ms the current life-regen cycle started (0 when the pool is full). */
   livesAnchor: number
-  /** Earned chip balance — a reward token banked from level wins. Earned-only; never spent in Phase 1. */
+  /** Earned chip balance — a closed-loop reward token banked from level wins and spent in the Gift Store. */
   chips: number
   // --- v7 personal-warmth fields (§E9). All default EMPTY/OFF; read shape-tolerantly below. ---
   /** YYYY-MM-DD (local) of the very first app open; null until the first Home entry stamps it. */

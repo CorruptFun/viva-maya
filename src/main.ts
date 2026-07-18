@@ -6,6 +6,7 @@ import { DailyBonusScene } from './scenes/DailyBonusScene'
 import { GameScene } from './scenes/GameScene'
 import { HomeScene } from './scenes/HomeScene'
 import { LevelSelectScene } from './scenes/LevelSelectScene'
+import { StoreScene } from './scenes/StoreScene'
 import { installQualityGovernor, quality } from './view/quality'
 import { applyPageChrome, getTheme } from './view/theme'
 
@@ -169,7 +170,7 @@ const game = new Phaser.Game({
     mode: Phaser.Scale.FIT,
     autoCenter: Phaser.Scale.CENTER_BOTH,
   },
-  scene: [BootScene, HomeScene, LevelSelectScene, DailyBonusScene, GameScene],
+  scene: [BootScene, HomeScene, LevelSelectScene, DailyBonusScene, StoreScene, GameScene],
 })
 
 // Adaptive quality governor (E2): ticks every frame off the game loop and samples
