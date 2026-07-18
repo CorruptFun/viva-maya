@@ -126,8 +126,8 @@ export class HomeScene extends Phaser.Scene {
         .setOrigin(0.5)
     }
 
-    // Endless weekly race — unlocks once the last numbered level is cleared.
-    if (endlessUnlocked(save, LEVEL_COUNT)) {
+    // Endless weekly race — unlocks after level 30.
+    if (endlessUnlocked(save)) {
       const wkBest = endlessBestThisWeek(save)
       addPillButton(this, DESIGN_W / 2, 1108, 340, 72, 'ENDLESS', ROSE_PILL, () =>
         this.scene.start('game', { endless: true })

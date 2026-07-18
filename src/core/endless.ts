@@ -16,6 +16,10 @@ import type { SaveData } from './save'
 /** Fixed move budget for the weekly score-attack board — equal for all, so BEST scores compare fairly. */
 export const ENDLESS_MOVES = 30
 
+/** Endless opens after this many numbered levels are cleared — a fixed milestone, independent of
+ * the total level count (so raising LEVEL_COUNT doesn't push the unlock out of reach). */
+export const ENDLESS_UNLOCK_LEVEL = 30
+
 /**
  * ISO-8601 week key "YYYY-Www" in LOCAL time (Thursday-anchored, weeks start
  * Monday). Same week → same key → same board; the race resets when it rolls over.
@@ -56,9 +60,9 @@ export function endlessBestThisWeek(save: SaveData, now = new Date()): number {
   return endlessBestForWeek(save, weekKey(now))
 }
 
-/** Endless unlocks once the player has cleared the last numbered level (unlocked past it). */
-export function endlessUnlocked(save: SaveData, levelCount: number): boolean {
-  return save.unlocked > levelCount
+/** Endless unlocks once the player has cleared ENDLESS_UNLOCK_LEVEL numbered levels. */
+export function endlessUnlocked(save: SaveData): boolean {
+  return save.unlocked > ENDLESS_UNLOCK_LEVEL
 }
 
 /**
