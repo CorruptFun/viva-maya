@@ -18,11 +18,13 @@ import {
   SWAP_MS,
 } from '../config'
 import { Board } from '../core/board'
+import { todayKey } from '../core/daily'
 import { ENDLESS_MOVES, endlessBestForWeek, endlessRngForWeek, recordEndless, weekKey } from '../core/endless'
 import { LEVEL_COUNT, levelSpec } from '../core/levels'
 import { devSetLives, formatCountdown, refreshLives, spendLife } from '../core/lives'
+import { maya, pendingOccasion, warmLoseLine, warmWinSubtitle } from '../core/maya'
 import { mulberry32 } from '../core/rng'
-import { addChips, loadSave, recordResult, recordScore, takePendingBoosts } from '../core/save'
+import { addChips, loadSave, markFinaleSeen, markOccasionSeen, recordResult, recordScore, takePendingBoosts } from '../core/save'
 import { SYMBOLS, key } from '../core/types'
 import type { BoostType, ClearWave, Coord, FallMove, LevelSpec, Piece, Spawn, SymbolType } from '../core/types'
 import { addCasinoBackdrop } from '../view/background'
@@ -90,6 +92,8 @@ export class GameScene extends Phaser.Scene {
   private jackpotOccurred = false
   /** §E4 guard — the Heartbloom (giant heart of light + Maya leitmotif) fires at most ONCE per round. */
   private heartbloomFired = false
+  /** §E9 — set in finishWin when this win's score beats the stored best; drives the NEW BEST! ribbon. */
+  private newBestThisWin = false
 
   // --- Impact & weight (E5/E6) ---
   /** Trauma accumulator (0..1); shake magnitude is trauma², decayed each frame in update(). */
@@ -196,6 +200,7 @@ export class GameScene extends Phaser.Scene {
     this.moveMade = false
     this.jackpotOccurred = false // §E4 — reset per round (scene.restart re-runs create, not field inits)
     this.heartbloomFired = false
+    this.newBestThisWin = false
 
     // DEV: ?lives=N forces the pool before the gate check.
     if (import.meta.env.DEV) {
@@ -290,6 +295,7 @@ export class GameScene extends Phaser.Scene {
     }
     if (this.activeBoosts.length > 0) this.showBoostBanner(this.activeBoosts)
     this.showGoalCallout()
+    this.maybeOccasion() // §E9 special-date dress-up (dormant unless an occasion is configured for today)
 
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => this.onDown(p))
     this.input.on('pointermove', (p: Phaser.Input.Pointer) => this.onMove(p))
@@ -2114,23 +2120,32 @@ export class GameScene extends Phaser.Scene {
     const stars = movesFrac >= 0.5 ? 3 : movesFrac >= 0.25 ? 2 : 1
     const bonus = this.movesLeft * MOVES_BONUS
     if (bonus > 0) this.addScore(bonus)
+    // §E9 new-best: capture the stored best BEFORE recordResult bumps it, then compare the final score.
+    const prevBest = loadSave().best
     const save = recordResult(this.level, stars, this.score)
+    this.newBestThisWin = this.score > prevBest
     // Reward payout — rewards a clean, fast clear and is BANKED to the persistent chip balance.
     // Once per win (finishWin runs exactly once per completed level); endless/losses pay nothing.
     const chipReward = stars * 8 + this.movesLeft * 2
     this.chipBanked = addChips(chipReward)
-    // Every 10th level is a milestone: a full-screen star-tally splash stands in for Beats 1–2.
-    const milestone = this.level % 10 === 0
     const totalStars = Object.values(save.stars).reduce((sum, s) => sum + s, 0)
-    if (milestone) {
+    const showCard = (): void => {
+      this.showOverlay(true, stars, bonus, chipReward, false, true)
+      this.input.once('pointerdown', () => this.overlaySettle?.())
+    }
+    // §E9 ALL CLEAR (signature moment #6) — a one-time bespoke crescendo the first time she clears the
+    // FINAL level. Latched by finaleSeen so it never repeats; a later L100 replay falls back to the
+    // normal milestone splash.
+    if (this.level >= LEVEL_COUNT && !save.finaleSeen) {
+      markFinaleSeen()
+      this.time.delayedCall(420, () => this.allClearFinale(totalStars, showCard))
+      return
+    }
+    // Every 10th level is a milestone: a full-screen star-tally splash stands in for Beats 1–2.
+    if (this.level % 10 === 0) {
       // The splash already fired the fanfare + heart shower — the card stays calm (celebrate=false)
       // but still runs Beat 4 (elastic entrance + coin roll-up), tap-to-settle.
-      this.time.delayedCall(420, () =>
-        this.milestoneSplash(totalStars, () => {
-          this.showOverlay(true, stars, bonus, chipReward, false, true)
-          this.input.once('pointerdown', () => this.overlaySettle?.())
-        })
-      )
+      this.time.delayedCall(420, () => this.milestoneSplash(totalStars, showCard))
     } else {
       this.runWinSequence(stars, bonus, chipReward)
     }
@@ -2474,6 +2489,105 @@ export class GameScene extends Phaser.Scene {
     )
   }
 
+  /**
+   * §E9 ALL CLEAR (signature moment #6) — the one-time grand finale on clearing the FINAL level.
+   * A full marquee celebration + the Heartbloom hero beat + a lingering, staggered heart shower + a
+   * heartfelt line, with the owner's private sign-off appended ONLY when maya.secretMessage is set
+   * (else a clean generic close). Reuses existing emitters/textures; reduced motion → static text +
+   * one soft heart puff, no staggered showers. Latched by finaleSeen upstream — plays once, ever.
+   */
+  private allClearFinale(totalStars: number, done: () => void): void {
+    const reduced = this.reducedMotion
+    const T = getTheme()
+    const cx = DESIGN_W / 2
+    const cy = 520
+    sfx.winFanfare()
+    this.time.delayedCall(220, () => sfx.jackpotStrike())
+    this.vibrate([80, 60, 140, 60, 220])
+    this.flashCabinet() // full marquee celebration (bulbs pop + reddish glow surge)
+    // The Heartbloom hero beat, centred (self-guards to one fire — may already be lit on a 3★ clear).
+    this.heartbloom(cx, cy + 40)
+    // A lingering heart shower — staggered bursts (one soft puff under reduced motion).
+    this.overlayHearts(cx, reduced ? 12 : 28, cy - 20)
+    if (!reduced) {
+      this.time.delayedCall(450, () => this.overlayHearts(cx - 150, 20, cy + 60))
+      this.time.delayedCall(900, () => this.overlayHearts(cx + 150, 20, cy - 80))
+      this.time.delayedCall(1400, () => this.overlayHearts(cx, 24, cy + 20))
+    }
+
+    const layer = this.add.container(0, 0).setDepth(48)
+    const title = this.add
+      .text(cx, cy - 150, 'ALL CLEAR', { fontFamily: FONT, fontSize: '80px', fontStyle: '900', color: T.goldText })
+      .setOrigin(0.5)
+      .setLetterSpacing(3)
+      .setStroke('#ffffff', 10)
+      .setShadow(0, 4, 'rgba(0,0,0,0.22)', 10, true, true)
+    const tally = this.add
+      .text(cx, cy - 78, `★  ${LEVEL_COUNT} LEVELS  ·  ${totalStars} STARS  ★`, {
+        fontFamily: FONT,
+        fontSize: '30px',
+        fontStyle: '900',
+        color: css(T.rose),
+      })
+      .setOrigin(0.5)
+      .setStroke('#ffffff', 6)
+    // The heartfelt line — always-on, non-name. Owner sign-off appended ONLY when secretMessage is set.
+    const sign = maya.secretMessage?.trim()
+    const heartfelt =
+      sign && sign.length > 0
+        ? `You finished every level.\nThank you for playing. ♥\n\n${sign}`
+        : 'You finished every level.\nThank you for playing. ♥'
+    // Drawn over the ALWAYS-cream board (not the backdrop) → use the cream-safe ink (dark on every
+    // theme) + a white stroke so it stays legible under the celebration, even on the dark themes.
+    const line = this.add
+      .text(cx, cy + 150, heartfelt, {
+        fontFamily: FONT,
+        fontSize: '26px',
+        fontStyle: '700',
+        color: T.ink,
+        align: 'center',
+        lineSpacing: 8,
+      })
+      .setOrigin(0.5)
+      .setStroke('#ffffff', 5)
+      .setShadow(0, 2, 'rgba(0,0,0,0.18)', 5, false, true)
+    layer.add([title, tally, line])
+
+    if (reduced) {
+      title.setScale(0.92)
+      this.time.delayedCall(2800, () =>
+        this.tweens.add({ targets: layer, alpha: 0, duration: 340, onComplete: () => { layer.destroy(); done() } })
+      )
+      return
+    }
+    title.setScale(0)
+    tally.setAlpha(0)
+    line.setAlpha(0).setY(cy + 162)
+    this.tweens.add({ targets: title, scale: 1, duration: 420, ease: 'Back.easeOut' })
+    this.tweens.add({ targets: tally, alpha: 1, duration: 320, delay: 320, ease: 'Sine.easeOut' })
+    this.tweens.add({ targets: line, alpha: 1, y: cy + 150, duration: 420, delay: 720, ease: 'Sine.easeOut' })
+    this.time.delayedCall(3800, () =>
+      this.tweens.add({ targets: layer, alpha: 0, duration: 360, onComplete: () => { layer.destroy(); done() } })
+    )
+  }
+
+  /**
+   * §E9 special-date dress-up (signature moment #5) — on a configured occasion (once per day) fire a
+   * heart-shower over the board, the in-game "it knew" touch. Dormant with the default empty
+   * occasions[]. Reduced motion → a single static heart, no shower.
+   */
+  private maybeOccasion(): void {
+    const today = todayKey()
+    if (!pendingOccasion(today, loadSave().occasionsSeen)) return
+    markOccasionSeen(today)
+    if (this.reducedMotion) {
+      const h = this.add.image(DESIGN_W / 2, BOARD_Y + BOARD_W / 2, 'heart').setDisplaySize(90, 90).setDepth(45).setAlpha(0.85)
+      this.time.delayedCall(1400, () => h.destroy())
+      return
+    }
+    this.overlayHearts(DESIGN_W / 2, 22, BOARD_Y + BOARD_W / 2)
+  }
+
   /** Dim scrim behind an end-of-round overlay (also swallows taps meant for the board). */
   private overlayScrim(): void {
     this.clearSelection()
@@ -2531,8 +2645,10 @@ export class GameScene extends Phaser.Scene {
     const cy = 590
     this.overlayCard(cx, cy, 230)
 
+    // §E9 warm lose copy — a kind rotating line instead of the cold "OUT OF MOVES". Seeded by score
+    // so it stays stable for this result. Navy (not the warn colour) reads as gentle, not an error.
     this.add
-      .text(cx, cy - 160, 'OUT OF MOVES', { fontFamily: FONT, fontSize: '48px', fontStyle: '900', color: getTheme().warn })
+      .text(cx, cy - 160, warmLoseLine(this.score), { fontFamily: FONT, fontSize: '42px', fontStyle: '900', color: getTheme().navyText })
       .setOrigin(0.5)
       .setDepth(42)
       .setShadow(0, 3, 'rgba(0,0,0,0.15)', 6, false, true)
@@ -2612,10 +2728,40 @@ export class GameScene extends Phaser.Scene {
 
     // Rank-word title.
     const title = this.add
-      .text(0, -210, this.rankWord(stars), { fontFamily: FONT, fontSize: '52px', fontStyle: '900', color: T.goldText })
+      .text(0, -216, this.rankWord(stars), { fontFamily: FONT, fontSize: '52px', fontStyle: '900', color: T.goldText })
       .setOrigin(0.5)
       .setShadow(0, 3, 'rgba(0,0,0,0.15)', 6, false, true)
     card.add(title)
+
+    // §E9 warm subtitle under the rank word — always-on, non-name gentle encouragement (seeded by
+    // score so it stays stable for this result).
+    card.add(
+      this.add
+        .text(0, -176, warmWinSubtitle(this.score), { fontFamily: FONT, fontSize: '20px', fontStyle: '700', color: T.inkSoft })
+        .setOrigin(0.5)
+    )
+
+    // §E9 NEW BEST! ribbon — a small rose banner across the card's top-left corner on a record score.
+    if (this.newBestThisWin) {
+      const ribbon = this.add.container(-156, -252).setAngle(-16)
+      const rt = this.add.text(0, 0, 'NEW BEST!', { fontFamily: FONT, fontSize: '21px', fontStyle: '900', color: T.onRose }).setOrigin(0.5)
+      const rw = rt.width + 40
+      const rh = 42
+      const rg = this.add.graphics()
+      rg.fillStyle(T.shadow, 0.25)
+      rg.fillRoundedRect(-rw / 2 + 2, -rh / 2 + 3, rw, rh, rh / 2)
+      rg.fillStyle(T.rose, 1)
+      rg.fillRoundedRect(-rw / 2, -rh / 2, rw, rh, rh / 2)
+      rg.lineStyle(3, T.roseDeep, 1)
+      rg.strokeRoundedRect(-rw / 2, -rh / 2, rw, rh, rh / 2)
+      ribbon.add([rg, rt])
+      card.add(ribbon)
+      if (animate) {
+        ribbon.setScale(0)
+        this.tweens.add({ targets: ribbon, scale: 1, delay: 360, duration: 300, ease: 'Back.easeOut' })
+        settleActions.push(() => ribbon.setScale(1))
+      }
+    }
 
     // Faint static gold ray behind the star row.
     const ray = this.add.image(0, -122, 'sweep').setDisplaySize(440, 96).setAlpha(0.22).setBlendMode(Phaser.BlendModes.ADD)
