@@ -66,6 +66,8 @@ export class GameScene extends Phaser.Scene {
   private movesLeft = 0
   private objectives: ObjectiveState[] = []
   private movesText!: Phaser.GameObjects.Text
+  /** Looping "urgent" pulse on the moves number once movesLeft ≤ 3 (started once, cleared on level end). */
+  private movesPulse: Phaser.Tweens.Tween | null = null
 
   private selected: Coord | null = null
   private selectedSprite: Phaser.GameObjects.Sprite | null = null
@@ -159,6 +161,7 @@ export class GameScene extends Phaser.Scene {
     this.selectPulse = null
     this.dragFrom = null
     this.scoreMult = 1
+    this.movesPulse = null
     this.activeBoosts = []
     this.autoplay = import.meta.env.DEV && new URLSearchParams(location.search).has('auto')
     if (!this.endless) this.applyBoosts(takePendingBoosts())
@@ -808,6 +811,17 @@ export class GameScene extends Phaser.Scene {
     this.moveMade = true
     this.movesText.setText(String(this.movesLeft))
     if (this.movesLeft <= 5) this.movesText.setColor('#d3302f')
+    // Getting tight — start a gentle looping pulse on the moves number (once, no stacking).
+    if (this.movesLeft <= 3 && !this.movesPulse) {
+      this.movesPulse = this.tweens.add({
+        targets: this.movesText,
+        scale: 1.08,
+        duration: 500,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut',
+      })
+    }
     await this.resolveLoop(wave)
   }
 
@@ -893,6 +907,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     // Scoring + objectives (specials count as their symbol; jackpot pieces don't).
+    const changedObjectives = new Set<ObjectiveState>()
     for (const { piece } of wave.cleared) {
       if (piece.kind === 'jackpot') continue
       const obj = this.objectives.find(o => o.symbol === piece.symbol)
@@ -900,14 +915,22 @@ export class GameScene extends Phaser.Scene {
         obj.remaining--
         obj.text?.setText(obj.remaining > 0 ? String(obj.remaining) : '✓')
         if (obj.remaining === 0) obj.text?.setColor('#2fae4c')
+        changedObjectives.add(obj)
       }
     }
-    for (const o of this.objectives) {
+    // Pop only the chip(s) whose count actually changed this wave, and flash the number gold.
+    for (const o of changedObjectives) {
       if (o.chip && o.chip.scale === 1) {
-        this.tweens.add({ targets: o.chip, scale: 1.08, duration: 110, yoyo: true })
+        this.tweens.add({ targets: o.chip, scale: 1.14, duration: 120, yoyo: true, ease: 'Quad.easeOut' })
+      }
+      // Gold flash — but leave a completed objective its green ✓.
+      if (o.text && o.remaining > 0) {
+        o.text.setColor('#f2b234')
+        this.time.delayedCall(160, () => o.remaining > 0 && o.text?.setColor('#2a2732'))
       }
     }
-    this.addScore(wave.cleared.length * POINTS_PER_PIECE * cascade)
+    const wavePoints = wave.cleared.length * POINTS_PER_PIECE * cascade
+    this.addScore(wavePoints)
     if (cascade >= 2) {
       this.showCombo(cascade)
       this.cameras.main.shake(100 + cascade * 30, 0.002 + 0.0012 * Math.min(cascade, 5))
@@ -915,6 +938,11 @@ export class GameScene extends Phaser.Scene {
 
     // Pop cleared sprites, staggered outward from the first effect's epicenter.
     const epicenter = wave.events[0]?.at ?? pops[0]?.at
+    // One floating "+N" per wave at the clear epicenter — bigger on chunky cascades.
+    if (epicenter) {
+      const ep = this.cellToXY(epicenter)
+      this.spawnScorePopup(wavePoints, ep.x, ep.y, cascade)
+    }
     const promises: Promise<void>[] = []
     for (const { piece, at } of pops) {
       const sprite = this.sprites.get(piece.id)
@@ -1024,6 +1052,7 @@ export class GameScene extends Phaser.Scene {
   private finishWin(): void {
     this.log('finishWin')
     this.state = 'ended'
+    this.stopMovesPulse()
     this.celebrateBoard() // Beat 0: casino light flash + chip/card burst on the still-visible board
     this.vibrate(60)
     const movesFrac = this.movesLeft / this.spec.moves
@@ -1246,6 +1275,7 @@ export class GameScene extends Phaser.Scene {
   private finishLose(): void {
     this.log('finishLose')
     this.state = 'ended'
+    this.stopMovesPulse()
     spendLife() // a loss costs a life (numbered levels only ever reach finishLose)
     recordScore(this.score)
     this.time.delayedCall(400, () => this.showOverlay(false, 0, 0))
@@ -1254,6 +1284,7 @@ export class GameScene extends Phaser.Scene {
   private finishEndless(): void {
     this.log('finishEndless')
     this.state = 'ended'
+    this.stopMovesPulse()
     const { best, isRecord } = recordEndless(this.score, this.endlessWeekKey)
     this.time.delayedCall(450, () => this.showEndlessOverlay(this.score, best, isRecord))
   }
@@ -1757,6 +1788,38 @@ export class GameScene extends Phaser.Scene {
   }
 
   // --------------------------------------------------------------- helpers
+
+  /** Small gold, navy-outlined "+N" that floats up and fades, then self-destroys. One per wave. */
+  private spawnScorePopup(points: number, x: number, y: number, cascade: number): void {
+    if (points <= 0) return
+    const big = cascade >= 3
+    const t = this.add
+      .text(x, y, `+${points}`, {
+        fontFamily: FONT,
+        fontSize: big ? '40px' : '32px',
+        color: '#f2b234',
+        fontStyle: '900',
+      })
+      .setOrigin(0.5)
+      .setDepth(28)
+      .setStroke('#26304d', 6)
+      .setShadow(0, 2, 'rgba(0,0,0,0.18)', 4, false, true)
+    this.tweens.add({
+      targets: t,
+      y: y - 40,
+      alpha: { from: 1, to: 0 },
+      duration: 600,
+      ease: 'Quad.easeOut',
+      onComplete: () => t.destroy(),
+    })
+  }
+
+  /** Kill the urgent-moves pulse and settle the number back to rest scale (called when a level ends). */
+  private stopMovesPulse(): void {
+    this.movesPulse?.stop()
+    this.movesPulse = null
+    this.movesText?.setScale(1)
+  }
 
   private t(config: Record<string, unknown>): Promise<void> {
     return new Promise(resolve => {
