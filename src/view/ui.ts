@@ -1517,9 +1517,9 @@ function buildToggleRow(
 }
 
 /**
- * Settings / Accessibility overlay (§E8): a scrim + cream card titled "SETTINGS" with four labelled
- * ON/OFF toggle rows — Reduce Motion, Reduce Flashing, Haptics, High-Contrast Board. Each row reads
- * its live pref and persists on tap via the shared authority. Restart-affecting toggles (Reduce
+ * Settings / Accessibility overlay (§E8): a scrim + cream card titled "SETTINGS" with five labelled
+ * ON/OFF toggle rows — Reduce Motion, Reduce Flashing, Haptics, High-Contrast Board, Ambient sound.
+ * Each row reads its live pref and persists on tap via the shared authority. Restart-affecting toggles (Reduce
  * Motion + High-Contrast Board change the CURRENT paint) are snapshotted at open; on CLOSE, if either
  * changed, the calling scene restarts so its art repaints — mirroring the theme picker's pattern.
  * Reduce Flashing / Haptics are read live at effect time, so they need no restart.
@@ -1532,8 +1532,10 @@ export function openSettingsPanel(scene: Phaser.Scene): void {
 
   const px = 40
   const pw = W - 80
-  const ph = 700
-  const pyTop = (H - ph) / 2
+  // Height sized for FIVE toggle rows above DONE: rows start pyTop+176, step 104 → last row centre
+  // pyTop+592 (bottom pyTop+637); DONE at pyTop+ph-62 (top edge pyTop+ph-96) clears it with ph=800.
+  const ph = 800
+  const pyTop = (H - ph) / 2 // stays vertically centred: (1280-800)/2 = 240px margins
 
   // Snapshot the restart-affecting prefs at open (raw in-app reduce-motion + HC board).
   const startedRM = rawReduceMotionPref()
@@ -1578,6 +1580,9 @@ export function openSettingsPanel(scene: Phaser.Scene): void {
     { label: 'Reduce Flashing', sub: 'Soften flashes & impacts', get: reduceFlashing, set: setReduceFlashing },
     { label: 'Haptics', sub: 'Vibrate on big moments', get: () => !hapticsOff(), set: v => setHapticsOff(!v) },
     { label: 'High-Contrast Board', sub: 'Bolder tiles & outlines', get: hcBoard, set: setHcBoard },
+    // §E3-A2 — unlock the built-but-unreached ambient bed. Default OFF (sfx.ambience); toggling it
+    // starts/stops the warm per-theme lounge pad and persists exactly like mute.
+    { label: 'Ambient sound', sub: 'Warm lounge music', get: () => sfx.ambience, set: () => sfx.toggleAmbience() },
   ]
   const rowW = pw - 80
   const rowH = 90
