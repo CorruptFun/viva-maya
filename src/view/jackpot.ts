@@ -171,28 +171,22 @@ export function openJackpotWheel(scene: Phaser.Scene, opts: { onClaim: (result: 
     for (const p of parts) if (p.active) p.destroy()
   }
 
-  // 2) Scrim — dim + swallow taps meant for the board underneath.
+  // 2) Scrim — firmly dim the board + HUD (so the wheel + title read as the sole focus) and swallow
+  // taps meant for the board underneath.
   const scrim = track(
-    scene.add.rectangle(cx, 640, DESIGN_W, worldH() + 400, T.scrim, reduced ? 0.66 : 0.001).setDepth(60).setInteractive()
+    scene.add.rectangle(cx, 640, DESIGN_W, worldH() + 400, T.scrim, reduced ? 0.82 : 0.001).setDepth(60).setInteractive()
   )
-  if (!reduced) scene.tweens.add({ targets: scrim, fillAlpha: 0.66, duration: 200, ease: 'Quad.easeOut' })
+  if (!reduced) scene.tweens.add({ targets: scrim, fillAlpha: 0.82, duration: 200, ease: 'Quad.easeOut' })
 
-  // 3) Title.
+  // 3) Title — seated in the gap between the HUD and the wheel bezel so it never fights the HUD.
   const title = track(
     scene.add
-      .text(cx, 214, 'JACKPOT', { fontFamily: FONT, fontSize: '58px', fontStyle: '900', color: css(T.goldBright) })
+      .text(cx, 286, 'JACKPOT', { fontFamily: FONT, fontSize: '52px', fontStyle: '900', color: css(T.goldBright) })
       .setOrigin(0.5)
       .setDepth(62)
       .setLetterSpacing(6)
       .setStroke(css(T.goldDarkest), 8)
       .setShadow(0, 4, 'rgba(70,45,10,0.5)', 8, false, true)
-  )
-  track(
-    scene.add
-      .text(cx, 262, 'the reel is charged', { fontFamily: FONT, fontSize: '20px', fontStyle: '700', color: css(T.cardFillWarm) })
-      .setOrigin(0.5)
-      .setDepth(62)
-      .setLetterSpacing(1)
   )
 
   // 4) Rim bulbs (fixed cabinet frame) — alternating gold/rose, breathing like the marquee.
