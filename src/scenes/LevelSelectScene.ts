@@ -15,12 +15,29 @@ const ROW_H = CHIP + GAP
 /** Grid entrance cascade: per (visible) row delay + pop duration, tuned so the whole ripple lands under ~500ms. */
 const CASCADE_STAGGER = 36
 const CASCADE_DURATION = 200
+/**
+ * L1 flick-scroll tuning. Velocity is carried as content-px per 60fps frame; on release the drag's
+ * smoothed velocity is decayed by `FLICK_FRICTION` every update() frame — the exponential glide a
+ * native list uses — reusing the drag's [minScroll,maxScroll] clamp so it can never fling off-screen.
+ */
+const FRAME_MS = 1000 / 60
+const FLICK_FRICTION = 0.92 // per-frame velocity retention — sets the coast length / "native list" feel
+const FLICK_MIN = 1.2 // min release speed (px/frame) that counts as a flick — a slow drag still stops dead
+const FLICK_STOP = 0.4 // speed (px/frame) below which the coast snaps to rest
+const FLICK_IDLE_MS = 90 // a release this long after the last move is a hold, not a flick → no throw
 
 export class LevelSelectScene extends Phaser.Scene {
   /** Largest pointer travel during the current press — a tap on a chip only fires below this. */
   private dragMoved = 0
   /** Beat 5: set when routed here straight from a win, so the newly-current chip celebrates. */
   private fromWin = false
+  /** L1: masked level-grid container (its `y` is the scroll offset) — held so update() can coast it. */
+  private scrollContent?: Phaser.GameObjects.Container
+  /** L1: the drag clamp's bounds, captured so the fling reuses the exact same [min,max] limits. */
+  private minScroll = 0
+  private maxScroll = 0
+  /** L1: flick velocity (content-px/frame); friction-decayed each update() after release, 0 at rest. */
+  private scrollVel = 0
 
   constructor() {
     super('levelselect')
@@ -68,12 +85,15 @@ export class LevelSelectScene extends Phaser.Scene {
     maskG.fillRect(0, viewTop, DESIGN_W, viewBottom - viewTop)
     content.setMask(maskG.createGeometryMask())
 
-    const minScroll = Math.min(0, viewBottom - contentBottom)
-    const maxScroll = 0
+    // Scroll bounds + the container, held on the scene so update()'s L1 fling reuses the exact clamp.
+    this.scrollContent = content
+    this.scrollVel = 0
+    this.minScroll = Math.min(0, viewBottom - contentBottom)
+    this.maxScroll = 0
     // Open scrolled so the current level sits mid-viewport.
     const curRow = Math.floor((Math.min(save.unlocked, LEVEL_COUNT) - 1) / GRID_COLS)
     const curCy = viewTop + topPad + curRow * ROW_H + CHIP / 2
-    content.y = Phaser.Math.Clamp((viewTop + viewBottom) / 2 - curCy, minScroll, maxScroll)
+    content.y = Phaser.Math.Clamp((viewTop + viewBottom) / 2 - curCy, this.minScroll, this.maxScroll)
 
     // Grid entrance cascade: chips (with their star icons, nested in each container) scale + fade
     // in, rippling down by on-screen row. Runs after content.y is finalised so the stagger tracks
@@ -99,23 +119,46 @@ export class LevelSelectScene extends Phaser.Scene {
       })
     }
 
-    // Drag to scroll (chip taps are suppressed once the press has travelled — see buildChip).
+    // Drag to scroll (chip taps are suppressed once the press has travelled — see buildChip). While
+    // the finger is down the grid tracks it 1:1; L1 adds a flick — the release velocity is smoothed
+    // during the drag and, unless motion is reduced, committed to update() to coast under friction.
     let dragging = false
     let startPointerY = 0
     let startContentY = 0
+    let lastMoveAt = 0 // this.time.now of the previous pointermove — for the per-move velocity delta
+    let flickVel = 0 // smoothed drag velocity (content-px/frame), committed to this.scrollVel on release
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
       dragging = true
       startPointerY = p.y
       startContentY = content.y
       this.dragMoved = 0
+      this.scrollVel = 0 // touching the list halts any in-flight coast (native feel)
+      flickVel = 0
+      lastMoveAt = this.time.now
     })
     this.input.on('pointermove', (p: Phaser.Input.Pointer) => {
       if (!dragging || !p.isDown) return
       const dy = p.y - startPointerY
       this.dragMoved = Math.max(this.dragMoved, Math.abs(dy))
-      content.y = Phaser.Math.Clamp(startContentY + dy, minScroll, maxScroll)
+      const prevY = content.y
+      content.y = Phaser.Math.Clamp(startContentY + dy, this.minScroll, this.maxScroll)
+      if (reduced) return // reduced motion (§E8): 1:1 drag only — never build a fling velocity
+      // Smoothed velocity: normalise this move's travel to a 60fps step and blend it into the running
+      // estimate (newest weighted 0.6), so a fast release carries momentum and a slow one fades. A
+      // clamp at a bound zeroes the step naturally, so momentum can't build while pinned to an end.
+      const now = this.time.now
+      const step = ((content.y - prevY) / Math.max(1, now - lastMoveAt)) * FRAME_MS
+      flickVel = flickVel * 0.4 + step * 0.6
+      lastMoveAt = now
     })
-    this.input.on('pointerup', () => (dragging = false))
+    this.input.on('pointerup', () => {
+      dragging = false
+      // Hand the smoothed velocity to update()'s coast only for a genuine flick: motion allowed, above
+      // the flick floor, and released promptly after the last move (a hold-then-lift stops dead, as today).
+      if (!reduced && Math.abs(flickVel) >= FLICK_MIN && this.time.now - lastMoveAt <= FLICK_IDLE_MS) {
+        this.scrollVel = flickVel
+      }
+    })
 
     // Fixed footer.
     if (unlocked) {
@@ -138,6 +181,26 @@ export class LevelSelectScene extends Phaser.Scene {
       })
       .setOrigin(0.5)
       .setLetterSpacing(2)
+  }
+
+  /**
+   * L1 flick inertia: after a release with momentum, coast the masked grid under friction, reusing
+   * the drag's exact [minScroll,maxScroll] clamp so it can't overrun the ends. Stops when the speed
+   * decays past `FLICK_STOP` or a bound clamps the step. No-ops while the finger is down (pointerdown
+   * zeroes the velocity) and under reduced motion (a fling velocity is never built) — pure transform
+   * on the one masked container, no new draws.
+   */
+  update(): void {
+    if (this.scrollVel === 0 || !this.scrollContent) return
+    const raw = this.scrollContent.y + this.scrollVel
+    const next = Phaser.Math.Clamp(raw, this.minScroll, this.maxScroll)
+    this.scrollContent.y = next
+    if (next !== raw) {
+      this.scrollVel = 0 // a bound swallowed the step — halt at the end
+      return
+    }
+    this.scrollVel *= FLICK_FRICTION
+    if (Math.abs(this.scrollVel) < FLICK_STOP) this.scrollVel = 0
   }
 
   /** Reduced-motion (OS query OR in-app override) — delegates to the shared theme authority (§E8). */
