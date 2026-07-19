@@ -184,7 +184,36 @@ export function addLivesHud(
       .setOrigin(0.5)
     container.add(timer)
   }
+  // ── H2 · lives-regen "heart fills" micro-beat ──────────────────────────────────────────────────
+  // Remember the last displayed filled-count so an INCREASE (a life quietly regenerated while the
+  // player was away) can pop + warm-flash the exact pip(s) that just filled — turning invisible regen
+  // into a felt "you got a life back." Reduced motion keeps today's instant fill (gated in update).
+  // Visual only; the paired soft "life restored" chime lands in C5.
+  let prevFilled = -1
+  const white = Phaser.Display.Color.ValueToColor(0xffffff)
+  const flash = Phaser.Display.Color.ValueToColor(getTheme().rose)
+  const popPip = (heart: Phaser.GameObjects.Image): void => {
+    const base = heart.scaleX
+    const POP = 0.34
+    scene.tweens.add({
+      targets: heart,
+      scaleX: base * (1 + POP),
+      scaleY: base * (1 + POP),
+      duration: 170,
+      yoyo: true,
+      ease: 'Quad.easeOut',
+      onUpdate: () => {
+        // Warm rose glint strongest at the peak of the pop, easing back to normal as the pip settles —
+        // derived from the live scale so the colour tracks the yoyo with no extra tween bookkeeping.
+        const amt = Phaser.Math.Clamp((heart.scaleX / base - 1) / POP, 0, 1)
+        const c = Phaser.Display.Color.Interpolate.ColorWithColor(white, flash, 100, Math.round(amt * 100))
+        heart.setTint(Phaser.Display.Color.GetColor(c.r, c.g, c.b))
+      },
+      onComplete: () => heart.clearTint(),
+    })
+  }
   const update = (state: LivesState): void => {
+    const filledCount = Phaser.Math.Clamp(state.lives, 0, LIVES_MAX)
     hearts.forEach((heart, i) => {
       const filled = i < state.lives
       heart.setAlpha(filled ? 1 : 0.24)
@@ -192,6 +221,12 @@ export function addLivesHud(
       else heart.setTint(0x7a7266)
     })
     if (timer) timer.setText(state.full ? '' : `next life  ${formatCountdown(state.nextInMs)}`)
+    // Celebrate only a genuine increase in filled hearts — never the first paint (prevFilled seeded to
+    // -1) and never under reduced motion, where the fill stays instant exactly as before.
+    if (prevFilled >= 0 && filledCount > prevFilled && !prefersReducedMotion()) {
+      for (let i = prevFilled; i < filledCount; i++) popPip(hearts[i])
+    }
+    prevFilled = filledCount
   }
   return { container, update }
 }
