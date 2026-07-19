@@ -9,7 +9,7 @@ import { greeting, occasionFor, pendingOccasion, secretNote, withName } from '..
 import { loadSave, markOccasionSeen, touchOpen } from '../core/save'
 import { addCasinoBackdrop } from '../view/background'
 import { addJackpotMeter } from '../view/jackpot'
-import { OVERSHOOT, backOut } from '../view/motion'
+import { OVERSHOOT, backOut, heartbeat } from '../view/motion'
 import { quality } from '../view/quality'
 import { getTheme, prefersReducedMotion } from '../view/theme'
 import {
@@ -46,6 +46,15 @@ let bootRevealed = false
 export class HomeScene extends Phaser.Scene {
   /** Guards the discovered secret-note overlay so long-press/4-tap can't stack copies. */
   private noteOpen = false
+
+  // --- C1 · ambient PLAY-glow halo, phase-locked to the shared heartbeat clock in update() ---
+  /** The soft gold halo behind PLAY; its steady breathe is driven per-frame off `heartbeat`. */
+  private playGlow?: Phaser.GameObjects.Image
+  /** Resting scale of the halo — the heartbeat swells a small delta above this. */
+  private playGlowBaseSX = 1
+  private playGlowBaseSY = 1
+  /** Gate: the heartbeat only takes over AFTER the fade-in/power-on bloom lands (never under reduced motion). */
+  private playGlowLive = false
 
   constructor() {
     super('home')
@@ -243,16 +252,23 @@ export class HomeScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setLetterSpacing(2)
 
-    // Soft gold halo behind PLAY — rendered underneath the button, breathing in
-    // time with its scale pulse. Uses the runtime 'bgglow' texture from the backdrop.
+    // Soft gold halo behind PLAY — rendered underneath the button. Its steady breathe is phase-locked
+    // to the shared `heartbeat` clock in update() (C1), so it pulses in time with every other ambient
+    // glow in the app. Uses the runtime 'bgglow' texture from the backdrop.
     const glow = this.add.image(DESIGN_W / 2, 720, 'bgglow')
     glow.setTint(getTheme().gold).setBlendMode(Phaser.BlendModes.ADD).setDisplaySize(460, 240)
     const glowSX = glow.scaleX
     const glowSY = glow.scaleY
     glow.setAlpha(reduced ? 0.28 : 0)
+    // Stash the halo + its resting scale so update() can drive it once the bloom has landed.
+    this.playGlow = glow
+    this.playGlowBaseSX = glowSX
+    this.playGlowBaseSY = glowSY
+    this.playGlowLive = false
     if (!reduced) {
       // Power-on beat #4: on boot the warm glow BLOOMS up (delayed + swelling from small) after the
-      // wordmark reveal; on a normal entrance it just fades in alongside PLAY. Then it keeps breathing.
+      // wordmark reveal; on a normal entrance it just fades in alongside PLAY. Then the shared
+      // heartbeat takes over its steady breathing (see update()) — no independent yoyo.
       const bloomDelay = powerOn ? 980 : 0
       if (powerOn) glow.setScale(glowSX * 0.7, glowSY * 0.7)
       this.tweens.add({
@@ -264,16 +280,9 @@ export class HomeScene extends Phaser.Scene {
         delay: bloomDelay,
         ease: 'Sine.easeOut',
         onComplete: () => {
-          this.tweens.add({
-            targets: glow,
-            alpha: 0.4,
-            scaleX: glowSX * 1.04,
-            scaleY: glowSY * 1.04,
-            duration: 1400,
-            yoyo: true,
-            repeat: -1,
-            ease: 'Sine.easeInOut',
-          })
+          // Hand the breathe off to the heartbeat clock: update() now modulates alpha (~0.22 rest →
+          // ~0.4 peak) + a slight scale from heartbeat.amp(), in phase with the rest of the app.
+          this.playGlowLive = true
         },
       })
     }
@@ -373,6 +382,21 @@ export class HomeScene extends Phaser.Scene {
         })
       })
     }
+  }
+
+  /**
+   * C1 · heartbeat coherence. Drive the ambient PLAY-glow halo off the shared `heartbeat` clock so it
+   * breathes in phase with the in-game cabinet glow and every other hero breather — one organism, not
+   * N independent yoyos. Only runs once the fade-in/power-on bloom has landed (`playGlowLive`), and
+   * NEVER under reduced motion: there the halo holds the static resting alpha set in create(), reading
+   * neither the clock nor modulating per-frame — exactly today's reduced-motion behaviour.
+   */
+  update(): void {
+    if (!this.playGlowLive || !this.playGlow || this.prefersReducedMotion()) return
+    const a = heartbeat.amp()
+    // ~0.22 rest → ~0.4 peak alpha + a ≤1.04× swell, matching the retired independent yoyo's range.
+    this.playGlow.setAlpha(0.22 + a * 0.18)
+    this.playGlow.setScale(this.playGlowBaseSX * (1 + a * 0.04), this.playGlowBaseSY * (1 + a * 0.04))
   }
 
   /**

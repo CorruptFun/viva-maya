@@ -33,6 +33,7 @@ import type { BoostType, ClearWave, Coord, FallMove, LevelSpec, Piece, Spawn, Sy
 import { addCasinoBackdrop } from '../view/background'
 import { addJackpotMeter, openJackpotWheel } from '../view/jackpot'
 import type { JackpotMeter } from '../view/jackpot'
+import { heartbeat } from '../view/motion'
 import { quality } from '../view/quality'
 import { css, getTheme, hapticsOff, prefersReducedMotion, reduceFlashing as prefReduceFlashing } from '../view/theme'
 import { TEX_SIZE, ensurePieceTexture } from '../view/textures'
@@ -110,6 +111,8 @@ export class GameScene extends Phaser.Scene {
   private introOpen = false
   private cabinetBulbs: Phaser.GameObjects.Image[] = []
   private cabinetGlow?: Phaser.GameObjects.Image
+  /** True while a win surge (flashCabinet) briefly owns cabinetGlow's alpha, so the heartbeat drive in update() yields (C1). */
+  private cabinetSurge = false
   private state: GameState = 'idle'
   /** §E4 latch — a jackpot chip detonated this round, so the Heartbloom hero win fires even below 3-star. */
   private jackpotOccurred = false
@@ -890,9 +893,11 @@ export class GameScene extends Phaser.Scene {
       .setAlpha(0.1)
       .setBlendMode(Phaser.BlendModes.ADD)
     this.cabinetGlow.setDisplaySize(BOARD_W + 170, BOARD_W + 170)
+    this.cabinetSurge = false // reset per build so a restart mid-surge can't leave the drive stuck off
     // cabinetGlow breathe — gated (§E8): reduced motion rests it at a static mid-glow, no pulse.
+    // Otherwise it breathes off the shared `heartbeat` clock in update() (C1), in phase with Home's
+    // PLAY halo — no independent yoyo (that would shimmer out of phase with the rest of the app).
     if (this.reducedMotion) this.cabinetGlow.setAlpha(0.14)
-    else this.tweens.add({ targets: this.cabinetGlow, alpha: 0.18, duration: 1700, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' })
 
     // Recessed gold TRAY: an opaque gold-bezel cabinet with a well floor DARKER than the tiles,
     // so the 64 raised glossy cushions pop out of a real 3-D setting. Baked once (static graphics),
@@ -1007,7 +1012,19 @@ export class GameScene extends Phaser.Scene {
       this.tweens.add({ targets: bulb, scaleX: base * 1.7, scaleY: base * 1.7, duration: 140, yoyo: true, ease: 'Quad.easeOut' })
     }
     if (this.cabinetGlow) {
-      this.tweens.add({ targets: this.cabinetGlow, alpha: 0.42, duration: 160, yoyo: true, repeat: 1, ease: 'Quad.easeOut' })
+      // The surge briefly OWNS the glow's alpha; the heartbeat drive in update() yields until it ends.
+      this.cabinetSurge = true
+      this.tweens.add({
+        targets: this.cabinetGlow,
+        alpha: 0.42,
+        duration: 160,
+        yoyo: true,
+        repeat: 1,
+        ease: 'Quad.easeOut',
+        onComplete: () => {
+          this.cabinetSurge = false
+        },
+      })
     }
   }
 
@@ -1375,6 +1392,12 @@ export class GameScene extends Phaser.Scene {
       }
     } else if (this.cameras.main.scrollX !== 0 || this.cameras.main.scrollY !== restScrollY()) {
       this.cameras.main.setScroll(0, restScrollY())
+    }
+    // Ambient cabinet glow (C1): breathe off the shared `heartbeat` so it pulses in phase with Home's
+    // PLAY halo and every other breather. Skipped under reduced motion (holds the static mid-glow set
+    // in buildBackdrop) and while a win surge (flashCabinet) briefly owns the alpha.
+    if (this.cabinetGlow && !this.reducedMotion && !this.cabinetSurge) {
+      this.cabinetGlow.setAlpha(0.1 + heartbeat.amp() * 0.08) // ~0.1 rest → ~0.18 peak, matching the retired yoyo
     }
     if (this.armedGlows.size > 0) {
       const a = 0.16 + 0.14 * (0.5 + 0.5 * Math.sin(time / 300))
