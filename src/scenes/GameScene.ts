@@ -26,10 +26,13 @@ import { LEVEL_COUNT, levelSpec } from '../core/levels'
 import { devSetLives, formatCountdown, refreshLives, spendLife } from '../core/lives'
 import { maya, pendingOccasion, warmLoseLine, warmWinSubtitle } from '../core/maya'
 import { mulberry32 } from '../core/rng'
-import { addChips, loadSave, markFinaleSeen, markOccasionSeen, persistSave, recordResult, recordScore, takePendingBoosts } from '../core/save'
+import { addChips, bumpJackpotMeter, loadSave, markFinaleSeen, markOccasionSeen, persistSave, recordResult, recordScore, resetJackpotMeter, takePendingBoosts } from '../core/save'
+import { jackpotReady } from '../core/jackpot'
 import { SYMBOLS, key } from '../core/types'
 import type { BoostType, ClearWave, Coord, FallMove, LevelSpec, Piece, Spawn, SymbolType } from '../core/types'
 import { addCasinoBackdrop } from '../view/background'
+import { addJackpotMeter, openJackpotWheel } from '../view/jackpot'
+import type { JackpotMeter } from '../view/jackpot'
 import { quality } from '../view/quality'
 import { css, getTheme, hapticsOff, prefersReducedMotion, reduceFlashing as prefReduceFlashing } from '../view/theme'
 import { TEX_SIZE, ensurePieceTexture } from '../view/textures'
@@ -171,6 +174,11 @@ export class GameScene extends Phaser.Scene {
   private chipHud?: ChipPill
   /** New chip total banked by the current win (set in finishWin, applied on the payout fly-in). */
   private chipBanked = 0
+
+  /** Jackpot charge meter in the HUD (fills one notch per level win). */
+  private jackpotHud?: JackpotMeter
+  /** True once this win charged the meter to full — the win-card Continue then fires the wheel. */
+  private jackpotArmed = false
 
   /** Set while the win result card is animating in — a tap fast-forwards it to the settled state. */
   private overlaySettle: (() => void) | null = null
@@ -1063,6 +1071,15 @@ export class GameScene extends Phaser.Scene {
     // Persistent chip balance — compact, tucked into the top row's gap between the back button
     // and the LEVEL tab. Shows the pre-win total; the win payout flies a chip in to bump it.
     this.chipHud = addChipPill(this, 182, 84, { compact: true })
+
+    // Jackpot charge meter — a slot-console strip in the space below the board that fills one notch
+    // per level win and then "explodes" into the wheel. Numbered levels only (endless has no jackpot).
+    // Depth 42 so it sits above the win scrim and the player watches it tick up on the win card.
+    if (!this.endless) {
+      this.jackpotHud = addJackpotMeter(this, DESIGN_W / 2, 1086, { width: 300 })
+      this.jackpotHud.container.setDepth(42)
+      this.jackpotHud.update(loadSave().jackpotMeter, false)
+    }
 
     // Second row: moves card + objective chips.
     const cardY = 196
@@ -2183,6 +2200,11 @@ export class GameScene extends Phaser.Scene {
     // Once per win (finishWin runs exactly once per completed level); endless/losses pay nothing.
     const chipReward = stars * 8 + this.movesLeft * 2
     this.chipBanked = addChips(chipReward)
+    // Charge the jackpot meter one notch. When it fills, arm the wheel — the win-card Continue then
+    // fires it (see continueAfterWin). Persisted immediately, so quitting can't lose progress.
+    const meter = bumpJackpotMeter()
+    this.jackpotHud?.update(meter)
+    this.jackpotArmed = jackpotReady(meter)
     const totalStars = Object.values(save.stars).reduce((sum, s) => sum + s, 0)
     const showCard = (): void => {
       this.showOverlay(true, stars, bonus, chipReward, false, true)
@@ -2204,6 +2226,29 @@ export class GameScene extends Phaser.Scene {
     } else {
       this.runWinSequence(stars, bonus, chipReward)
     }
+  }
+
+  /**
+   * Gate every post-win transition through the Jackpot Wheel when the meter just filled. If armed, the
+   * wheel "explodes" in over the win card (an overlay, no scene-swap), pays its chips, and only THEN
+   * runs the original transition `go` on CLAIM — so advancing after the fifth win always fires the
+   * wheel exactly once. Not armed → straight through. Routing both Continue buttons here covers every
+   * win branch (normal / milestone / all-clear all funnel to this card).
+   */
+  private continueAfterWin(go: () => void): void {
+    if (!this.jackpotArmed) {
+      go()
+      return
+    }
+    this.jackpotArmed = false
+    openJackpotWheel(this, {
+      onClaim: result => {
+        resetJackpotMeter()
+        this.jackpotHud?.update(0, false)
+        this.chipHud?.update(result.newTotal)
+        go()
+      },
+    })
   }
 
   /** Reduced-motion (OS query OR in-app override) — delegates to the shared theme authority (§E8). */
@@ -2876,11 +2921,14 @@ export class GameScene extends Phaser.Scene {
     // COIN ROLL-UP PAYOUT.
     this.buildCoinPayout(card, chipReward, animate, at, settleActions)
 
-    // Continue buttons.
+    // Continue buttons. When the jackpot meter just filled, these route through the wheel first
+    // (continueAfterWin) so it fires exactly once, then performs the original transition.
     const nextExists = this.level < LEVEL_COUNT
     const nextBtn = addPillButton(this, 0, 176, 300, 72, nextExists ? 'NEXT LEVEL' : 'ALL CLEAR!', GOLD_PILL, () => {
-      if (nextExists) startScene(this,'game', { level: this.level + 1 })
-      else startScene(this,'levelselect', { fromWin: true })
+      this.continueAfterWin(() => {
+        if (nextExists) startScene(this,'game', { level: this.level + 1 })
+        else startScene(this,'levelselect', { fromWin: true })
+      })
     })
     // Beat 5: a soft gold glow-ring pulse behind the Continue pill to lead the eye. Gated (§E8):
     // reduced motion rests it at a static soft glow, no pulse.
@@ -2888,7 +2936,32 @@ export class GameScene extends Phaser.Scene {
     card.add(glow)
     if (!this.reducedMotion) this.tweens.add({ targets: glow, alpha: 0.42, duration: 780, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' })
     card.add(nextBtn)
-    card.add(addPillButton(this, 0, 176 + 84, 300, 60, 'LEVELS', GHOST_PILL, () => startScene(this,'levelselect', { fromWin: true })))
+    card.add(
+      addPillButton(this, 0, 176 + 84, 300, 60, 'LEVELS', GHOST_PILL, () =>
+        this.continueAfterWin(() => startScene(this,'levelselect', { fromWin: true }))
+      )
+    )
+
+    // §Jackpot — when the meter just filled, a glowing "JACKPOT READY" banner crowns the card (above
+    // the top edge, clear of the LEVEL tab) to telegraph that the wheel explodes in on Continue.
+    if (this.jackpotArmed) {
+      const ready = this.add.container(0, -halfH - 50)
+      const rt = this.add
+        .text(0, 0, '🎰  JACKPOT READY!', { fontFamily: FONT, fontSize: '22px', fontStyle: '900', color: T.onRose })
+        .setOrigin(0.5)
+      const rw = rt.width + 44
+      const rg = this.add.graphics()
+      rg.fillStyle(T.shadow, 0.25)
+      rg.fillRoundedRect(-rw / 2 + 2, -21 + 3, rw, 42, 21)
+      rg.fillStyle(T.rose, 1)
+      rg.fillRoundedRect(-rw / 2, -21, rw, 42, 21)
+      rg.lineStyle(3, T.goldBright, 1)
+      rg.strokeRoundedRect(-rw / 2, -21, rw, 42, 21)
+      const rglow = this.add.image(0, 0, 'bgglow').setTint(T.rose).setBlendMode(Phaser.BlendModes.ADD).setDisplaySize(rw + 60, 90).setAlpha(this.reducedMotion ? 0.3 : 0.2)
+      ready.add([rglow, rg, rt])
+      card.add(ready)
+      if (!this.reducedMotion) this.tweens.add({ targets: rglow, alpha: 0.5, duration: 700, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' })
+    }
 
     // Rose skip/close chip (top-right) — a tap jumps straight to the settled card.
     if (animate) {

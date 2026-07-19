@@ -2,7 +2,7 @@ import { LIVES_MAX } from '../config'
 import type { BoostType } from './types'
 
 export interface SaveData {
-  v: 7
+  v: 8
   best: number
   /** Highest level the player may attempt (1-based). */
   unlocked: number
@@ -35,12 +35,15 @@ export interface SaveData {
   finaleSeen: boolean
   /** Latch for a future first-run onboarding intro. */
   seenIntro: boolean
+  // --- v8 Jackpot Wheel field. Defaults to 0; read shape-tolerantly below. ---
+  /** Jackpot meter charge — notches filled by level wins; at JACKPOT_GOAL the wheel fires, then resets. */
+  jackpotMeter: number
 }
 
 const KEY = 'viva-maya:v1'
 
 const DEFAULTS: SaveData = {
-  v: 7,
+  v: 8,
   best: 0,
   unlocked: 1,
   stars: {},
@@ -57,6 +60,7 @@ const DEFAULTS: SaveData = {
   occasionsSeen: [],
   finaleSeen: false,
   seenIntro: false,
+  jackpotMeter: 0,
 }
 
 function fresh(): SaveData {
@@ -95,6 +99,8 @@ export function loadSave(): SaveData {
       : []
     base.finaleSeen = data.finaleSeen === true
     base.seenIntro = data.seenIntro === true
+    // v8 Jackpot Wheel meter — absent in pre-v8 saves → 0.
+    base.jackpotMeter = typeof data.jackpotMeter === 'number' ? Math.max(0, Math.floor(data.jackpotMeter)) : 0
     // v6 grace refill: the pool grew (3→10) and the break got much shorter — top EVERYONE up to
     // full on upgrade so nobody is left stranded at the old, stingier count (e.g. mid-session).
     const storedVersion = typeof data.v === 'number' ? (data.v as number) : 1
@@ -141,6 +147,23 @@ export function addChips(n: number): number {
   save.chips += Math.max(0, Math.floor(n))
   persistSave(save)
   return save.chips
+}
+
+/** Charge the jackpot meter by one notch (a level win); persists and returns the new meter value. */
+export function bumpJackpotMeter(): number {
+  const save = loadSave()
+  save.jackpotMeter += 1
+  persistSave(save)
+  return save.jackpotMeter
+}
+
+/** Empty the jackpot meter after the wheel has fired, so it recharges from zero. */
+export function resetJackpotMeter(): void {
+  const save = loadSave()
+  if (save.jackpotMeter !== 0) {
+    save.jackpotMeter = 0
+    persistSave(save)
+  }
 }
 
 /**
