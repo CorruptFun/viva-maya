@@ -9,7 +9,7 @@ import { greeting, occasionFor, pendingOccasion, secretNote, withName } from '..
 import { loadSave, markOccasionSeen, touchOpen } from '../core/save'
 import { addCasinoBackdrop } from '../view/background'
 import { addJackpotMeter } from '../view/jackpot'
-import { OVERSHOOT, backOut, heartbeat } from '../view/motion'
+import { OVERSHOOT, backOut, fadeRise, heartbeat } from '../view/motion'
 import { quality } from '../view/quality'
 import { getTheme, prefersReducedMotion } from '../view/theme'
 import {
@@ -135,10 +135,15 @@ export class HomeScene extends Phaser.Scene {
     // Backdrop-drawn → routed through onBackdrop* tokens (legible on the dark themes too).
     const occToday = occasionFor(today.slice(5))
     const greetLine = occToday ? withName(occToday.label) : greeting(new Date().getHours())
-    this.add
+    const greetText = this.add
       .text(DESIGN_W / 2, 214, greetLine, { fontFamily: FONT, fontSize: '23px', color: getTheme().onBackdropInk })
       .setOrigin(0.5)
       .setLetterSpacing(1)
+    // H1 · fade-rise the greeting so the top of Home composes in rather than stamping static. On boot it
+    // sequences in behind the emblem spring (a delay so it never precedes the power-on reveal); on a
+    // normal entry it rises a hair after the camera nudge (applyEntrance) leads. Reduced motion →
+    // fadeRise places it at its resting state instantly (the a11y path for free).
+    fadeRise(this, greetText, { delay: powerOn ? 220 : 120 })
 
     // §E9 special-date dress-up (signature moment #5) — DORMANT unless an occasion is configured,
     // matches today, and hasn't fired today. Fires a once-that-day heart-shower and marks it seen.
@@ -243,7 +248,7 @@ export class HomeScene extends Phaser.Scene {
     // a single gold sweep unveils VIVA·MAYA and the bulbs cascade left→right after the emblem draws in.
     const marquee = addMarquee(this, DESIGN_W / 2, 500, { bulbs: true })
     if (powerOn) marquee.powerOn(this, 420)
-    this.add
+    const tagline = this.add
       .text(DESIGN_W / 2, 560, 'cascades  ·  power-ups  ·  jackpots', {
         fontFamily: FONT,
         fontSize: '24px',
@@ -251,6 +256,9 @@ export class HomeScene extends Phaser.Scene {
       })
       .setOrigin(0.5)
       .setLetterSpacing(2)
+    // H1 · the tagline fade-rises a beat after the greeting (a gentle top-down settle). On boot it lands
+    // just after the gold sweep reveals VIVA·MAYA above it; on a normal entry it follows the greeting in.
+    fadeRise(this, tagline, { delay: powerOn ? 700 : 200 })
 
     // Soft gold halo behind PLAY — rendered underneath the button. Its steady breathe is phase-locked
     // to the shared `heartbeat` clock in update() (C1), so it pulses in time with every other ambient
