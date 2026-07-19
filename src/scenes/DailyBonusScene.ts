@@ -224,6 +224,28 @@ export class DailyBonusScene extends Phaser.Scene {
     const idle: Phaser.GameObjects.Image[] = windows.map(w =>
       this.add.image(w.x + REEL_W / 2, w.y + REEL_H / 2, SYMBOLS[Math.floor(Math.random() * 6)]).setDisplaySize(96, 96)
     )
+    // §D2 baselines — every symbol bakes into the same TEX_SIZE² frame and every reel window shares one
+    // y, so all three idle symbols rest at an identical scale + y. Captured here so the idle bob and the
+    // SPIN wind-up (below) can spring the whole group back to one exact resting transform.
+    const idleBase = idle[0].scaleX
+    const idleRestY = windows[0].y + REEL_H / 2
+
+    // §D2 pre-spin tease — a subtle vertical BOB so the idle reels breathe instead of sitting dead,
+    // staggered per reel so the three symbols float out of lockstep. Gated (§E8): reduced motion leaves
+    // them at their resting y. Transform only; retired by killTweensOf the instant SPIN winds up (below).
+    if (!reduced) {
+      idle.forEach((img, i) =>
+        this.tweens.add({
+          targets: img,
+          y: idleRestY - 7,
+          duration: 1100,
+          yoyo: true,
+          repeat: -1,
+          ease: 'Sine.easeInOut',
+          delay: i * 160,
+        })
+      )
+    }
 
     const doSpin = () => {
       if (this.spinning) return
@@ -232,10 +254,30 @@ export class DailyBonusScene extends Phaser.Scene {
       // Award first, animate second — closing mid-spin can't lose the prize.
       const result = performSpin(loadSave(), mulberry32((Math.random() * 2 ** 31) | 0))
       streakText.setText(`🔥 day ${result.streak}`)
-      idle.forEach(img => img.destroy())
-      this.runReels(windows, result.prizes.map(p => p.type), () =>
-        this.celebrate(result.prizes.map(p => p.label), result.prizes.map(p => p.blurb), result.streak)
-      )
+      // Hand the FIXED result to the reels once the pre-spin wind-up (if any) has cleared the idle symbols.
+      const launch = (): void => {
+        idle.forEach(img => img.destroy())
+        this.runReels(windows, result.prizes.map(p => p.type), () =>
+          this.celebrate(result.prizes.map(p => p.label), result.prizes.map(p => p.blurb), result.streak)
+        )
+      }
+      // §D2 wind-up (E6 charge language): the idle symbols CROUCH — dip down + squash (anticipation,
+      // Quad.easeIn) — then SPRING back through rest (release, backOut), and the reels LAUNCH on that
+      // release, so the beat reads charge→release before the spin. Reduced motion (§E8) → straight to
+      // launch: the existing instant path is untouched. Transforms only; the result is unaffected either way.
+      if (reduced) {
+        launch()
+        return
+      }
+      this.tweens.killTweensOf(idle) // retire the idle bob so it doesn't fight the wind-up
+      this.tweens.chain({
+        targets: idle,
+        tweens: [
+          { scaleX: idleBase * 1.06, scaleY: idleBase * 0.86, y: idleRestY + 8, duration: 100, ease: 'Quad.easeIn' }, // charge — crouch + squash
+          { scaleX: idleBase, scaleY: idleBase, y: idleRestY, duration: 150, ease: backOut(OVERSHOOT.pop) }, // release — spring back into rest
+        ],
+        onComplete: launch,
+      })
     }
     const spinBtn = addPillButton(this, DESIGN_W / 2, 740, 300, 92, 'SPIN', GOLD_PILL, doSpin)
     // SPIN breathe — gated (§E8): reduced motion leaves it at its resting scale.
