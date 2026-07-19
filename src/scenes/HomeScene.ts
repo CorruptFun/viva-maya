@@ -8,6 +8,7 @@ import { refreshLives } from '../core/lives'
 import { greeting, occasionFor, pendingOccasion, secretNote, withName } from '../core/maya'
 import { loadSave, markOccasionSeen, touchOpen } from '../core/save'
 import { addCasinoBackdrop } from '../view/background'
+import { addJackpotMeter } from '../view/jackpot'
 import { quality } from '../view/quality'
 import { getTheme, prefersReducedMotion } from '../view/theme'
 import {
@@ -266,6 +267,10 @@ export class HomeScene extends Phaser.Scene {
     this.add
       .text(DESIGN_W / 2, 790, sub, { fontFamily: FONT, fontSize: '22px', color: getTheme().onBackdropMuted })
       .setOrigin(0.5)
+
+    // Jackpot charge meter — a compact progress read-out in the hero area (fills one notch per level
+    // win). Display-only: the wheel itself explodes in-game after the win that tops the meter off.
+    addJackpotMeter(this, DESIGN_W / 2, 590, { width: 300, compact: true }).update(save.jackpotMeter, false)
 
     // LEVELS + GIFT STORE share a row so the store gets a first-class entry without growing the stack.
     const levels = addPillButton(this, DESIGN_W / 2 - 158, 872, 300, 64, 'LEVELS', GHOST_PILL, () =>

@@ -196,6 +196,13 @@ export function markFinaleSeen(): void {
   }
 }
 
+/** Grant a boost (e.g. a Jackpot Wheel prize) — banked to apply on the next level started. */
+export function addPendingBoost(type: BoostType): void {
+  const save = loadSave()
+  save.pendingBoosts.push(type)
+  persistSave(save)
+}
+
 /** Consume all pending boosts (they apply to the level being started, win or lose). */
 export function takePendingBoosts(): BoostType[] {
   const save = loadSave()

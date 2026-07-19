@@ -3,7 +3,8 @@ import { sfx } from '../audio/sfx'
 import { DESIGN_W, worldH } from '../config'
 import { JACKPOT_GOAL, WHEEL_PRIZES, rollWheelIndex } from '../core/jackpot'
 import { mulberry32 } from '../core/rng'
-import { addChips } from '../core/save'
+import { addChips, addPendingBoost, loadSave } from '../core/save'
+import type { BoostType } from '../core/types'
 import { backOut, OVERSHOOT } from './motion'
 import { css, getTheme, hapticsOff, prefersReducedMotion, reduceFlashing } from './theme'
 import { addPillButton, FONT, GOLD_PILL, goldFace } from './ui'
@@ -37,39 +38,54 @@ export interface JackpotMeter {
  * "ready to spin". Read-only display — SaveData.jackpotMeter is the source of truth; call `update()`
  * after a bump. Returns a container safe to `.setDepth`/position. Theme-driven + reduced-motion aware.
  */
-export function addJackpotMeter(scene: Phaser.Scene, cx: number, cy: number, opts: { width?: number } = {}): JackpotMeter {
+export function addJackpotMeter(
+  scene: Phaser.Scene,
+  cx: number,
+  cy: number,
+  opts: { width?: number; compact?: boolean } = {}
+): JackpotMeter {
   const T = getTheme()
   const reduced = prefersReducedMotion()
   const width = opts.width ?? 300
-  const trackH = 26
+  const compact = opts.compact ?? false
+  const trackH = compact ? 24 : 26
+  // Compact (Home HUD): the "JACKPOT" caption sits INLINE to the left of the track; otherwise above it.
+  const labelW = compact ? 98 : 0
+  const trackX0 = -width / 2 + labelW
+  const trackW = width - labelW
   const container = scene.add.container(cx, cy)
 
   // Recessed track well (dark, so lit gold pips read as raised light).
   const well = scene.add.graphics()
   well.fillStyle(T.shadow, 0.28)
-  well.fillRoundedRect(-width / 2, -trackH / 2 + 2, width, trackH, trackH / 2)
+  well.fillRoundedRect(trackX0, -trackH / 2 + 2, trackW, trackH, trackH / 2)
   well.fillStyle(0x2a2417, 0.55)
-  well.fillRoundedRect(-width / 2, -trackH / 2, width, trackH, trackH / 2)
+  well.fillRoundedRect(trackX0, -trackH / 2, trackW, trackH, trackH / 2)
   well.lineStyle(2, T.goldDeep, 0.9)
-  well.strokeRoundedRect(-width / 2, -trackH / 2, width, trackH, trackH / 2)
+  well.strokeRoundedRect(trackX0, -trackH / 2, trackW, trackH, trackH / 2)
   container.add(well)
 
-  // Gold "JACKPOT" caption above the track.
+  // Gold "JACKPOT" caption — above the track (default) or inline to its left (compact).
   const cap = scene.add
-    .text(0, -trackH / 2 - 15, 'JACKPOT', { fontFamily: FONT, fontSize: '15px', fontStyle: '900', color: css(T.goldBright) })
+    .text(compact ? -width / 2 + labelW / 2 : 0, compact ? 0 : -trackH / 2 - 15, 'JACKPOT', {
+      fontFamily: FONT,
+      fontSize: '15px',
+      fontStyle: '900',
+      color: css(T.goldBright),
+    })
     .setOrigin(0.5)
-    .setLetterSpacing(4)
+    .setLetterSpacing(compact ? 1 : 4)
     .setShadow(0, 1, 'rgba(80,50,10,0.5)', 2, false, true)
   container.add(cap)
 
   // Pip cells — one per notch. Each holds a pre-baked gold face, hidden until lit so it can pop in.
   const gap = 6
   const pad = 7
-  const pipW = (width - pad * 2 - gap * (JACKPOT_GOAL - 1)) / JACKPOT_GOAL
+  const pipW = (trackW - pad * 2 - gap * (JACKPOT_GOAL - 1)) / JACKPOT_GOAL
   const pipH = trackH - pad
   const pips: Phaser.GameObjects.Container[] = []
   for (let i = 0; i < JACKPOT_GOAL; i++) {
-    const px = -width / 2 + pad + pipW / 2 + i * (pipW + gap)
+    const px = trackX0 + pad + pipW / 2 + i * (pipW + gap)
     const pip = scene.add.container(px, 0)
     const face = scene.add.graphics()
     goldFace(face, -pipW / 2, -pipH / 2, pipW, pipH, T, Math.min(pipH / 2, 7))
@@ -84,7 +100,7 @@ export function addJackpotMeter(scene: Phaser.Scene, cx: number, cy: number, opt
     .image(0, 0, 'bgglow')
     .setTint(T.gold)
     .setBlendMode(Phaser.BlendModes.ADD)
-    .setDisplaySize(width + 80, trackH + 70)
+    .setDisplaySize(width + 80, trackH + (compact ? 44 : 70))
     .setAlpha(0)
   container.addAt(halo, 0)
   let haloTween: Phaser.Tweens.Tween | null = null
@@ -128,9 +144,15 @@ export function addJackpotMeter(scene: Phaser.Scene, cx: number, cy: number, opt
 // ── Wheel overlay ────────────────────────────────────────────────────────────
 
 export interface WheelResult {
+  kind: 'chips' | 'boost'
+  /** Chips won (0 for a boost prize). */
   chips: number
+  /** Boost won, or null for a chip prize (banked to pendingBoosts, applies to the next level). */
+  boost: BoostType | null
+  /** Display name of a boost prize ('' for chips). */
+  name: string
   jackpot: boolean
-  /** New total chip balance after the payout was banked. */
+  /** Chip balance after banking (unchanged for a boost). */
   newTotal: number
 }
 
@@ -149,11 +171,22 @@ export function openJackpotWheel(scene: Phaser.Scene, opts: { onClaim: (result: 
   const reduced = prefersReducedMotion()
   const flashOff = reduceFlashing()
 
-  // 1) AWARD-FIRST — decide + bank before a single pixel moves.
+  // 1) AWARD-FIRST — decide + bank before a single pixel moves. Chips add to the balance; boosts bank
+  // to pendingBoosts (applied when the next level starts, exactly like the daily spin).
   const idx = rollWheelIndex(mulberry32((Math.random() * 2 ** 31) | 0))
   const prize = WHEEL_PRIZES[idx]
-  const newTotal = addChips(prize.chips)
-  const result: WheelResult = { chips: prize.chips, jackpot: !!prize.jackpot, newTotal }
+  const isBoost = prize.kind === 'boost'
+  const isJackpot = prize.kind === 'chips' && !!prize.jackpot
+  if (prize.kind === 'boost') addPendingBoost(prize.boost)
+  const newTotal = prize.kind === 'chips' ? addChips(prize.chips) : loadSave().chips
+  const result: WheelResult = {
+    kind: prize.kind,
+    chips: prize.kind === 'chips' ? prize.chips : 0,
+    boost: prize.kind === 'boost' ? prize.boost : null,
+    name: prize.kind === 'boost' ? prize.name : '',
+    jackpot: isJackpot,
+    newTotal,
+  }
 
   const cx = DESIGN_W / 2
   const cy = 566
@@ -213,16 +246,22 @@ export function openJackpotWheel(scene: Phaser.Scene, opts: { onClaim: (result: 
     }
   }
 
-  // 5) The wheel disc (this is what rotates).
+  // 5) The wheel disc (this is what rotates). Precompute each wedge's fill + text colour: boosts are
+  // navy (distinct "special" slots), the JACKPOT is rose, and the chip wedges alternate gold/cream.
   const wheel = track(scene.add.container(cx, cy).setDepth(61))
-  const disc = scene.add.graphics()
   const wedgeDeg = 360 / WEDGES
+  let chipTone = 0
+  const wedgeStyle = WHEEL_PRIZES.map(p => {
+    if (p.kind === 'boost') return { fill: T.navy, text: css(T.goldBright) }
+    if (p.jackpot) return { fill: T.rose, text: css(T.cardFillWarm) }
+    const gold = chipTone++ % 2 === 0
+    return { fill: gold ? T.gold : T.cardFill, text: gold ? T.navyText : css(T.goldDarkest) }
+  })
+  const disc = scene.add.graphics()
   for (let i = 0; i < WEDGES; i++) {
-    const p = WHEEL_PRIZES[i]
     const start = deg(i * wedgeDeg)
     const end = deg((i + 1) * wedgeDeg)
-    const fill = p.jackpot ? T.rose : i % 2 === 0 ? T.gold : T.cardFill
-    disc.fillStyle(fill, 1)
+    disc.fillStyle(wedgeStyle[i].fill, 1)
     disc.slice(0, 0, R, start, end, false)
     disc.fillPath()
     // Crisp separator between wedges.
@@ -234,21 +273,19 @@ export function openJackpotWheel(scene: Phaser.Scene, opts: { onClaim: (result: 
   // Wedge labels — radiating outward from the hub, coloured for contrast on their wedge.
   for (let i = 0; i < WEDGES; i++) {
     const p = WHEEL_PRIZES[i]
-    const midDeg = i * wedgeDeg + wedgeDeg / 2
-    const rad = deg(midDeg)
-    const onLight = !p.jackpot && i % 2 !== 0 // cream wedge
-    const color = p.jackpot ? css(T.cardFillWarm) : onLight ? css(T.goldDarkest) : T.navyText
+    const rad = deg(i * wedgeDeg + wedgeDeg / 2)
+    const big = p.kind === 'chips' && !p.jackpot
     const label = scene.add
       .text(Math.cos(rad) * R * 0.6, Math.sin(rad) * R * 0.6, p.label, {
         fontFamily: FONT,
-        fontSize: p.jackpot ? '26px' : '34px',
+        fontSize: big ? '34px' : p.kind === 'boost' ? '28px' : '26px',
         fontStyle: '900',
-        color,
+        color: wedgeStyle[i].text,
         align: 'center',
       })
       .setOrigin(0.5)
       .setRotation(rad + Math.PI / 2)
-    if (p.jackpot) label.setWordWrapWidth(120)
+    if (p.kind === 'chips' && p.jackpot) label.setWordWrapWidth(120)
     wheel.add(label)
   }
 
@@ -296,7 +333,7 @@ export function openJackpotWheel(scene: Phaser.Scene, opts: { onClaim: (result: 
 
   // DEV-only rig probe (stripped from prod) — lets an automated check assert the wheel lands on the
   // pre-chosen wedge (that the spin is honest) and that the payout matches.
-  const dev = import.meta.env.DEV ? { idx, chips: prize.chips, jackpot: !!prize.jackpot, newTotal, landed: false, rotationDeg: 0 } : null
+  const dev = import.meta.env.DEV ? { idx, chips: result.chips, jackpot: isJackpot, boost: result.boost, newTotal, landed: false, rotationDeg: 0 } : null
   if (dev) (window as unknown as { __wheel?: unknown }).__wheel = dev
 
   const celebrate = (): void => {
@@ -312,7 +349,7 @@ export function openJackpotWheel(scene: Phaser.Scene, opts: { onClaim: (result: 
     const glow = track(
       scene.add
         .image(cx, cy - R * 0.62, 'bgglow')
-        .setTint(prize.jackpot ? T.rose : T.gold)
+        .setTint(isJackpot ? T.rose : T.gold)
         .setBlendMode(Phaser.BlendModes.ADD)
         .setDisplaySize(220, 220)
         .setDepth(61)
@@ -322,9 +359,9 @@ export function openJackpotWheel(scene: Phaser.Scene, opts: { onClaim: (result: 
 
     // Detent + punch.
     sfx.reelClunk(0)
-    if (!hapticsOff()) navigator.vibrate?.(prize.jackpot ? [20, 40, 30] : 16)
-    if (!reduced) scene.cameras.main.shake(prize.jackpot ? 260 : 120, prize.jackpot ? 0.008 : 0.004)
-    if (!flashOff && prize.jackpot) scene.cameras.main.flash(220, 255, 240, 210)
+    if (!hapticsOff()) navigator.vibrate?.(isJackpot ? [20, 40, 30] : 16)
+    if (!reduced) scene.cameras.main.shake(isJackpot ? 260 : 120, isJackpot ? 0.008 : 0.004)
+    if (!flashOff && isJackpot) scene.cameras.main.flash(220, 255, 240, 210)
 
     // Burst FX (shockwave + sparks + confetti; a heart bloom crowns a jackpot).
     if (!reduced) {
@@ -353,7 +390,7 @@ export function openJackpotWheel(scene: Phaser.Scene, opts: { onClaim: (result: 
           })
           .setDepth(62)
       )
-      sparks.explode(prize.jackpot ? 40 : 22)
+      sparks.explode(isJackpot ? 40 : 22)
       const confetti = track(
         scene.add
           .particles(cx, cy - 40, 'confetti', {
@@ -369,8 +406,8 @@ export function openJackpotWheel(scene: Phaser.Scene, opts: { onClaim: (result: 
           })
           .setDepth(62)
       )
-      confetti.explode(prize.jackpot ? 60 : 30)
-      if (prize.jackpot) {
+      confetti.explode(isJackpot ? 60 : 30)
+      if (isJackpot) {
         const bloom = track(
           scene.add.image(cx, cy, 'heartglow').setTint(T.bloom).setBlendMode(Phaser.BlendModes.ADD).setDepth(61).setDisplaySize(200, 200).setAlpha(0)
         )
@@ -379,30 +416,39 @@ export function openJackpotWheel(scene: Phaser.Scene, opts: { onClaim: (result: 
     }
 
     // Reward voice.
-    if (prize.jackpot) {
+    if (isJackpot) {
       sfx.jackpotStrike()
       sfx.mayaMotif()
     } else {
       sfx.winFanfare()
     }
 
-    // Prize readout ("+N CHIPS" / "JACKPOT! +1000") pops up, coins roll.
-    const label = prize.jackpot ? `JACKPOT!  +${prize.chips.toLocaleString()}` : `+${prize.chips.toLocaleString()} CHIPS`
+    // Prize readout — chips ("+N CHIPS" / "JACKPOT! +1000") or a boost ("WILD REEL!" + a hint that
+    // it applies to the next level). Coins only roll for a chip payout.
+    const headline = isBoost ? `${result.name}!` : isJackpot ? `JACKPOT!  +${result.chips.toLocaleString()}` : `+${result.chips.toLocaleString()} CHIPS`
     const prizeText = track(
       scene.add
-        .text(cx, 872, label, { fontFamily: FONT, fontSize: prize.jackpot ? '48px' : '44px', fontStyle: '900', color: css(prize.jackpot ? T.roseLight : T.goldBright) })
+        .text(cx, isBoost ? 856 : 872, headline, { fontFamily: FONT, fontSize: isJackpot ? '48px' : '44px', fontStyle: '900', color: css(isJackpot ? T.roseLight : T.goldBright) })
         .setOrigin(0.5)
         .setDepth(62)
         .setStroke(css(T.goldDarkest), 7)
         .setShadow(0, 4, 'rgba(70,45,10,0.5)', 8, false, true)
     )
+    if (isBoost) {
+      track(
+        scene.add
+          .text(cx, 898, 'applies to your next level', { fontFamily: FONT, fontSize: '20px', fontStyle: '700', color: css(T.cardFillWarm) })
+          .setOrigin(0.5)
+          .setDepth(62)
+      )
+    }
     if (reduced) {
       prizeText.setScale(1)
     } else {
       prizeText.setScale(0)
       scene.tweens.add({ targets: prizeText, scale: 1, duration: 340, ease: backOut(OVERSHOOT.pop) })
     }
-    sfx.coinCount()
+    if (!isBoost) sfx.coinCount()
 
     // CLAIM — the only exit. Fades the overlay, then hands control back to the caller.
     const claim = track(

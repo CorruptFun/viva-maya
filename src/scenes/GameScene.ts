@@ -1080,6 +1080,11 @@ export class GameScene extends Phaser.Scene {
       this.jackpotHud.container.setDepth(42)
       this.jackpotHud.update(loadSave().jackpotMeter, false)
     }
+    // DEV-only: open the wheel on demand so an automated check can spin it repeatedly. Stripped in prod.
+    if (import.meta.env.DEV) {
+      ;(window as unknown as { __spinWheel?: () => Promise<unknown> }).__spinWheel = () =>
+        new Promise(res => openJackpotWheel(this, { onClaim: res }))
+    }
 
     // Second row: moves card + objective chips.
     const cardY = 196
