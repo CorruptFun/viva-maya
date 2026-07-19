@@ -248,6 +248,14 @@ export class HomeScene extends Phaser.Scene {
     // a single gold sweep unveils VIVA·MAYA and the bulbs cascade left→right after the emblem draws in.
     const marquee = addMarquee(this, DESIGN_W / 2, 500, { bulbs: true })
     if (powerOn) marquee.powerOn(this, 420)
+    // BT1 · power-on audio swell (Signature #1 finish). A warm, theme-tinted rising chord — the tonal
+    // sibling of the sweep's airy `whoosh` — blooms as the boot reveal lights the wordmark, so the
+    // identity open is multi-sensory. Fires on the TRUE boot reveal only (`isBoot`), so it stays scarce
+    // (never on a normal Home re-entry). NOT motion-gated: like `mayaMotif` a boot chord is no motion
+    // hazard, so it plays under reduced motion too (there the wordmark is already lit → it just sounds
+    // promptly); mute-gated inside `sfx`. Under the visual sweep, delay it to swell as the gold light
+    // passes VIVA (~150ms into the 420ms lead-in).
+    if (isBoot) this.time.delayedCall(powerOn ? 560 : 120, () => sfx.powerOn())
     const tagline = this.add
       .text(DESIGN_W / 2, 560, 'cascades  ·  power-ups  ·  jackpots', {
         fontFamily: FONT,
