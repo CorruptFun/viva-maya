@@ -7,6 +7,7 @@ import type { BoostStoreItem } from '../core/store'
 import { SYMBOLS } from '../core/types'
 import type { Piece, PieceKind } from '../core/types'
 import { addCasinoBackdrop } from '../view/background'
+import { stagger } from '../view/motion'
 import { getTheme, prefersReducedMotion } from '../view/theme'
 import { ensurePieceTexture } from '../view/textures'
 import type { ChipPill } from '../view/ui'
@@ -66,7 +67,7 @@ export class StoreScene extends Phaser.Scene {
     this.balance = addChipPill(this, this.balanceX, this.balanceY)
 
     this.listLayer = this.add.container(0, 0)
-    this.renderList()
+    this.renderList(true) // stagger the cards in on first paint; purchase refreshes rebuild silently
 
     this.add
       .text(DESIGN_W / 2, DESIGN_H - 60, 'Chips are earned by winning — in-game only, no cash value.', {
@@ -85,17 +86,25 @@ export class StoreScene extends Phaser.Scene {
     return o
   }
 
-  private renderList(): void {
+  private renderList(animate = false): void {
     this.listLayer.removeAll(true)
-    BOOST_ITEMS.forEach((item, i) => this.boostRow(item, LIST_TOP + i * ROW_H))
+    const rows = BOOST_ITEMS.map((item, i) => this.boostRow(item, LIST_TOP + i * ROW_H))
+    // Entrance beat: stagger the cards up into place ~60ms apart, top-to-bottom, so the Store
+    // composes in like every other scene instead of snapping flat. `stagger` is reduced-motion-
+    // aware (it lands each row at its resting alpha/y instantly). Adopts the shared motion helpers
+    // (item C2). Only on first paint — post-purchase affordability refreshes rebuild silently.
+    if (animate) stagger(this, rows, 60)
   }
 
-  private boostRow(item: BoostStoreItem, cy: number): void {
+  private boostRow(item: BoostStoreItem, cy: number): Phaser.GameObjects.Container {
     // Cream card frame with a gold bezel + soft drop shadow (matches the help/sound panels). Cards stay
     // cream on every theme, so route through tokens: identical on the light themes, and it fixes the
     // drop-shadow tint on the dark themes (T.shadow is near-black there, not the warm literal).
+    // The whole card lives in one row container so the entrance stagger moves it as a single unit —
+    // children keep their absolute coords; the container rests at y=0 and fadeRise nudges only that.
     const T = getTheme()
-    const g = this.hold(this.add.graphics())
+    const row = this.hold(this.add.container(0, 0))
+    const g = this.add.graphics()
     const h = 88
     const y = cy - h / 2
     g.fillStyle(T.shadow, 0.16)
@@ -104,12 +113,13 @@ export class StoreScene extends Phaser.Scene {
     g.fillRoundedRect(CARD_X, y, CARD_W, h, 24)
     g.lineStyle(2.5, T.goldBezel, 0.9)
     g.strokeRoundedRect(CARD_X, y, CARD_W, h, 24)
+    row.add(g)
 
-    this.hold(this.add.image(80, cy, this.boostIcon(item.type)).setDisplaySize(58, 58))
-    this.hold(
+    row.add(this.add.image(80, cy, this.boostIcon(item.type)).setDisplaySize(58, 58))
+    row.add(
       this.add.text(124, cy - 30, item.label, { fontFamily: FONT, fontSize: '26px', fontStyle: '900', color: T.ink }).setOrigin(0, 0)
     )
-    this.hold(
+    row.add(
       this.add
         .text(124, cy + 4, item.blurb, {
           fontFamily: 'Arial, sans-serif',
@@ -123,11 +133,13 @@ export class StoreScene extends Phaser.Scene {
 
     // Chip icon + price pill (gold when affordable, ghost when not). Returns the pill for shake feedback.
     const afford = loadSave().chips >= item.price
-    this.hold(this.add.image(CTRL_CX - 58, cy, 'chip').setDisplaySize(34, 34).setAlpha(afford ? 1 : 0.4))
+    row.add(this.add.image(CTRL_CX - 58, cy, 'chip').setDisplaySize(34, 34).setAlpha(afford ? 1 : 0.4))
     const btn = addPillButton(this, CTRL_CX + 20, cy, 108, 60, item.price.toLocaleString(), afford ? GOLD_PILL : GHOST_PILL, () =>
       this.attemptBuy(item, btn)
     )
-    this.listLayer.add(btn)
+    row.add(btn)
+
+    return row
   }
 
   // --------------------------------------------------------------- purchase
