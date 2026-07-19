@@ -154,11 +154,21 @@ export class GameScene extends Phaser.Scene {
   private selectedSprite: Phaser.GameObjects.Sprite | null = null
   private selectPulse: Phaser.Tweens.Tween | null = null
   private ring!: Phaser.GameObjects.Sprite
+  /**
+   * B2 magnetic select telegraph — the ≤4 orthogonal neighbor sprites leaned ~3px toward the current
+   * selection, paired with their EXACT grid-home positions so a restore is pixel-perfect. Both are
+   * cleared by disarmSelectTelegraph on clear / swap-start / any board mutation, so no piece is ever
+   * left displaced when the board animates. Stays empty (and unused) under reduced motion.
+   */
+  private leanTweens: Phaser.Tweens.Tween[] = []
+  private leanHomes: Array<{ sprite: Phaser.GameObjects.Sprite; x: number; y: number }> = []
 
   private dragFrom: Coord | null = null
   private dragStartX = 0
   private dragStartY = 0
   private dragConsumed = false
+  /** B1 swipe-intent trail — a faint spark follow riding the grabbed piece across a swap glide; null when idle. */
+  private swipeTrail: Phaser.GameObjects.Particles.ParticleEmitter | null = null
 
   private score = 0
   private shownScore = 0
@@ -270,6 +280,11 @@ export class GameScene extends Phaser.Scene {
     this.selected = null
     this.selectedSprite = null
     this.selectPulse = null
+    // B1/B2 additive-cue state — drop any stale refs from a prior create (restart re-runs create,
+    // not field inits); the objects themselves were destroyed with the previous scene.
+    this.leanTweens = []
+    this.leanHomes = []
+    this.swipeTrail = null
     this.dragFrom = null
     this.scoreMult = 1
     this.movesPulse = null
@@ -1504,6 +1519,7 @@ export class GameScene extends Phaser.Scene {
         ease: 'Sine.easeInOut',
       })
     }
+    this.armSelectTelegraph(at) // B2: lean the swappable neighbors in (no-op under reduced motion)
   }
 
   private clearSelection(): void {
@@ -1514,6 +1530,89 @@ export class GameScene extends Phaser.Scene {
     this.selected = null
     this.ring.setVisible(false)
     this.hcRing?.setVisible(false)
+    this.disarmSelectTelegraph() // B2: settle the leaned neighbors back to their exact grid homes
+  }
+
+  /**
+   * B2 magnetic select telegraph: the ≤4 in-bounds ORTHOGONAL neighbors of the selected cell lean
+   * ~3px toward it and Back-settle — a tactile "these are your options" cue that complements the
+   * selection ring. Each leaned sprite is stored with its EXACT grid-home position so disarm restores
+   * it pixel-perfectly. Reduced motion → no lean (the ring alone carries the tell); ≤4 tiny transform
+   * tweens per selection, all cleared before any board change so nothing fights a swap/fall.
+   */
+  private armSelectTelegraph(at: Coord): void {
+    if (this.reducedMotion) return
+    const center = this.cellToXY(at)
+    const LEAN = 3
+    const dirs: Coord[] = [{ row: -1, col: 0 }, { row: 1, col: 0 }, { row: 0, col: -1 }, { row: 0, col: 1 }]
+    for (const d of dirs) {
+      const nAt = { row: at.row + d.row, col: at.col + d.col }
+      if (!this.board.inBounds(nAt)) continue
+      const piece = this.board.get(nAt)
+      if (!piece) continue
+      const sprite = this.sprites.get(piece.id)
+      if (!sprite || !sprite.active) continue
+      const home = this.cellToXY(nAt)
+      const dx = center.x - home.x
+      const dy = center.y - home.y
+      const len = Math.hypot(dx, dy) || 1
+      this.leanHomes.push({ sprite, x: home.x, y: home.y })
+      this.leanTweens.push(
+        this.tweens.add({
+          targets: sprite,
+          x: home.x + (dx / len) * LEAN,
+          y: home.y + (dy / len) * LEAN,
+          duration: 220,
+          ease: 'Back.easeOut',
+        })
+      )
+    }
+  }
+
+  /** Disarm B2: kill any half-finished lean tweens and snap the neighbors back to their grid homes. */
+  private disarmSelectTelegraph(): void {
+    if (this.leanTweens.length === 0 && this.leanHomes.length === 0) return
+    for (const tw of this.leanTweens) tw.stop()
+    this.leanTweens = []
+    for (const { sprite, x, y } of this.leanHomes) if (sprite.active) sprite.setPosition(x, y)
+    this.leanHomes = []
+  }
+
+  /**
+   * B1 swipe-intent trail: a faint spark follow rides the grabbed piece as it glides on a swap, so the
+   * gesture reads as physical intent before the pieces snap. A dedicated follow-emitter (the same idiom
+   * as the reel missile trail), reusing the baked `spark` texture and retired the instant the glide
+   * resolves. Reduced motion → no trail; governor-capped (off entirely on the low tier via
+   * count(1)===0, and its live-particle budget sized by quality.count so it never gets busy).
+   */
+  private startSwipeTrail(sprite: Phaser.GameObjects.Sprite): void {
+    this.stopSwipeTrail() // never stack two trails — a fresh swap owns the follow
+    if (this.reducedMotion || quality.count(1) === 0) return
+    const trail = this.add
+      .particles(0, 0, 'spark', {
+        speed: { min: 10, max: 55 },
+        scale: { start: 0.4, end: 0 },
+        alpha: { start: 0.5, end: 0 },
+        lifespan: { min: 150, max: 280 },
+        tint: [0xf2b234, 0xffd75e],
+        quantity: 1,
+        frequency: 26,
+        maxAliveParticles: quality.count(9),
+        emitting: true,
+      })
+      .setDepth(20) // above the tiles/pieces, below the HUD — rides the piece, never a board-wide wash
+    trail.startFollow(sprite)
+    this.swipeTrail = trail
+  }
+
+  /** Retire the B1 trail: stop emitting + following, then free the emitter once its tail has faded. */
+  private stopSwipeTrail(): void {
+    const trail = this.swipeTrail
+    if (!trail) return
+    this.swipeTrail = null
+    trail.stop()
+    trail.stopFollow()
+    this.time.delayedCall(320, () => trail.destroy())
   }
 
   // ------------------------------------------------------------ game flow
@@ -1524,6 +1623,7 @@ export class GameScene extends Phaser.Scene {
     if (!pa || !pb) return
     this.state = 'swapping'
     this.disarmHint() // idle effects yield to the move (§3d composition)
+    this.disarmSelectTelegraph() // B2: restore any leaned neighbors before the board animates
     sfx.swap()
 
     const sa = this.sprites.get(pa.id)!
@@ -1531,10 +1631,14 @@ export class GameScene extends Phaser.Scene {
     const posA = this.cellToXY(a)
     const posB = this.cellToXY(b)
 
+    // B1: a faint spark trail rides the grabbed piece across the glide (physical intent), retired the
+    // instant the pieces snap. Reduced-motion / low tier → no trail (handled inside the helper).
+    this.startSwipeTrail(sa)
     await Promise.all([
       this.t({ targets: sa, x: posB.x, y: posB.y, duration: SWAP_MS, ease: 'Quad.easeOut' }),
       this.t({ targets: sb, x: posA.x, y: posA.y, duration: SWAP_MS, ease: 'Quad.easeOut' }),
     ])
+    this.stopSwipeTrail()
     this.board.swap(a, b)
 
     let wave = this.board.swapActivation(a, b)
