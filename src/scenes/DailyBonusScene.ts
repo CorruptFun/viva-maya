@@ -18,6 +18,29 @@ const REEL_H = 210
 const STRIP_LEN = 14
 
 /**
+ * §D1 — absolute epoch-ms of the next daily rollover: LOCAL midnight, the exact boundary that
+ * todayKey()/spinAvailable flip on (both read local Y-M-D). new Date(y, m, d + 1) normalises any
+ * month/year wrap for us. Captured ONCE per scene entry so the countdown targets a FIXED instant
+ * (the same fixed-target model the lives HUD counts down to), not a "tomorrow" that recedes each tick.
+ */
+function nextRolloverMs(now = new Date()): number {
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 0, 0).getTime()
+}
+
+/**
+ * "H:MM:SS" remaining — core/lives' formatCountdown style (ceil to whole seconds, zero-padded)
+ * widened to hours, since a wait for the next rollover can span most of a day and that helper only
+ * renders M:SS. Clamped at 0 so it rests cleanly on "0:00:00".
+ */
+function formatDailyCountdown(ms: number): string {
+  const total = Math.max(0, Math.ceil(ms / 1000))
+  const h = Math.floor(total / 3600)
+  const m = Math.floor((total % 3600) / 60)
+  const s = total % 60
+  return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+}
+
+/**
  * The daily bonus: a 3-reel slot machine that ALWAYS lands the prize
  * (three-of-a-kind). Prize + streak are computed and persisted BEFORE the
  * animation runs, so the celebration is pure presentation.
@@ -172,9 +195,24 @@ export class DailyBonusScene extends Phaser.Scene {
     }
 
     if (!available) {
-      this.add
-        .text(DESIGN_W / 2, 720, '⏳  come back tomorrow', { fontFamily: FONT, fontSize: '30px', color: T.onBackdropMuted })
+      // §D1 — a LIVE "next spin in H:MM:SS" countdown replaces the old static "come back tomorrow"
+      // dead-end, giving the same return-hook clarity the lives HUD already gives. The target is the
+      // next LOCAL-midnight rollover (fixed at entry), and one 1s timer repaints the remaining span.
+      const rolloverAt = nextRolloverMs() // fixed target — matches todayKey()'s local-day boundary
+      const countdown = this.add
+        .text(DESIGN_W / 2, 720, '', { fontFamily: FONT, fontSize: '30px', color: T.onBackdropMuted })
         .setOrigin(0.5)
+      const tick = (): void => {
+        const remaining = rolloverAt - Date.now()
+        countdown.setText(`next spin in  ${formatDailyCountdown(remaining)}`)
+        // At/after rollover the spin unlocks — re-enter so create() re-evaluates spinAvailable and
+        // shows the reels. The format already rests at "0:00:00", so a missed frame never crashes.
+        if (remaining <= 0) this.scene.restart()
+      }
+      tick() // paint immediately — don't wait a second for the first label
+      // One looping timer, created ONLY in this unavailable branch. Phaser auto-removes scene timers
+      // on shutdown (incl. the restart above); the local ref never outlives the scene, so no leak.
+      this.time.addEvent({ delay: 1000, loop: true, callback: tick })
       for (const w of windows) {
         this.add.image(w.x + REEL_W / 2, w.y + REEL_H / 2, SYMBOLS[Math.floor(Math.random() * 6)]).setDisplaySize(96, 96).setAlpha(0.5)
       }
