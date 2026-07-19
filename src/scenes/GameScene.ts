@@ -2871,62 +2871,123 @@ export class GameScene extends Phaser.Scene {
     }
 
     sfx.loseWah()
+    const T = getTheme()
     const cx = DESIGN_W / 2
     const cy = 590
-    this.overlayCard(cx, cy, 230)
+    const halfH = 230
+    const w = 520
+    // Everything lives in ONE container (mirroring buildWinCard) so the card can gently scale + fade
+    // in as a unit — a calm settle rather than the old hard appear. Depth 41 sits above the scrim (40).
+    const card = this.add.container(cx, cy).setDepth(41)
+
+    // Card panel (cream + gold bezel) — inlined from overlayCard at container-relative coords so the
+    // backdrop scales together with the contents during the entrance.
+    const g = this.add.graphics()
+    g.fillStyle(T.shadow, 0.25)
+    g.fillRoundedRect(-w / 2 + 4, -halfH + 8, w, halfH * 2, 34)
+    g.fillStyle(T.cardFill, 1)
+    g.fillRoundedRect(-w / 2, -halfH, w, halfH * 2, 34)
+    g.lineStyle(4, T.goldBezel, 1)
+    g.strokeRoundedRect(-w / 2, -halfH, w, halfH * 2, 34)
+    card.add(g)
 
     // §E9 warm lose copy — a kind rotating line instead of the cold "OUT OF MOVES". Seeded by score
     // so it stays stable for this result. Navy (not the warn colour) reads as gentle, not an error.
-    this.add
-      .text(cx, cy - 160, warmLoseLine(this.score), { fontFamily: FONT, fontSize: '42px', fontStyle: '900', color: getTheme().navyText })
-      .setOrigin(0.5)
-      .setDepth(42)
-      .setShadow(0, 3, 'rgba(0,0,0,0.15)', 6, false, true)
+    card.add(
+      this.add
+        .text(0, -160, warmLoseLine(this.score), { fontFamily: FONT, fontSize: '42px', fontStyle: '900', color: T.navyText })
+        .setOrigin(0.5)
+        .setShadow(0, 3, 'rgba(0,0,0,0.15)', 6, false, true)
+    )
 
     // Show WHICH symbols still need collecting (icon + count), not bare numbers — a learning player
     // reads "which ones do I still need?" at a glance. A finished goal dims to a green check.
     const objs = this.objectives
-    this.add
-      .text(cx, cy - 112, 'STILL NEEDED', { fontFamily: FONT, fontSize: '18px', color: getTheme().inkMuted })
-      .setOrigin(0.5)
-      .setLetterSpacing(3)
-      .setDepth(42)
+    card.add(
+      this.add
+        .text(0, -112, 'STILL NEEDED', { fontFamily: FONT, fontSize: '18px', color: T.inkMuted })
+        .setOrigin(0.5)
+        .setLetterSpacing(3)
+    )
+    // "So close" emphasis — the nearest-to-complete goal (smallest count still OWED) gets a soft warm
+    // shimmer below, so a loss reads as "you almost had this". Only the single nearest one is picked;
+    // nearIdx stays -1 if nothing is owed (never on a real loss), which harmlessly skips the highlight.
+    let nearIdx = -1
+    let nearRem = Infinity
+    objs.forEach((o, i) => {
+      if (o.remaining > 0 && o.remaining < nearRem) {
+        nearRem = o.remaining
+        nearIdx = i
+      }
+    })
     const slotW = 94
-    const x0 = cx - ((objs.length - 1) * slotW) / 2
+    const x0 = -((objs.length - 1) * slotW) / 2
+    let nearIcon: Phaser.GameObjects.Image | undefined
+    let nearHalo: Phaser.GameObjects.Image | undefined
     objs.forEach((o, i) => {
       const ox = x0 + i * slotW
       const done = o.remaining <= 0
-      this.add.image(ox, cy - 66, o.symbol).setDisplaySize(48, 48).setDepth(42).setAlpha(done ? 0.4 : 1)
-      this.add
-        .text(ox, cy - 30, done ? '✓' : String(o.remaining), {
-          fontFamily: FONT,
-          fontSize: '26px',
-          fontStyle: '900',
-          color: done ? getTheme().ok : getTheme().ink,
-        })
-        .setOrigin(0.5)
-        .setDepth(42)
+      if (i === nearIdx) {
+        // Soft gold glow radiating from the nearest symbol (ADD, tucked BEHIND the icon). Rests at a
+        // static soft alpha under reduced motion; breathes otherwise (gated with the entrance below).
+        nearHalo = this.add
+          .image(ox, -66, 'bgglow')
+          .setTint(T.gold)
+          .setBlendMode(Phaser.BlendModes.ADD)
+          .setDisplaySize(84, 84)
+          .setAlpha(this.reducedMotion ? 0.5 : 0.26)
+        card.add(nearHalo)
+      }
+      const icon = this.add.image(ox, -66, o.symbol).setDisplaySize(48, 48).setAlpha(done ? 0.4 : 1)
+      card.add(icon)
+      if (i === nearIdx) nearIcon = icon
+      card.add(
+        this.add
+          .text(ox, -30, done ? '✓' : String(o.remaining), {
+            fontFamily: FONT,
+            fontSize: '26px',
+            fontStyle: '900',
+            color: done ? T.ok : T.ink,
+          })
+          .setOrigin(0.5)
+      )
     })
 
-    this.add
-      .text(cx, cy + 10, `SCORE  ${this.score.toLocaleString()}`, {
-        fontFamily: FONT,
-        fontSize: '34px',
-        fontStyle: '900',
-        color: getTheme().ink,
-      })
-      .setOrigin(0.5)
-      .setDepth(42)
+    card.add(
+      this.add
+        .text(0, 10, `SCORE  ${this.score.toLocaleString()}`, {
+          fontFamily: FONT,
+          fontSize: '34px',
+          fontStyle: '900',
+          color: T.ink,
+        })
+        .setOrigin(0.5)
+    )
 
     // A loss spent a life — show what's left + when the next one lands.
-    const livesHud = addLivesHud(this, cx, cy + 56, { size: 28 })
-    livesHud.container.setDepth(42)
+    const livesHud = addLivesHud(this, 0, 56, { size: 28 })
+    card.add(livesHud.container)
     const refresh = (): void => livesHud.update(refreshLives())
     refresh()
     this.time.addEvent({ delay: 1000, loop: true, callback: refresh })
 
-    addPillButton(this, cx, cy + 140, 300, 72, 'RETRY', GOLD_PILL, () => startScene(this,'game', { level: this.level })).setDepth(42)
-    addPillButton(this, cx, cy + 140 + 84, 300, 60, 'LEVELS', GHOST_PILL, () => startScene(this,'levelselect')).setDepth(42)
+    card.add(addPillButton(this, 0, 140, 300, 72, 'RETRY', GOLD_PILL, () => startScene(this,'game', { level: this.level })))
+    card.add(addPillButton(this, 0, 140 + 84, 300, 60, 'LEVELS', GHOST_PILL, () => startScene(this,'levelselect')))
+
+    // Entrance — mirror buildWinCard's calm Back.easeOut settle, from a slightly smaller scale + a
+    // fade, so the card eases in rather than snapping. Reduced motion → instant card (today's feel).
+    if (!this.reducedMotion) {
+      card.setScale(0.9).setAlpha(0)
+      this.tweens.add({ targets: card, scale: 1, alpha: 1, duration: 320, ease: 'Back.easeOut' })
+    }
+    // Shimmer the nearest goal once the card has settled — a gentle icon + halo breath (soft tint/
+    // scale, never a hard flash). Reduced motion keeps the static highlight above, no breathing.
+    if (nearIcon && !this.reducedMotion) {
+      this.tweens.add({ targets: nearIcon, scale: nearIcon.scale * 1.08, duration: 900, yoyo: true, repeat: -1, delay: 320, ease: 'Sine.easeInOut' })
+      if (nearHalo) {
+        this.tweens.add({ targets: nearHalo, alpha: 0.5, duration: 900, yoyo: true, repeat: -1, delay: 320, ease: 'Sine.easeInOut' })
+      }
+    }
   }
 
   /**
