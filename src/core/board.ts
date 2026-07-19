@@ -260,7 +260,12 @@ export class Board {
           for (let c = 0; c < this.cols; c++) {
             const p = this.grid[r][c]
             if (p && p.kind === 'normal' && p.symbol === other.symbol) {
-              this.grid[r][c] = this.newPiece(p.symbol, kind === 'diceBomb' ? 'diceBomb' : this.rng() < 0.5 ? 'wildReelRow' : 'wildReelCol')
+              // Keep the piece's IDENTITY (id) — only change its kind. The view keys its sprites by
+              // piece id, and chainExpand reports these same pieces back in `cleared`. Minting a
+              // fresh-id piece here (newPiece) would orphan the original sprite — it never lands in
+              // `cleared`, so the view never destroys it, and the next refill stacks a new piece on
+              // top of the ghost (the jackpot+reel/bomb "double-stack" bug).
+              this.grid[r][c] = { ...p, kind: kind === 'diceBomb' ? 'diceBomb' : this.rng() < 0.5 ? 'wildReelRow' : 'wildReelCol' }
               seeds.push({ row: r, col: c })
             }
           }
