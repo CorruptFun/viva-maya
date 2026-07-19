@@ -687,4 +687,13 @@ export function createAllTextures(scene: Phaser.Scene): void {
   makeGlyphTexture(scene, 'lock', '🔒', 104, 128)
   makeGlyphTexture(scene, 'heart', '❤️', 44, 64)
   makeGlyphTexture(scene, 'heartbig', '❤️', 330, 384)
+  // Card-suit emblem set — the Home hero shuffles through these (heart · spade · diamond · club).
+  // Baked large like 'heartbig' so they stay crisp on hi-DPI; the platform emoji give classic RED
+  // hearts/diamonds + BLACK spades/clubs for free (the ️ forces colour-emoji presentation).
+  // All four bake into the SAME 384² frame, so the emblem can `setTexture()` between them mid-tween
+  // without any size jump. Suits are decorative only — the board still uses its own symbol art.
+  makeGlyphTexture(scene, 'suitHeart', '♥️', 320, 384)
+  makeGlyphTexture(scene, 'suitSpade', '♠️', 320, 384)
+  makeGlyphTexture(scene, 'suitDiamond', '♦️', 320, 384)
+  makeGlyphTexture(scene, 'suitClub', '♣️', 320, 384)
 }

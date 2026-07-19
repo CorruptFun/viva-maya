@@ -9,6 +9,7 @@ import { greeting, occasionFor, pendingOccasion, secretNote, withName } from '..
 import { loadSave, markOccasionSeen, touchOpen } from '../core/save'
 import { addCasinoBackdrop } from '../view/background'
 import { addJackpotMeter } from '../view/jackpot'
+import { OVERSHOOT, backOut } from '../view/motion'
 import { quality } from '../view/quality'
 import { getTheme, prefersReducedMotion } from '../view/theme'
 import {
@@ -138,41 +139,73 @@ export class HomeScene extends Phaser.Scene {
       this.occasionShower()
     }
 
-    // Big heart emblem with a heartbeat pulse.
+    // Card-suit hero emblem — the full deck shuffles through the emblem slot (heart · spade ·
+    // diamond · club), each one winding down + tipping, swapping glyph, then springing back up past
+    // its resting scale with a bouncy overshoot before it holds for a heartbeat. Red hearts/diamonds
+    // + black spades/clubs come straight from the platform emoji. All four share the same 384² frame,
+    // so `setTexture()` swaps mid-tween with no size jump. Reduced motion (§E8): a single static
+    // heart, no cycle — identical to the old resting emblem.
     const emblemY = 330
-    const heart = this.add.image(DESIGN_W / 2, emblemY, 'heartbig')
-    heart.setDisplaySize(190, 190)
-    const base = heart.scaleX
-    // Emblem heartbeat pulse — gated (§E8): under reduced motion it rests at base scale, no beat.
-    const beatEmblem = (): void => {
-      if (reduced) return
+    const SUITS = ['suitHeart', 'suitSpade', 'suitDiamond', 'suitClub'] as const
+    const emblem = this.add.image(DESIGN_W / 2, emblemY, reduced ? 'heartbig' : SUITS[0])
+    emblem.setDisplaySize(190, 190)
+    const base = emblem.scaleX
+    let suitIdx = 0
+    // Hold the landed suit with one gentle heartbeat, then shuffle on to the next.
+    const holdBeat = (): void => {
       this.tweens.add({
-        targets: heart,
-        scale: base * 1.09,
-        duration: 620,
+        targets: emblem,
+        scale: base * 1.06,
+        duration: 280,
         yoyo: true,
-        repeat: -1,
-        repeatDelay: 340,
         ease: 'Sine.easeInOut',
+        onComplete: () => this.time.delayedCall(200, spinNext),
       })
     }
-    if (powerOn) {
-      // Power-on beat #1: the emblem draws/scales in first, THEN its heartbeat starts.
-      heart.setScale(0)
+    // One turn of the shuffle: wind the current suit down + tip it (Back.easeIn anticipation), swap
+    // to the next suit tipped the other way, then spring it upright + up to rest with a bouncy pop.
+    const spinNext = (): void => {
+      const nextIdx = (suitIdx + 1) % SUITS.length
       this.tweens.add({
-        targets: heart,
+        targets: emblem,
+        scale: base * 0.5,
+        angle: -12,
+        duration: 170,
+        ease: 'Back.easeIn',
+        onComplete: () => {
+          suitIdx = nextIdx
+          emblem.setTexture(SUITS[suitIdx])
+          emblem.setAngle(12)
+          this.tweens.add({
+            targets: emblem,
+            scale: base,
+            angle: 0,
+            duration: 480,
+            ease: backOut(OVERSHOOT.pop),
+            onComplete: holdBeat,
+          })
+        },
+      })
+    }
+    if (reduced) {
+      // Static heart — the emblem already rests at base scale; no shuffle.
+    } else if (powerOn) {
+      // Power-on beat #1: the first suit springs up from nothing, THEN the shuffle begins.
+      emblem.setScale(0)
+      this.tweens.add({
+        targets: emblem,
         scale: base,
-        duration: 380,
+        duration: 440,
         delay: 100,
-        ease: 'Back.easeOut',
-        onComplete: beatEmblem,
+        ease: backOut(OVERSHOOT.pop),
+        onComplete: holdBeat,
       })
     } else {
-      beatEmblem()
+      holdBeat()
     }
     // §E9 secret love note — DISCOVERED, never advertised: a long-press (~620ms) or 4 quick taps
-    // on the emblem opens it. Nothing on the front door hints at it beyond the tappable heart.
-    this.wireSecretNote(heart)
+    // on the emblem opens it. Nothing on the front door hints at it beyond the tappable emblem.
+    this.wireSecretNote(emblem)
     // 3f Home emblem sparkle: sparse drifting hearts near the emblem. Reconciled with the existing
     // satellites (not a second emitter) — governor-capped (fewer on weak tiers) and reduced-motion
     // gated (placed static, no drift).
