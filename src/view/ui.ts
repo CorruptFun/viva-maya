@@ -22,6 +22,7 @@ import {
   themeUnlocked,
 } from './theme'
 import type { Theme, ThemeId } from './theme'
+import { openCloudModal } from './cloudmodal'
 
 export const FONT = '"Arial Black", "Helvetica Neue", Arial, sans-serif'
 
@@ -1610,7 +1611,8 @@ function buildToggleRow(
 
 /**
  * Settings / Accessibility overlay (§E8): a scrim + cream card titled "SETTINGS" with five labelled
- * ON/OFF toggle rows — Reduce Motion, Reduce Flashing, Haptics, High-Contrast Board, Ambient sound.
+ * ON/OFF toggle rows — Reduce Motion, Reduce Flashing, Haptics, High-Contrast Board, Ambient sound —
+ * plus a CLOUD & BACKUP pill below them that opens the DOM cloud sign-in / backup modal (openCloudModal).
  * Each row reads its live pref and persists on tap via the shared authority. Restart-affecting toggles (Reduce
  * Motion + High-Contrast Board change the CURRENT paint) are snapshotted at open; on CLOSE, if either
  * changed, the calling scene restarts so its art repaints — mirroring the theme picker's pattern.
@@ -1624,9 +1626,10 @@ export function openSettingsPanel(scene: Phaser.Scene): void {
 
   const px = 40
   const pw = W - 80
-  // Height sized for FIVE toggle rows above DONE: rows start pyTop+176, step 104 → last row centre
-  // pyTop+592 (bottom pyTop+637); DONE at pyTop+ph-62 (top edge pyTop+ph-96) clears it with ph=800.
-  const ph = 800
+  // Height sized for FIVE toggle rows + the CLOUD & BACKUP pill above DONE: rows start pyTop+176,
+  // step 104 → last row centre pyTop+592 (bottom pyTop+637); the cloud pill sits at pyTop+696 (72 tall,
+  // bottom pyTop+732) and DONE at pyTop+ph-62 (top edge pyTop+ph-96) clears it with ph=860.
+  const ph = 860
   const pyTop = (H - ph) / 2 // stays vertically centred: (1280-800)/2 = 240px margins
 
   // Snapshot the restart-affecting prefs at open (raw in-app reduce-motion + HC board).
@@ -1683,6 +1686,15 @@ export function openSettingsPanel(scene: Phaser.Scene): void {
     buildToggleRow(scene, layer, W / 2, y, rowW, rowH, cfg, reduced)
     y += 104
   }
+
+  // CLOUD & BACKUP — opens the DOM cloud sign-in / device-backup modal (a high-z overlay above the
+  // canvas). Placed between the toggle rows and DONE; the panel height (ph) was grown to make room.
+  layer.add(
+    addPillButton(scene, W / 2, pyTop + 696, 460, 72, 'CLOUD & BACKUP', GOLD_PILL, () => {
+      sfx.whoosh() // §E3 B14: the airy sweep partners the cloud modal opening
+      openCloudModal()
+    })
+  )
 
   layer.add(addPillButton(scene, W / 2, pyTop + ph - 62, 240, 68, 'DONE', GOLD_PILL, close))
 }
