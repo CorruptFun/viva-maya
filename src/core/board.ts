@@ -444,4 +444,24 @@ export class Board {
     const p = this.get(at)
     if (p) this.grid[at.row][at.col] = this.newPiece(p.symbol, kind)
   }
+
+  /**
+   * Detonate a (2·radius+1)² square centred on `center` — the purchased in-level bomb. No match is
+   * required and no special is created; it simply seeds the blast square and floods through
+   * chainExpand, so any Wild Reel / Dice Bomb / Jackpot Chip caught in the blast chains for free,
+   * exactly like a matched Dice Bomb. Mutates the grid (clears the hit cells) and returns the
+   * ClearWave for the view — feed it straight to the scene's resolve loop. Mirrors swapActivation's
+   * shape (transformed is always empty; a leading `bomb` event drives the 3×3 detonation art).
+   */
+  detonate(center: Coord, radius = 1): ClearWave {
+    const seeds: Coord[] = []
+    for (let dr = -radius; dr <= radius; dr++) {
+      for (let dc = -radius; dc <= radius; dc++) {
+        const c = { row: center.row + dr, col: center.col + dc }
+        if (this.inBounds(c)) seeds.push(c)
+      }
+    }
+    const { cleared, events } = this.chainExpand(seeds, new Set())
+    return { cleared, transformed: [], events: [{ type: 'bomb', at: center, radius }, ...events] }
+  }
 }

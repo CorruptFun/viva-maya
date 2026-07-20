@@ -196,6 +196,21 @@ export function addChips(n: number): number {
   return save.chips
 }
 
+/**
+ * Spend chips on an in-level helper (the mid-level power bar). Atomic load→check→deduct→persist
+ * (mirrors store.ts buyBoost) so a spend can never tear apart from the balance. Returns the NEW
+ * balance on success, or null when the player can't afford it — leaving the save untouched.
+ * Unlike buyBoost this does NOT queue a pendingBoost; the caller applies the effect to the live level.
+ */
+export function spendChips(price: number): number | null {
+  const cost = Math.max(0, Math.floor(price))
+  const save = loadSave()
+  if (save.chips < cost) return null
+  save.chips -= cost
+  persistSave(save)
+  return save.chips
+}
+
 /** Charge the jackpot meter by one notch (a level win); persists and returns the new meter value. */
 export function bumpJackpotMeter(): number {
   const save = loadSave()

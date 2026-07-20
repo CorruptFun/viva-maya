@@ -26,7 +26,9 @@ import { LEVEL_COUNT, levelSpec } from '../core/levels'
 import { devSetLives, formatCountdown, refreshLives, spendLife } from '../core/lives'
 import { maya, pendingOccasion, warmLoseLine, warmWinSubtitle } from '../core/maya'
 import { mulberry32 } from '../core/rng'
-import { addChips, bumpJackpotMeter, loadSave, markFinaleSeen, markOccasionSeen, persistSave, recordResult, recordScore, resetJackpotMeter, takePendingBoosts } from '../core/save'
+import { addChips, bumpJackpotMeter, loadSave, markFinaleSeen, markOccasionSeen, persistSave, recordResult, recordScore, resetJackpotMeter, spendChips, takePendingBoosts } from '../core/save'
+import { POWER_ITEMS } from '../core/store'
+import type { PowerItem } from '../core/store'
 import { jackpotReady } from '../core/jackpot'
 import { SYMBOLS, key } from '../core/types'
 import type { BoostType, ClearWave, Coord, FallMove, LevelSpec, Piece, Spawn, SymbolType } from '../core/types'
@@ -225,6 +227,22 @@ export class GameScene extends Phaser.Scene {
   /** Set while the win result card is animating in — a tap fast-forwards it to the settled state. */
   private overlaySettle: (() => void) | null = null
 
+  // --- In-level helpers (the mid-level power bar below the jackpot meter; numbered levels only) ---
+  /** The shop-bar container (caption + item buttons); undefined in endless. Hidden on level end. */
+  private powerBar?: Phaser.GameObjects.Container
+  /** The rebuildable layer of item buttons inside `powerBar` (affordability re-renders swap gold↔ghost). */
+  private powerItemsLayer?: Phaser.GameObjects.Container
+  /** Transient "+N moves" / "Not enough chips" toast over the bar. */
+  private powerToastText?: Phaser.GameObjects.Text
+  /** Moves bought this level — SUBTRACTED from the win's star/bonus/reward math so buys can't farm stars/chips. */
+  private purchasedMoves = 0
+  /** True between tapping BOMB and picking a target: the next board tap detonates instead of selecting. */
+  private bombArmed = false
+  /** The bomb-aim overlay (board-frame highlight + prompt + cancel); torn down on detonate/cancel. */
+  private bombAimLayer?: Phaser.GameObjects.Container
+  /** The looping pulse on the aim board-frame — killed explicitly (Phaser 3.90 won't sweep it on destroy). */
+  private bombAimTween?: Phaser.Tweens.Tween
+
   private autoplay = false
   private autoplayDelay = 450
   private activeBoosts: BoostType[] = []
@@ -333,6 +351,14 @@ export class GameScene extends Phaser.Scene {
     this.impactFlash = undefined
     this.cameras.main.setScroll(0, restScrollY())
     this.activeBoosts = []
+    // In-level helpers — drop any stale refs (scene.restart re-runs create, not field inits) + reset counters.
+    this.powerBar = undefined
+    this.powerItemsLayer = undefined
+    this.powerToastText = undefined
+    this.purchasedMoves = 0
+    this.bombArmed = false
+    this.bombAimLayer = undefined
+    this.bombAimTween = undefined
     this.autoplay = import.meta.env.DEV && new URLSearchParams(location.search).has('auto')
     if (!this.endless) this.applyBoosts(takePendingBoosts())
 
@@ -365,6 +391,7 @@ export class GameScene extends Phaser.Scene {
     this.buildHud()
     this.buildPieceLayer()
     this.buildParticles()
+    if (!this.endless) this.buildPowerBar() // mid-level helper shelf below the jackpot meter (numbered levels only)
 
     // §C6 shared-element transition (destination half): if the tapped element (Home PLAY / a LevelSelect
     // chip) queued a focus, bloom ONE transient light from its on-screen spot into the board frame under
@@ -830,7 +857,7 @@ export class GameScene extends Phaser.Scene {
     this.apSched++
     this.time.delayedCall(this.autoplayDelay, () => {
       this.apFired++
-      if (this.state !== 'idle') return
+      if (this.state !== 'idle' || this.bombArmed) return
       const hint = this.board.findFirstValidMove()
       if (hint) {
         this.apMoved++
@@ -1320,6 +1347,257 @@ export class GameScene extends Phaser.Scene {
       .setOrigin(0.5)
   }
 
+  // ------------------------------------------------------- in-level helpers (power bar)
+
+  /**
+   * The mid-level HELPER shelf, seated in the space below the jackpot meter (numbered levels only —
+   * endless stays a boost-free fairness race). A caption over three chunky item buttons: +1 move,
+   * +5 moves, and a targeted bomb. Same earned-chip economy as the Gift Store, but these apply to the
+   * level being PLAYED (top up so you don't run out, or blast a spot) instead of queuing for the next.
+   * Spend is atomic (save.spendChips); affordability restyles gold↔ghost on every rebuild.
+   */
+  private buildPowerBar(): void {
+    const T = getTheme()
+    this.powerBar = this.add.container(0, 0).setDepth(34)
+    this.powerBar.add(
+      this.add
+        .text(DESIGN_W / 2, 1136, 'HELPERS · SPEND CHIPS TO WIN THIS LEVEL', {
+          fontFamily: FONT,
+          fontSize: '18px',
+          fontStyle: '900',
+          color: T.goldText,
+        })
+        .setOrigin(0.5)
+        .setLetterSpacing(2)
+        .setShadow(0, 2, 'rgba(90,70,20,0.18)', 3, false, true)
+    )
+    this.powerItemsLayer = this.add.container(0, 0)
+    this.powerBar.add(this.powerItemsLayer)
+    this.renderPowerItems()
+  }
+
+  /** (Re)build the item buttons from the live chip balance — affordable pills read gold, the rest ghost. */
+  private renderPowerItems(): void {
+    const layer = this.powerItemsLayer
+    if (!layer) return
+    this.killPowerTweens()
+    layer.removeAll(true)
+    const T = getTheme()
+    const chips = loadSave().chips
+    const n = POWER_ITEMS.length
+    const pillW = 200
+    const pillH = 58
+    const gap = 14
+    const rowW = n * pillW + (n - 1) * gap
+    const cx0 = DESIGN_W / 2 - rowW / 2 + pillW / 2
+    POWER_ITEMS.forEach((item, i) => {
+      const cx = cx0 + i * (pillW + gap)
+      const afford = chips >= item.price
+      const btn = addPillButton(this, cx, 1188, pillW, pillH, item.label, afford ? GOLD_PILL : GHOST_PILL, () =>
+        this.buyPower(item, btn)
+      )
+      layer.add(btn)
+      // Price line beneath the button: chip token + amount, centred under `cx` (gold when affordable).
+      const priceText = this.add
+        .text(0, 1240, item.price.toLocaleString(), {
+          fontFamily: FONT,
+          fontSize: '22px',
+          fontStyle: '900',
+          color: afford ? T.goldText : T.onBackdropMuted,
+        })
+        .setOrigin(0, 0.5)
+      const chipIcon = this.add.image(0, 1240, 'chip').setDisplaySize(26, 26).setAlpha(afford ? 1 : 0.45)
+      const groupW = 26 + 6 + priceText.width
+      chipIcon.setX(cx - groupW / 2 + 13)
+      priceText.setX(chipIcon.x + 13 + 6)
+      layer.add([chipIcon, priceText])
+    })
+  }
+
+  /** Kill any lingering press/looping tweens on the item layer before a rebuild (3.90 won't sweep them). */
+  private killPowerTweens(): void {
+    const layer = this.powerItemsLayer
+    if (!layer) return
+    const walk = (obj: Phaser.GameObjects.GameObject): void => {
+      this.tweens.killTweensOf(obj)
+      if (obj instanceof Phaser.GameObjects.Container) obj.list.forEach(walk)
+    }
+    layer.list.forEach(walk)
+  }
+
+  /** Buy an in-level helper — only while the board rests. Bomb arms an aim mode; moves top up now. */
+  private buyPower(item: PowerItem, btn: Phaser.GameObjects.Container): void {
+    if (this.state !== 'idle' || this.bombArmed) return // spend only when the board is settled
+    if (item.type === 'bomb') {
+      this.armBomb(item, btn)
+      return
+    }
+    const balance = spendChips(item.price)
+    if (balance === null) {
+      this.denyPower(btn)
+      return
+    }
+    const n = item.moves ?? 0
+    this.grantMoves(n)
+    sfx.coinCount()
+    this.flyChipToHud(btn.x, btn.y)
+    this.powerToast(`+${n} ${n === 1 ? 'move' : 'moves'}`, 'good')
+    this.renderPowerItems() // affordability may have changed
+  }
+
+  /** Add bought moves to the live counter, restoring the "plenty" colour + stopping the urgent pulse. */
+  private grantMoves(n: number): void {
+    if (n <= 0) return
+    this.movesLeft += n
+    this.purchasedMoves += n
+    this.movesText.setText(String(this.movesLeft))
+    this.movesText.setColor(this.movesLeft <= 5 ? getTheme().warn : getTheme().ink)
+    if (this.movesLeft > 3) this.stopMovesPulse()
+    if (!this.reducedMotion) {
+      this.tweens.add({
+        targets: this.movesText,
+        scale: 1.2,
+        duration: 150,
+        yoyo: true,
+        ease: 'Quad.easeOut',
+        onComplete: () => this.movesText.setScale(1),
+      })
+    }
+  }
+
+  /** Not-enough-chips feedback: a thud, a red toast, and a shake of the tapped button. */
+  private denyPower(btn: Phaser.GameObjects.Container): void {
+    sfx.invalidThud()
+    this.powerToast('Not enough chips', 'bad')
+    if (this.reducedMotion) return
+    const x0 = btn.x
+    this.tweens.add({ targets: btn, x: x0 - 6, duration: 50, yoyo: true, repeat: 3, onComplete: () => btn.setX(x0) })
+  }
+
+  /** A single chip arcs from the tapped button up into the HUD balance pill, which pops on arrival. */
+  private flyChipToHud(fromX: number, fromY: number): void {
+    if (!this.chipHud || this.reducedMotion) {
+      this.chipHud?.update(loadSave().chips)
+      return
+    }
+    const target = this.chipHud.container
+    const c = this.add.image(fromX, fromY, 'chip').setDisplaySize(40, 40).setDepth(60)
+    this.tweens.add({
+      targets: c,
+      x: target.x,
+      y: target.y,
+      scale: c.scale * 0.5,
+      duration: 420,
+      ease: 'Cubic.easeIn',
+      onComplete: () => {
+        c.destroy()
+        this.chipHud?.update(loadSave().chips)
+      },
+    })
+  }
+
+  /** Brief toast over the power bar (good = ok tone, bad = warn tone). Reduced motion → static, no slide. */
+  private powerToast(msg: string, tone: 'good' | 'bad'): void {
+    this.powerToastText?.destroy()
+    const T = getTheme()
+    const t = this.add
+      .text(DESIGN_W / 2, 1104, msg, { fontFamily: FONT, fontSize: '24px', fontStyle: '900', color: tone === 'bad' ? T.warn : T.ok })
+      .setOrigin(0.5)
+      .setDepth(46)
+    this.powerToastText = t
+    if (this.reducedMotion) {
+      this.time.delayedCall(1000, () => t.destroy())
+      return
+    }
+    t.setAlpha(0).setY(1116)
+    this.tweens.add({ targets: t, alpha: 1, y: 1104, duration: 180, ease: 'Back.easeOut' })
+    this.tweens.add({ targets: t, alpha: 0, delay: 900, duration: 300, onComplete: () => t.destroy() })
+  }
+
+  // -------------------------------------------------------- bomb (targeted 3×3 blast)
+
+  /** Pay for the bomb, then enter aim mode (the next board tap blasts a 3×3 there). */
+  private armBomb(item: PowerItem, btn: Phaser.GameObjects.Container): void {
+    if (this.bombArmed) return
+    const balance = spendChips(item.price)
+    if (balance === null) {
+      this.denyPower(btn)
+      return
+    }
+    this.bombArmed = true
+    this.disarmHint() // no idle nudge while aiming
+    sfx.coinCount()
+    this.flyChipToHud(btn.x, btn.y)
+    this.renderPowerItems() // affordability may have changed
+    this.showBombAim()
+  }
+
+  /** Aim overlay: a pulsing gold frame round the board + a prompt + a Cancel (which refunds). */
+  private showBombAim(): void {
+    const T = getTheme()
+    this.powerBar?.setVisible(false) // swap the shelf for the aim controls while targeting
+    const layer = this.add.container(0, 0).setDepth(44)
+    this.bombAimLayer = layer
+    const frame = this.add.graphics()
+    frame.lineStyle(6, T.gold, 0.95)
+    frame.strokeRoundedRect(BOARD_X - 8, BOARD_Y - 8, BOARD_W + 16, BOARD_W + 16, 18)
+    layer.add(frame)
+    if (!this.reducedMotion) {
+      this.bombAimTween = this.tweens.add({ targets: frame, alpha: 0.35, duration: 600, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' })
+    }
+    layer.add(
+      this.add
+        .text(DESIGN_W / 2, 1150, 'TAP A TILE — 3×3 BLAST', { fontFamily: FONT, fontSize: '26px', fontStyle: '900', color: T.goldText })
+        .setOrigin(0.5)
+        .setLetterSpacing(2)
+        .setShadow(0, 2, 'rgba(90,70,20,0.2)', 3, false, true)
+    )
+    // Cancel sits well BELOW the board (y≈1206 → row 11, out of the 8×8 grid) so tapping it can never
+    // read as a board target in onDown; it refunds the spent chips and returns to the shelf.
+    layer.add(addPillButton(this, DESIGN_W / 2, 1206, 220, 58, 'CANCEL', GHOST_PILL, () => this.cancelBombAim()))
+  }
+
+  /** Tear down the aim overlay (kills its pulse) and restore the shelf. */
+  private hideBombAim(): void {
+    this.bombAimTween?.stop()
+    this.bombAimTween = undefined
+    this.bombAimLayer?.destroy(true)
+    this.bombAimLayer = undefined
+    this.powerBar?.setVisible(true)
+  }
+
+  /** Cancel an armed bomb: refund the chips, restore the shelf, disarm. */
+  private cancelBombAim(): void {
+    if (!this.bombArmed) return
+    this.bombArmed = false
+    const bombPrice = POWER_ITEMS.find(i => i.type === 'bomb')?.price ?? 0
+    const balance = addChips(bombPrice) // full refund — nothing was consumed on the board
+    this.chipHud?.update(balance)
+    this.hideBombAim()
+    this.renderPowerItems()
+  }
+
+  /**
+   * Fire the purchased bomb at `center`: a free 3×3 blast (no move spent) that runs through the normal
+   * detonation → cascade → scoring → objective pipeline via the board's `detonate`. Locks input
+   * immediately (state → resolving) so a second tap can't double-fire, then hands the wave to resolveLoop.
+   */
+  private detonatePurchasedBomb(center: Coord): void {
+    this.bombArmed = false
+    this.hideBombAim()
+    this.clearSelection()
+    this.disarmHint()
+    this.disarmTwinkle()
+    this.state = 'resolving' // lock the board before any await
+    const pos = this.cellToXY(center)
+    this.specialBirth(center)
+    sfx.bombBoom(this.colPan(center.col))
+    this.vibrate(30)
+    this.punch({ trauma: 0.35, flash: { x: pos.x, y: pos.y, size: CELL * 1.5 } })
+    const wave = this.board.detonate(center, 1)
+    void this.resolveLoop(wave)
+  }
+
   private buildPieceLayer(): void {
     const maskShape = this.make.graphics({ x: 0, y: 0 }, false)
     maskShape.fillStyle(0xffffff)
@@ -1551,12 +1829,27 @@ export class GameScene extends Phaser.Scene {
       if (this.twinkleGleam) this.disarmTwinkle()
       this.nextTwinkleAt = time + 10000
     }
+    // Power bar reads active only while the board rests — dim it (visual "can't buy now") during any
+    // resolve/swap so it matches the buy handlers' idle guard. Hidden entirely during aim + on level end.
+    if (this.powerBar && this.powerBar.visible) {
+      const want = this.state === 'idle' ? 1 : 0.5
+      if (this.powerBar.alpha !== want) this.powerBar.setAlpha(want)
+    }
   }
 
   // ----------------------------------------------------------------- input
 
   private onDown(p: Phaser.Input.Pointer): void {
     if (this.introOpen) return // §E14 — ignore board taps while the first-run card is up
+    // Bomb aim mode: the tap PLACES the purchased blast instead of selecting a piece. A tap off the
+    // board (e.g. the Cancel pill below it) resolves to no cell → the bomb stays armed. Armed only from
+    // idle, but guard state anyway so a stray tap can never start a resolve on an unsettled board.
+    if (this.bombArmed) {
+      if (this.state !== 'idle') return
+      const cell = this.xyToCell(p.worldX, p.worldY)
+      if (cell) this.detonatePurchasedBomb(cell)
+      return
+    }
     if (this.state !== 'idle') return
     this.disarmTwinkle() // B4 — the board is being touched; kill any idle gleam instantly
     // Pieces are WORLD objects (rendered at BOARD_X/Y + col/row*CELL). Since the fill-screen change
@@ -2534,11 +2827,16 @@ export class GameScene extends Phaser.Scene {
     this.log('finishWin')
     this.state = 'ended'
     this.stopMovesPulse()
+    this.powerBar?.setVisible(false) // retire the helper shelf — the result card takes the screen
     this.celebrateBoard() // Beat 0: casino light flash + chip/card burst on the still-visible board
     this.vibrate(60)
-    const movesFrac = this.movesLeft / this.spec.moves
+    // Purchased moves buy a WIN, not a better grade: exclude them from the stars/bonus/reward so a
+    // player can't top up moves to farm stars or chips (which would run the closed chip economy away).
+    // A clean in-budget run is unaffected (purchasedMoves is 0); only bought-move surplus is discounted.
+    const earnedLeftover = Math.max(0, this.movesLeft - this.purchasedMoves)
+    const movesFrac = earnedLeftover / this.spec.moves
     const stars = movesFrac >= 0.5 ? 3 : movesFrac >= 0.25 ? 2 : 1
-    const bonus = this.movesLeft * MOVES_BONUS
+    const bonus = earnedLeftover * MOVES_BONUS
     if (bonus > 0) this.addScore(bonus)
     // §E9 new-best: capture the stored best BEFORE recordResult bumps it, then compare the final score.
     const prevBest = loadSave().best
@@ -2546,7 +2844,7 @@ export class GameScene extends Phaser.Scene {
     this.newBestThisWin = this.score > prevBest
     // Reward payout — rewards a clean, fast clear and is BANKED to the persistent chip balance.
     // Once per win (finishWin runs exactly once per completed level); endless/losses pay nothing.
-    const chipReward = stars * 8 + this.movesLeft * 2
+    const chipReward = stars * 8 + earnedLeftover * 2
     this.chipBanked = addChips(chipReward)
     // Charge the jackpot meter one notch. When it fills, arm the wheel — the win-card Continue then
     // fires it (see continueAfterWin). Persisted immediately, so quitting can't lose progress.
@@ -3003,6 +3301,7 @@ export class GameScene extends Phaser.Scene {
     this.log('finishLose')
     this.state = 'ended'
     this.stopMovesPulse()
+    this.powerBar?.setVisible(false) // retire the helper shelf — the result card takes the screen
     spendLife() // a loss costs a life (numbered levels only ever reach finishLose)
     recordScore(this.score)
     this.time.delayedCall(400, () => this.showOverlay(false, 0, 0))

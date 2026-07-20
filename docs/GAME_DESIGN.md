@@ -7,11 +7,14 @@ This file is the canonical mechanics reference — keep it updated when rules ch
 ## Pillars
 - The match-3 board IS the game. Everything else is a doorway back into it.
 - Additions must create reasons to RETURN, never chores to clear. A light lives/energy pool
-  (lose-only, self-refilling — see Lives) paces sessions and pulls players back. Still NO
-  purchasable currencies, NO meta-building, NO pay-to-win. Lives regenerate and boosters are
-  earned (daily spin) — nothing is bought.
+  (lose-only, self-refilling — see Lives) paces sessions and pulls players back. NO REAL-MONEY
+  purchases, NO cash-out, NO meta-building. The one spendable currency is CHIPS — earned only by
+  winning, with no monetary value — spent on consumable boosts in the Gift Store (next level) and
+  the in-level helper bar (this level; see "In-level helpers"). Lives still regenerate for free.
   (Direction change 2026-07-17: the earlier "no energy systems" rule was reversed at Austin's
   request — energy that forces a short break is now a wanted return hook.)
+  (Direction change 2026-07-20: mid-level chip spending — the in-level helper bar — added at
+  Austin's request. "No pay-to-win" now means "no PAY-WITH-CASH"; earned chips may buy help.)
 - Warm "modern slot screen" look: off-white #f6f3ec, gold #f2b234/#c9930a, rose #d3304f,
   navy #26304d, system-emoji symbols. Heart motif = Maya tribute (name carries it; no
   explicit dedication text in product copy).
@@ -108,6 +111,23 @@ clears a RANDOM present color. Swap-combos (both consumed, epicenter = drag dest
 - Home button: gold+pulse when ready ("DAILY BONUS"), ghost "SPUN · DAY N" after.
   NOTE: no emoji in pill labels — letterSpacing splits surrogate pairs (renders tofu).
 
+## In-level helpers / power bar (src/core/store.ts POWER_ITEMS + GameScene.buildPowerBar)
+- A shelf below the jackpot meter (numbered levels only — endless stays a boost-free fairness race)
+  where earned CHIPS buy help for the level being PLAYED. Distinct from the Gift Store, which queues
+  boosts for the NEXT level; these apply NOW. Catalogue is pure (POWER_ITEMS, cheapest→priciest):
+  +1 MOVE (8), +5 MOVES (30, better value — "don't run out"), BOMB (35). Spend is atomic
+  (save.spendChips: load→check→deduct→persist, returns the new balance or null; the save is untouched
+  when broke). Affordable pills read GOLD, the rest GHOST; buying rebuilds the shelf for the new balance.
+- Moves top-ups add straight to movesLeft (restoring the "plenty" colour + stopping the ≤3 urgent
+  pulse) and a chip flies into the HUD balance. BOMB arms an AIM mode: a pulsing gold frame round the
+  board + "TAP A TILE — 3×3 BLAST" + a CANCEL that refunds. The next board tap fires board.detonate(cell,1)
+  — a free 3×3 blast (NO move spent) run through the normal detonation→cascade→scoring→objective
+  pipeline (chains any special caught in it, exactly like a matched Dice Bomb), so it clears goal symbols.
+- Anti-farm: purchasedMoves is tracked and SUBTRACTED from the win's star/moves-bonus/chip-reward math
+  (earnedLeftover = max(0, movesLeft − purchasedMoves)), so buying moves can win a level but never inflate
+  stars or farm chips (which would run the closed economy away). A clean in-budget run is unaffected.
+- Buys are idle-only (the bar dims mid-resolve, hides on level end); reduced-motion / haptics / mute aware.
+
 ## Save (src/core/save.ts — localStorage key 'viva-maya:v1', all access try/catch)
 v6: { v:6, best, unlocked, stars{level:1..3}, lastSpinDate|null, streak, pendingBoosts[],
       endlessWeek|null, endlessBest, lives, livesAnchor }
@@ -166,7 +186,8 @@ builds and deploys automatically. Legacy fallback: publish dist/ to gh-pages bra
 ## Roadmap (agreed direction)
 DONE: streak flame on Home (addStreakBadge) · endless weekly-seed race after L30 (shared board,
 BEST race — src/core/endless.ts) · star-milestone celebration every 10 levels (milestoneSplash) ·
-lives/energy (lose-only, 10-pool, 8-min regen — src/core/lives.ts).
+lives/energy (lose-only, 10-pool, 8-min regen — src/core/lives.ts) · in-level helper bar (spend
+earned chips on +1/+5 moves or a targeted bomb for the current level — src/core/store.ts POWER_ITEMS).
 TODO: tune levelSpec from Maya's real play · optionally let the daily spin grant a bonus life.
-Still rejected: purchasable currencies, home-decorating meta, pay-to-win. (Lives/energy was
-previously rejected but reintroduced 2026-07-17 at Austin's request as a self-refilling return hook.)
+Still rejected: real-money purchases, cash-out, home-decorating meta. (Both lives/energy and mid-level
+chip spending were previously rejected but reintroduced at Austin's request — 2026-07-17 and 2026-07-20.)
