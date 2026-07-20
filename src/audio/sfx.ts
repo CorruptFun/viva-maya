@@ -673,6 +673,40 @@ class Sfx {
   }
 
   /**
+   * Power-on identity swell (§E10 / Signature #1 / BT1) — the one-shot chord that lights the boot
+   * wordmark reveal on Home. A short, warm RISING major chord (root → major-third → fifth → octave)
+   * arpeggiated up a hair so it "powers on" from the bottom then rings together as one bloom. Voiced
+   * in the theme's `waveBias` timbre and KEY-LOCKED to the active theme (each degree snapped to the
+   * theme's pentatonic, anchored 2 octaves above `bedRoot` — a warm, full mid range), so the open is
+   * tinted to the active room and sits in the shared reverb lounge via the dry bus. The tonal sibling
+   * of the sweep's airy `whoosh`. Fired ONLY on the true boot reveal (HomeScene) and NOWHERE else —
+   * that scarcity keeps it special. Deliberately distinct from `mayaMotif` (a higher, single-line
+   * rising motif): this is a lower, fuller stacked chord. ~700ms total. Mute-gated like every voice.
+   */
+  powerOn(): void {
+    this.voice((ctx, t, out) => {
+      const pal = getTheme().audio
+      // Anchor 2 octaves above the theme root, then snap each rising chord degree into the theme's key
+      // (§A10) — root/third/fifth/octave already land on the pentatonic, so the chord stays consonant.
+      const base = pal.bedRoot * 4
+      const notes = [
+        this.snap(base), // root
+        this.snap(base * Math.pow(2, 4 / 12)), // major third
+        this.snap(base * Math.pow(2, 7 / 12)), // perfect fifth
+        this.snap(base * 2), // octave — the resolving lift
+      ]
+      const step = 0.09 // a quick upward bloom (~0.27s to stack), then the chord rings out together
+      notes.forEach((f, i) => {
+        const delay = i * step
+        // Soft attack + overlapping tails → a swelling chord (a power-on), not a plucked arpeggio. The
+        // body takes the theme timbre; a quiet sine octave shimmers cleanly on top (as in mayaMotif).
+        this.tone(ctx, out, t, { type: pal.waveBias, freq: f, peak: 0.2, dur: 0.62 - i * 0.06, attack: 0.04, delay })
+        this.tone(ctx, out, t, { type: 'sine', freq: f * 2, peak: 0.06, dur: 0.32, attack: 0.04, delay })
+      })
+    })
+  }
+
+  /**
    * Coin roll-up tally — ~8 ascending metallic pings (a brighter, pitched-up cousin of
    * reelSweep's tick train) closed by a 2-note "cha-ching" (the top two winFanfare notes).
    * Scores the payout counter as it rolls 0→reward.
@@ -861,6 +895,68 @@ class Sfx {
       src.connect(bp).connect(g).connect(out)
       src.start(t)
       src.stop(t + 0.06)
+    })
+  }
+
+  // -------------------------------------------- C5 sound↔visual pairing (§E3 B14)
+  // Three tiny partner voices closing the last silent beats: a lives-regen fill, the theme APPLY, and a
+  // collect objective nearing zero. Same contract as the partners above — routed through voice() (→ dry
+  // bus + shared reverb room), key-locked via snap(), mute-gated, and kept QUIETER than the lead SFX.
+
+  /**
+   * Soft "life restored" chime (§C5 / partners H2's heart-pip pop). A warm two-note RISING pair — a
+   * gentle "you got a life back" lift, not a fanfare — key-locked to the theme (§A10). Fired ONCE per
+   * regen crossing by the caller (never per pip), so multiple hearts filling at once still ring a single
+   * tasteful chime. Plays even under reduced motion (a sound is no motion hazard); mute-gated like every voice.
+   */
+  lifeRestored(): void {
+    this.voice((ctx, t, out) => {
+      const notes = [this.snap(587.33), this.snap(880)] // ~D5 → ~A5, a warm rising step (a lift, not a ding)
+      notes.forEach((f, i) => {
+        const delay = i * 0.1
+        // Rounded triangle body + a faint sine octave shimmer — softer/warmer than the glassy star dings.
+        this.tone(ctx, out, t, { type: 'triangle', freq: f, peak: 0.15, dur: 0.32, attack: 0.02, delay })
+        this.tone(ctx, out, t, { type: 'sine', freq: f * 2, peak: 0.05, dur: 0.18, attack: 0.02, delay })
+      })
+    })
+  }
+
+  /**
+   * Theme-swap confirmation chord (§C5) — the theme picker only repaints via a silent `scene.restart()`,
+   * so this bloom voices the swap in the NEWLY-applied palette (the caller applies the theme first, so
+   * `getTheme().audio` here is the new room): timbre from `pal.waveBias`, anchored 2 octaves above the new
+   * `bedRoot` and each degree snapped to the theme's key (§A10). A near-simultaneous settling triad — only
+   * a whisper of spread so it blooms rather than clicks — deliberately shorter and un-arpeggiated versus
+   * `powerOn`'s rising boot chord. ~0.5s. Mute-gated like every voice.
+   */
+  themeSwap(): void {
+    this.voice((ctx, t, out) => {
+      const pal = getTheme().audio
+      const base = pal.bedRoot * 4
+      const notes = [
+        this.snap(base), // root
+        this.snap(base * Math.pow(2, 4 / 12)), // major third
+        this.snap(base * Math.pow(2, 7 / 12)), // perfect fifth
+      ]
+      notes.forEach((f, i) => {
+        const delay = i * 0.03 // a whisper of spread → the chord blooms, not an arpeggio
+        this.tone(ctx, out, t, { type: pal.waveBias, freq: f, peak: 0.16, dur: 0.5 - i * 0.05, attack: 0.03, delay })
+        this.tone(ctx, out, t, { type: 'sine', freq: f * 2, peak: 0.05, dur: 0.24, attack: 0.03, delay }) // clean octave on top
+      })
+    })
+  }
+
+  /**
+   * Rising "almost there" tone (§C5) — a subtle nudge as a collect objective crosses into its final
+   * piece. One soft note GLIDES up a fourth into a key-locked landing note (§A10) with a faint octave
+   * sparkle on arrival. The caller latches it to fire at most once per objective, so it stays rare +
+   * meaningful; quieter than the lead cascade pops — a partner nudge, never a lead. Mute-gated.
+   */
+  objectiveNear(): void {
+    this.voice((ctx, t, out) => {
+      const target = this.snap(1174.66) // ~D6 landing note, snapped into the theme's key
+      this.tone(ctx, out, t, { type: 'triangle', freq: target * 0.75, endFreq: target, peak: 0.16, dur: 0.26, attack: 0.02 })
+      this.tone(ctx, out, t, { type: 'sine', freq: target * 2, peak: 0.06, dur: 0.18, attack: 0.03, delay: 0.08 })
     })
   }
 

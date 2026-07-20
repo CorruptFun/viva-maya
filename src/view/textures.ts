@@ -1,5 +1,6 @@
 import Phaser from 'phaser'
-import type { Piece, SymbolType } from '../core/types'
+import { SYMBOLS } from '../core/types'
+import type { Piece, PieceKind, SymbolType } from '../core/types'
 
 /**
  * Symbol art = system emoji rendered into textures at boot — crisp, high-quality
@@ -687,4 +688,45 @@ export function createAllTextures(scene: Phaser.Scene): void {
   makeGlyphTexture(scene, 'lock', '🔒', 104, 128)
   makeGlyphTexture(scene, 'heart', '❤️', 44, 64)
   makeGlyphTexture(scene, 'heartbig', '❤️', 330, 384)
+  // Card-suit emblem set — the Home hero shuffles through these (heart · spade · diamond · club).
+  // Baked large like 'heartbig' so they stay crisp on hi-DPI; the platform emoji give classic RED
+  // hearts/diamonds + BLACK spades/clubs for free (the ️ forces colour-emoji presentation).
+  // All four bake into the SAME 384² frame, so the emblem can `setTexture()` between them mid-tween
+  // without any size jump. Suits are decorative only — the board still uses its own symbol art.
+  makeGlyphTexture(scene, 'suitHeart', '♥️', 320, 384)
+  makeGlyphTexture(scene, 'suitSpade', '♠️', 320, 384)
+  makeGlyphTexture(scene, 'suitDiamond', '♦️', 320, 384)
+  makeGlyphTexture(scene, 'suitClub', '♣️', 320, 384)
+}
+
+/**
+ * Pre-bake the piece signatures the first in-game cascade would otherwise bake LAZILY, so a cold
+ * PWA's opening deal-in never hitches (BT2). Only the special overlays are lazy — normal-symbol and
+ * jackpot art is already baked by `createAllTextures` (`ensurePieceTexture` self-skips those keys) —
+ * so we front-load every symbol × special the board can spawn (6 × 3 = 18 signatures) through the
+ * very `ensurePieceTexture` the cascade uses, then pre-touch the board tile + core deal-in/burst
+ * particles in case warm-up ever runs before `createAllTextures`. Everything is generate-once
+ * guarded (`ensurePieceTexture` skips existing keys; each particle pre-touch skips a key already
+ * present), so this costs only a few ms once at boot with zero runtime cost. Mirrors
+ * `ui.warmButtonTextures`; adds no visible boot change (BootScene stays hard/instant by design).
+ */
+export function warmPieceTextures(scene: Phaser.Scene): void {
+  // Special overlays are the ONLY piece art baked on first use: a symbol-tinted bomb/reel drawn over
+  // the belly. Warm all match-4 wild-reels (row + col) and L/T dice-bombs across every symbol — the
+  // full set a first cascade can detonate. `id: -1` marks a synthetic piece (the key ignores id).
+  const specials: PieceKind[] = ['wildReelRow', 'wildReelCol', 'diceBomb']
+  for (const symbol of SYMBOLS) {
+    for (const kind of specials) {
+      ensurePieceTexture(scene, { id: -1, symbol, kind })
+    }
+  }
+  // Pre-touch the glossy board tile + the primary deal-in/burst particles so warm-up is self-
+  // sufficient. In the real boot flow `createAllTextures` already baked these, so the exists() guard
+  // makes each a no-op — we never re-generate (and warn on) a live texture key.
+  if (!scene.textures.exists('tile')) makeTile(scene)
+  if (!scene.textures.exists('spark')) makeSpark(scene)
+  if (!scene.textures.exists('ring')) makeRing(scene)
+  if (!scene.textures.exists('confetti')) makeConfetti(scene)
+  if (!scene.textures.exists('fireball')) makeFireball(scene)
+  if (!scene.textures.exists('shockwave')) makeShockwave(scene)
 }

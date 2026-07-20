@@ -103,9 +103,16 @@ export function backOut(overshoot: number = 1.70158): (v: number) => number {
 // Composable helpers (all reduced-motion-aware)
 // ---------------------------------------------------------------------------
 
-/** Anything with a transform + alpha — every drawable GameObject satisfies this. */
-type MotionTarget = Phaser.GameObjects.Components.Transform &
-  Phaser.GameObjects.Components.Alpha
+/**
+ * Anything the helpers move: the full transform surface + a single-value alpha. Sprites, Images,
+ * Text AND Containers all satisfy this. We can't use `Components.Alpha` directly because a Container's
+ * one-arg `setAlpha(value)` is narrower than the component's 4-corner signature — so we require only
+ * the alpha surface the helpers actually touch, which every entrance target (containers included) has.
+ */
+type MotionTarget = Phaser.GameObjects.Components.Transform & {
+  alpha: number
+  setAlpha(value?: number): unknown
+}
 
 export interface PopInOpts {
   /** starting scale factor relative to the resting scale (default 0.6). */

@@ -93,6 +93,9 @@ const ENTRANCE_OFFSET = 24
 /** Pending entrance direction for the NEXT scene's create(), set by startScene, read by applyEntrance. */
 let nextEntrance: SceneDir = 'deeper'
 
+/** Pending shared-element focus (§C6) for the NEXT scene's create(), set by startScene, read by consumeFocus. */
+let nextFocus: SceneFocus | undefined
+
 /** Count of in-app scene navigations this page-load — lets Home tell a true BootScene→Home open apart. */
 let sceneNavigations = 0
 
@@ -110,12 +113,22 @@ export function hasNavigated(): boolean {
  * §E10: the optional `dir` sets the destination's directional entrance. Explicit dir wins; otherwise
  * returning to Home reads as 'back' (settles down) and going anywhere else reads as 'deeper' (rises
  * in). Back-compatible — the existing 3-arg call sites keep working with `dir` left undefined.
+ *
+ * §C6: the optional `focus` descriptor (the tapped element's centre + size + tint) is queued for the
+ * destination's OPT-IN shared-element bloom, so the thing the player tapped "opens into" the board.
+ * Only the two opt-in call sites (Home PLAY, a LevelSelect chip) pass it; every other call queues
+ * nothing → the destination finds no focus and keeps today's EXACT flat cross-fade. Never queued under
+ * reduced motion (gated below), so the calm path is byte-for-byte unchanged. Strictly additive.
  */
-export function startScene(from: Phaser.Scene, key: string, data?: object, dir?: SceneDir): void {
+export function startScene(from: Phaser.Scene, key: string, data?: object, dir?: SceneDir, focus?: SceneFocus): void {
   if (!from.input.enabled) return // already transitioning
   from.input.enabled = false
   sfx.whoosh() // §E3 B14: a short airy sweep partners the cream cross-fade
   nextEntrance = dir ?? (key === 'home' ? 'back' : 'deeper')
+  // §C6 — queue the opt-in shared-element focus for the destination. Overwrite on EVERY nav (undefined
+  // at the non-opt-in call sites) so a stale focus can never leak into a later navigation, and NEVER
+  // queue one under reduced motion → that path stays exactly today's flat cross-fade (fallback rule #1).
+  nextFocus = prefersReducedMotion() ? undefined : focus
   sceneNavigations += 1
   const dur = prefersReducedMotion() ? 90 : 180
   const cam = from.cameras.main
@@ -128,6 +141,39 @@ export function consumeEntrance(): SceneDir {
   const dir = nextEntrance
   nextEntrance = 'deeper'
   return dir
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Shared-element focus (§C6). An OPT-IN companion to the cream cross-fade: the element the player
+// tapped (Home PLAY, a LevelSelect chip) hands a small descriptor to the NEXT scene, and the
+// destination blooms ONE transient light from that on-screen spot INTO its board frame as the cameras
+// cross-fade — the "the thing I tapped opened into the board" continuity. Mirrors the directional
+// grammar's handoff EXACTLY: queued by `startScene` into `nextFocus`, read once by the destination via
+// `consumeFocus()`. STRICTLY ADDITIVE — the destination owns the resolution (it knows its board
+// geometry); a scene that never consumes a focus, or a nav that queued none, keeps today's flat fade.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Opt-in shared-element descriptor (§C6): where the tapped element sat + how big, for the destination bloom. */
+export interface SceneFocus {
+  /** Source element centre, world/design space. Both scenes share `restScrollY`, so world maps 1:1 across the cut. */
+  x: number
+  y: number
+  /** Source element size — the bloom starts here and grows into the board frame. */
+  w: number
+  h: number
+  /** Additive-bloom tint (the destination defaults to theme gold when omitted). */
+  tint?: number
+}
+
+/**
+ * Read + clear the pending shared-element focus (§C6). Returns undefined when the triggering nav queued
+ * none — every call site except Home PLAY / a LevelSelect chip — so the destination silently keeps
+ * today's flat cross-fade. Always clears, so a queued focus resolves at most once.
+ */
+export function consumeFocus(): SceneFocus | undefined {
+  const f = nextFocus
+  nextFocus = undefined
+  return f
 }
 
 /**
@@ -184,7 +230,36 @@ export function addLivesHud(
       .setOrigin(0.5)
     container.add(timer)
   }
+  // ── H2 · lives-regen "heart fills" micro-beat ──────────────────────────────────────────────────
+  // Remember the last displayed filled-count so an INCREASE (a life quietly regenerated while the
+  // player was away) can pop + warm-flash the exact pip(s) that just filled — turning invisible regen
+  // into a felt "you got a life back." Reduced motion keeps today's instant fill (gated in update).
+  // Visual only; the paired soft "life restored" chime lands in C5.
+  let prevFilled = -1
+  const white = Phaser.Display.Color.ValueToColor(0xffffff)
+  const flash = Phaser.Display.Color.ValueToColor(getTheme().rose)
+  const popPip = (heart: Phaser.GameObjects.Image): void => {
+    const base = heart.scaleX
+    const POP = 0.34
+    scene.tweens.add({
+      targets: heart,
+      scaleX: base * (1 + POP),
+      scaleY: base * (1 + POP),
+      duration: 170,
+      yoyo: true,
+      ease: 'Quad.easeOut',
+      onUpdate: () => {
+        // Warm rose glint strongest at the peak of the pop, easing back to normal as the pip settles —
+        // derived from the live scale so the colour tracks the yoyo with no extra tween bookkeeping.
+        const amt = Phaser.Math.Clamp((heart.scaleX / base - 1) / POP, 0, 1)
+        const c = Phaser.Display.Color.Interpolate.ColorWithColor(white, flash, 100, Math.round(amt * 100))
+        heart.setTint(Phaser.Display.Color.GetColor(c.r, c.g, c.b))
+      },
+      onComplete: () => heart.clearTint(),
+    })
+  }
   const update = (state: LivesState): void => {
+    const filledCount = Phaser.Math.Clamp(state.lives, 0, LIVES_MAX)
     hearts.forEach((heart, i) => {
       const filled = i < state.lives
       heart.setAlpha(filled ? 1 : 0.24)
@@ -192,6 +267,16 @@ export function addLivesHud(
       else heart.setTint(0x7a7266)
     })
     if (timer) timer.setText(state.full ? '' : `next life  ${formatCountdown(state.nextInMs)}`)
+    // Celebrate only a genuine increase in filled hearts — never the first paint (prevFilled seeded to -1).
+    // C5 · a soft "life restored" chime partners the crossing — ONE gentle chime per regen (not per pip);
+    // it plays even under reduced motion (a sound is no motion hazard, always mute-gated in sfx), while the
+    // visual pop below stays reduced-motion-gated, instant exactly as before.
+    const regen = prevFilled >= 0 && filledCount > prevFilled
+    if (regen) sfx.lifeRestored()
+    if (regen && !prefersReducedMotion()) {
+      for (let i = prevFilled; i < filledCount; i++) popPip(hearts[i])
+    }
+    prevFilled = filledCount
   }
   return { container, update }
 }
@@ -1364,6 +1449,13 @@ export function openThemePanel(scene: Phaser.Scene, openingThemeId: ThemeId = ge
   const close = (): void => {
     sfx.whoosh() // §E3 B14: airy sweep partners the panel closing
     const changed = getThemeId() !== openingThemeId
+    if (changed) {
+      // C5 · theme APPLY was silent — the picker only repaints via the scene.restart() below. setTheme()
+      // already applied on the row tap, so retune the shared reverb (+ rebuild the opt-in bed) into the NEW
+      // room, then bloom a brief confirmation chord voiced in the new palette — a sonic partner for the swap.
+      sfx.refreshTheme()
+      sfx.themeSwap()
+    }
     layer.destroy()
     if (changed) scene.scene.restart()
   }
@@ -1517,9 +1609,9 @@ function buildToggleRow(
 }
 
 /**
- * Settings / Accessibility overlay (§E8): a scrim + cream card titled "SETTINGS" with four labelled
- * ON/OFF toggle rows — Reduce Motion, Reduce Flashing, Haptics, High-Contrast Board. Each row reads
- * its live pref and persists on tap via the shared authority. Restart-affecting toggles (Reduce
+ * Settings / Accessibility overlay (§E8): a scrim + cream card titled "SETTINGS" with five labelled
+ * ON/OFF toggle rows — Reduce Motion, Reduce Flashing, Haptics, High-Contrast Board, Ambient sound.
+ * Each row reads its live pref and persists on tap via the shared authority. Restart-affecting toggles (Reduce
  * Motion + High-Contrast Board change the CURRENT paint) are snapshotted at open; on CLOSE, if either
  * changed, the calling scene restarts so its art repaints — mirroring the theme picker's pattern.
  * Reduce Flashing / Haptics are read live at effect time, so they need no restart.
@@ -1532,8 +1624,10 @@ export function openSettingsPanel(scene: Phaser.Scene): void {
 
   const px = 40
   const pw = W - 80
-  const ph = 700
-  const pyTop = (H - ph) / 2
+  // Height sized for FIVE toggle rows above DONE: rows start pyTop+176, step 104 → last row centre
+  // pyTop+592 (bottom pyTop+637); DONE at pyTop+ph-62 (top edge pyTop+ph-96) clears it with ph=800.
+  const ph = 800
+  const pyTop = (H - ph) / 2 // stays vertically centred: (1280-800)/2 = 240px margins
 
   // Snapshot the restart-affecting prefs at open (raw in-app reduce-motion + HC board).
   const startedRM = rawReduceMotionPref()
@@ -1578,6 +1672,9 @@ export function openSettingsPanel(scene: Phaser.Scene): void {
     { label: 'Reduce Flashing', sub: 'Soften flashes & impacts', get: reduceFlashing, set: setReduceFlashing },
     { label: 'Haptics', sub: 'Vibrate on big moments', get: () => !hapticsOff(), set: v => setHapticsOff(!v) },
     { label: 'High-Contrast Board', sub: 'Bolder tiles & outlines', get: hcBoard, set: setHcBoard },
+    // §E3-A2 — unlock the built-but-unreached ambient bed. Default OFF (sfx.ambience); toggling it
+    // starts/stops the warm per-theme lounge pad and persists exactly like mute.
+    { label: 'Ambient sound', sub: 'Warm lounge music', get: () => sfx.ambience, set: () => sfx.toggleAmbience() },
   ]
   const rowW = pw - 80
   const rowH = 90

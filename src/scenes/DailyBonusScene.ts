@@ -18,6 +18,29 @@ const REEL_H = 210
 const STRIP_LEN = 14
 
 /**
+ * §D1 — absolute epoch-ms of the next daily rollover: LOCAL midnight, the exact boundary that
+ * todayKey()/spinAvailable flip on (both read local Y-M-D). new Date(y, m, d + 1) normalises any
+ * month/year wrap for us. Captured ONCE per scene entry so the countdown targets a FIXED instant
+ * (the same fixed-target model the lives HUD counts down to), not a "tomorrow" that recedes each tick.
+ */
+function nextRolloverMs(now = new Date()): number {
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 0, 0).getTime()
+}
+
+/**
+ * "H:MM:SS" remaining — core/lives' formatCountdown style (ceil to whole seconds, zero-padded)
+ * widened to hours, since a wait for the next rollover can span most of a day and that helper only
+ * renders M:SS. Clamped at 0 so it rests cleanly on "0:00:00".
+ */
+function formatDailyCountdown(ms: number): string {
+  const total = Math.max(0, Math.ceil(ms / 1000))
+  const h = Math.floor(total / 3600)
+  const m = Math.floor((total % 3600) / 60)
+  const s = total % 60
+  return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+}
+
+/**
  * The daily bonus: a 3-reel slot machine that ALWAYS lands the prize
  * (three-of-a-kind). Prize + streak are computed and persisted BEFORE the
  * animation runs, so the celebration is pure presentation.
@@ -83,6 +106,46 @@ export class DailyBonusScene extends Phaser.Scene {
         color: T.onBackdropMuted,
       })
       .setOrigin(0.5)
+
+    // §D3 — a small 7-dot "week" streak strip under the streak line. Earned days light gold, upcoming
+    // days ghost, and the 5th dot is crowned with a star as the DOUBLE-PRIZE milestone (daily.ts pays a
+    // SECOND prize every 5th streak day), so the streak's payoff structure is visible and worth coming
+    // back for. Built here — before the branch below — so it rides EVERY state (the available reels, D1's
+    // already-spun countdown, the post-claim screen). It sits high above both the cabinet and D1's
+    // countdown, disturbing neither. Baked `bulb`/`star` + gold tokens only, no new assets.
+    const DOT_STEP = 32
+    const DOT_MID = 4 // 0-based index of the 5th dot — the double-prize day
+    const dotY = 236
+    const dot0X = DESIGN_W / 2 - (DOT_STEP * 6) / 2 // centre the 7-dot row on the design axis
+    // This week's earned days, capped at a 7-day week: streak 1..7 → 1..7 filled; streak 8 wraps to a
+    // fresh week (1 filled), 14 → 7, … — always the CURRENT week's progress, matching the streak line.
+    const weekDots = (streak: number): number => (streak <= 0 ? 0 : ((streak - 1) % 7) + 1)
+    const streakDots: Phaser.GameObjects.Image[] = []
+    for (let i = 0; i < 7; i++) {
+      const s = i === DOT_MID ? 22 : 18 // the milestone dot rides a touch larger under its star
+      streakDots.push(this.add.image(dot0X + i * DOT_STEP, dotY, 'bulb').setDisplaySize(s, s))
+    }
+    // The double-prize badge: a small star crowning the 5th dot, ALWAYS shown so the reward advertises
+    // itself even on day 1 (it just brightens once that day is actually earned).
+    const milestoneStar = this.add.image(streakDots[DOT_MID].x, dotY - 20, 'star').setDisplaySize(18, 18)
+    // Repaint earned(lit-gold)/upcoming(ghosted) from a streak count — reused when today's spin lands.
+    const paintStreak = (streak: number): void => {
+      const earned = weekDots(streak)
+      streakDots.forEach((dot, i) => {
+        const lit = i < earned
+        dot.setTint(lit ? T.gold : T.goldDeep).setAlpha(lit ? 1 : 0.4) // lit matches the cabinet marquee
+      })
+      milestoneStar.setAlpha(earned >= DOT_MID + 1 ? 1 : 0.5) // full once the double-day is banked
+    }
+    paintStreak(save.streak)
+    // One gentle pop on TODAY's dot — the day about to be claimed (spin available) or the one just
+    // claimed (already spun). Gated (§E8): reduced motion leaves the strip fully static, no steady cost.
+    if (!reduced) {
+      const earnedNow = weekDots(save.streak)
+      const today = streakDots[Phaser.Math.Clamp(available ? earnedNow : earnedNow - 1, 0, 6)]
+      const base = today.scaleX
+      this.tweens.add({ targets: today, scale: base * 1.22, duration: 260, delay: 260, yoyo: true, ease: 'Sine.easeInOut' })
+    }
 
     // Machine cabinet.
     const g = this.add.graphics()
@@ -172,9 +235,24 @@ export class DailyBonusScene extends Phaser.Scene {
     }
 
     if (!available) {
-      this.add
-        .text(DESIGN_W / 2, 720, '⏳  come back tomorrow', { fontFamily: FONT, fontSize: '30px', color: T.onBackdropMuted })
+      // §D1 — a LIVE "next spin in H:MM:SS" countdown replaces the old static "come back tomorrow"
+      // dead-end, giving the same return-hook clarity the lives HUD already gives. The target is the
+      // next LOCAL-midnight rollover (fixed at entry), and one 1s timer repaints the remaining span.
+      const rolloverAt = nextRolloverMs() // fixed target — matches todayKey()'s local-day boundary
+      const countdown = this.add
+        .text(DESIGN_W / 2, 720, '', { fontFamily: FONT, fontSize: '30px', color: T.onBackdropMuted })
         .setOrigin(0.5)
+      const tick = (): void => {
+        const remaining = rolloverAt - Date.now()
+        countdown.setText(`next spin in  ${formatDailyCountdown(remaining)}`)
+        // At/after rollover the spin unlocks — re-enter so create() re-evaluates spinAvailable and
+        // shows the reels. The format already rests at "0:00:00", so a missed frame never crashes.
+        if (remaining <= 0) this.scene.restart()
+      }
+      tick() // paint immediately — don't wait a second for the first label
+      // One looping timer, created ONLY in this unavailable branch. Phaser auto-removes scene timers
+      // on shutdown (incl. the restart above); the local ref never outlives the scene, so no leak.
+      this.time.addEvent({ delay: 1000, loop: true, callback: tick })
       for (const w of windows) {
         this.add.image(w.x + REEL_W / 2, w.y + REEL_H / 2, SYMBOLS[Math.floor(Math.random() * 6)]).setDisplaySize(96, 96).setAlpha(0.5)
       }
@@ -186,6 +264,28 @@ export class DailyBonusScene extends Phaser.Scene {
     const idle: Phaser.GameObjects.Image[] = windows.map(w =>
       this.add.image(w.x + REEL_W / 2, w.y + REEL_H / 2, SYMBOLS[Math.floor(Math.random() * 6)]).setDisplaySize(96, 96)
     )
+    // §D2 baselines — every symbol bakes into the same TEX_SIZE² frame and every reel window shares one
+    // y, so all three idle symbols rest at an identical scale + y. Captured here so the idle bob and the
+    // SPIN wind-up (below) can spring the whole group back to one exact resting transform.
+    const idleBase = idle[0].scaleX
+    const idleRestY = windows[0].y + REEL_H / 2
+
+    // §D2 pre-spin tease — a subtle vertical BOB so the idle reels breathe instead of sitting dead,
+    // staggered per reel so the three symbols float out of lockstep. Gated (§E8): reduced motion leaves
+    // them at their resting y. Transform only; retired by killTweensOf the instant SPIN winds up (below).
+    if (!reduced) {
+      idle.forEach((img, i) =>
+        this.tweens.add({
+          targets: img,
+          y: idleRestY - 7,
+          duration: 1100,
+          yoyo: true,
+          repeat: -1,
+          ease: 'Sine.easeInOut',
+          delay: i * 160,
+        })
+      )
+    }
 
     const doSpin = () => {
       if (this.spinning) return
@@ -194,10 +294,31 @@ export class DailyBonusScene extends Phaser.Scene {
       // Award first, animate second — closing mid-spin can't lose the prize.
       const result = performSpin(loadSave(), mulberry32((Math.random() * 2 ** 31) | 0))
       streakText.setText(`🔥 day ${result.streak}`)
-      idle.forEach(img => img.destroy())
-      this.runReels(windows, result.prizes.map(p => p.type), () =>
-        this.celebrate(result.prizes.map(p => p.label), result.prizes.map(p => p.blurb), result.streak)
-      )
+      paintStreak(result.streak) // §D3 — advance the week strip in step with the streak line
+      // Hand the FIXED result to the reels once the pre-spin wind-up (if any) has cleared the idle symbols.
+      const launch = (): void => {
+        idle.forEach(img => img.destroy())
+        this.runReels(windows, result.prizes.map(p => p.type), () =>
+          this.celebrate(result.prizes.map(p => p.label), result.prizes.map(p => p.blurb), result.streak)
+        )
+      }
+      // §D2 wind-up (E6 charge language): the idle symbols CROUCH — dip down + squash (anticipation,
+      // Quad.easeIn) — then SPRING back through rest (release, backOut), and the reels LAUNCH on that
+      // release, so the beat reads charge→release before the spin. Reduced motion (§E8) → straight to
+      // launch: the existing instant path is untouched. Transforms only; the result is unaffected either way.
+      if (reduced) {
+        launch()
+        return
+      }
+      this.tweens.killTweensOf(idle) // retire the idle bob so it doesn't fight the wind-up
+      this.tweens.chain({
+        targets: idle,
+        tweens: [
+          { scaleX: idleBase * 1.06, scaleY: idleBase * 0.86, y: idleRestY + 8, duration: 100, ease: 'Quad.easeIn' }, // charge — crouch + squash
+          { scaleX: idleBase, scaleY: idleBase, y: idleRestY, duration: 150, ease: backOut(OVERSHOOT.pop) }, // release — spring back into rest
+        ],
+        onComplete: launch,
+      })
     }
     const spinBtn = addPillButton(this, DESIGN_W / 2, 740, 300, 92, 'SPIN', GOLD_PILL, doSpin)
     // SPIN breathe — gated (§E8): reduced motion leaves it at its resting scale.

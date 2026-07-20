@@ -6,6 +6,7 @@ import { mulberry32 } from '../core/rng'
 import { addChips, addPendingBoost, loadSave } from '../core/save'
 import type { BoostType } from '../core/types'
 import { backOut, OVERSHOOT } from './motion'
+import { quality } from './quality'
 import { css, getTheme, hapticsOff, prefersReducedMotion, reduceFlashing } from './theme'
 import { addPillButton, FONT, GOLD_PILL, goldFace } from './ui'
 
@@ -105,6 +106,77 @@ export function addJackpotMeter(
   container.addAt(halo, 0)
   let haloTween: Phaser.Tweens.Tween | null = null
 
+  // ── H4 · "ready to spin" teaser (Home hero meter only) ──────────────────────
+  // A full meter should read as ARMED at a glance on Home. Over the breathing halo we lift a single
+  // ember off the track every couple of seconds and glide a soft light-sweep across the "JACKPOT"
+  // caption. SCOPED to the compact (Home) meter — the in-game HUD is the non-compact variant, so the
+  // teaser never fires there and distracts play. Skipped whole under reduced motion (the lit halo alone
+  // carries "ready" — today's look). The ember is quality.count()-capped, thinning to nothing on the low
+  // tier. Everything here is lazy: nothing exists until the meter is actually full on Home.
+  let teaseSpark: Phaser.GameObjects.Particles.ParticleEmitter | null = null
+  let teaseTimer: Phaser.Time.TimerEvent | null = null
+  let shimmer: Phaser.GameObjects.Image | null = null
+  let shimmerTween: Phaser.Tweens.Tween | null = null
+
+  const startTease = (): void => {
+    // One shared ADD ember emitter, parked (emitting:false) and pulsed only by the timer. Added to the
+    // container so it rides the widget's transform + is torn down with it; created once, then reused.
+    if (!teaseSpark) {
+      teaseSpark = scene.add.particles(0, 0, 'spark', {
+        speed: { min: 24, max: 60 },
+        angle: { min: 250, max: 290 }, // up off the track, with a little spread
+        scale: { start: 0.42, end: 0 },
+        alpha: { start: 0.9, end: 0 },
+        lifespan: { min: 620, max: 980 },
+        tint: T.gold,
+        blendMode: 'ADD',
+        emitting: false,
+      })
+      container.add(teaseSpark)
+    }
+    // One ember every ~2.2s — off-phase from the 1.8s halo breathe so the two never lock into a
+    // mechanical beat — lifted from a random spot along the lit track so repeats don't stamp one place.
+    teaseTimer = scene.time.addEvent({
+      delay: 2200,
+      loop: true,
+      callback: () => {
+        const count = quality.count(1) // 1 on high/med, 0 on low → the ember self-gates off the low tier
+        if (count > 0) teaseSpark?.explode(count, trackX0 + Phaser.Math.Between(pad, trackW - pad), -trackH / 2)
+      },
+    })
+
+    // Caption shimmer — the wordmark's masked-gloss idiom (ui.ts): a cream `sweep` clipped to the
+    // "JACKPOT" glyphs, gliding across on a slow loop with a long rest between passes.
+    shimmer = scene.add
+      .image(cap.x - labelW / 2, cap.y, 'sweep')
+      .setDisplaySize(30, trackH + 4)
+      .setTint(0xfffdf8)
+      .setAlpha(0.5)
+      .setBlendMode(Phaser.BlendModes.ADD)
+    shimmer.setMask(cap.createBitmapMask())
+    container.add(shimmer)
+    shimmerTween = scene.tweens.add({
+      targets: shimmer,
+      x: cap.x + labelW / 2,
+      duration: 1200,
+      ease: 'Sine.easeInOut',
+      repeat: -1,
+      repeatDelay: 2400,
+    })
+  }
+
+  const endTease = (): void => {
+    teaseTimer?.remove()
+    teaseTimer = null
+    shimmerTween?.remove()
+    shimmerTween = null
+    shimmer?.clearMask(true) // frees the bitmap mask; leaves `cap` itself untouched
+    shimmer?.destroy()
+    shimmer = null
+    // The parked ember emitter is cheap and reused across full↔not-full toggles, so it's kept in place;
+    // it dies with the container on scene teardown.
+  }
+
   let lit = -1
   const update = (meter: number, animate = true): void => {
     const n = Math.max(0, Math.min(JACKPOT_GOAL, Math.floor(meter)))
@@ -136,6 +208,10 @@ export function addJackpotMeter(
     } else {
       halo.setAlpha(0)
     }
+    // H4 · layer the Home "ready to spin" teaser over the lit halo — compact (Home) meter only, and
+    // never under reduced motion. Cleared first so a re-fill or a drop back below full never stacks it.
+    endTease()
+    if (full && compact && !reduced) startTease()
   }
 
   return { container, update }
