@@ -10,12 +10,10 @@
 // held while open) and after each async action, so it always reflects reality.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { cloudSession, isCloudConfigured, onCloudChange, sendEmailOtp, signOutCloud, verifyEmailOtp } from '../core/cloud'
+import { cloudSession, isCloudConfigured, onCloudChange, signInWithGoogle, signOutCloud } from '../core/cloud'
 import { exportSave, importSave } from '../core/save'
 
 const MODAL_ID = 'vm-cloud-modal'
-const EMAIL_ID = 'vm-cloud-email'
-const CODE_ID = 'vm-cloud-code'
 
 // Warm palette (mirrors the game's cream card + gold accents), kept local so the modal is self-contained.
 const SANS = 'system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif'
@@ -66,21 +64,6 @@ function ghostBtn(label: string): HTMLButtonElement {
 function focusRing(el: HTMLElement): void {
   el.addEventListener('focus', () => { el.style.borderColor = GOLD })
   el.addEventListener('blur', () => { el.style.borderColor = BORDER })
-}
-
-function textInput(opts: { id?: string; type?: string; placeholder?: string; inputMode?: string; autocomplete?: string }): HTMLInputElement {
-  const i = mk('input', {
-    display: 'block', width: '100%', minHeight: '44px', padding: '11px 13px',
-    border: `2px solid ${BORDER}`, borderRadius: '12px', background: '#fffef9', color: INK,
-    fontFamily: SANS, fontSize: '16px', boxSizing: 'border-box', outline: 'none',
-  })
-  i.type = opts.type ?? 'text'
-  if (opts.id) i.id = opts.id
-  if (opts.placeholder) i.placeholder = opts.placeholder
-  if (opts.inputMode) i.setAttribute('inputmode', opts.inputMode)
-  if (opts.autocomplete) i.setAttribute('autocomplete', opts.autocomplete)
-  focusRing(i)
-  return i
 }
 
 function textArea(opts: { id?: string; placeholder?: string; readOnly?: boolean }): HTMLTextAreaElement {
@@ -137,10 +120,7 @@ function stack(children: HTMLElement[], gap = '10px'): HTMLDivElement {
 export function openCloudModal(): void {
   if (document.getElementById(MODAL_ID)) return
 
-  // ── Local UI state (preserved across re-renders so typing/paste isn't lost) ────────────────
-  let emailValue = ''
-  let otpSent = false // once true, the code field + "Sign in" are revealed
-  let codeValue = ''
+  // ── Local UI state (preserved across re-renders so a pasted backup code isn't lost) ─────────
   let authError = ''
   let restoreValue = ''
   let restoreError = ''
@@ -222,58 +202,33 @@ export function openCloudModal(): void {
       return stack([note(who), out])
     }
 
-    // Configured but signed out — email OTP flow.
-    const email = textInput({ id: EMAIL_ID, type: 'email', placeholder: 'you@email.com', inputMode: 'email', autocomplete: 'email' })
-    email.value = emailValue
-    email.addEventListener('input', () => { emailValue = email.value })
-
-    const sendBtn = primaryBtn('Email me a sign-in code')
-    sendBtn.addEventListener('click', () => {
-      const addr = emailValue.trim()
-      if (!addr) { authError = 'Enter your email first.'; render(); return }
+    // Configured but signed out — one-tap Google sign-in. This REDIRECTS the whole page to Google and
+    // returns to the app; there is no code to run on success (see signInWithGoogle in core/cloud), so we
+    // only surface an error if the redirect itself couldn't start. On success the button stays in its
+    // "Continuing…" state because the navigation happens immediately.
+    const signInBtn = primaryBtn('Sign in with Google')
+    signInBtn.addEventListener('click', () => {
       authError = ''
-      sendBtn.disabled = true
-      sendBtn.textContent = 'Sending…'
-      sendEmailOtp(addr)
+      signInBtn.disabled = true
+      signInBtn.textContent = 'Continuing…'
+      signInWithGoogle()
         .then((res) => {
-          if (res.ok) { otpSent = true; authError = '' }
-          else { authError = res.error ?? "Couldn't send a code. Please try again." }
-          render()
-          if (otpSent) document.getElementById(CODE_ID)?.focus()
+          if (!res.ok) {
+            authError = res.error ?? "Couldn't start Google sign-in. Please try again."
+            render()
+          }
+          // On success the page redirects to Google — nothing else runs here.
         })
-        .catch(() => { authError = "Couldn't send a code. Please try again."; render() })
+        .catch(() => {
+          authError = "Couldn't start Google sign-in. Please try again."
+          render()
+        })
     })
 
-    const children: HTMLElement[] = [
-      note('Sign in with your email to save your progress to the cloud and restore it on any device.'),
-      email,
-      sendBtn,
-    ]
-
-    // Second step: the code field + Sign in, revealed once a code has been sent.
-    if (otpSent) {
-      const code = textInput({ id: CODE_ID, placeholder: 'Enter the code', inputMode: 'numeric', autocomplete: 'one-time-code' })
-      code.value = codeValue
-      code.addEventListener('input', () => { codeValue = code.value })
-
-      const verifyBtn = primaryBtn('Sign in')
-      verifyBtn.addEventListener('click', () => {
-        const c = codeValue.trim()
-        if (!c) { authError = 'Enter the code from your email.'; render(); return }
-        authError = ''
-        verifyBtn.disabled = true
-        verifyBtn.textContent = 'Signing in…'
-        verifyEmailOtp(emailValue.trim(), c)
-          .then((res) => {
-            if (res.ok) location.reload() // reload so the merged cloud save shows everywhere
-            else { authError = res.error ?? "That code didn't work."; render() }
-          })
-          .catch(() => { authError = "That code didn't work."; render() })
-      })
-      children.push(code, verifyBtn)
-    }
-
-    return stack(children)
+    return stack([
+      note('Sign in with Google to save your progress to the cloud and restore it on any device — even after clearing your browser or on a new phone.'),
+      signInBtn,
+    ])
   }
 
   // ── Backup / restore block (always shown) ─────────────────────────────────────────────────
@@ -382,7 +337,7 @@ export function openCloudModal(): void {
   // configured build (auth never changes otherwise), so the friendly not-configured path never
   // depends on a live cloud client.
   if (isCloudConfigured()) {
-    unsub = onCloudChange(() => { otpSent = false; authError = ''; render() })
+    unsub = onCloudChange(() => { authError = ''; render() })
   }
 
   card.append(closeBtn, title, content)

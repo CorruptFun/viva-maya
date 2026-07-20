@@ -9,7 +9,7 @@ on another device. (Wallets, ledger and anti-cheat come later.)
 
 - Gives each signed-in player one row in a `saves` table holding their whole
   game save (as JSON).
-- Lets players sign in with just their email (a 6-digit code — no password).
+- Lets players sign in with **Google** (one tap — no password, no email codes).
 - Keeps local and cloud progress in sync while signed in.
 
 ## The one thing to understand about safety
@@ -53,34 +53,44 @@ To confirm it worked: open **Table Editor** and you should see a `saves` table.
 Open **Authentication → Policies** and you should see four policies on it
 (view / insert / update / delete own save).
 
-## Step 3 — Turn on email sign-in (one-time code)
+## Step 3 — Turn on Google sign-in
 
-Players sign in with an email one-time passcode (OTP). The client calls
-`signInWithOtp` to send the code and `verifyOtp` to check it, and it also
-handles the case where the player instead **clicks the magic link** in the email.
+Players sign in with **Google** (one tap). The client calls
+`supabase.auth.signInWithOAuth({ provider: 'google', ... })`, which redirects to
+Google's consent screen and back to the app; Supabase establishes the session on
+return. No email is sent, so there's no rate limit. You need a **Google OAuth
+client**, then you paste its ID/secret into Supabase.
 
-1. Go to **Authentication → Providers** (some dashboards label it
-   **Sign In / Providers**) and make sure **Email** is enabled.
-2. Go to **Authentication → Emails → Templates** (a.k.a. the email templates).
-   The **Magic Link** / **Confirm signup** template must actually include the
-   6-digit code so players can type it in. Supabase exposes it as the
-   `{{ .Token }}` variable. Make sure the template body shows it, e.g.:
+### 3a — Create a Google OAuth client (Google Cloud Console)
+
+1. Go to <https://console.cloud.google.com>, create or pick a project.
+2. **APIs & Services → OAuth consent screen:** choose **External**, fill in the
+   app name + your email, and add your own Google account as a **test user** (you
+   don't need Google's verification for a small, personal user base).
+3. **APIs & Services → Credentials → Create Credentials → OAuth client ID.**
+4. Application type: **Web application**.
+5. Under **Authorized redirect URIs**, add EXACTLY (no trailing slash):
 
    ```
-   Your Viva Maya login code is: {{ .Token }}
+   https://<YOUR-PROJECT-REF>.supabase.co/auth/v1/callback
    ```
 
-   The default template mostly shows a `{{ .ConfirmationURL }}` link (which the
-   client also supports when clicked). Adding `{{ .Token }}` to the body is what
-   makes the "type the code" flow work. Keeping both the link and the token in
-   the template covers both sign-in styles.
-3. (Optional but recommended) Under **Authentication → URL Configuration**, add
-   your GitHub Pages site URL to the allowed **Redirect URLs** so clicked magic
-   links come back to the deployed game.
+   `<YOUR-PROJECT-REF>` is the first part of your Supabase Project URL (Step 4) —
+   e.g. for `https://abcdefgh.supabase.co` the ref is `abcdefgh`.
+6. Create it, then copy the **Client ID** and **Client secret**.
 
-> On Supabase's free tier the built-in email sender is rate-limited and meant
-> for testing. That's fine to start; for real traffic you'd later add a custom
-> SMTP provider. No code changes are needed for that.
+### 3b — Enable Google in Supabase
+
+1. In Supabase, go to **Authentication → Providers → Google**.
+2. Toggle it **enabled**, paste the **Client ID** and **Client secret**, and save.
+
+### 3c — Set the site URL + redirect allow-list
+
+Under **Authentication → URL Configuration**:
+
+- **Site URL:** `https://corruptfun.github.io/viva-maya/`
+- **Redirect URLs** (add both): `https://corruptfun.github.io/viva-maya/**`
+  and `http://localhost:5173/**` (for local dev).
 
 ## Step 4 — Get your Project URL and anon key
 
@@ -111,12 +121,10 @@ VITE_SUPABASE_ANON_KEY=YOUR-ANON-PUBLIC-KEY
 
 Then run the game as usual (`npm run dev`). Vite picks these up automatically.
 
-> **Keep `.env.local` out of git.** Good news: this repo's `.gitignore` already
-> ignores it via the existing `*.local` rule, so you don't need to do anything.
-> Heads-up: a plain `.env` file (or `.env.production`) is **not** currently
-> ignored — if you ever create one of those, add a line like `.env` to
-> `.gitignore` first so keys don't get committed. (For this feature you only
-> need `.env.local`, which is already safe.)
+> **Keep your env file out of git.** This repo's `.gitignore` ignores both
+> `*.local` (so `.env.local` is safe) **and** now `.env` / `.env.*`, so whichever
+> you use, your keys won't be committed. (The anon key is public anyway, but it's
+> good hygiene.)
 
 ### GitHub Pages deploy
 
@@ -151,7 +159,10 @@ Variables are absent, the build still succeeds and the site runs local-only.
 - **Game works but never syncs / no sign-in prompt:** the env vars probably
   aren't set. Locally, check `.env.local` and restart `npm run dev`. On the
   deployed site, check the two repository **Variables** and re-run the deploy.
-- **Never receive a login code:** re-check Step 3 — Email provider enabled and
-  `{{ .Token }}` present in the email template. Free-tier email is rate-limited.
+- **Google sign-in fails or won't come back:** re-check Step 3 — Google provider
+  enabled in Supabase with the right Client ID/secret, the Google OAuth client's
+  redirect URI is EXACTLY `https://<ref>.supabase.co/auth/v1/callback`, and your
+  site URL is in the redirect allow-list. On an installed iPhone PWA the flow
+  leaves to Google and returns — give it a moment to land the session.
 - **Signed in but saves don't load/save:** re-run `0001_saves.sql` (Step 2) and
   confirm the four RLS policies exist on `public.saves`.

@@ -10,6 +10,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
+    "test": "vitest run",
     "icons": "node scripts/gen-icons.mjs"
   },
   "dependencies": {
@@ -19,6 +20,7 @@
   "devDependencies": {
     "typescript": "~5.8.3",
     "vite": "^7.0.0",
-    "vite-plugin-pwa": "^1.0.0"
+    "vite-plugin-pwa": "^1.0.0",
+    "vitest": "^4.1.10"
   }
 }
