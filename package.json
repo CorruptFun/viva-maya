@@ -1,0 +1,26 @@
+{
+  "name": "viva-maya",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "author": "CorruptFun LLC",
+  "license": "UNLICENSED",
+  "copyright": "© 2026 CorruptFun LLC. All rights reserved.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "icons": "node scripts/gen-icons.mjs"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.110.7",
+    "phaser": "^3.90.0"
+  },
+  "devDependencies": {
+    "typescript": "~5.8.3",
+    "vite": "^7.0.0",
+    "vite-plugin-pwa": "^1.0.0",
+    "vitest": "^4.1.10"
+  }
+}

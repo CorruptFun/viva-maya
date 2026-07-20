@@ -1,0 +1,77 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 1024px; height: 1024px; overflow: hidden; }
+  body { background: #f6f3ec; position: relative; }
+  .frame {
+    position: absolute; inset: 0;
+    border: 16px solid #f2c14e; border-radius: 64px;
+    overflow: hidden; background: #fdfbf7;
+  }
+  .board {
+    position: absolute; inset: 0;
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    grid-template-rows: repeat(5, 1fr);
+  }
+  .cell { display: flex; align-items: center; justify-content: center; }
+  .cell.alt { background: #f3ece0; }
+  .sym { font-size: 118px; font-family: "Apple Color Emoji", sans-serif; }
+  .seven {
+    font-family: "Arial Black", Arial, sans-serif; font-weight: 900;
+    font-size: 128px; color: #e0312e; text-shadow: 0 7px 9px rgba(90,20,10,0.25);
+  }
+  .bartile {
+    background: #26304d; border: 4px solid #3d4a75; border-radius: 20px;
+    color: #ffd75e; font-family: "Arial Black", Arial, sans-serif; font-weight: 900;
+    font-size: 52px; padding: 20px 24px; letter-spacing: 2px;
+  }
+  .banner {
+    position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+    background: #ffffff; border: 6px solid #e8dfc9; border-radius: 999px;
+    box-shadow: 0 14px 30px rgba(138,122,82,0.35), inset 0 0 0 10px rgba(242,193,78,0.55);
+    padding: 34px 64px; white-space: nowrap; display: flex; gap: 28px;
+  }
+  .word {
+    font-family: "Arial Black", Arial, sans-serif; font-weight: 900;
+    font-size: 116px; letter-spacing: 4px; line-height: 1;
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .viva { background-image: linear-gradient(#ffd75e, #c9930a); }
+  .maya { background-image: linear-gradient(#ff7a85, #d3304f); }
+</style>
+</head>
+<body>
+  <div class="frame">
+    <div class="board" id="board"></div>
+  </div>
+  <div class="banner" id="banner">
+    <span class="word viva">VIVA</span>
+    <span class="word maya">MAYA</span>
+  </div>
+  <script>
+    const layout = [
+      ['🔔', '7', '🍒', '💎', '🍀'],
+      ['🍒', '💎', '🔔', '7', 'BAR'],
+      ['7', '🍀', '💎', '🔔', '🍒'],
+      ['💎', 'BAR', '7', '🍀', '🔔'],
+      ['🍀', '🔔', '🍒', '💎', '7'],
+    ]
+    const board = document.getElementById('board')
+    layout.flat().forEach((glyph, i) => {
+      const cell = document.createElement('div')
+      const row = Math.floor(i / 5)
+      const col = i % 5
+      cell.className = 'cell' + ((row + col) % 2 === 0 ? ' alt' : '')
+      if (glyph === '7') cell.innerHTML = '<span class="seven">7</span>'
+      else if (glyph === 'BAR') cell.innerHTML = '<span class="bartile">BAR</span>'
+      else cell.innerHTML = '<span class="sym">' + glyph + '</span>'
+      board.appendChild(cell)
+    })
+    if (location.hash === '#plain') document.getElementById('banner').style.display = 'none'
+  </script>
+</body>
+</html>

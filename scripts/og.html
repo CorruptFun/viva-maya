@@ -1,0 +1,62 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 1200px; height: 630px; overflow: hidden; }
+  body {
+    background: radial-gradient(120% 140% at 50% 10%, #faf7f0 0%, #f6f3ec 55%, #eee9dd 100%);
+    font-family: "Arial Black", "Helvetica Neue", Arial, sans-serif;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 34px;
+  }
+  .title { display: flex; align-items: center; gap: 26px; }
+  .word {
+    font-size: 148px; font-weight: 900; letter-spacing: 6px; line-height: 1;
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    filter: drop-shadow(0 5px 3px rgba(90,70,20,0.22));
+  }
+  .viva { background-image: linear-gradient(#ffd75e, #c9930a); }
+  .maya { background-image: linear-gradient(#ff7a85, #d3304f); filter: drop-shadow(0 5px 3px rgba(90,20,25,0.22)); }
+  .heart { font-size: 96px; transform: translateY(-8px) rotate(8deg); font-family: "Apple Color Emoji", sans-serif; }
+  .card {
+    background: #fffdf8; border: 2px solid #e8dfc9; border-radius: 34px;
+    box-shadow: 0 10px 24px rgba(138,122,82,0.22), inset 0 0 0 6px rgba(242,193,78,0.55);
+    padding: 26px 48px; display: flex; align-items: center; gap: 38px;
+  }
+  .sym { font-size: 88px; font-family: "Apple Color Emoji", sans-serif; }
+  .seven {
+    font-size: 96px; font-weight: 900; color: #e0312e;
+    text-shadow: 0 6px 8px rgba(90,20,10,0.28); transform: rotate(-4deg);
+  }
+  .bar {
+    background: #26304d; border: 3px solid #3d4a75; border-radius: 16px;
+    color: #ffd75e; font-size: 44px; font-weight: 900; padding: 18px 26px;
+    letter-spacing: 2px; transform: rotate(3deg);
+  }
+  .sym:nth-child(1) { transform: rotate(-6deg); }
+  .sym:nth-child(3) { transform: rotate(5deg); }
+  .sym:nth-child(5) { transform: rotate(-5deg); }
+  .tagline {
+    font-size: 30px; font-weight: 900; letter-spacing: 4px; color: #9a927e;
+  }
+</style>
+</head>
+<body>
+  <div class="title">
+    <span class="word viva">VIVA</span>
+    <span class="word maya">MAYA</span>
+    <span class="heart">❤️</span>
+  </div>
+  <div class="card">
+    <span class="sym">🍒</span>
+    <span class="seven">7</span>
+    <span class="sym">💎</span>
+    <span class="bar">BAR</span>
+    <span class="sym">🔔</span>
+    <span class="sym">🍀</span>
+  </div>
+  <div class="tagline">CASCADES  ·  POWER-UPS  ·  JACKPOTS</div>
+</body>
+</html>

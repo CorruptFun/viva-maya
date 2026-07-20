@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#f6f3ec" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="Viva Maya" />
+    <link rel="icon" href="/favicon.ico" sizes="48x48" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <title>Viva Maya</title>
+    <meta name="description" content="A casino match-3 — spin up cascades, chase the jackpot." />
+    <meta name="author" content="CorruptFun LLC" />
+    <meta name="copyright" content="© 2026 CorruptFun LLC. All rights reserved." />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Viva Maya" />
+    <meta property="og:title" content="Viva Maya ❤️🎰" />
+    <meta property="og:description" content="A casino match-3 — cascades, power-ups, jackpots." />
+    <meta property="og:url" content="https://corruptfun.github.io/viva-maya/" />
+    <meta property="og:image" content="https://corruptfun.github.io/viva-maya/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Viva Maya ❤️🎰" />
+    <meta name="twitter:description" content="A casino match-3 — cascades, power-ups, jackpots." />
+    <meta name="twitter:image" content="https://corruptfun.github.io/viva-maya/og-image.png" />
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        /* No scroll, no iOS rubber-band bounce. */
+        overscroll-behavior: none;
+        touch-action: none;
+        /* Solid warm fallback in case the gradient can't paint (also fills the
+           browser overscroll gutter on the rare frame it shows). */
+        background-color: #efe7d6;
+      }
+      /* Lock the page to the layout viewport so URL-bar resize / notches never
+         introduce scroll, and the warm frame always covers the whole screen —
+         safe-area zones (notch, Dynamic Island, home indicator) included. */
+      body {
+        position: fixed;
+        inset: 0;
+        /* Warm brand vignette: cream at the center spotlight, easing to a warmer
+           tone at the edges so tablet/odd-aspect letterbox reads as an intentional
+           frame instead of empty bars. */
+        background:
+          radial-gradient(
+            ellipse 118% 92% at 50% 40%,
+            #f7f4ee 0%,
+            #f1eadb 46%,
+            #ebe1cd 74%,
+            #e3d7bf 100%
+          );
+        background-repeat: no-repeat;
+        background-attachment: fixed;
+      }
+      /* The safe region. #frame keeps only the LEFT/RIGHT device insets (landscape
+         notch protection). Top/bottom insets are dropped so the canvas extends to
+         the true screen edges and fills a tall phone far better — safe because the
+         720×1280 design's top (0–300) and bottom (940–1280) are empty margin, and
+         the FIT letterbox adds further buffer, so the board (40–680 × 300–940) and
+         HUD never reach the notch / Dynamic Island / home indicator.
+         Phaser owns #app — on boot it forces `width/height:100%` inline on its
+         parent, so the insets MUST live on this outer wrapper: a fixed element's
+         `height:100%` resolves against the viewport (ignoring its own top/bottom),
+         which would defeat the right inset if it sat on #app directly. */
+      #frame {
+        position: fixed;
+        top: 0;
+        right: env(safe-area-inset-right, 0px);
+        bottom: 0;
+        left: env(safe-area-inset-left, 0px);
+      }
+      /* Phaser measures & centers the canvas within #app; #app fills the safe
+         region (#frame is its containing block). No flex here or autoCenter
+         double-offsets. */
+      #app {
+        width: 100%;
+        height: 100%;
+      }
+      canvas {
+        touch-action: none;
+        user-select: none;
+        -webkit-user-select: none;
+        -webkit-tap-highlight-color: transparent;
+        /* Soft warm shadow so the centered game reads as a framed screen resting
+           on the warm surface (visible in the letterbox margins on tablets / odd
+           aspects; harmlessly clipped at the viewport edge when there's no margin). */
+        box-shadow:
+          0 10px 44px rgba(74, 58, 30, 0.2),
+          0 2px 10px rgba(74, 58, 30, 0.12);
+      }
+    </style>
+  </head>
+  <body>
+    <div id="frame">
+      <div id="app"></div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
