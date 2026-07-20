@@ -221,9 +221,13 @@ export function addLivesHud(
       else heart.setTint(0x7a7266)
     })
     if (timer) timer.setText(state.full ? '' : `next life  ${formatCountdown(state.nextInMs)}`)
-    // Celebrate only a genuine increase in filled hearts — never the first paint (prevFilled seeded to
-    // -1) and never under reduced motion, where the fill stays instant exactly as before.
-    if (prevFilled >= 0 && filledCount > prevFilled && !prefersReducedMotion()) {
+    // Celebrate only a genuine increase in filled hearts — never the first paint (prevFilled seeded to -1).
+    // C5 · a soft "life restored" chime partners the crossing — ONE gentle chime per regen (not per pip);
+    // it plays even under reduced motion (a sound is no motion hazard, always mute-gated in sfx), while the
+    // visual pop below stays reduced-motion-gated, instant exactly as before.
+    const regen = prevFilled >= 0 && filledCount > prevFilled
+    if (regen) sfx.lifeRestored()
+    if (regen && !prefersReducedMotion()) {
       for (let i = prevFilled; i < filledCount; i++) popPip(hearts[i])
     }
     prevFilled = filledCount
@@ -1399,6 +1403,13 @@ export function openThemePanel(scene: Phaser.Scene, openingThemeId: ThemeId = ge
   const close = (): void => {
     sfx.whoosh() // §E3 B14: airy sweep partners the panel closing
     const changed = getThemeId() !== openingThemeId
+    if (changed) {
+      // C5 · theme APPLY was silent — the picker only repaints via the scene.restart() below. setTheme()
+      // already applied on the row tap, so retune the shared reverb (+ rebuild the opt-in bed) into the NEW
+      // room, then bloom a brief confirmation chord voiced in the new palette — a sonic partner for the swap.
+      sfx.refreshTheme()
+      sfx.themeSwap()
+    }
     layer.destroy()
     if (changed) scene.scene.restart()
   }

@@ -79,10 +79,14 @@ interface ObjectiveState {
   glow?: Phaser.GameObjects.Image
   /** The breathe tween on `glow` — stopped when the objective completes. */
   pulse?: Phaser.Tweens.Tween
+  /** C5 latch — the rising "almost there" tone fires at most once, when remaining first crosses low. */
+  nearFired?: boolean
 }
 
 const PIECE_SCALE = PIECE_SIZE / TEX_SIZE
 const DRAG_THRESHOLD = CELL * 0.3
+/** C5 · remaining-count at/under which a collect objective rings its one "almost there" tone. */
+const OBJECTIVE_NEAR = 1
 
 export class GameScene extends Phaser.Scene {
   private level = 1
@@ -679,6 +683,13 @@ export class GameScene extends Phaser.Scene {
       this.tweens.add({ targets: o.chip, scale: 1.14, duration: 120, yoyo: true, ease: 'Quad.easeOut' })
     }
     if (o.remaining > 0) {
+      // C5 · one subtle rising "almost there" tone as this objective crosses into its final piece(s).
+      // Latched (remaining only ever decreases) so it fires exactly once per objective — rare + meaningful.
+      // Objectives that begin at/under the threshold (e.g. total 1) simply complete and never "approach".
+      if (o.remaining <= OBJECTIVE_NEAR && !o.nearFired) {
+        o.nearFired = true
+        sfx.objectiveNear()
+      }
       // Gold flash — reverts to ink only while still incomplete (a completed chip keeps its green ✓).
       o.text?.setColor(css(getTheme().gold))
       this.time.delayedCall(160, () => o.remaining > 0 && o.text?.setColor(getTheme().ink))
