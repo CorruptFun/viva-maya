@@ -6,12 +6,14 @@ import { LEVEL_COUNT } from '../core/levels'
 import { loadSave } from '../core/save'
 import { addCasinoBackdrop } from '../view/background'
 import { getTheme, prefersReducedMotion } from '../view/theme'
-import { FONT, GHOST_PILL, ROSE_PILL, addMarquee, addMuteChip, addPillButton, startScene } from '../view/ui'
+import { FONT, GHOST_PILL, ROSE_PILL, addMarquee, addMuteChip, addPillButton, goldFace, startScene } from '../view/ui'
 
 const GRID_COLS = 5
 const CHIP = 108
 const GAP = 18
 const ROW_H = CHIP + GAP
+/** L2: gold frame band width — a milestone chip's cream face insets this much so the baked `goldFace` rim shows as an ornamental border. */
+const MILESTONE_FRAME = 7
 /** Grid entrance cascade: per (visible) row delay + pop duration, tuned so the whole ripple lands under ~500ms. */
 const CASCADE_STAGGER = 36
 const CASCADE_DURATION = 200
@@ -213,6 +215,41 @@ export class LevelSelectScene extends Phaser.Scene {
     this.tweens.add({ targets: container, scale: 1.06, duration: 600, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' })
   }
 
+  /**
+   * L3 frontier "keep going" marker: a soft gold chevron on the current chip aimed at the next
+   * (locked) run — right when that level shares this row, else down to the next row's start — so a
+   * returning player instantly reads which way the journey continues. Reduced motion (§E8): the
+   * chevron rests static (no bob); otherwise it gives a gentle directional nudge. Baked Graphics
+   * added INTO the chip container, so it scrolls + masks with the grid (L1's coast/mask untouched).
+   */
+  private addFrontierMarker(container: Phaser.GameObjects.Container, n: number): void {
+    const T = getTheme()
+    // Levels fill left→right, top→bottom: the next run is the same-row neighbour to the right, unless
+    // this chip ends the row (col 4), in which case it wraps down to the next row's start.
+    const nextRight = (n - 1) % GRID_COLS < GRID_COLS - 1
+    // A single chevron baked around local (0,0) so a 90° turn re-aims it from "right" to "down".
+    const pts = [new Phaser.Math.Vector2(-7, -12), new Phaser.Math.Vector2(9, 0), new Phaser.Math.Vector2(-7, 12)]
+    const chev = this.add.graphics()
+    chev.lineStyle(8, T.goldDarkest, 0.5) // soft dark backing so the cue stays legible on the cream face
+    chev.strokePoints(pts, false)
+    chev.lineStyle(5, T.goldBright, 0.95)
+    chev.strokePoints(pts, false)
+    if (nextRight) chev.setPosition(CHIP / 2 + 13, 0)
+    else chev.setPosition(0, CHIP / 2 + 13).setRotation(Math.PI / 2)
+    container.add(chev)
+    // Gentle "keep going" nudge toward the next chip — gated OFF under reduced motion (static arrow).
+    if (this.prefersReducedMotion()) return
+    this.tweens.add({
+      targets: chev,
+      x: chev.x + (nextRight ? 6 : 0),
+      y: chev.y + (nextRight ? 0 : 6),
+      duration: 640,
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.easeInOut',
+    })
+  }
+
   private buildChip(
     n: number,
     cx: number,
@@ -225,16 +262,35 @@ export class LevelSelectScene extends Phaser.Scene {
   ): Phaser.GameObjects.Container {
     const playable = n <= unlocked
     const current = n === unlocked
+    const milestone = n % 10 === 0 // L2: every 10th level is a gilded "landmark" on the journey map
     const T = getTheme()
     const container = this.add.container(cx, cy)
     const g = this.add.graphics()
     if (playable) {
       g.fillStyle(T.shadow, 0.12)
       g.fillRoundedRect(-CHIP / 2 + 2, -CHIP / 2 + 5, CHIP, CHIP, 20)
-      g.fillStyle(0xffffff, 1)
-      g.fillRoundedRect(-CHIP / 2, -CHIP / 2, CHIP, CHIP, 20)
-      g.lineStyle(current ? 4 : 2, current ? T.gold : T.border, 1)
+      if (milestone) {
+        // L2: gilded landmark face — a baked `goldFace` frame (E7 real-metal, brightest along the top
+        // crown) with a cream face inset so the gold reads as an ornamental border. Static, theme-tokened.
+        goldFace(g, -CHIP / 2, -CHIP / 2, CHIP, CHIP, T, 20)
+        g.fillStyle(0xffffff, 1)
+        g.fillRoundedRect(-CHIP / 2 + MILESTONE_FRAME, -CHIP / 2 + MILESTONE_FRAME, CHIP - MILESTONE_FRAME * 2, CHIP - MILESTONE_FRAME * 2, 14)
+        g.lineStyle(current ? 4 : 3, current ? T.gold : T.goldBezel, 1)
+      } else {
+        g.fillStyle(0xffffff, 1)
+        g.fillRoundedRect(-CHIP / 2, -CHIP / 2, CHIP, CHIP, 20)
+        g.lineStyle(current ? 4 : 2, current ? T.gold : T.border, 1)
+      }
       g.strokeRoundedRect(-CHIP / 2, -CHIP / 2, CHIP, CHIP, 20)
+    } else if (milestone) {
+      // L2: a locked landmark still reads gold (muted) so upcoming waypoints are visible on the map —
+      // the "see where the journey leads" payoff. Cream face inset over a dimmed `goldFace` frame.
+      goldFace(g, -CHIP / 2, -CHIP / 2, CHIP, CHIP, T, 20)
+      g.fillStyle(0xefe8da, 1)
+      g.fillRoundedRect(-CHIP / 2 + MILESTONE_FRAME, -CHIP / 2 + MILESTONE_FRAME, CHIP - MILESTONE_FRAME * 2, CHIP - MILESTONE_FRAME * 2, 14)
+      g.lineStyle(2, T.goldBezel, 0.7)
+      g.strokeRoundedRect(-CHIP / 2, -CHIP / 2, CHIP, CHIP, 20)
+      g.setAlpha(0.75) // subordinate to the current chip — a landmark ahead, not yet reached
     } else {
       g.fillStyle(0xefe8da, 1)
       g.fillRoundedRect(-CHIP / 2, -CHIP / 2, CHIP, CHIP, 20)
@@ -244,7 +300,8 @@ export class LevelSelectScene extends Phaser.Scene {
     if (playable) {
       const hasStars = stars > 0
       const numText = this.add
-        .text(0, hasStars ? -14 : 0, String(n), {
+        // Milestones always carry a tally below, so their number rides high like a starred chip's.
+        .text(0, milestone || hasStars ? -14 : 0, String(n), {
           fontFamily: FONT,
           fontSize: '40px',
           fontStyle: '900',
@@ -254,10 +311,22 @@ export class LevelSelectScene extends Phaser.Scene {
       container.add(numText)
       // Beat 5 echo: the freshly-unlocked current chip pops + sparkles + haloes on win arrival.
       if (current && this.fromWin) this.celebrateCurrentChip(container, numText, cx, cy, content)
-      for (let i = 0; i < stars; i++) {
-        const star = this.add.image((i - (stars - 1) / 2) * 30, 30, 'star')
-        star.setDisplaySize(26, 26)
-        container.add(star)
+      // L3: frontier "keep going" cue — a soft gold chevron on the current chip aimed at the next
+      // (locked) run, so a returning player instantly reads which way the journey continues.
+      if (current && n < LEVEL_COUNT) this.addFrontierMarker(container, n)
+      if (milestone) {
+        // L2: a full 3-slot star tally (earned bright, remaining ghosted) grades the landmark at a
+        // glance — the "how far along am I" read a journey map wants. Baked + static.
+        for (let i = 0; i < 3; i++) {
+          const pip = this.add.image((i - 1) * 26, 32, 'star').setDisplaySize(24, 24).setAlpha(i < stars ? 1 : 0.26)
+          container.add(pip)
+        }
+      } else {
+        for (let i = 0; i < stars; i++) {
+          const star = this.add.image((i - (stars - 1) / 2) * 30, 30, 'star')
+          star.setDisplaySize(26, 26)
+          container.add(star)
+        }
       }
       const zone = this.add.rectangle(0, 0, CHIP, CHIP, 0xffffff, 0.001).setInteractive({ useHandCursor: true })
       zone.on('pointerdown', () => container.setScale(0.94))
