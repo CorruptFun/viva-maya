@@ -68,15 +68,17 @@ function fresh(): SaveData {
   return { ...DEFAULTS, stars: {}, pendingBoosts: [], occasionsSeen: [] }
 }
 
-/** localStorage can throw (private mode, storage full) — never let that kill the game. */
-export function loadSave(): SaveData {
-  try {
-    const raw = localStorage.getItem(KEY)
-    if (!raw) return fresh()
-    const data = JSON.parse(raw) as Partial<SaveData> & { best?: number }
-    const base = fresh()
-    // v1 {best}; v2 +unlocked/stars; v3 +daily-spin; v4 +endless race; v5 +lives/energy.
-    base.best = typeof data.best === 'number' ? data.best : 0
+/**
+ * Shape-tolerant coercion of a raw parsed blob into a valid SaveData — never throws, always returns a
+ * complete save. Shared by loadSave (localStorage), importSave (backup code), and cloud pull, so every
+ * ingress path normalises identically and a malformed/foreign blob can never leak a bad shape.
+ */
+export function coerceSave(raw: unknown): SaveData {
+  const base = fresh()
+  if (!raw || typeof raw !== 'object') return base
+  const data = raw as Partial<SaveData> & { best?: number }
+  // v1 {best}; v2 +unlocked/stars; v3 +daily-spin; v4 +endless race; v5 +lives/energy.
+  base.best = typeof data.best === 'number' ? data.best : 0
     base.unlocked = typeof data.unlocked === 'number' ? Math.max(1, data.unlocked) : 1
     base.stars = data.stars && typeof data.stars === 'object' ? data.stars : {}
     base.lastSpinDate = typeof data.lastSpinDate === 'string' ? data.lastSpinDate : null
@@ -109,9 +111,25 @@ export function loadSave(): SaveData {
       base.livesAnchor = 0
     }
     return base
+}
+
+/** localStorage can throw (private mode, storage full) — never let that kill the game. */
+export function loadSave(): SaveData {
+  try {
+    const raw = localStorage.getItem(KEY)
+    return raw ? coerceSave(JSON.parse(raw)) : fresh()
   } catch {
     return fresh()
   }
+}
+
+/**
+ * Optional side-channel invoked after every persist (e.g. cloud sync). Kept as a registered hook so
+ * this module stays backend-agnostic + dependency-free — the cloud layer registers itself at boot.
+ */
+let persistListener: ((data: SaveData) => void) | null = null
+export function setPersistListener(fn: ((data: SaveData) => void) | null): void {
+  persistListener = fn
 }
 
 export function persistSave(data: SaveData): void {
@@ -119,6 +137,35 @@ export function persistSave(data: SaveData): void {
     localStorage.setItem(KEY, JSON.stringify(data))
   } catch {
     // best-effort only
+  }
+  // A cloud hiccup must NEVER break the authoritative local save.
+  try {
+    persistListener?.(data)
+  } catch {
+    // best-effort only
+  }
+}
+
+/**
+ * A portable backup code — base64(JSON) of the current save. `escape/unescape` bridge btoa's Latin-1
+ * limit so any UTF-8 in the blob survives the round-trip. Paste into importSave to restore.
+ */
+export function exportSave(): string {
+  try {
+    return btoa(unescape(encodeURIComponent(JSON.stringify(loadSave()))))
+  } catch {
+    return ''
+  }
+}
+
+/** Restore from an exportSave code: decode → coerce → persist (overwrites local). Returns success. */
+export function importSave(code: string): boolean {
+  try {
+    const json = decodeURIComponent(escape(atob(code.trim())))
+    persistSave(coerceSave(JSON.parse(json)))
+    return true
+  } catch {
+    return false
   }
 }
 

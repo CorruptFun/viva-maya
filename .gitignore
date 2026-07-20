@@ -3,4 +3,8 @@ dist/
 dev-dist/
 .DS_Store
 *.local
+# Local Supabase / build env (the VITE_SUPABASE_* keys). *.local already covers .env.local;
+# these guard a bare .env / .env.production so keys are never committed by accident.
+.env
+.env.*
 .claude/

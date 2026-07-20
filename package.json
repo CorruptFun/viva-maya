@@ -13,6 +13,7 @@
     "icons": "node scripts/gen-icons.mjs"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.110.7",
     "phaser": "^3.90.0"
   },
   "devDependencies": {

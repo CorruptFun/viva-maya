@@ -9,7 +9,9 @@ export default defineConfig({
   preview: { port: 4173, strictPort: true },
   plugins: [
     VitePWA({
-      registerType: 'autoUpdate',
+      // 'prompt' (not 'autoUpdate') so a new deploy surfaces a visible "new version — refresh" toast
+      // the player taps, instead of a silent update that lands a launch late. See main.ts onNeedRefresh.
+      registerType: 'prompt',
       includeAssets: ['apple-touch-icon.png', 'favicon.ico', 'favicon.svg', 'favicon-32.png', 'favicon-16.png'],
       manifest: {
         name: 'Viva Maya',
