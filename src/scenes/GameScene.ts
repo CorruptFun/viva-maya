@@ -1557,11 +1557,23 @@ export class GameScene extends Phaser.Scene {
     layer.add(addPillButton(this, DESIGN_W / 2, 1206, 220, 58, 'CANCEL', GHOST_PILL, () => this.cancelBombAim()))
   }
 
-  /** Tear down the aim overlay (kills its pulse) and restore the shelf. */
+  /** Tear down the aim overlay (kills its pulse + the CANCEL pill's press tween) and restore the shelf. */
   private hideBombAim(): void {
     this.bombAimTween?.stop()
     this.bombAimTween = undefined
-    this.bombAimLayer?.destroy(true)
+    const layer = this.bombAimLayer
+    if (layer) {
+      // Kill any in-flight tweens on the layer's children BEFORE destroying them: Phaser 3.90 doesn't
+      // sweep tweens on GameObject.destroy, so the CANCEL pill's release tween (started on pointerup,
+      // just before onPress → cancelBombAim → here) would keep writing to a dead face container. Mirrors
+      // killPowerTweens for the shelf.
+      const walk = (obj: Phaser.GameObjects.GameObject): void => {
+        this.tweens.killTweensOf(obj)
+        if (obj instanceof Phaser.GameObjects.Container) obj.list.forEach(walk)
+      }
+      layer.list.forEach(walk)
+      layer.destroy(true)
+    }
     this.bombAimLayer = undefined
     this.powerBar?.setVisible(true)
   }
