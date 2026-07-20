@@ -88,6 +88,17 @@ const DRAG_THRESHOLD = CELL * 0.3
 /** C5 · remaining-count at/under which a collect objective rings its one "almost there" tone. */
 const OBJECTIVE_NEAR = 1
 
+/**
+ * B5 · win "board sweep-clean" tuning. The cascade is short BY DESIGN — it lands right as the result
+ * card enters and never delays the tap-to-skip (footprint ≈ SWEEP_STAGGER_MS + SWEEP_ARC_MS). SWEEP_FLIES
+ * is the HIGH-tier fly cap; `quality.count()` thins it per device (0 → no sweep). SWEEP_FADE_MS empties
+ * the WHOLE board as one fade under the flyers, so cells with no flyer of their own never pop.
+ */
+const SWEEP_FLIES = 22
+const SWEEP_STAGGER_MS = 150
+const SWEEP_ARC_MS = 250
+const SWEEP_FADE_MS = 360
+
 export class GameScene extends Phaser.Scene {
   private level = 1
   private spec!: LevelSpec
@@ -2555,6 +2566,9 @@ export class GameScene extends Phaser.Scene {
     let cardShown = false
     let skipped = false
     let fanfarePlayed = false
+    // B5 — set by the sweep beat to a canceller that snaps the emptying board straight to clean; the
+    // skip guard calls it so a tap mid-sweep lands on the settled card without a half-faded board.
+    let cancelSweep: (() => void) | null = null
 
     const at = (ms: number, cb: () => void): void => {
       timers.push(this.time.delayedCall(ms, cb))
@@ -2572,6 +2586,7 @@ export class GameScene extends Phaser.Scene {
       if (skipped) return
       skipped = true
       for (const t of timers) t.remove(false)
+      cancelSweep?.() // B5 — finalize an in-flight board sweep (its flyers are freed with the transient below)
       for (const o of transient) if (o.active) o.destroy()
       if (!fanfarePlayed) sfx.winFanfare()
       if (!cardShown) showCard(false)
@@ -2621,6 +2636,12 @@ export class GameScene extends Phaser.Scene {
 
     // BEAT 3 — fireworks + confetti + a brand heart puff (skipped under reduced-motion).
     if (!reduced) at(350, () => this.winFireworks(track, at))
+
+    // BEAT 3½ — B5 board sweep-clean: the remaining pieces cascade off toward the SCORE readout so the
+    // board visibly EMPTIES into the win, landing just as the card enters. Skipped WHOLE under reduced
+    // motion (no sweep ⇒ byte-for-byte today's straight-to-card); the skip guard above cancels it
+    // mid-flight via the canceller it returns.
+    if (!reduced) at(620, () => { cancelSweep = this.sweepBoardClean(track) })
 
     // BEAT 4 — the result card enters (elastic scale-in) + coin roll-up payout.
     at(1100, () => showCard(true))
@@ -2731,6 +2752,83 @@ export class GameScene extends Phaser.Scene {
 
     // A small heart puff for brand warmth.
     this.overlayHearts(360, 14, 300)
+  }
+
+  /**
+   * BEAT 3½ (B5) — the win "board sweep-clean" flourish: arc the REMAINING live pieces off the board
+   * toward the SCORE readout in a quick staggered cascade (an outward wave from board-centre) so the
+   * board visibly EMPTIES into the win. Reuses flyCollect's lifted-quadratic arc, generalized to every
+   * live sprite; the whole board fades as ONE unit under the flyers so uncapped cells never pop. The
+   * flyers are throwaway copies (`track`ed as transient) — PURELY COSMETIC: the pieces are already
+   * logically resolved, so nothing here touches score / objectives / stars / jackpot / any state.
+   *
+   * Perf + a11y: the caller only schedules this when motion is allowed; the fly count is capped by
+   * `quality.count()` (thinning the herd on low tier, 0 ⇒ no-op) and the score spark is count-gated.
+   * Returns a canceller the win sequence's skip guard calls: flyers are freed with the transient list,
+   * and this stops the board fade + snaps it clean so a mid-flight tap lands on the settled card.
+   */
+  private sweepBoardClean(track: <T extends Phaser.GameObjects.GameObject>(o: T) => T): () => void {
+    const cx = BOARD_X + BOARD_W / 2
+    const cy = BOARD_Y + BOARD_W / 2
+    const distSq = (x: number, y: number): number => (x - cx) * (x - cx) + (y - cy) * (y - cy)
+    // Live board sprites, centre-out (nearest first) so both the stride pick and the stagger read as
+    // one expanding wave. sort/filter only READ the sprites — the map is never mutated.
+    const live = [...this.sprites.values()].filter(s => s.active && s.visible).sort((a, b) => distSq(a.x, a.y) - distSq(b.x, b.y))
+    const flyCap = quality.count(SWEEP_FLIES)
+    if (flyCap <= 0 || live.length === 0) return () => {}
+
+    // Aim at the SCORE readout's visual centre (its origin is top-right — see buildHud), matching the
+    // scoreMilestone glow so the cascade clearly pours INTO the score.
+    const targetX = this.scoreText.x - this.scoreText.width / 2
+    const targetY = this.scoreText.y + this.scoreText.height / 2
+
+    // Empty the whole board as one fade UNDER the flyers (separate top-depth copies, so the layer's
+    // alpha never touches them). Captured so the canceller can stop + snap it on a skip.
+    const fade = this.tweens.add({ targets: this.pieceLayer, alpha: 0, duration: SWEEP_FADE_MS, ease: 'Quad.easeIn' })
+    // One spark puff at the readout as the pieces converge (reuses sparkEmitter; count-gated, no flash).
+    if (quality.count(1) > 0) this.sparkEmitter.explode(quality.count(8), targetX, targetY)
+
+    // Stride across the centre-sorted list so the capped flyers stay spatially spread over the board.
+    const stride = Math.max(1, Math.ceil(live.length / flyCap))
+    const maxSq = distSq(BOARD_X, BOARD_Y) || 1 // corner→centre reference keeps the wave delay in [0, STAGGER]
+    const startScale = PIECE_SCALE
+    for (let i = 0; i < live.length; i += stride) {
+      const s = live[i]
+      const fromX = s.x
+      const fromY = s.y
+      const delay = (distSq(fromX, fromY) / maxSq) * SWEEP_STAGGER_MS
+      // A throwaway copy of the piece's face (its own baked texture) sitting exactly on the original.
+      const flyer = track(this.add.image(fromX, fromY, s.texture.key, s.frame.name).setDepth(33).setScale(startScale))
+      // Control point lifted above both ends → the same gentle board→readout arc as flyCollect.
+      const ctrlX = (fromX + targetX) / 2 + (Math.random() * 2 - 1) * 40
+      const ctrlY = Math.min(fromY, targetY) - 80 - Math.random() * 40
+      const p = { t: 0 }
+      this.tweens.add({
+        targets: p,
+        t: 1,
+        delay,
+        duration: SWEEP_ARC_MS + Math.random() * 50,
+        ease: 'Sine.easeIn',
+        onUpdate: () => {
+          if (!flyer.active) return // cancelled mid-flight — skip destroyed the flyer out from under us
+          const t = p.t
+          const u = 1 - t
+          flyer.x = u * u * fromX + 2 * u * t * ctrlX + t * t * targetX
+          flyer.y = u * u * fromY + 2 * u * t * ctrlY + t * t * targetY
+          flyer.setScale(startScale * (1 - 0.55 * t))
+          flyer.rotation = t * 1.1
+        },
+        onComplete: () => {
+          if (flyer.active) flyer.destroy() // self-destroy on arrival; idempotent with the skip destroy
+        },
+      })
+    }
+
+    // Canceller for the skip guard: stop the board fade + snap it empty (the flyers are freed by skip).
+    return () => {
+      fade.stop()
+      this.pieceLayer.setAlpha(0)
+    }
   }
 
   /**
