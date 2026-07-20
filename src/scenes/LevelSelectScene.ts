@@ -28,6 +28,17 @@ const FLICK_FRICTION = 0.92 // per-frame velocity retention — sets the coast l
 const FLICK_MIN = 1.2 // min release speed (px/frame) that counts as a flick — a slow drag still stops dead
 const FLICK_STOP = 0.4 // speed (px/frame) below which the coast snaps to rest
 const FLICK_IDLE_MS = 90 // a release this long after the last move is a hold, not a flick → no throw
+/**
+ * L4 map-trail tuning. The "journey" line is baked as ONE Graphics of faint dots stamped every
+ * `TRAIL_DOT_GAP` px between consecutive chip centres; travelled segments (up to the current chip)
+ * glow at `TRAIL_LIT_ALPHA`, the run beyond sits muted at `TRAIL_DIM_ALPHA`. `TRAIL_RETURN_BOW` bows
+ * each row-wrap "carriage return" downward so the path winds rather than cutting a hard diagonal.
+ */
+const TRAIL_DOT_GAP = 15
+const TRAIL_DOT_R = 3.4
+const TRAIL_LIT_ALPHA = 0.5
+const TRAIL_DIM_ALPHA = 0.26
+const TRAIL_RETURN_BOW = 16
 
 export class LevelSelectScene extends Phaser.Scene {
   /** Largest pointer travel during the current press — a tap on a chip only fires below this. */
@@ -80,6 +91,11 @@ export class LevelSelectScene extends Phaser.Scene {
     const gridW = GRID_COLS * CHIP + (GRID_COLS - 1) * GAP
     const startX = (DESIGN_W - gridW) / 2
     const topPad = 32
+    // L4 · map "journey" trail — a faint dotted, winding line threading the chip centres in level
+    // order, lit gold up to the current chip and muted beyond. Added FIRST so it sits UNDER every chip;
+    // it lives in `content`, so it rides L1's scroll (content.y) + the existing geometry mask (no
+    // second mask). Static → reduced motion unaffected.
+    content.add(this.buildPathTrail(startX, topPad, viewTop, save.unlocked))
     const reduced = this.prefersReducedMotion()
     const chipEntries: { container: Phaser.GameObjects.Container; cy: number; current: boolean }[] = []
     for (let n = 1; n <= LEVEL_COUNT; n++) {
@@ -298,6 +314,59 @@ export class LevelSelectScene extends Phaser.Scene {
       repeat: -1,
       ease: 'Sine.easeInOut',
     })
+  }
+
+  /**
+   * L4 · map "journey" trail. Threads the level chips into one winding dotted path so the grid reads
+   * as a route, not a spreadsheet. Builds ONE Graphics: between each chip and the next (in level order)
+   * it stamps faint dots — a straight run within a row, and a gently downward-bowed "carriage return"
+   * quadratic where the grid wraps to the next row's left start. Two-tone — dots up to the current
+   * unlocked chip glow `gold`, everything beyond is muted `suitWatermark` — so the lit trail terminates
+   * exactly at the "you are here" chip. Returned to create() to be added FIRST into `content`, so it
+   * sits UNDER every chip and rides L1's scroll + the existing geometry mask (no second mask; static).
+   */
+  private buildPathTrail(startX: number, topPad: number, viewTop: number, unlocked: number): Phaser.GameObjects.Graphics {
+    const T = getTheme()
+    const g = this.add.graphics()
+    // Chip centre in content-local space — the exact cx/cy formula buildChip uses, so the trail threads
+    // the real grid geometry (GRID_COLS columns on a CHIP+GAP pitch, ROW_H rows).
+    const centre = (n: number): Phaser.Math.Vector2 => {
+      const row = Math.floor((n - 1) / GRID_COLS)
+      const col = (n - 1) % GRID_COLS
+      return new Phaser.Math.Vector2(startX + col * (CHIP + GAP) + CHIP / 2, viewTop + topPad + row * ROW_H + CHIP / 2)
+    }
+    // One faint dot; travelled dots glow gold, the rest sit muted (colour + alpha reset per stamp so a
+    // single Graphics carries both tones).
+    const dot = (x: number, y: number, lit: boolean): void => {
+      g.fillStyle(lit ? T.gold : T.suitWatermark, lit ? TRAIL_LIT_ALPHA : TRAIL_DIM_ALPHA)
+      g.fillCircle(x, y, TRAIL_DOT_R)
+    }
+    // Walk the chips in level order, dotting each n → n+1 gap; endpoints (chip centres) are left
+    // unstamped — they hide under the chips anyway and skipping them keeps shared vertices seam-free.
+    for (let n = 1; n < LEVEL_COUNT; n++) {
+      const a = centre(n)
+      const b = centre(n + 1)
+      // Lit once the destination chip is unlocked; the segment LEAVING the current chip stays dim, so
+      // the gold trail ends precisely at "you are here" and "beyond" reads as unexplored (§L4).
+      const lit = n + 1 <= unlocked
+      if ((n - 1) % GRID_COLS < GRID_COLS - 1) {
+        // Same-row hop: a straight dotted run whose dots peek through the gaps between neighbouring chips.
+        const steps = Math.max(2, Math.round(a.distance(b) / TRAIL_DOT_GAP))
+        for (let i = 1; i < steps; i++) dot(Phaser.Math.Linear(a.x, b.x, i / steps), a.y, lit)
+      } else {
+        // Row wrap: a downward-bowed quadratic "carriage return" sweeping from the row's right end back
+        // to the next row's left start, so the journey winds instead of cutting a hard diagonal.
+        const cpx = (a.x + b.x) / 2
+        const cpy = (a.y + b.y) / 2 + TRAIL_RETURN_BOW
+        const steps = Math.max(3, Math.round((a.distance(b) + TRAIL_RETURN_BOW) / TRAIL_DOT_GAP))
+        for (let i = 1; i < steps; i++) {
+          const t = i / steps
+          const u = 1 - t
+          dot(u * u * a.x + 2 * u * t * cpx + t * t * b.x, u * u * a.y + 2 * u * t * cpy + t * t * b.y, lit)
+        }
+      }
+    }
+    return g
   }
 
   private buildChip(
