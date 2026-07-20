@@ -56,12 +56,22 @@ export class HomeScene extends Phaser.Scene {
   /** Gate: the heartbeat only takes over AFTER the fade-in/power-on bloom lands (never under reduced motion). */
   private playGlowLive = false
 
+  // --- C4/H3 · idle attract beat: a soft one-shot "come play" invitation fired once per idle entry ---
+  /** Rising-edge latch for `quality.idle()` — true once the current idle beat has fired; re-armed on activity. */
+  private wasIdle = false
+  /** The PLAY container + its steady breathe tween; the attract beat pauses the breathe for one bigger pulse. */
+  private playButton?: Phaser.GameObjects.Container
+  private playBreathe?: Phaser.Tweens.Tween
+  /** The hero emblem — the idle suit-ghost drifts across behind it (read for its live centre). */
+  private heroEmblem?: Phaser.GameObjects.Image
+
   constructor() {
     super('home')
   }
 
   create(): void {
     this.noteOpen = false // reset per entry (scene.start reuses the instance)
+    this.wasIdle = false // C4: re-arm the idle-attract latch per entry (the instance is reused across navigation)
     // Warm cream fade-in (never black) — the receiving half of every startScene cross-fade.
     this.cameras.main.fadeIn(this.prefersReducedMotion() ? 90 : 180, 255, 253, 248)
     // Centre the 720×1280 design box in the (possibly taller) world; applyEntrance/power-on animate
@@ -163,6 +173,7 @@ export class HomeScene extends Phaser.Scene {
     const SUITS = ['suitHeart', 'suitSpade', 'suitDiamond', 'suitClub'] as const
     const emblem = this.add.image(DESIGN_W / 2, emblemY, reduced ? 'heartbig' : SUITS[0])
     emblem.setDisplaySize(190, 190)
+    this.heroEmblem = emblem // held so the C4/H3 idle suit-ghost can drift across behind it
     const base = emblem.scaleX
     let suitIdx = 0
     // Hold the landed suit with one gentle heartbeat, then shuffle on to the next.
@@ -307,9 +318,11 @@ export class HomeScene extends Phaser.Scene {
       startScene(this,'game', { level: currentLevel })
     )
     menuButtons.push(play)
+    // Held for the C4/H3 idle attract beat — the "come play" pulse pauses this breathe, nudges, resumes.
+    this.playButton = play
     // PLAY breathe — gated (§E8): reduced motion leaves it at its resting scale.
     if (!reduced) {
-      this.tweens.add({
+      this.playBreathe = this.tweens.add({
         targets: play,
         scale: 1.04,
         duration: 800,
@@ -408,11 +421,82 @@ export class HomeScene extends Phaser.Scene {
    * neither the clock nor modulating per-frame — exactly today's reduced-motion behaviour.
    */
   update(): void {
+    // C4 · idle attract — watch the governor's idle flag every frame; a rising edge fires the H3 beat
+    // ONCE per idle entry. Sits BEFORE the C1 glow gate so it stays live even during the boot bloom and
+    // independent of the glow's readiness; reduced motion is handled inside the beat (the single opt-out).
+    this.updateIdleAttract()
+    // C1 · heartbeat coherence — drive the ambient PLAY-glow halo off the shared clock (unchanged).
     if (!this.playGlowLive || !this.playGlow || this.prefersReducedMotion()) return
     const a = heartbeat.amp()
     // ~0.22 rest → ~0.4 peak alpha + a ≤1.04× swell, matching the retired independent yoyo's range.
     this.playGlow.setAlpha(0.22 + a * 0.18)
     this.playGlow.setScale(this.playGlowBaseSX * (1 + a * 0.04), this.playGlowBaseSY * (1 + a * 0.04))
+  }
+
+  /**
+   * C4 · idle-attract edge detector. `quality.idle()` flips true after 6s of no input and clears on the
+   * next input (via `quality.noteActivity()`), so a rising edge (`idle && !wasIdle`) fires the attract
+   * beat EXACTLY once per idle entry; tracking the raw flag re-arms it automatically only after activity.
+   * No reduced-motion check here — `playIdleBeat` is the single opt-out point, so the edge stays honest.
+   */
+  private updateIdleAttract(): void {
+    const idle = quality.idle()
+    if (idle && !this.wasIdle) this.playIdleBeat()
+    this.wasIdle = idle
+  }
+
+  /**
+   * H3 · idle attract beat: a soft one-shot invitation (NOT a loop). (1) PLAY gives ONE slightly-larger
+   * "come play" pulse — its steady breathe is paused, nudged, then resumed from the same scale (the yoyo
+   * returns to the paused value, so the hand-back is seamless). (2) A single card-suit glyph ghosts across
+   * behind the hero, then rests (fades in on entry, out on exit, self-destroys). Reduced motion (§E8) → no
+   * beat at all. The ghost sprite is governor-capped (dropped on the low tier), leaving just the free
+   * transform pulse on the busiest devices; each fire is a lone transient, so it can never stack.
+   */
+  private playIdleBeat(): void {
+    if (this.prefersReducedMotion()) return
+    // (1) PLAY "come play" pulse — a pure transform (no fill cost). Pause the steady breathe, pulse a hair
+    // larger than its 1.04 rest, then resume; both container + breathe are absent under reduced motion but
+    // we've already returned there, and the `?.` keeps a normal-entry-without-breathe path safe too.
+    const play = this.playButton
+    if (play) {
+      this.playBreathe?.pause()
+      this.tweens.add({
+        targets: play,
+        scale: 1.09,
+        duration: 300,
+        yoyo: true,
+        ease: 'Sine.easeInOut',
+        onComplete: () => this.playBreathe?.resume(),
+      })
+    }
+    // (2) Single suit-glyph ghost drifting behind the hero. Governor-capped: `quality.count(1)` rounds to 0
+    // on the low tier → the sprite is dropped (the pulse alone carries the beat). A RED suit (heart or
+    // diamond) so the faint ghost reads on all 4 themes — a black club/spade would vanish on the dark ones.
+    if (quality.count(1) < 1) return
+    const cx = this.heroEmblem?.x ?? DESIGN_W / 2
+    const cy = this.heroEmblem?.y ?? 330
+    const suit = Math.random() < 0.5 ? 'suitHeart' : 'suitDiamond'
+    const dir = Math.random() < 0.5 ? 1 : -1 // drift left→right or right→left, for a touch of variety
+    const span = 220
+    // Depth −10: above the whole backdrop stack (proscenium −28) yet behind the hero (depth 0).
+    const ghost = this.add
+      .image(cx - dir * span, cy, suit)
+      .setDepth(-10)
+      .setDisplaySize(240, 240)
+      .setAngle(-8)
+      .setAlpha(0)
+    // Slow, ghostly drift across the hero; alpha fades in over the entry then out over the exit (yoyo at
+    // half the drift time). The sprite destroys itself once it rests — one transient object, never a loop.
+    this.tweens.add({ targets: ghost, x: cx + dir * span, duration: 2600, ease: 'Sine.easeInOut' })
+    this.tweens.add({
+      targets: ghost,
+      alpha: 0.16,
+      duration: 1300,
+      yoyo: true,
+      ease: 'Sine.easeInOut',
+      onComplete: () => ghost.destroy(),
+    })
   }
 
   /**

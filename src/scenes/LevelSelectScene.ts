@@ -5,6 +5,7 @@ import { endlessBestThisWeek, endlessUnlocked } from '../core/endless'
 import { LEVEL_COUNT } from '../core/levels'
 import { loadSave } from '../core/save'
 import { addCasinoBackdrop } from '../view/background'
+import { quality } from '../view/quality'
 import { getTheme, prefersReducedMotion } from '../view/theme'
 import { FONT, GHOST_PILL, ROSE_PILL, addMarquee, addMuteChip, addPillButton, goldFace, startScene } from '../view/ui'
 
@@ -40,6 +41,11 @@ export class LevelSelectScene extends Phaser.Scene {
   private maxScroll = 0
   /** L1: flick velocity (content-px/frame); friction-decayed each update() after release, 0 at rest. */
   private scrollVel = 0
+  /** C4: rising-edge latch for `quality.idle()` — true once the current idle beat has fired; re-armed on activity. */
+  private wasIdle = false
+  /** C4: the current-level chip + its steady "you are here" breathe — the idle beat pauses it for one nudge. */
+  private currentChip?: Phaser.GameObjects.Container
+  private currentChipPulse?: Phaser.Tweens.Tween
 
   constructor() {
     super('levelselect')
@@ -53,6 +59,12 @@ export class LevelSelectScene extends Phaser.Scene {
     // Warm cream fade-in (never black) — the receiving half of every startScene cross-fade.
     this.cameras.main.fadeIn(this.prefersReducedMotion() ? 90 : 180, 255, 253, 248)
     this.cameras.main.setScroll(0, restScrollY()) // centre the design box in the taller world
+    // C4: reset the idle-attract state per entry — Phaser reuses the scene instance across navigation, so
+    // clear the latch + any stale current-chip/tween ref (e.g. from a visit that HAD a current chip) before
+    // the grid rebuilds; startChipPulse re-captures the live chip once its entrance settles.
+    this.wasIdle = false
+    this.currentChip = undefined
+    this.currentChipPulse = undefined
     const save = loadSave()
     addCasinoBackdrop(this, 'menu')
     addMarquee(this, DESIGN_W / 2, 96)
@@ -193,6 +205,11 @@ export class LevelSelectScene extends Phaser.Scene {
    * on the one masked container, no new draws.
    */
   update(): void {
+    // C4 · idle attract — watch the governor's idle flag; a rising edge fires ONE gentle current-chip
+    // pulse (the subtler LevelSelect counterpart to Home's H3 beat). Runs before the L1 coast's early
+    // return so it ticks every frame regardless of scroll state; reduced motion is handled in the beat.
+    this.updateIdleAttract()
+    // L1 flick inertia (unchanged) — coast the masked grid under friction after a release with momentum.
     if (this.scrollVel === 0 || !this.scrollContent) return
     const raw = this.scrollContent.y + this.scrollVel
     const next = Phaser.Math.Clamp(raw, this.minScroll, this.maxScroll)
@@ -205,6 +222,37 @@ export class LevelSelectScene extends Phaser.Scene {
     if (Math.abs(this.scrollVel) < FLICK_STOP) this.scrollVel = 0
   }
 
+  /**
+   * C4 · idle-attract edge detector (mirrors HomeScene). `quality.idle()` flips true after 6s of no input
+   * and clears on the next input, so a rising edge fires the beat once per idle entry; tracking the raw
+   * flag re-arms it only after activity. `playIdleBeat` is the single reduced-motion opt-out point.
+   */
+  private updateIdleAttract(): void {
+    const idle = quality.idle()
+    if (idle && !this.wasIdle) this.playIdleBeat()
+    this.wasIdle = idle
+  }
+
+  /**
+   * C4 · LevelSelect idle beat — the subtler, secondary counterpart to Home's H3: ONE gentle nudge of the
+   * current "you are here" chip. Pauses its steady breathe, pulses a hair larger, then resumes from the
+   * same scale (the yoyo returns to the paused value → seamless). A single transform tween, no new draws.
+   * Reduced motion (§E8) → no beat at all; also needs a live current chip (absent once every level is done).
+   */
+  private playIdleBeat(): void {
+    if (this.prefersReducedMotion() || !this.currentChip) return
+    const chip = this.currentChip
+    this.currentChipPulse?.pause()
+    this.tweens.add({
+      targets: chip,
+      scale: 1.12,
+      duration: 320,
+      yoyo: true,
+      ease: 'Sine.easeInOut',
+      onComplete: () => this.currentChipPulse?.resume(),
+    })
+  }
+
   /** Reduced-motion (OS query OR in-app override) — delegates to the shared theme authority (§E8). */
   private prefersReducedMotion(): boolean {
     return prefersReducedMotion()
@@ -212,7 +260,9 @@ export class LevelSelectScene extends Phaser.Scene {
 
   /** The current level's gentle "you are here" breathing pulse — started once its entrance pop settles. */
   private startChipPulse(container: Phaser.GameObjects.Container): void {
-    this.tweens.add({ targets: container, scale: 1.06, duration: 600, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' })
+    // Held for the C4 idle beat: the attract nudge pauses this breathe, pulses once, then resumes it.
+    this.currentChip = container
+    this.currentChipPulse = this.tweens.add({ targets: container, scale: 1.06, duration: 600, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' })
   }
 
   /**
