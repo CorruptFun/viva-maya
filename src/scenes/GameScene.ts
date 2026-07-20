@@ -170,10 +170,23 @@ export class GameScene extends Phaser.Scene {
   /** B1 swipe-intent trail — a faint spark follow riding the grabbed piece across a swap glide; null when idle. */
   private swipeTrail: Phaser.GameObjects.Particles.ParticleEmitter | null = null
 
+  /**
+   * B4 rare idle twinkle — a lone masked `sweep` gleam on ONE resting piece, fired sparsely while idle
+   * (deliberately NOT the removed board-wide light-sweep). The live gleam + its geometry mask + tween
+   * are held so a board touch / resolve disarms it mid-flight; `nextTwinkleAt` is the scene-clock (ms)
+   * of the next allowed fire, pushed forward on any activity so it never glints the instant rest resumes.
+   */
+  private twinkleGleam: Phaser.GameObjects.Image | null = null
+  private twinkleMask: Phaser.GameObjects.Graphics | null = null
+  private twinkleTween: Phaser.Tweens.Tween | null = null
+  private nextTwinkleAt = 0
+
   private score = 0
   private shownScore = 0
   private scoreTween: Phaser.Tweens.Tween | null = null
   private scoreText!: Phaser.GameObjects.Text
+  /** W3 — the next round score milestone (10k/25k/50k…) whose crossing fires a one-off gold pop on the readout. */
+  private scoreMilestone = 10000
 
   /**
    * E11 continuous combo counter: ONE reused readout over the board — punches in place + heat-ramps
@@ -268,6 +281,7 @@ export class GameScene extends Phaser.Scene {
     this.objectives = this.spec.objectives.map(o => ({ symbol: o.symbol, remaining: o.count, total: o.count }))
     this.score = 0
     this.shownScore = 0
+    this.scoreMilestone = 10000 // W3 — first gold milestone pop
     this.state = 'idle'
     this.sprites.clear()
     this.armedGlows.clear()
@@ -280,11 +294,15 @@ export class GameScene extends Phaser.Scene {
     this.selected = null
     this.selectedSprite = null
     this.selectPulse = null
-    // B1/B2 additive-cue state — drop any stale refs from a prior create (restart re-runs create,
+    // B1/B2/B4 additive-cue state — drop any stale refs from a prior create (restart re-runs create,
     // not field inits); the objects themselves were destroyed with the previous scene.
     this.leanTweens = []
     this.leanHomes = []
     this.swipeTrail = null
+    this.twinkleGleam = null
+    this.twinkleMask = null
+    this.twinkleTween = null
+    this.nextTwinkleAt = 0
     this.dragFrom = null
     this.scoreMult = 1
     this.movesPulse = null
@@ -1290,6 +1308,9 @@ export class GameScene extends Phaser.Scene {
             // §E5/B14: ONE full-height landing thunk per settling column (r===0 fires once/col),
             // panned by column — the board pours in left→right as a rain of thunks, not mush.
             if (r === 0) sfx.land(1, this.colPan(c))
+            // B3: one floor-dust puff per column at its DEEPEST (bottom) cell — the whole column pours in
+            // together, so this lands in step with the r===0 thunk; full-height drop → max-size puff.
+            if (r === ROWS - 1) this.floorDust(to.x, to.y, ROWS)
             if (++landed >= total) {
               this.state = 'idle'
               this.scheduleAutoplay()
@@ -1443,6 +1464,20 @@ export class GameScene extends Phaser.Scene {
         }
       }
     }
+    // B4 rare idle twinkle: while the board truly rests (idle state + governor-idle, not reduced motion,
+    // not low tier) let ONE random piece gleam every ~8–12s — a single sparse glint, NOT the removed
+    // board-wide sweep. The moment anything happens (a touch flips quality.idle() false, or a resolve
+    // leaves 'idle') we push the next fire a full interval out and kill any gleam mid-flight, so it
+    // disarms instantly and never glints the moment rest resumes.
+    if (this.state === 'idle' && !this.reducedMotion && quality.idle() && quality.count(1) > 0) {
+      if (!this.twinkleGleam && time >= this.nextTwinkleAt) {
+        this.nextTwinkleAt = time + Phaser.Math.Between(8000, 12000)
+        this.twinklePiece()
+      }
+    } else {
+      if (this.twinkleGleam) this.disarmTwinkle()
+      this.nextTwinkleAt = time + 10000
+    }
   }
 
   // ----------------------------------------------------------------- input
@@ -1450,6 +1485,7 @@ export class GameScene extends Phaser.Scene {
   private onDown(p: Phaser.Input.Pointer): void {
     if (this.introOpen) return // §E14 — ignore board taps while the first-run card is up
     if (this.state !== 'idle') return
+    this.disarmTwinkle() // B4 — the board is being touched; kill any idle gleam instantly
     // Pieces are WORLD objects (rendered at BOARD_X/Y + col/row*CELL). Since the fill-screen change
     // scrolls the main camera by restScrollY() to centre the design box, game-space (p.x/p.y) no
     // longer equals world-space — so hit-test the cell against the camera-converted WORLD point.
@@ -2020,6 +2056,108 @@ export class GameScene extends Phaser.Scene {
   }
 
   /**
+   * B3 floor-impact dust: ONE soft ground puff per settling COLUMN (co-timed with its land() thunk) — a
+   * faint `bgglow` cloud + a few `spark` motes at the deepest-settling cell, sized by drop distance, the
+   * visual partner to the audio thunk. Added INTO the board-masked pieceLayer BELOW every piece (addAt 0)
+   * so it reads as dust at the tray floor and can never spill past the board rect. Reduced motion → none;
+   * `quality.count()`-gated so it drops to nothing on the low tier. Self-destroying.
+   */
+  private floorDust(x: number, y: number, dropCells: number): void {
+    if (this.reducedMotion || quality.count(1) === 0) return
+    const amp = Phaser.Math.Clamp(dropCells / ROWS, 0.2, 1)
+    const T = getTheme()
+    const fy = y + CELL * 0.3 // sit the puff at the piece's base, not its centre
+    // Soft dust cloud — a low, wide bloom that expands and fades under the pieces.
+    const cloud = this.add
+      .image(x, fy, 'bgglow')
+      .setTint(T.bloom)
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setDisplaySize(CELL * (0.5 + amp * 0.5), CELL * (0.32 + amp * 0.3))
+      .setAlpha(0.3 * amp * quality.scale())
+    this.pieceLayer.addAt(cloud, 0) // below every piece; the layer's mask keeps it on the board
+    this.tweens.add({
+      targets: cloud,
+      scaleX: cloud.scaleX * 1.7,
+      scaleY: cloud.scaleY * 1.4,
+      alpha: 0,
+      duration: 300,
+      ease: 'Quad.easeOut',
+      onComplete: () => cloud.destroy(),
+    })
+    // A few low, outward-kicked motes settling as they fade.
+    const motes = quality.count(1 + Math.round(amp * 2))
+    for (let i = 0; i < motes; i++) {
+      const mote = this.add
+        .image(x, fy, 'spark')
+        .setTint(T.sparkleTint)
+        .setBlendMode(Phaser.BlendModes.ADD)
+        .setDisplaySize(7, 7)
+        .setAlpha(0.7 * amp)
+      this.pieceLayer.addAt(mote, 0)
+      this.tweens.add({
+        targets: mote,
+        x: x + Phaser.Math.Between(-1, 1) * CELL * (0.3 + amp * 0.25),
+        y: fy - Phaser.Math.Between(4, 12) * amp,
+        scale: 0,
+        alpha: 0,
+        duration: 260 + Math.random() * 120,
+        ease: 'Quad.easeOut',
+        onComplete: () => mote.destroy(),
+      })
+    }
+  }
+
+  /**
+   * B4 helper: gleam ONE random resting piece with a short masked `sweep` shine — a single sparse glint,
+   * deliberately not a board-wide sweep (that was removed as repetitive). The sweep is clipped to the
+   * piece's cell by a geometry mask and slides across once, then everything self-destructs via
+   * disarmTwinkle. Refs are held so a board touch / resolve can kill it mid-slide.
+   */
+  private twinklePiece(): void {
+    const pool: Phaser.GameObjects.Sprite[] = []
+    for (const s of this.sprites.values()) if (s.active && s.visible) pool.push(s)
+    if (pool.length === 0) return
+    const s = pool[Phaser.Math.Between(0, pool.length - 1)]
+    const half = PIECE_SIZE / 2
+    // Geometry mask matching the piece cell so the shine can't bleed onto its neighbours.
+    const mg = this.make.graphics({ x: 0, y: 0 }, false)
+    mg.fillStyle(0xffffff, 1)
+    mg.fillRoundedRect(s.x - half, s.y - half, PIECE_SIZE, PIECE_SIZE, 14)
+    this.twinkleMask = mg
+    const gleam = this.add
+      .image(s.x - half, s.y, 'sweep')
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setDepth(19) // above the pieces (container depth 0), below the clear-burst emitters (20/21)
+      .setDisplaySize(PIECE_SIZE * 0.55, PIECE_SIZE)
+      .setAlpha(0)
+      .setAngle(18)
+      .setMask(mg.createGeometryMask())
+    this.twinkleGleam = gleam
+    // One pass: the shine catches at the left edge and fades as it crosses — never yoyos, never repeats.
+    this.twinkleTween = this.tweens.add({
+      targets: gleam,
+      x: s.x + half,
+      alpha: { from: 0.4 * quality.scale(), to: 0 },
+      duration: 460,
+      ease: 'Sine.easeInOut',
+      onComplete: () => this.disarmTwinkle(),
+    })
+  }
+
+  /** B4 teardown: stop the gleam tween and destroy the sweep + its mask graphics. Safe to call anytime. */
+  private disarmTwinkle(): void {
+    this.twinkleTween?.stop()
+    this.twinkleTween = null
+    if (this.twinkleGleam) {
+      this.twinkleGleam.clearMask()
+      this.twinkleGleam.destroy()
+      this.twinkleGleam = null
+    }
+    this.twinkleMask?.destroy()
+    this.twinkleMask = null
+  }
+
+  /**
    * Secondary motion (E5): the ring of SURVIVING neighbors around a blast gets shoved ~4–8px outward
    * (falloff by distance) then Back-settles home, so the board reads as physical. Cap ~10 pieces.
    * Reduced motion / weakest governor tier → none.
@@ -2240,10 +2378,11 @@ export class GameScene extends Phaser.Scene {
     const tweens: Promise<void>[] = []
     // §E5/B14: throttle landing thunks to ONE voice per settling COLUMN (≤COLS=8/refill) so the
     // refill reads as a rain of thunks, not mush. Track the deepest drop per column + when it lands.
-    const colDrop = new Map<number, { dist: number; ms: number }>()
-    const noteCol = (col: number, dist: number): void => {
+    // Track the deepest drop per column + when/where it lands, so B3's floor dust can co-fire with the thunk.
+    const colDrop = new Map<number, { dist: number; ms: number; x: number; y: number }>()
+    const noteCol = (col: number, dist: number, x: number, y: number): void => {
       const cur = colDrop.get(col)
-      if (!cur || dist > cur.dist) colDrop.set(col, { dist, ms: FALL_BASE_MS + FALL_PER_CELL_MS * dist })
+      if (!cur || dist > cur.dist) colDrop.set(col, { dist, ms: FALL_BASE_MS + FALL_PER_CELL_MS * dist, x, y })
     }
     for (const move of falls) {
       const sprite = this.sprites.get(move.piece.id)
@@ -2253,7 +2392,7 @@ export class GameScene extends Phaser.Scene {
       }
       const to = this.cellToXY(move.to)
       const dist = move.to.row - move.from.row
-      noteCol(move.to.col, dist)
+      noteCol(move.to.col, dist, to.x, to.y)
       tweens.push(
         this.t({
           targets: sprite,
@@ -2266,7 +2405,7 @@ export class GameScene extends Phaser.Scene {
     for (const spawn of spawns) {
       const sprite = this.createSprite(spawn.piece, spawn.at, spawn.dropCells)
       const to = this.cellToXY(spawn.at)
-      noteCol(spawn.at.col, spawn.dropCells)
+      noteCol(spawn.at.col, spawn.dropCells, to.x, to.y)
       tweens.push(
         this.t({
           targets: sprite,
@@ -2276,9 +2415,13 @@ export class GameScene extends Phaser.Scene {
         }).then(() => this.settleSquash(sprite, spawn.dropCells)) // E5: squash-&-settle on landing
       )
     }
-    // One height-mapped thunk per column, fired as that column's deepest piece settles, panned by column.
-    for (const [col, { dist, ms }] of colDrop) {
-      this.time.delayedCall(ms, () => sfx.land(Phaser.Math.Clamp(dist / ROWS, 0.15, 1), this.colPan(col)))
+    // One height-mapped thunk per column, fired as that column's deepest piece settles, panned by column,
+    // with B3's floor-dust puff co-timed to it at the settling cell (sized by the same drop distance).
+    for (const [col, { dist, ms, x, y }] of colDrop) {
+      this.time.delayedCall(ms, () => {
+        sfx.land(Phaser.Math.Clamp(dist / ROWS, 0.15, 1), this.colPan(col))
+        this.floorDust(x, y, dist)
+      })
     }
     return Promise.all(tweens)
   }
@@ -2646,6 +2789,50 @@ export class GameScene extends Phaser.Scene {
       .setDepth(45)
     this.time.delayedCall(560, () => stream.active && stream.stop())
     this.time.delayedCall(1700, () => stream.active && stream.destroy())
+  }
+
+  /**
+   * W2 third-star flourish: a small gold burst crowning the 3rd star as it dings in on the win card —
+   * deliberately a tier below the Heartbloom (giant heart of light + leitmotif) that fires on a
+   * PERFECT/jackpot win. Rendered ABOVE the card (depth > 41) with its own transient emitter, since the
+   * shared spark emitter sits below it. Reduced motion → nothing (the star stays static); the burst is
+   * `quality.count()`-gated to nothing on the low tier and self-destroys.
+   */
+  private thirdStarBurst(x: number, y: number): void {
+    if (this.reducedMotion || quality.count(1) === 0) return
+    const T = getTheme()
+    // Soft gold bloom behind the star.
+    const bloom = this.add
+      .image(x, y, 'bgglow')
+      .setTint(T.gold)
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setDepth(44)
+      .setDisplaySize(120, 120)
+      .setAlpha(0)
+    this.tweens.add({
+      targets: bloom,
+      alpha: { from: 0.7, to: 0 },
+      scaleX: bloom.scaleX * 1.8,
+      scaleY: bloom.scaleY * 1.8,
+      duration: 420,
+      ease: 'Quad.easeOut',
+      onComplete: () => bloom.destroy(),
+    })
+    // Capped gold spark crown above the card (own emitter — the shared one renders under the card).
+    const burst = this.add
+      .particles(0, 0, 'spark', {
+        speed: { min: 70, max: 220 },
+        angle: { min: 0, max: 360 },
+        scale: { start: 0.7, end: 0 },
+        alpha: { start: 0.95, end: 0 },
+        lifespan: { min: 300, max: 560 },
+        gravityY: 260,
+        tint: [T.gold, T.sparkleTint],
+        emitting: false,
+      })
+      .setDepth(45)
+    burst.explode(quality.count(12), x, y)
+    this.time.delayedCall(640, () => burst.destroy())
   }
 
   private rankWord(stars: number): string {
@@ -3087,7 +3274,14 @@ export class GameScene extends Phaser.Scene {
         star.setScale(0)
         const delay = 150 + i * 160
         this.tweens.add({ targets: star, scale: finalScale, delay, duration: 260, ease: 'Back.easeOut' })
-        if (earned) at(delay, () => sfx.starDing(i))
+        if (earned)
+          at(delay, () => {
+            sfx.starDing(i)
+            // W2: crown the 3rd (max) star with a small gold burst — a tier below the Heartbloom, which
+            // already fires on a PERFECT/jackpot win. cx/cy are the card's rest coords; the star sits at
+            // local ((i-1)*84, -122). Self-gates to nothing under reduced motion / low tier.
+            if (i === 2) this.thirdStarBurst(cx + (i - 1) * 84, cy - 122)
+          })
         settleActions.push(() => star.setScale(finalScale))
       } else {
         star.setScale(finalScale)
@@ -3404,7 +3598,16 @@ export class GameScene extends Phaser.Scene {
         this.scoreText.setText(this.shownScore.toLocaleString())
       },
     })
-    this.scorePunch(gain)
+    // W3: crossing a round milestone (10k/25k/50k…) gets its OWN gold pop — richer than the per-gain
+    // scorePunch and mutually exclusive with it, so the two never fight over the readout the same frame.
+    // The pointer always advances on a crossing (skipping any it leaps past); the pop is held during play.
+    if (this.score >= this.scoreMilestone) {
+      const crossed = this.scoreMilestone
+      this.scoreMilestone = this.nextScoreMilestone(this.score)
+      if (this.state !== 'ended') this.scoreMilestonePop(crossed)
+    } else {
+      this.scorePunch(gain)
+    }
   }
 
   /**
@@ -3425,6 +3628,61 @@ export class GameScene extends Phaser.Scene {
       yoyo: true,
       ease: 'Quad.easeOut',
     })
+  }
+
+  /** W3: the smallest 1 / 2.5 / 5 ×10ⁿ milestone strictly above `v` (…10k, 25k, 50k, 100k, 250k, 500k…). */
+  private nextScoreMilestone(v: number): number {
+    for (let exp = 4; exp < 15; exp++) {
+      for (const mant of [1, 2.5, 5]) {
+        const m = mant * Math.pow(10, exp)
+        if (m > v) return m
+      }
+    }
+    return Math.pow(10, 15) // unreachable for any real score
+  }
+
+  /**
+   * W3 score-milestone pop: a one-off gold flash + tick + scale kick on the HUD readout when the rolling
+   * score crosses a round threshold — a bigger, rarer sibling of scorePunch. Reduced motion → the colour
+   * flash + tick only (no scale, no glow); the extra bright glow rides the reduce-flashing gate, and the
+   * glow is `quality.count()`-gated. The threshold is passed for future copy but the pop is generic.
+   */
+  private scoreMilestonePop(_threshold: number): void {
+    if (!this.scoreText) return
+    const T = getTheme()
+    sfx.scoreTick() // reuse the score tick — audio fires in both motion modes
+    this.scoreText.setColor(css(T.gold))
+    this.time.delayedCall(260, () => this.scoreText?.setColor(getTheme().onBackdropInk))
+    if (this.reducedMotion) return
+    // Scale kick — a notch beyond scorePunch's 1.15.
+    this.scorePunchTween?.stop()
+    this.scoreText.setScale(1)
+    this.scorePunchTween = this.tweens.add({
+      targets: this.scoreText,
+      scale: 1.3,
+      duration: 160,
+      yoyo: true,
+      ease: 'Back.easeOut',
+    })
+    // A brief gold flare over the readout — an extra flash, so it rides the reduce-flashing gate.
+    if (!this.reduceFlashing && quality.count(1) > 0) {
+      const flare = this.add
+        .image(this.scoreText.x - this.scoreText.width / 2, this.scoreText.y + this.scoreText.height / 2, 'bgglow')
+        .setTint(T.gold)
+        .setBlendMode(Phaser.BlendModes.ADD)
+        .setDepth(5)
+        .setDisplaySize(200, 90)
+        .setAlpha(0)
+      this.tweens.add({
+        targets: flare,
+        alpha: { from: 0.5, to: 0 },
+        scaleX: flare.scaleX * 1.5,
+        scaleY: flare.scaleY * 1.5,
+        duration: 420,
+        ease: 'Quad.easeOut',
+        onComplete: () => flare.destroy(),
+      })
+    }
   }
 
   /**
