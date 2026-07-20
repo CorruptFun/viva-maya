@@ -107,6 +107,46 @@ export class DailyBonusScene extends Phaser.Scene {
       })
       .setOrigin(0.5)
 
+    // §D3 — a small 7-dot "week" streak strip under the streak line. Earned days light gold, upcoming
+    // days ghost, and the 5th dot is crowned with a star as the DOUBLE-PRIZE milestone (daily.ts pays a
+    // SECOND prize every 5th streak day), so the streak's payoff structure is visible and worth coming
+    // back for. Built here — before the branch below — so it rides EVERY state (the available reels, D1's
+    // already-spun countdown, the post-claim screen). It sits high above both the cabinet and D1's
+    // countdown, disturbing neither. Baked `bulb`/`star` + gold tokens only, no new assets.
+    const DOT_STEP = 32
+    const DOT_MID = 4 // 0-based index of the 5th dot — the double-prize day
+    const dotY = 236
+    const dot0X = DESIGN_W / 2 - (DOT_STEP * 6) / 2 // centre the 7-dot row on the design axis
+    // This week's earned days, capped at a 7-day week: streak 1..7 → 1..7 filled; streak 8 wraps to a
+    // fresh week (1 filled), 14 → 7, … — always the CURRENT week's progress, matching the streak line.
+    const weekDots = (streak: number): number => (streak <= 0 ? 0 : ((streak - 1) % 7) + 1)
+    const streakDots: Phaser.GameObjects.Image[] = []
+    for (let i = 0; i < 7; i++) {
+      const s = i === DOT_MID ? 22 : 18 // the milestone dot rides a touch larger under its star
+      streakDots.push(this.add.image(dot0X + i * DOT_STEP, dotY, 'bulb').setDisplaySize(s, s))
+    }
+    // The double-prize badge: a small star crowning the 5th dot, ALWAYS shown so the reward advertises
+    // itself even on day 1 (it just brightens once that day is actually earned).
+    const milestoneStar = this.add.image(streakDots[DOT_MID].x, dotY - 20, 'star').setDisplaySize(18, 18)
+    // Repaint earned(lit-gold)/upcoming(ghosted) from a streak count — reused when today's spin lands.
+    const paintStreak = (streak: number): void => {
+      const earned = weekDots(streak)
+      streakDots.forEach((dot, i) => {
+        const lit = i < earned
+        dot.setTint(lit ? T.gold : T.goldDeep).setAlpha(lit ? 1 : 0.4) // lit matches the cabinet marquee
+      })
+      milestoneStar.setAlpha(earned >= DOT_MID + 1 ? 1 : 0.5) // full once the double-day is banked
+    }
+    paintStreak(save.streak)
+    // One gentle pop on TODAY's dot — the day about to be claimed (spin available) or the one just
+    // claimed (already spun). Gated (§E8): reduced motion leaves the strip fully static, no steady cost.
+    if (!reduced) {
+      const earnedNow = weekDots(save.streak)
+      const today = streakDots[Phaser.Math.Clamp(available ? earnedNow : earnedNow - 1, 0, 6)]
+      const base = today.scaleX
+      this.tweens.add({ targets: today, scale: base * 1.22, duration: 260, delay: 260, yoyo: true, ease: 'Sine.easeInOut' })
+    }
+
     // Machine cabinet.
     const g = this.add.graphics()
     const cabW = 560
@@ -254,6 +294,7 @@ export class DailyBonusScene extends Phaser.Scene {
       // Award first, animate second — closing mid-spin can't lose the prize.
       const result = performSpin(loadSave(), mulberry32((Math.random() * 2 ** 31) | 0))
       streakText.setText(`🔥 day ${result.streak}`)
+      paintStreak(result.streak) // §D3 — advance the week strip in step with the streak line
       // Hand the FIXED result to the reels once the pre-spin wind-up (if any) has cleared the idle symbols.
       const launch = (): void => {
         idle.forEach(img => img.destroy())
