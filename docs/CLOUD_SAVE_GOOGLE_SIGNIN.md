@@ -1,10 +1,32 @@
 # Cloud Save — Google Sign-In Plan
 
-> **Status (branch `feat/cloud-save-google`):** the CODE is **DONE** — Google sign-in is wired, the
-> email one-time-code flow removed, the merge is unit-tested (`src/core/merge.test.ts`, `npm test`),
-> and the app still boots byte-for-byte local-only when unconfigured. **What remains is YOUR dashboard
-> setup (Part 1) + the end-to-end test (Part 3).** Cloud stays dormant until the Supabase/Google
-> project is configured and the two repo Variables (`VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`) are set.
+> **Status: ✅ LIVE (2026-07-20).** Google sign-in cloud save is merged (PR #4) and deployed to
+> https://corruptfun.github.io/viva-maya/ with `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY` set as
+> repo **Variables**. Supabase project `deskabqqxqqibxjffwmb` is configured (saves table + owner-only
+> RLS, Google provider enabled). Verified end-to-end on a real iPhone — sign-in works and a save row
+> lands in the cloud. See **Operational notes** below.
+
+## Operational notes (post-launch, 2026-07-20)
+
+- **OAuth publishing:** the Google Cloud OAuth app is **published to production but left UNVERIFIED**,
+  which is fine — Viva Maya requests only **non-sensitive scopes** (email/profile/openid via Supabase),
+  so app verification is **not required**, there is **no "unverified app" warning screen**, and the
+  100-new-user cap does **not** apply (those are for *sensitive* scopes like Gmail/Drive). Any Google
+  account can sign in.
+- **Brand verification is DEFERRED (cosmetic only).** Completing Google's "brand verification" only adds
+  the app **name + logo** to the consent screen (instead of the raw `…supabase.co` name). It requires a
+  home page that shows the app name and explains the purpose — `public/about.html` already satisfies
+  this (point the consent screen's *Application home page* at `…/viva-maya/about.html`). Left for a
+  future update once a permanent hosting/branding home is chosen. A fully branded auth domain
+  (e.g. `auth.vivamaya.com`) would additionally need Supabase's paid Custom Domain add-on.
+- **OAuth consent pages** live on the game's own site: `public/about.html` (landing), `public/privacy.html`,
+  `public/terms.html` (public contact = **meta@corrupt.fun**, not any business email). `vite.config.ts`
+  `navigateFallbackDenylist` keeps them serving as themselves rather than the SPA game fallback.
+- **Data-safety recap:** a deploy never touches `localStorage`; cloud is opt-in per player; a first
+  sign-in on an empty cloud **uploads** the local save (never overwrites it); the `onAuthStateChange`
+  null→session `syncNow()` fix stops a fresh device from pushing an empty save over real cloud progress.
+- **Scale:** these games are intended to grow **beyond family use**. Future work should keep scalability
+  and real branding in mind (brand verification for the logo, and a custom auth domain).
 
 The chosen auth for cloud save is **Sign in with Google** (not email one-time codes).
 
