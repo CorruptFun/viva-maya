@@ -14,7 +14,7 @@ export { mergeSaves }
  *   - localStorage stays AUTHORITATIVE. The cloud is a mirror: on boot we pull the cloud row, MERGE it
  *     with local ("furthest-progressed wins"), persist the winner locally, and push it back so both
  *     ends converge. Thereafter every persistSave() debounce-pushes to the cloud.
- *   - Identity is an email (one-time code) so progress survives a cache wipe and syncs across devices.
+ *   - Identity is a Google account (OAuth) so progress survives a cache wipe and syncs across devices.
  */
 
 const env = import.meta.env as unknown as Record<string, string | undefined>
@@ -127,27 +127,25 @@ export async function syncNow(): Promise<void> {
   pushCloudSave(winner) // ensure a first-ever cloud row is created even if local was already newest
 }
 
-// ---------------------------------------------------------------------------- auth (email OTP)
-/** Email the user a one-time sign-in code (also sends a magic link the client can detect). */
-export async function sendEmailOtp(email: string): Promise<{ ok: boolean; error?: string }> {
+// ---------------------------------------------------------------------------- auth (Google OAuth)
+/**
+ * Start the Google sign-in flow. This REDIRECTS the whole page to Google's consent screen and back to
+ * `redirectTo` (the app's current URL, minus any hash). Nothing runs after this on success — the
+ * return is a fresh page load where the Supabase client (detectSessionInUrl: true) establishes the
+ * session, `onAuthStateChange` fires, and the null→session transition reconciles saves via syncNow().
+ * Returns an error only if the redirect couldn't be started (or cloud is unconfigured). Chosen over
+ * email codes because Supabase's built-in email sender is throttled to ~2/hour (testing-only) and
+ * Google is one tap for a non-technical player. See docs/CLOUD_SAVE_GOOGLE_SIGNIN.md.
+ */
+export async function signInWithGoogle(): Promise<{ ok: boolean; error?: string }> {
   const c = await sb()
   if (!c) return { ok: false, error: 'Cloud save isn’t set up on this build.' }
-  const { error } = await c.auth.signInWithOtp({ email: email.trim(), options: { shouldCreateUser: true } })
+  const { error } = await c.auth.signInWithOAuth({
+    provider: 'google',
+    // Strip the hash so we return to a clean app URL; Supabase appends its own auth params on return.
+    options: { redirectTo: window.location.href.split('#')[0] },
+  })
   return error ? { ok: false, error: error.message } : { ok: true }
-}
-
-/** Verify the 6-digit email code, establish the session, and immediately reconcile saves. */
-export async function verifyEmailOtp(email: string, code: string): Promise<{ ok: boolean; error?: string }> {
-  const c = await sb()
-  if (!c) return { ok: false, error: 'Cloud save isn’t set up on this build.' }
-  const { error } = await c.auth.verifyOtp({ email: email.trim(), token: code.trim(), type: 'email' })
-  if (error) return { ok: false, error: error.message }
-  try {
-    await syncNow()
-  } catch {
-    // sign-in still succeeded; a failed first sync will retry on the next persist
-  }
-  return { ok: true }
 }
 
 export async function signOutCloud(): Promise<void> {
@@ -174,8 +172,16 @@ export async function initCloud(): Promise<void> {
   const c = await sb()
   if (!c) return
   c.auth.onAuthStateChange((_event, s) => {
+    const hadSession = session !== null
     applySession(s)
     notify()
+    // Google OAuth returns via a full-page redirect with NO explicit verify step (the old email code
+    // reconciled inside verifyEmailOtp). So a newly-established session — the null→session transition,
+    // which is exactly what the redirect return produces — MUST reconcile here (pull cloud → merge
+    // "furthest-progressed wins" → persist + push) BEFORE any local persist can mirror a fresh/default
+    // save over the player's real cloud progress. Idempotent: the redundant run alongside
+    // bootstrapCloud's own syncNow simply converges. Does NOT fire on token refresh or sign-out.
+    if (session && !hadSession) void syncNow()
   })
   try {
     const { data } = await c.auth.getSession()

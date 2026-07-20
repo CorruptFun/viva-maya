@@ -1,5 +1,11 @@
 # Cloud Save — Google Sign-In Plan
 
+> **Status (branch `feat/cloud-save-google`):** the CODE is **DONE** — Google sign-in is wired, the
+> email one-time-code flow removed, the merge is unit-tested (`src/core/merge.test.ts`, `npm test`),
+> and the app still boots byte-for-byte local-only when unconfigured. **What remains is YOUR dashboard
+> setup (Part 1) + the end-to-end test (Part 3).** Cloud stays dormant until the Supabase/Google
+> project is configured and the two repo Variables (`VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`) are set.
+
 The chosen auth for cloud save is **Sign in with Google** (not email one-time codes).
 
 **Why Google over email codes:** Supabase's built-in email sender is throttled to ~2 messages/hour
@@ -10,19 +16,20 @@ so we skip it for now.)
 
 ---
 
-## What already exists (built + dormant on `main`)
+## What the engine provides (built + dormant until configured)
 
-The cloud **engine** is done and safe — it just needs Google swapped in for the email auth and the
-project keys set:
+The cloud **engine** is done and safe — Google is now wired in; it just needs the project keys set:
 
 - `src/core/cloud.ts` — Supabase client (lazy-loaded), boot reconcile (`bootstrapCloud`), pull/push,
   and a debounced sync. **Dormant** unless `VITE_SUPABASE_*` is set → today's local-only behavior.
-  *(Currently exposes email-OTP `sendEmailOtp`/`verifyEmailOtp` — these get replaced by Google.)*
-- `src/core/merge.ts` — pure "furthest-progressed wins" merge (unit-tested). **Keep as-is.**
+  *(Exposes `signInWithGoogle()`; the old email-OTP helpers were removed. A newly-established session
+  reconciles saves via `syncNow()` from the `onAuthStateChange` handler — this is critical for Google,
+  whose redirect return has no explicit verify step, so nothing else would trigger the first reconcile.)*
+- `src/core/merge.ts` — pure "furthest-progressed wins" merge, now **unit-tested** (`merge.test.ts`). **Keep as-is.**
 - `src/core/save.ts` — `coerceSave`, `exportSave`/`importSave` backup codes, and a persist listener
   that mirrors every local save to the cloud. **Keep as-is.**
-- `src/view/cloudmodal.ts` — the Settings → CLOUD & BACKUP modal. *(Email/code inputs get replaced
-  by a "Sign in with Google" button; the signed-in + Download/Restore-backup blocks stay.)*
+- `src/view/cloudmodal.ts` — the Settings → CLOUD & BACKUP modal. *(Signed-out state shows a single
+  "Sign in with Google" button; the signed-in state + Download/Restore-backup blocks are unchanged.)*
 - `supabase/migrations/0001_saves.sql` — `saves` table + owner-only RLS + `updated_at` trigger.
 - Lazy-load: `@supabase/supabase-js` is a separate chunk, excluded from the PWA precache, so a
   local-only build never downloads it (see `vite.config.ts`).
