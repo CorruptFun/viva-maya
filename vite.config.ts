@@ -42,7 +42,11 @@ export default defineConfig({
         globIgnores: ['**/og-image.png', '**/supabase-*.js'],
         // Phaser's bundle is ~1.5 MB raw; keep it under the precache ceiling.
         maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
-        navigateFallback: 'index.html'
+        navigateFallback: 'index.html',
+        // Standalone content pages (about / privacy / terms — linked from the Google OAuth consent
+        // screen and the app) must always serve as THEMSELVES, never the SPA game fallback — even for
+        // an installed PWA. Without this, the navigate-fallback would hand back index.html (the game).
+        navigateFallbackDenylist: [/\/(about|privacy|terms)\.html(\?.*)?$/]
       }
     })
   ]
