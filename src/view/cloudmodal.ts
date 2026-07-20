@@ -308,7 +308,7 @@ export function openCloudModal(): void {
     restore.value = restoreValue
     restore.addEventListener('input', () => { restoreValue = restore.value })
 
-    const restoreBtn = ghostBtn('Restore')
+    const restoreBtn = ghostBtn('Restore from code')
     restoreBtn.addEventListener('click', () => {
       const c = restoreValue.trim()
       if (!c) { restoreError = 'Paste a backup code first.'; render(); return }
@@ -316,13 +316,53 @@ export function openCloudModal(): void {
       else { restoreError = "That code didn't work."; render() }
     })
 
+    // Download-a-FILE backup: a file saved to the device (Downloads / Files) survives clearing the
+    // browser's site data — the strongest durability we can offer with no account. It holds the same
+    // backup code, so "Restore from a file" simply re-imports it.
+    const downloadBtn = ghostBtn('Download backup file')
+    downloadBtn.addEventListener('click', () => {
+      try {
+        const a = document.createElement('a')
+        const url = URL.createObjectURL(new Blob([exportSave()], { type: 'text/plain' }))
+        a.href = url
+        a.download = 'viva-maya-backup.txt'
+        document.body.appendChild(a)
+        a.click()
+        a.remove()
+        window.setTimeout(() => URL.revokeObjectURL(url), 2000)
+      } catch {
+        // download unsupported (rare) — the copy-code path still works
+      }
+    })
+
+    const fileInput = document.createElement('input')
+    fileInput.type = 'file'
+    fileInput.accept = 'text/plain,.txt'
+    fileInput.style.display = 'none'
+    fileInput.addEventListener('change', () => {
+      const f = fileInput.files && fileInput.files[0]
+      fileInput.value = '' // allow re-picking the same file later
+      if (!f) return
+      f.text()
+        .then(txt => {
+          if (importSave(txt.trim())) location.reload()
+          else { restoreError = "That file didn't work."; render() }
+        })
+        .catch(() => { restoreError = "Couldn't read that file."; render() })
+    })
+    const restoreFileBtn = ghostBtn('Restore from a file')
+    restoreFileBtn.addEventListener('click', () => fileInput.click())
+
     const children: HTMLElement[] = [
       heading('Back up on this device'),
-      note('Copy a backup code to keep your progress safe, or paste one to restore it.'),
+      note('Download a backup file (or copy a code) to keep your progress safe — restore it here anytime, even after clearing your browser or on a new device.'),
+      downloadBtn,
       copyBtn,
       fallback,
+      restoreFileBtn,
       restore,
       restoreBtn,
+      fileInput,
     ]
     if (restoreError) children.push(errorEl(restoreError))
     return stack(children)

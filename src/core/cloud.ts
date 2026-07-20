@@ -1,4 +1,4 @@
-import { createClient, type SupabaseClient } from '@supabase/supabase-js'
+import type { SupabaseClient } from '@supabase/supabase-js'
 import { mergeSaves } from './merge'
 import { coerceSave, loadSave, persistSave, type SaveData } from './save'
 
@@ -26,15 +26,22 @@ export function isCloudConfigured(): boolean {
   return !!SUPABASE_URL && !!SUPABASE_ANON_KEY
 }
 
-let client: SupabaseClient | null = null
-function sb(): SupabaseClient | null {
+let clientPromise: Promise<SupabaseClient> | null = null
+/**
+ * Lazily import the Supabase client — ONLY when configured. This keeps @supabase/supabase-js in a
+ * separate async chunk (named + excluded from the PWA precache in vite.config) so a LOCAL-ONLY build
+ * never ships or downloads it; it loads on demand the moment cloud is actually turned on.
+ */
+async function sb(): Promise<SupabaseClient | null> {
   if (!isCloudConfigured()) return null
-  if (!client) {
-    client = createClient(SUPABASE_URL as string, SUPABASE_ANON_KEY as string, {
-      auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
-    })
+  if (!clientPromise) {
+    clientPromise = import('@supabase/supabase-js').then(m =>
+      m.createClient(SUPABASE_URL as string, SUPABASE_ANON_KEY as string, {
+        auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
+      })
+    )
   }
-  return client
+  return clientPromise
 }
 
 export interface CloudSession {
@@ -68,7 +75,7 @@ export function cloudSession(): CloudSession | null {
 // ---------------------------------------------------------------------------- pull / push
 /** Fetch the signed-in user's cloud save (coerced), or null (none yet / unconfigured / error). */
 export async function pullCloudSave(): Promise<SaveData | null> {
-  const c = sb()
+  const c = await sb()
   if (!c || !session) return null
   try {
     const { data, error } = await c.from('saves').select('data').eq('user_id', session.userId).maybeSingle()
@@ -94,7 +101,7 @@ export function pushCloudSave(data: SaveData): void {
 
 async function flushPush(): Promise<void> {
   pushTimer = null
-  const c = sb()
+  const c = await sb()
   const data = pending
   pending = null
   if (!c || !session || !data) return
@@ -123,7 +130,7 @@ export async function syncNow(): Promise<void> {
 // ---------------------------------------------------------------------------- auth (email OTP)
 /** Email the user a one-time sign-in code (also sends a magic link the client can detect). */
 export async function sendEmailOtp(email: string): Promise<{ ok: boolean; error?: string }> {
-  const c = sb()
+  const c = await sb()
   if (!c) return { ok: false, error: 'Cloud save isn’t set up on this build.' }
   const { error } = await c.auth.signInWithOtp({ email: email.trim(), options: { shouldCreateUser: true } })
   return error ? { ok: false, error: error.message } : { ok: true }
@@ -131,7 +138,7 @@ export async function sendEmailOtp(email: string): Promise<{ ok: boolean; error?
 
 /** Verify the 6-digit email code, establish the session, and immediately reconcile saves. */
 export async function verifyEmailOtp(email: string, code: string): Promise<{ ok: boolean; error?: string }> {
-  const c = sb()
+  const c = await sb()
   if (!c) return { ok: false, error: 'Cloud save isn’t set up on this build.' }
   const { error } = await c.auth.verifyOtp({ email: email.trim(), token: code.trim(), type: 'email' })
   if (error) return { ok: false, error: error.message }
@@ -144,7 +151,7 @@ export async function verifyEmailOtp(email: string, code: string): Promise<{ ok:
 }
 
 export async function signOutCloud(): Promise<void> {
-  const c = sb()
+  const c = await sb()
   if (!c) return
   try {
     await c.auth.signOut()
@@ -164,7 +171,7 @@ function applySession(s: { user?: { id: string; email?: string | null } | null }
  * cloud save from the first paint.
  */
 export async function initCloud(): Promise<void> {
-  const c = sb()
+  const c = await sb()
   if (!c) return
   c.auth.onAuthStateChange((_event, s) => {
     applySession(s)
