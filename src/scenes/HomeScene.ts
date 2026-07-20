@@ -8,6 +8,7 @@ import { refreshLives } from '../core/lives'
 import { greeting, occasionFor, pendingOccasion, secretNote, withName } from '../core/maya'
 import { loadSave, markOccasionSeen, touchOpen } from '../core/save'
 import { addCasinoBackdrop } from '../view/background'
+import { maybeShowInstallNudge } from '../view/installnudge'
 import { addJackpotMeter } from '../view/jackpot'
 import { OVERSHOOT, backOut, fadeRise, heartbeat } from '../view/motion'
 import { quality } from '../view/quality'
@@ -90,6 +91,9 @@ export class HomeScene extends Phaser.Scene {
     // §E9 — stamp first/last open dates (safe: touches only those two fields). Enables future
     // "welcome back" warmth; never alters progress.
     const today = touchOpen(todayKey()).lastOpenDate ?? todayKey()
+    // Gentle one-off nudge: a browser player (not installed) with progress + not signed in is invited to
+    // save/sync before adding to the home screen (an installed iOS PWA gets its own storage). Self-guards.
+    maybeShowInstallNudge(this)
     const currentLevel = Math.min(save.unlocked, LEVEL_COUNT)
     const reduced = this.prefersReducedMotion()
     // Stacked pill buttons that fade + slide up into place on entrance (see below).
