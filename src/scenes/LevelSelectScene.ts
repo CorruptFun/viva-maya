@@ -456,7 +456,10 @@ export class LevelSelectScene extends Phaser.Scene {
         const screenY = cy + content.y
         if (this.dragMoved >= 12 || screenY < viewTop || screenY > viewBottom) return
         sfx.uiTap()
-        startScene(this,'game', { level: n })
+        // C6 · opt-in shared-element bloom: hand the destination this chip's live on-screen centre
+        // (cx, cy+scroll) + size so the board "opens" from the tapped chip. Additive — reduced motion
+        // never queues it (gated in startScene), so the calm path keeps today's flat cross-fade.
+        startScene(this, 'game', { level: n }, undefined, { x: cx, y: screenY, w: CHIP, h: CHIP, tint: getTheme().gold })
       })
       container.add(zone)
     } else {

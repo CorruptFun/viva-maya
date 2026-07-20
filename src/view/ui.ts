@@ -93,6 +93,9 @@ const ENTRANCE_OFFSET = 24
 /** Pending entrance direction for the NEXT scene's create(), set by startScene, read by applyEntrance. */
 let nextEntrance: SceneDir = 'deeper'
 
+/** Pending shared-element focus (§C6) for the NEXT scene's create(), set by startScene, read by consumeFocus. */
+let nextFocus: SceneFocus | undefined
+
 /** Count of in-app scene navigations this page-load — lets Home tell a true BootScene→Home open apart. */
 let sceneNavigations = 0
 
@@ -110,12 +113,22 @@ export function hasNavigated(): boolean {
  * §E10: the optional `dir` sets the destination's directional entrance. Explicit dir wins; otherwise
  * returning to Home reads as 'back' (settles down) and going anywhere else reads as 'deeper' (rises
  * in). Back-compatible — the existing 3-arg call sites keep working with `dir` left undefined.
+ *
+ * §C6: the optional `focus` descriptor (the tapped element's centre + size + tint) is queued for the
+ * destination's OPT-IN shared-element bloom, so the thing the player tapped "opens into" the board.
+ * Only the two opt-in call sites (Home PLAY, a LevelSelect chip) pass it; every other call queues
+ * nothing → the destination finds no focus and keeps today's EXACT flat cross-fade. Never queued under
+ * reduced motion (gated below), so the calm path is byte-for-byte unchanged. Strictly additive.
  */
-export function startScene(from: Phaser.Scene, key: string, data?: object, dir?: SceneDir): void {
+export function startScene(from: Phaser.Scene, key: string, data?: object, dir?: SceneDir, focus?: SceneFocus): void {
   if (!from.input.enabled) return // already transitioning
   from.input.enabled = false
   sfx.whoosh() // §E3 B14: a short airy sweep partners the cream cross-fade
   nextEntrance = dir ?? (key === 'home' ? 'back' : 'deeper')
+  // §C6 — queue the opt-in shared-element focus for the destination. Overwrite on EVERY nav (undefined
+  // at the non-opt-in call sites) so a stale focus can never leak into a later navigation, and NEVER
+  // queue one under reduced motion → that path stays exactly today's flat cross-fade (fallback rule #1).
+  nextFocus = prefersReducedMotion() ? undefined : focus
   sceneNavigations += 1
   const dur = prefersReducedMotion() ? 90 : 180
   const cam = from.cameras.main
@@ -128,6 +141,39 @@ export function consumeEntrance(): SceneDir {
   const dir = nextEntrance
   nextEntrance = 'deeper'
   return dir
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Shared-element focus (§C6). An OPT-IN companion to the cream cross-fade: the element the player
+// tapped (Home PLAY, a LevelSelect chip) hands a small descriptor to the NEXT scene, and the
+// destination blooms ONE transient light from that on-screen spot INTO its board frame as the cameras
+// cross-fade — the "the thing I tapped opened into the board" continuity. Mirrors the directional
+// grammar's handoff EXACTLY: queued by `startScene` into `nextFocus`, read once by the destination via
+// `consumeFocus()`. STRICTLY ADDITIVE — the destination owns the resolution (it knows its board
+// geometry); a scene that never consumes a focus, or a nav that queued none, keeps today's flat fade.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Opt-in shared-element descriptor (§C6): where the tapped element sat + how big, for the destination bloom. */
+export interface SceneFocus {
+  /** Source element centre, world/design space. Both scenes share `restScrollY`, so world maps 1:1 across the cut. */
+  x: number
+  y: number
+  /** Source element size — the bloom starts here and grows into the board frame. */
+  w: number
+  h: number
+  /** Additive-bloom tint (the destination defaults to theme gold when omitted). */
+  tint?: number
+}
+
+/**
+ * Read + clear the pending shared-element focus (§C6). Returns undefined when the triggering nav queued
+ * none — every call site except Home PLAY / a LevelSelect chip — so the destination silently keeps
+ * today's flat cross-fade. Always clears, so a queued focus resolves at most once.
+ */
+export function consumeFocus(): SceneFocus | undefined {
+  const f = nextFocus
+  nextFocus = undefined
+  return f
 }
 
 /**

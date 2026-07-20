@@ -46,11 +46,12 @@ import {
   addLivesHud,
   addMuteChip,
   addPillButton,
+  consumeFocus,
   hcBoard,
   openOnboarding,
   startScene,
 } from '../view/ui'
-import type { ChipPill } from '../view/ui'
+import type { ChipPill, SceneFocus } from '../view/ui'
 
 /**
  * Turn state machine:
@@ -365,6 +366,15 @@ export class GameScene extends Phaser.Scene {
     this.buildPieceLayer()
     this.buildParticles()
 
+    // §C6 shared-element transition (destination half): if the tapped element (Home PLAY / a LevelSelect
+    // chip) queued a focus, bloom ONE transient light from its on-screen spot into the board frame under
+    // the camera fade-in. Consumed AFTER the board is built so it targets the real frame; the lives-gate
+    // early-return above never reaches here, so a gated entry simply doesn't bloom (the next nav clears
+    // the queue). No focus (every other nav) or reduced motion → the guard skips it and the flat cream
+    // cross-fade is byte-for-byte today's. The `!reducedMotion` is a second guard behind startScene's own.
+    const focus = consumeFocus()
+    if (focus && !this.reducedMotion) this.playFocusBloom(focus)
+
     if (this.scoreMult > 1) {
       this.add
         .text(BOARD_X + BOARD_W - 128, 66, '×2', { fontFamily: FONT, fontSize: '26px', fontStyle: '900', color: getTheme().goldText })
@@ -390,6 +400,47 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.maybeOnboarding()
+  }
+
+  /**
+   * §C6 shared-element transition (destination half). The tapped element (Home PLAY / a LevelSelect
+   * chip) queued a `focus`; here we bloom ONE soft transient light from its on-screen spot INTO the
+   * board frame as the camera cross-fades in, giving spatial continuity ("the thing I tapped opened
+   * into the board"). Strictly additive + self-cleaning:
+   *   • Reached only WITH a real focus AND when motion is allowed (double-guarded — startScene never
+   *     queues a focus under reduced motion, and the create() call site re-checks `reducedMotion`), so
+   *     the no-focus / calm path never runs this and the flat cream cross-fade stays byte-for-byte today's.
+   *   • ONE additive `bgglow` sprite (the app's house glow idiom, reused — no new asset), tweened
+   *     origin→board-centre while it grows + fades, then DESTROYED on arrival (no leak). It's a plain
+   *     display image (never interactive), so the transition's existing input-lock is untouched.
+   *   • Depth 36: above the board (container depth 0) + HUD (≤34), below every overlay/onboarding (38+/65).
+   * A missing `bgglow` (can't happen post-backdrop) → no bloom, i.e. silently the flat fade.
+   */
+  private playFocusBloom(focus: SceneFocus): void {
+    if (!this.textures.exists('bgglow')) return
+    // Board-frame centre in world space (cameras share restScrollY, so the queued world coords line up).
+    const bx = BOARD_X + BOARD_W / 2
+    const by = BOARD_Y + (ROWS * CELL) / 2
+    const bloom = this.add
+      .image(focus.x, focus.y, 'bgglow')
+      .setDepth(36)
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setTint(focus.tint ?? getTheme().gold)
+      .setDisplaySize(focus.w * 1.2, focus.h * 1.2)
+      .setAlpha(0.5)
+    // Grow to ~the board frame in BOTH axes (independent factors, so a wide PLAY and a square chip both
+    // settle board-sized) while gliding to the board centre and fading out beneath the camera fade-in.
+    this.tweens.add({
+      targets: bloom,
+      x: bx,
+      y: by,
+      scaleX: bloom.scaleX * ((BOARD_W * 1.05) / (focus.w * 1.2)),
+      scaleY: bloom.scaleY * ((BOARD_W * 1.05) / (focus.h * 1.2)),
+      alpha: 0,
+      duration: 340,
+      ease: 'Cubic.easeInOut',
+      onComplete: () => bloom.destroy(),
+    })
   }
 
   /**

@@ -314,8 +314,11 @@ export class HomeScene extends Phaser.Scene {
       })
     }
 
+    // C6 · opt-in shared-element bloom: hand the destination PLAY's on-screen spot + size so the board
+    // "opens" from right here. Additive — only this one nav passes a focus; reduced motion never queues
+    // it (gated in startScene), so the calm path keeps today's flat cream cross-fade untouched.
     const play = addPillButton(this, DESIGN_W / 2, 720, 340, 96, 'PLAY', GOLD_PILL, () =>
-      startScene(this,'game', { level: currentLevel })
+      startScene(this, 'game', { level: currentLevel }, undefined, { x: DESIGN_W / 2, y: 720, w: 340, h: 96, tint: getTheme().gold })
     )
     menuButtons.push(play)
     // Held for the C4/H3 idle attract beat — the "come play" pulse pauses this breathe, nudges, resumes.
