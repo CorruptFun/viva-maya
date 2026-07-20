@@ -1,13 +1,14 @@
 import Phaser from 'phaser'
 import { sfx } from '../audio/sfx'
 import { DESIGN_H, DESIGN_W, restScrollY } from '../config'
+import { LEVEL_COUNT } from '../core/levels'
 import { loadSave } from '../core/save'
 import { BOOST_ITEMS, buyBoost } from '../core/store'
 import type { BoostStoreItem } from '../core/store'
 import { SYMBOLS } from '../core/types'
 import type { Piece, PieceKind } from '../core/types'
 import { addCasinoBackdrop } from '../view/background'
-import { stagger } from '../view/motion'
+import { D, E, stagger } from '../view/motion'
 import { getTheme, prefersReducedMotion } from '../view/theme'
 import { ensurePieceTexture } from '../view/textures'
 import type { ChipPill } from '../view/ui'
@@ -87,16 +88,63 @@ export class StoreScene extends Phaser.Scene {
   }
 
   private renderList(animate = false): void {
+    // Stop the previous list's looping tweens (icon bobs + any first-affordable glow) BEFORE their
+    // targets are destroyed: Phaser 3.90 doesn't auto-remove tweens when a GameObject is destroyed
+    // (its TweenManager only sweeps on scene shutdown), so a silent post-purchase rebuild would leak
+    // them. Cheap + fully additive — no behaviour change to the spend path.
+    this.killListTweens()
     this.listLayer.removeAll(true)
-    const rows = BOOST_ITEMS.map((item, i) => this.boostRow(item, LIST_TOP + i * ROW_H))
+    // S2 · first-affordable highlight: BOOST_ITEMS is priced cheapest → most powerful, so the FIRST
+    // affordable row IS the cheapest one to reach for — that's the pill we breathe to guide a first
+    // buy. -1 (nothing affordable) means even the cheapest is out of reach → the S3 empty state below.
+    const chips = loadSave().chips
+    const firstAffordable = BOOST_ITEMS.findIndex((item) => chips >= item.price)
+    const rows = BOOST_ITEMS.map((item, i) => this.boostRow(item, LIST_TOP + i * ROW_H, i === firstAffordable))
     // Entrance beat: stagger the cards up into place ~60ms apart, top-to-bottom, so the Store
     // composes in like every other scene instead of snapping flat. `stagger` is reduced-motion-
     // aware (it lands each row at its resting alpha/y instantly). Adopts the shared motion helpers
     // (item C2). Only on first paint — post-purchase affordability refreshes rebuild silently.
     if (animate) stagger(this, rows, 60)
+    // S3 · "play to earn" empty state: when nothing is affordable the list is all ghosted pills with
+    // no next step, so point the broke player back into the earn loop (rebuilt in/out with the list).
+    if (firstAffordable < 0) this.renderEmptyState()
   }
 
-  private boostRow(item: BoostStoreItem, cy: number): Phaser.GameObjects.Container {
+  /** Kill every looping tween the current list layer started, recursing into row/button containers. */
+  private killListTweens(): void {
+    const walk = (obj: Phaser.GameObjects.GameObject): void => {
+      this.tweens.killTweensOf(obj)
+      if (obj instanceof Phaser.GameObjects.Container) obj.list.forEach(walk)
+    }
+    this.listLayer.list.forEach(walk)
+  }
+
+  /**
+   * S3 · "play to earn" empty state (rendered by renderList only when even the cheapest boost is out of
+   * reach). A wall of ghosted pills dead-ends a broke player, so add a warm encouragement line + a
+   * single PLAY shortcut that drops them into their current level to earn more chips — closing the loop.
+   * Static + theme-tokened (no motion); reuses `addPillButton` + `startScene` exactly like Home's PLAY,
+   * and is held in listLayer so the next affordability refresh rebuilds it away once chips can buy again.
+   */
+  private renderEmptyState(): void {
+    const T = getTheme()
+    const currentLevel = Math.min(loadSave().unlocked, LEVEL_COUNT) // same target Home's PLAY uses
+    this.hold(
+      this.add
+        .text(DESIGN_W / 2, 900, 'Win a level to earn more chips 💛', {
+          fontFamily: FONT,
+          fontSize: '25px',
+          fontStyle: '900',
+          color: T.onBackdropInk,
+        })
+        .setOrigin(0.5)
+    )
+    this.hold(
+      addPillButton(this, DESIGN_W / 2, 986, 300, 72, 'PLAY', GOLD_PILL, () => startScene(this, 'game', { level: currentLevel }))
+    )
+  }
+
+  private boostRow(item: BoostStoreItem, cy: number, highlight: boolean): Phaser.GameObjects.Container {
     // Cream card frame with a gold bezel + soft drop shadow (matches the help/sound panels). Cards stay
     // cream on every theme, so route through tokens: identical on the light themes, and it fixes the
     // drop-shadow tint on the dark themes (T.shadow is near-black there, not the warm literal).
@@ -115,7 +163,23 @@ export class StoreScene extends Phaser.Scene {
     g.strokeRoundedRect(CARD_X, y, CARD_W, h, 24)
     row.add(g)
 
-    row.add(this.add.image(80, cy, this.boostIcon(item.type)).setDisplaySize(58, 58))
+    // S2 · idle bob — each icon drifts a few px up-and-back on the shared breathing ease so the shelf
+    // reads as alive, not a static price list. Reduced motion → no tween (the icon simply rests at cy).
+    // Pure transform on one existing sprite (no ADD sprites); phase-spread by row so the icons don't
+    // bob in mechanical lockstep. Cleaned up on any rebuild by killListTweens.
+    const icon = this.add.image(80, cy, this.boostIcon(item.type)).setDisplaySize(58, 58)
+    row.add(icon)
+    if (!prefersReducedMotion()) {
+      this.tweens.add({
+        targets: icon,
+        y: cy - 5,
+        duration: D.breath,
+        delay: ((cy - LIST_TOP) / ROW_H) * 150, // ≈ row index × 150ms → a gentle per-row phase offset
+        yoyo: true,
+        repeat: -1,
+        ease: E.hero,
+      })
+    }
     row.add(
       this.add.text(124, cy - 30, item.label, { fontFamily: FONT, fontSize: '26px', fontStyle: '900', color: T.ink }).setOrigin(0, 0)
     )
@@ -132,10 +196,22 @@ export class StoreScene extends Phaser.Scene {
     )
 
     // Chip icon + price pill (gold when affordable, ghost when not). Returns the pill for shake feedback.
+    // S2 · first-affordable highlight: the cheapest reachable pill (`highlight`, only ever set on an
+    // affordable gold pill) gets the shared button `juice` breathing glow — one ADD `bgglow` sprite
+    // behind the cap (governor-safe; reduced motion → static, no breath) — to draw the eye to the
+    // easiest first purchase.
     const afford = loadSave().chips >= item.price
     row.add(this.add.image(CTRL_CX - 58, cy, 'chip').setDisplaySize(34, 34).setAlpha(afford ? 1 : 0.4))
-    const btn = addPillButton(this, CTRL_CX + 20, cy, 108, 60, item.price.toLocaleString(), afford ? GOLD_PILL : GHOST_PILL, () =>
-      this.attemptBuy(item, btn)
+    const btn = addPillButton(
+      this,
+      CTRL_CX + 20,
+      cy,
+      108,
+      60,
+      item.price.toLocaleString(),
+      afford ? GOLD_PILL : GHOST_PILL,
+      () => this.attemptBuy(item, btn),
+      highlight ? { juice: true } : {}
     )
     row.add(btn)
 
