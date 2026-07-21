@@ -8,6 +8,7 @@ import type { BoostType } from '../core/types'
 import { backOut, E, heartbeat, OVERSHOOT } from './motion'
 import { quality } from './quality'
 import { css, getTheme, hapticsOff, prefersReducedMotion, reduceFlashing } from './theme'
+import type { Theme } from './theme'
 import { addPillButton, FONT, GOLD_PILL, goldFace } from './ui'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -308,6 +309,151 @@ export interface WheelOpenOpts {
 const WEDGES = WHEEL_PRIZES.length // 8
 
 /**
+ * Studded cast-cabinet jackpot-wheel bezel drawn into `g`, centred on (cx,cy) radius R: a DEEP dish (6
+ * graded tonal bands, lit outer lip → shaded inner groove) bracketed by two fine milled tracks (both lit
+ * BY ANGLE — bright at the crown, dark at the base) with a ring of 24 raised STUDS marching between them,
+ * then a bright inner lip ring where it meets the wedge disc, and a crown light-pool + gloss crescent.
+ * Everything stays inside R+16, clear of the rim bulbs at R+20. Theme-token drawn (restyles per theme).
+ * Exported so the dev atlas ('wheel' page) can render the real bezel — no drift.
+ */
+export function drawWheelBezel(
+  g: Phaser.GameObjects.Graphics,
+  cx: number,
+  cy: number,
+  R: number,
+  T: Theme = getTheme()
+): void {
+  const TAU = Math.PI * 2
+  // Deep cast belly — the widest band the whole dish is turned into.
+  g.lineStyle(26, T.goldDeep, 1)
+  g.strokeCircle(cx, cy, R)
+  // Dished cross-section (6 tonal bands): lit outer lip → bezel wall → crown band (studs seat here) →
+  // shaded lower wall → dark dish-bottom groove → inner wall rising back toward the lip.
+  g.lineStyle(4, T.goldBright, 0.9)
+  g.strokeCircle(cx, cy, R + 9)
+  g.lineStyle(5, T.goldBezel, 1)
+  g.strokeCircle(cx, cy, R + 4)
+  g.lineStyle(6, T.gold, 1)
+  g.strokeCircle(cx, cy, R - 1)
+  g.lineStyle(7, T.goldDeep, 1)
+  g.strokeCircle(cx, cy, R - 8)
+  g.lineStyle(5, T.goldDarkest, 0.9)
+  g.strokeCircle(cx, cy, R - 14)
+  g.lineStyle(3, T.goldDeep, 0.8)
+  g.strokeCircle(cx, cy, R - 18)
+  // Outer milled track (R+11→R+16), tooth tone lit BY ANGLE; stays inside the rim bulbs at R+20.
+  const oTeeth = 60
+  for (let i = 0; i < oTeeth; i++) {
+    const a = (i / oTeeth) * TAU
+    const ca = Math.cos(a)
+    const sa = Math.sin(a)
+    const top = -sa
+    const c = top > 0.45 ? T.goldBright : top > -0.15 ? T.gold : top > -0.6 ? T.goldDeep : T.goldDarkest
+    g.lineStyle(i % 2 === 0 ? 2 : 1.2, c, i % 2 === 0 ? 0.9 : 0.6)
+    g.lineBetween(cx + ca * (R + 11), cy + sa * (R + 11), cx + ca * (R + 16), cy + sa * (R + 16))
+  }
+  // Inner milled track (R-9→R-4) — the second rail the studs march between.
+  const iTeeth = 54
+  for (let i = 0; i < iTeeth; i++) {
+    const a = (i / iTeeth) * TAU
+    const ca = Math.cos(a)
+    const sa = Math.sin(a)
+    const top = -sa
+    const c = top > 0.45 ? T.goldBright : top > -0.15 ? T.gold : top > -0.6 ? T.goldDeep : T.goldDarkest
+    g.lineStyle(1.4, c, 0.7)
+    g.lineBetween(cx + ca * (R - 9), cy + sa * (R - 9), cx + ca * (R - 4), cy + sa * (R - 4))
+  }
+  // Ring of 24 raised STUDS at R+3 between the tracks — the cabinet-rivet signature (offset-disc dome:
+  // a pressed seat → a deep base → an angle-lit cap offset up → a specular).
+  const studs = 24
+  for (let i = 0; i < studs; i++) {
+    const a = (i / studs) * TAU
+    const ca = Math.cos(a)
+    const sa = Math.sin(a)
+    const sx = cx + ca * (R + 3)
+    const sy = cy + sa * (R + 3)
+    const top = -sa
+    g.fillStyle(0x000000, 0.22)
+    g.fillCircle(sx, sy + 1.4, 5.4)
+    g.fillStyle(T.goldDeep, 1)
+    g.fillCircle(sx, sy, 4.6)
+    const cap = top > 0.3 ? T.goldBright : top > -0.4 ? T.gold : T.goldDeep
+    g.fillStyle(cap, 1)
+    g.fillCircle(sx, sy - 1.3, 3.2)
+    g.fillStyle(0xffffff, top > 0 ? 0.6 : 0.28)
+    g.fillCircle(sx - 0.9, sy - 1.9, 1.1)
+  }
+  // Bright inner LIP ring where the bezel meets the wedge disc, seated by a dark shadow line just inside.
+  g.lineStyle(3, T.goldBright, 0.85)
+  g.strokeCircle(cx, cy, R - 19)
+  g.lineStyle(2, T.goldDarkest, 0.7)
+  g.strokeCircle(cx, cy, R - 22)
+  // Warm crown light-pool + a broad gloss crescent across the upper bezel + a hard specular pip.
+  g.fillStyle(T.glossHi, 0.12)
+  g.fillEllipse(cx, cy - R, 60, 16)
+  g.fillStyle(T.cardFill, 0.06)
+  g.fillEllipse(cx, cy - R + 4, 120, 26)
+  g.fillStyle(0xffffff, 0.55)
+  g.fillCircle(cx, cy - R - 2, 2.5)
+}
+
+/**
+ * Beveled cast-metal wheel pointer (the clacker) drawn into `g` in LOCAL space (origin 0,0 = the base
+ * pivot; apex points DOWN toward the wheel). The silhouette matches the old flat triangle exactly —
+ * (−26,−20)(26,−20)(0,30) — plus the +3 seat shadow, so the ±9° flex/spring the spin drives stays
+ * unchanged; everything else is relief carved on top: a full cast bevel split on the centre spine (dark
+ * right facet, lit left facet), a bright spine crest + specular, a chamfered lit tip, and a bigger domed
+ * pivot rivet with a Phillips cross-slot. Exported for the dev atlas ('wheel' page).
+ */
+export function drawWheelPointer(g: Phaser.GameObjects.Graphics, T: Theme = getTheme()): void {
+  // Seat drop shadow (offset +3 down — identical to v1).
+  g.fillStyle(T.shadow, 0.3)
+  g.fillTriangle(-26, -17, 26, -17, 0, 33)
+  // Cast silhouette — footprint corners preserved EXACTLY → inset gold flank leaving the cast edge.
+  g.fillStyle(T.goldDeep, 1)
+  g.fillTriangle(-26, -20, 26, -20, 0, 30)
+  g.fillStyle(T.gold, 1)
+  g.fillTriangle(-20, -16, 20, -16, 0, 24)
+  // Full cast bevel split on the centre spine: dark RIGHT facet, lit LEFT facet.
+  g.fillStyle(T.goldDeep, 0.85)
+  g.fillTriangle(0, -16, 20, -16, 0, 24)
+  g.fillStyle(T.goldBezel, 1)
+  g.fillTriangle(-20, -16, 0, -16, 0, 24)
+  // Raised centre spine crest + a specular sliver.
+  g.fillStyle(T.goldBright, 1)
+  g.fillTriangle(-6, -16, 6, -16, 0, 26)
+  g.fillStyle(T.glossHi, 0.5)
+  g.fillTriangle(-2.5, -14, 2.5, -14, 0, 22)
+  // Chamfered lit tip + a white spec at the apex.
+  g.fillStyle(T.goldBright, 0.8)
+  g.fillTriangle(-3.5, 19, 3.5, 19, 0, 30)
+  g.fillStyle(0xffffff, 0.7)
+  g.fillCircle(0, 26, 1.4)
+  // Bigger domed pivot rivet with a Phillips CROSS-SLOT (offset-disc dome stack).
+  g.fillStyle(0x000000, 0.2)
+  g.fillEllipse(0, -6, 22, 8)
+  g.fillStyle(T.goldDeep, 1)
+  g.fillCircle(0, -11, 9)
+  g.lineStyle(1.5, T.goldDarkest, 0.6)
+  g.strokeCircle(0, -11, 9)
+  g.lineStyle(1, T.goldBright, 0.5)
+  g.strokeCircle(0, -11, 7.6)
+  g.fillStyle(T.gold, 1)
+  g.fillCircle(0, -12.5, 7)
+  g.fillStyle(T.goldBright, 1)
+  g.fillCircle(0, -13.5, 4)
+  g.fillStyle(T.rim, 0.6)
+  g.fillCircle(0, -14, 2.3)
+  g.lineStyle(1.6, T.goldDarkest, 0.7)
+  g.lineBetween(-4.5, -12, 4.5, -12)
+  g.lineBetween(0, -16.5, 0, -8.5)
+  g.lineStyle(1, T.goldBright, 0.45)
+  g.lineBetween(-4.5, -12.8, 4.5, -12.8)
+  g.fillStyle(0xffffff, 0.9)
+  g.fillCircle(-1, -15, 1.2)
+}
+
+/**
  * Fire the Jackpot Wheel as a self-contained overlay on top of `scene` (above every gameplay/HUD
  * depth), NOT a new Scene. AWARD-FIRST: the winning wedge is chosen and the chips banked immediately,
  * then the wheel is rigged to land on that wedge — so quitting mid-spin can never lose the prize. The
@@ -477,14 +623,9 @@ export function openJackpotWheel(scene: Phaser.Scene, opts: WheelOpenOpts): void
     streaks.add(s)
   }
 
-  // 6) Metallic bezel ring (over the disc rim) + hub cap + fixed top pointer.
+  // 6) Dished-metal bezel ring (over the disc rim) + hub cap + beveled cast pointer.
   const bezel = track(scene.add.graphics().setDepth(61))
-  bezel.lineStyle(14, T.goldDeep, 1)
-  bezel.strokeCircle(cx, cy, R)
-  bezel.lineStyle(8, T.gold, 1)
-  bezel.strokeCircle(cx, cy, R)
-  bezel.lineStyle(3, T.goldBright, 0.9)
-  bezel.strokeCircle(cx, cy, R - 4)
+  drawWheelBezel(bezel, cx, cy, R, T)
 
   const hub = track(scene.add.image(cx, cy, 'jackpot').setDisplaySize(96, 96).setDepth(62))
 
@@ -493,12 +634,7 @@ export function openJackpotWheel(scene: Phaser.Scene, opts: WheelOpenOpts): void
   const py = cy - R - 6
   const pointerC = track(scene.add.container(cx, py).setDepth(62))
   const pointerG = scene.add.graphics()
-  pointerG.fillStyle(T.shadow, 0.3)
-  pointerG.fillTriangle(-26, -20 + 3, 26, -20 + 3, 0, 30 + 3)
-  pointerG.fillStyle(T.goldDeep, 1)
-  pointerG.fillTriangle(-26, -20, 26, -20, 0, 30)
-  pointerG.fillStyle(T.goldBright, 1)
-  pointerG.fillTriangle(-17, -14, 17, -14, 0, 18)
+  drawWheelPointer(pointerG, T)
   pointerC.add(pointerG)
 
   // Entrance pop for the whole rig (wheel + rim + bezel + hub).
