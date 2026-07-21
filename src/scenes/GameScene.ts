@@ -372,6 +372,12 @@ export class GameScene extends Phaser.Scene {
     this.comboText = undefined
     this.comboTween = null
     this.freeSpinBadge = undefined // scene GameObject from a prior round — died with that scene
+    // §R3 score-medallion pool: its slots' GameObjects (Text/Image/Container) were destroyed with the
+    // prior scene, so drop the stale refs and let takeMedallion rebuild. A restart re-runs create() but
+    // NOT the field initializers — without this, spawnScorePopup reuses a destroyed Text and setText()
+    // throws inside the resolve loop, wedging the board in 'resolving' (a permanent freeze).
+    this.medallionPool = []
+    this.medallionSeq = 0
     this.trauma = 0
     this.traumaDirX = 0
     this.traumaDirY = 0
@@ -2460,40 +2466,55 @@ export class GameScene extends Phaser.Scene {
   /** Play waves until the board settles, then check for win/lose. */
   private async resolveLoop(first: ClearWave | null): Promise<void> {
     this.state = 'resolving'
-    let cascade = 0
-    let wave = first
-    while (wave) {
-      cascade++
-      this.dbgStage = `playWave c${cascade} cl=${wave.cleared.length} tr=${wave.transformed.length} ev=${wave.events.length}`
-      this.log(this.dbgStage)
-      await this.playWave(wave, cascade)
-      const falls = this.board.applyGravity()
-      const spawns = this.board.refill()
-      this.dbgStage = `falls c${cascade} f=${falls.length} s=${spawns.length}`
-      this.log(this.dbgStage)
-      await this.animateFalls(falls, spawns)
-      this.dbgStage = `matchWave c${cascade}`
-      this.log(this.dbgStage)
-      wave = this.board.matchWave()
+    try {
+      let cascade = 0
+      let wave = first
+      while (wave) {
+        cascade++
+        this.dbgStage = `playWave c${cascade} cl=${wave.cleared.length} tr=${wave.transformed.length} ev=${wave.events.length}`
+        this.log(this.dbgStage)
+        await this.playWave(wave, cascade)
+        const falls = this.board.applyGravity()
+        const spawns = this.board.refill()
+        this.dbgStage = `falls c${cascade} f=${falls.length} s=${spawns.length}`
+        this.log(this.dbgStage)
+        await this.animateFalls(falls, spawns)
+        this.dbgStage = `matchWave c${cascade}`
+        this.log(this.dbgStage)
+        wave = this.board.matchWave()
+      }
+      this.fadeCombo() // E11: the cascade settled — resolve the combo readout (composes with the win peak)
+      this.maybeAwardFreeSpins(cascade) // R4: a MEGA-grade chain banks free spins + flies the golden ticket
+      this.dbgStage = 'end-checks'
+      this.log('end-checks', 'objectivesDone', this.objectives.every(o => o.remaining <= 0), 'movesLeft', this.movesLeft)
+      // Endless never "wins" on objectives (it has none) — it ends when moves run out.
+      if (!this.endless && this.objectives.every(o => o.remaining <= 0)) {
+        this.finishWin()
+        return
+      }
+      if (this.movesLeft <= 0) {
+        if (this.endless) this.finishEndless()
+        else this.finishLose()
+        return
+      }
+      if (!this.board.hasValidMove()) await this.reshuffle()
+      this.state = 'idle'
+      this.scheduleAutoplay()
+      this.armHint()
+    } catch (err) {
+      // Safety net: trySwap is fire-and-forget (`void this.trySwap`), so an unhandled throw anywhere in
+      // the resolve path would leave the board stuck in 'resolving' forever — a permanent input freeze.
+      // Log it and recover to a playable idle (the board model stays the source of truth) so the round
+      // can continue instead of dead-locking.
+      this.log('resolveLoop ERROR', err)
+      // Cast: TS narrows `state` to the try's assignments and can't see finishWin/finishLose set 'ended'
+      // via a method call — but a throw inside those (after the level ended) must not resurrect the board.
+      if ((this.state as GameState) !== 'ended') {
+        this.state = 'idle'
+        this.scheduleAutoplay()
+        this.armHint()
+      }
     }
-    this.fadeCombo() // E11: the cascade settled — resolve the combo readout (composes with the win peak)
-    this.maybeAwardFreeSpins(cascade) // R4: a MEGA-grade chain banks free spins + flies the golden ticket
-    this.dbgStage = 'end-checks'
-    this.log('end-checks', 'objectivesDone', this.objectives.every(o => o.remaining <= 0), 'movesLeft', this.movesLeft)
-    // Endless never "wins" on objectives (it has none) — it ends when moves run out.
-    if (!this.endless && this.objectives.every(o => o.remaining <= 0)) {
-      this.finishWin()
-      return
-    }
-    if (this.movesLeft <= 0) {
-      if (this.endless) this.finishEndless()
-      else this.finishLose()
-      return
-    }
-    if (!this.board.hasValidMove()) await this.reshuffle()
-    this.state = 'idle'
-    this.scheduleAutoplay()
-    this.armHint()
   }
 
   private async playWave(wave: ClearWave, cascade: number): Promise<void> {
