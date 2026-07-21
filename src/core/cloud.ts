@@ -44,6 +44,14 @@ async function sb(): Promise<SupabaseClient | null> {
   return clientPromise
 }
 
+/**
+ * Shared client accessor for sibling cloud modules (core/leaderboard.ts) — hands out the SAME lazy
+ * singleton, so a second connection can never exist. Null when unconfigured (the dormant path).
+ */
+export function sbClient(): Promise<SupabaseClient | null> {
+  return sb()
+}
+
 export interface CloudSession {
   userId: string
   email: string | null
@@ -110,6 +118,10 @@ async function flushPush(): Promise<void> {
       { user_id: session.userId, data, updated_at: new Date().toISOString() },
       { onConflict: 'user_id' }
     )
+    // Weekly-race mirror: after the save lands, mirror its endless best to the shared leaderboard
+    // (core/leaderboard.ts — no-ops unless this week has a score; lazy import keeps the dependency
+    // one-directional and out of the boot path). Fire-and-forget: the race must never block a save.
+    void import('./leaderboard').then(m => m.maybeSubmitEndless(data))
   } catch {
     pending = data // offline / transient → re-queue for the next persist or the 'online' event
   }

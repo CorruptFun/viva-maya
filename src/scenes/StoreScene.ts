@@ -8,8 +8,9 @@ import type { BoostStoreItem } from '../core/store'
 import { SYMBOLS } from '../core/types'
 import type { Piece, PieceKind } from '../core/types'
 import { addCasinoBackdrop } from '../view/background'
-import { D, E, stagger } from '../view/motion'
-import { getTheme, prefersReducedMotion } from '../view/theme'
+import { D, E, OVERSHOOT, backOut, popIn, stagger } from '../view/motion'
+import { quality } from '../view/quality'
+import { getTheme, prefersReducedMotion, reduceFlashing } from '../view/theme'
 import { ensurePieceTexture } from '../view/textures'
 import type { ChipPill } from '../view/ui'
 import { FONT, GHOST_PILL, GOLD_PILL, addChipPill, addPillButton, applyEntrance, startScene } from '../view/ui'
@@ -66,6 +67,9 @@ export class StoreScene extends Phaser.Scene {
 
     // Live balance read-out — the same pill Home/HUD use; update() pops it on each spend.
     this.balance = addChipPill(this, this.balanceX, this.balanceY)
+    // Entrance: the balance pops in just ahead of the card stagger, so the "what can I afford"
+    // read-out leads the shelf. popIn is §E8-aware — reduced motion rests it instantly.
+    popIn(this, this.balance.container, { from: 0.7, delay: 60, overshoot: OVERSHOOT.gentle })
 
     this.listLayer = this.add.container(0, 0)
     this.renderList(true) // stagger the cards in on first paint; purchase refreshes rebuild silently
@@ -100,11 +104,11 @@ export class StoreScene extends Phaser.Scene {
     const chips = loadSave().chips
     const firstAffordable = BOOST_ITEMS.findIndex((item) => chips >= item.price)
     const rows = BOOST_ITEMS.map((item, i) => this.boostRow(item, LIST_TOP + i * ROW_H, i === firstAffordable))
-    // Entrance beat: stagger the cards up into place ~60ms apart, top-to-bottom, so the Store
-    // composes in like every other scene instead of snapping flat. `stagger` is reduced-motion-
-    // aware (it lands each row at its resting alpha/y instantly). Adopts the shared motion helpers
-    // (item C2). Only on first paint — post-purchase affordability refreshes rebuild silently.
-    if (animate) stagger(this, rows, 60)
+    // Entrance beat: stagger the cards up into place ~70ms apart, top-to-bottom, with a longer rise
+    // and a gentle Back overshoot so each card lands with a little spring instead of drifting flat.
+    // `stagger` is reduced-motion-aware (it lands each row at its resting alpha/y instantly). Adopts
+    // the shared motion helpers (item C2). Only on first paint — purchase refreshes rebuild silently.
+    if (animate) stagger(this, rows, 70, { rise: 26, duration: D.pop, ease: backOut(OVERSHOOT.gentle) })
     // S3 · "play to earn" empty state: when nothing is affordable the list is all ghosted pills with
     // no next step, so point the broke player back into the earn loop (rebuilt in/out with the list).
     if (firstAffordable < 0) this.renderEmptyState()
@@ -151,6 +155,10 @@ export class StoreScene extends Phaser.Scene {
     // The whole card lives in one row container so the entrance stagger moves it as a single unit —
     // children keep their absolute coords; the container rests at y=0 and fadeRise nudges only that.
     const T = getTheme()
+    // Affordability decides the whole row's posture (pill style, icon life, disabled-state clarity),
+    // so read it once up front — one loadSave per row, reused everywhere below.
+    const chips = loadSave().chips
+    const afford = chips >= item.price
     const row = this.hold(this.add.container(0, 0))
     const g = this.add.graphics()
     const h = 88
@@ -167,9 +175,11 @@ export class StoreScene extends Phaser.Scene {
     // reads as alive, not a static price list. Reduced motion → no tween (the icon simply rests at cy).
     // Pure transform on one existing sprite (no ADD sprites); phase-spread by row so the icons don't
     // bob in mechanical lockstep. Cleaned up on any rebuild by killListTweens.
-    const icon = this.add.image(80, cy, this.boostIcon(item.type)).setDisplaySize(58, 58)
+    // Disabled-state clarity: an unaffordable row's icon dims AND rests still — only goods you can
+    // actually reach for look alive on the shelf.
+    const icon = this.add.image(80, cy, this.boostIcon(item.type)).setDisplaySize(58, 58).setAlpha(afford ? 1 : 0.55)
     row.add(icon)
-    if (!prefersReducedMotion()) {
+    if (afford && !prefersReducedMotion()) {
       this.tweens.add({
         targets: icon,
         y: cy - 5,
@@ -181,7 +191,10 @@ export class StoreScene extends Phaser.Scene {
       })
     }
     row.add(
-      this.add.text(124, cy - 30, item.label, { fontFamily: FONT, fontSize: '26px', fontStyle: '900', color: T.ink }).setOrigin(0, 0)
+      this.add
+        .text(124, cy - 30, item.label, { fontFamily: FONT, fontSize: '26px', fontStyle: '900', color: T.ink })
+        .setOrigin(0, 0)
+        .setAlpha(afford ? 1 : 0.66)
     )
     row.add(
       this.add
@@ -193,6 +206,7 @@ export class StoreScene extends Phaser.Scene {
           lineSpacing: 2,
         })
         .setOrigin(0, 0)
+        .setAlpha(afford ? 1 : 0.66)
     )
 
     // Chip icon + price pill (gold when affordable, ghost when not). Returns the pill for shake feedback.
@@ -200,20 +214,35 @@ export class StoreScene extends Phaser.Scene {
     // affordable gold pill) gets the shared button `juice` breathing glow — one ADD `bgglow` sprite
     // behind the cap (governor-safe; reduced motion → static, no breath) — to draw the eye to the
     // easiest first purchase.
-    const afford = loadSave().chips >= item.price
     row.add(this.add.image(CTRL_CX - 58, cy, 'chip').setDisplaySize(34, 34).setAlpha(afford ? 1 : 0.4))
+    // Disabled-state clarity: an unaffordable pill shrinks a size and rides up a hair, making room
+    // inside the card for a plain-words "need N more" caption — so the inert ghost state (and the
+    // earn loop) is unmistakable, and the affordable gold pills stand a full size taller beside it.
     const btn = addPillButton(
       this,
       CTRL_CX + 20,
-      cy,
-      108,
-      60,
+      afford ? cy : cy - 5,
+      afford ? 108 : 100,
+      afford ? 60 : 48,
       item.price.toLocaleString(),
       afford ? GOLD_PILL : GHOST_PILL,
       () => this.attemptBuy(item, btn),
       highlight ? { juice: true } : {}
     )
     row.add(btn)
+    // The shortfall caption — rebuilt with the list on every affordability refresh, so it disappears
+    // the moment the row wakes up.
+    if (!afford) {
+      row.add(
+        this.add
+          .text(CTRL_CX + 20, cy + 33, `need ${(item.price - chips).toLocaleString()} more`, {
+            fontFamily: 'Arial, sans-serif',
+            fontSize: '12px',
+            color: T.inkFaint,
+          })
+          .setOrigin(0.5)
+      )
+    }
 
     return row
   }
@@ -227,6 +256,7 @@ export class StoreScene extends Phaser.Scene {
       return
     }
     sfx.coinCount()
+    this.purchaseFlash(btn.x, btn.y)
     this.flyChip(btn.x, btn.y)
     this.toast(`${item.label} added — applies next level`, 'good')
     this.renderList() // refresh affordability across the list
@@ -260,16 +290,39 @@ export class StoreScene extends Phaser.Scene {
     this.tweens.add({ targets: t, alpha: 0, delay: 950, duration: 320, onComplete: () => t.destroy() })
   }
 
-  /** A single chip arcs from the buy button into the balance pill, which pops when it lands. */
+  /**
+   * S5 · purchase pop — the instant a buy commits, one transient gold ring blooms out of the tapped
+   * button so the spend lands with a visible "yes" beyond the pill's own tap-flash. A single ADD
+   * sprite that destroys itself; skipped under reduced motion / reduced flashing / the LOW tier
+   * (the chip-fly + pill pop still carry the confirmation there).
+   */
+  private purchaseFlash(x: number, y: number): void {
+    if (prefersReducedMotion() || reduceFlashing() || quality.tier() === 'low') return
+    const ring = this.add
+      .image(x, y, 'ring')
+      .setDisplaySize(74, 74)
+      .setTint(getTheme().gold)
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setAlpha(0.9)
+      .setDepth(66)
+    this.tweens.add({ targets: ring, scale: ring.scale * 2.1, alpha: 0, duration: D.pop, ease: E.settle, onComplete: () => ring.destroy() })
+  }
+
+  /**
+   * A single chip arcs from the buy button into the balance pill, which pops when it lands. The x and
+   * y travel are eased separately (x glides out early, y accelerates late) so the chip carves a curve
+   * into the pill instead of beelining, and a lazy spin sells the coin in flight.
+   */
   private flyChip(fromX: number, fromY: number): void {
     if (prefersReducedMotion()) {
       this.balance.update(loadSave().chips)
       return
     }
     const c = this.add.image(fromX, fromY, 'chip').setDisplaySize(40, 40).setDepth(65)
+    this.tweens.add({ targets: c, x: this.balanceX, duration: 420, ease: E.arc })
+    this.tweens.add({ targets: c, angle: -300, duration: 420, ease: E.settle })
     this.tweens.add({
       targets: c,
-      x: this.balanceX,
       y: this.balanceY,
       scale: c.scale * 0.5,
       duration: 420,
@@ -277,8 +330,32 @@ export class StoreScene extends Phaser.Scene {
       onComplete: () => {
         c.destroy()
         this.balance.update(loadSave().chips)
+        this.landSpark()
       },
     })
+  }
+
+  /**
+   * S5 · landing sparkle — a tiny governor-scaled spark burst where the flown chip melts into the
+   * balance pill, so the deposit reads as an arrival, not a vanish. Transient emitter, destroys
+   * itself; skipped under reduced motion and on the LOW tier (counts scale with the governor).
+   */
+  private landSpark(): void {
+    if (prefersReducedMotion() || quality.tier() === 'low') return
+    const n = quality.count(8)
+    if (n === 0) return
+    const spark = this.add
+      .particles(0, 0, 'spark', {
+        speed: { min: 60, max: 190 },
+        angle: { min: 0, max: 360 },
+        scale: { start: 0.4, end: 0 },
+        alpha: { start: 0.9, end: 0 },
+        lifespan: { min: 280, max: 520 },
+        emitting: false,
+      })
+      .setDepth(66)
+    spark.explode(n, this.balanceX, this.balanceY)
+    this.time.delayedCall(650, () => spark.destroy())
   }
 
   /** Boost → board-piece texture, mirroring DailyBonusScene.prizeTexture. */

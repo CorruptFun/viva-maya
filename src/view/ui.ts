@@ -1,6 +1,6 @@
 import Phaser from 'phaser'
 import { SWAP_SOUNDS, SWAP_SOUND_LABELS, sfx } from '../audio/sfx'
-import { LIVES_MAX, restScrollY, worldH } from '../config'
+import { DESIGN_W, LIVES_MAX, restScrollY, worldH } from '../config'
 import { formatCountdown } from '../core/lives'
 import type { LivesState } from '../core/lives'
 import { loadSave } from '../core/save'
@@ -23,6 +23,8 @@ import {
 } from './theme'
 import type { Theme, ThemeId } from './theme'
 import { openCloudModal } from './cloudmodal'
+import { quality } from './quality'
+import { D, E, OVERSHOOT, backOut } from './motion'
 
 export const FONT = '"Arial Black", "Helvetica Neue", Arial, sans-serif'
 
@@ -105,6 +107,57 @@ export function hasNavigated(): boolean {
   return sceneNavigations > 0
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Transition light-wipe (§F2). The cream cross-fade stays the structural backbone of every scene
+// change; this layers a soft travelling light band OVER it so a navigation reads as light moving
+// across the screen instead of a flat dip to cream. It speaks the same directional grammar as the
+// §E10 entrance: going DEEPER the band RISES (bottom → up and off the top), going BACK it SETTLES
+// (top → down and off the bottom). Each nav plays two halves — the leaving scene carries the band
+// through mid-screen during its 180ms fade-out, and the arriving scene picks it up and carries it
+// off-screen during its entrance settle — so the cut reads as ONE light passing across the change.
+// STRICTLY ADDITIVE: reduced motion and the LOW quality tier skip the wipe entirely (today's flat
+// cream fade, byte-for-byte), and the §C6 shared-element focus path is untouched — the wipe is pure
+// screen-space light (scrollFactor 0, ADD blend), two transient images that destroy themselves.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * One half of the travelling light band: a broad warm halo + a tighter bright core (both the baked
+ * pre-blurred `bgglow`, stretched wide), gliding across the screen in the nav's direction while a
+ * half-duration alpha yoyo swells them in and back out. `'leave'` rides the fade-out (D.base, the
+ * fade's own length); `'arrive'` rides the entrance settle (D.pop). Screen-space (scrollFactor 0),
+ * so the §E10 camera nudge under it never bends the light's path. No-op under reduced motion / on
+ * the low tier / where `bgglow` hasn't baked — every fallback keeps the exact flat cream fade.
+ */
+function lightWipe(scene: Phaser.Scene, dir: SceneDir, phase: 'leave' | 'arrive'): void {
+  if (prefersReducedMotion() || quality.tier() === 'low') return
+  if (!scene.textures.exists('bgglow')) return
+  const T = getTheme()
+  const H = worldH()
+  const rising = dir === 'deeper'
+  const leave = phase === 'leave'
+  // Travel fractions of the screen: the leaving half sweeps through the middle band of the screen;
+  // the arriving half starts where the cut left the light and carries it past the opposite edge.
+  const fromF = leave ? (rising ? 0.88 : 0.12) : (rising ? 0.66 : 0.34)
+  const toF = leave ? (rising ? 0.34 : 0.66) : (rising ? -0.24 : 1.24)
+  const dur = leave ? D.base : D.pop
+  const band = (h: number, tint: number, peak: number): void => {
+    const img = scene.add
+      .image(DESIGN_W / 2, H * fromF, 'bgglow')
+      .setDisplaySize(DESIGN_W * 2.1, h)
+      .setTint(tint)
+      .setAlpha(0)
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setScrollFactor(0)
+      .setDepth(120) // over every panel/overlay — it is light on the glass, not part of the scene
+    scene.tweens.add({ targets: img, y: H * toF, duration: dur, ease: E.glide, onComplete: () => img.destroy() })
+    // Fast attack, brief hold, then decay — the light must land EARLY, in the clear first third of
+    // the cream fade, or the deepening cream simply washes it out before it ever reads.
+    scene.tweens.add({ targets: img, alpha: peak, duration: dur * 0.3, yoyo: true, hold: dur * 0.15, ease: E.settle })
+  }
+  band(560, T.bloom, leave ? 0.42 : 0.34) // the broad warm halo
+  band(210, T.goldBright, leave ? 0.36 : 0.3) // the tighter bright core riding its centre
+}
+
 /**
  * Warm cream cross-fade between scenes (§3d). Locks input during the fade (which doubles as an
  * anti-double-tap guard), fades the camera to brand cream (#fffdf8 — NEVER black), and starts
@@ -135,6 +188,9 @@ export function startScene(from: Phaser.Scene, key: string, data?: object, dir?:
   const cam = from.cameras.main
   cam.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => from.scene.start(key, data))
   cam.fadeOut(dur, 255, 253, 248)
+  // §F2 — the leaving half of the transition light-wipe rides the fade-out (no-ops under reduced
+  // motion / low tier, so those paths keep the flat cream fade exactly as it is today).
+  lightWipe(from, nextEntrance, 'leave')
 }
 
 /** Read + clear the pending directional entrance (defaults 'deeper' when nothing is queued). */
@@ -192,6 +248,9 @@ export function applyEntrance(scene: Phaser.Scene, dir: SceneDir = consumeEntran
   const rest = restScrollY()
   cam.setScroll(cam.scrollX, rest + (dir === 'deeper' ? -ENTRANCE_OFFSET : ENTRANCE_OFFSET))
   scene.tweens.add({ targets: cam, scrollY: rest, duration: 340, ease: 'Back.easeOut' })
+  // §F2 — the arriving half of the light-wipe: pick the band up where the cut left it and carry it
+  // off-screen over the entrance settle. Screen-space, so the camera nudge above never bends it.
+  lightWipe(scene, dir, 'arrive')
   return dir
 }
 
@@ -833,8 +892,11 @@ const READOUT_STYLE: PillStyle = { id: 'readout', fill: 0xfff3d6, border: 0xf2c1
 
 /** Opt-in extras for a pressable control (additive — every call site works without passing this). */
 export interface PillOpts {
-  /** Hero flag (PLAY / SPIN): a soft breathing glow ring behind the pedestal. */
+  /** Hero flag (PLAY / SPIN): a soft breathing glow ring behind the pedestal + a periodic sheen. */
   juice?: boolean
+  /** Periodic hero sheen only (a slow specular sweep) WITHOUT the glow ring — for heroes that already
+   *  own a bespoke halo (e.g. Home's heartbeat-coherent PLAY glow) but still want the light-catch. */
+  sheen?: boolean
   /** Start dimmed + inert; toggle later via the returned container's `setDisabled`. */
   disabled?: boolean
 }
@@ -897,17 +959,78 @@ function buildPressable(
 
   const baseImg = scene.add.image(0, capY + ext / 2, `btnbase:${id}`)
   const face = scene.add.container(0, capY)
-  face.add(scene.add.image(0, 0, `btnface:${id}`))
+  const capImg = scene.add.image(0, 0, `btnface:${id}`)
+  face.add(capImg)
   // Hit-zone grows to the ≥44pt minimum in each axis (visual art unchanged) — §E8 touch targets.
   const zone = scene.add
     .rectangle(0, capY, Math.max(w, MIN_HIT), Math.max(h, MIN_HIT), 0xffffff, 0.001)
     .setInteractive({ useHandCursor: true })
   container.add([baseImg, face, zone])
 
+  // ── §F1 · tactile press polish ────────────────────────────────────────────────────────────────
+  // Modern-app depth on every pressable, layered on top of the existing sink/rise. Three additive,
+  // reduced-motion + governor-gated beats that compose over the baked 3D cap:
+  //   (a) TAP FLASH    — the cap's exact shape flares bright for a beat on press-down (a crisp
+  //       acknowledgement that reads on any pill/round aspect — no geometry mismatch).
+  //   (b) RELEASE SHINE — a specular streak glides across the cap on a committed release (masked to
+  //       the cap's exact pill/round shape, so light travels over the glass, never a rectangle).
+  //   (c) HERO SHEEN   — hero buttons (PLAY/SPIN — `juice`/`sheen`) get a slow periodic shine so the
+  //       primary action quietly catches the light and reads "alive".
+  // Every beat no-ops under reduced motion and on the LOW quality tier (transform-only feel remains),
+  // and each spawns a lone transient it destroys itself — nothing accumulates, no per-frame cost.
+  const fancy = !reduced && quality.tier() !== 'low'
+  const isGhost = style.id === 'ghost'
+  const emitFlash = (): void => {
+    if (!fancy) return
+    // Reuse the baked cap texture as a white ADD ghost → the flash is exactly the cap silhouette.
+    const flash = scene.add
+      .image(0, 0, `btnface:${id}`)
+      .setTint(0xffffff)
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setAlpha(isGhost ? 0.28 : 0.4)
+    face.add(flash) // rides inside the face, so it sinks with the cap
+    scene.tweens.add({
+      targets: flash,
+      alpha: 0,
+      duration: 260,
+      ease: 'Quad.easeOut',
+      onComplete: () => flash.destroy(),
+    })
+  }
+  const shineOnce = (): void => {
+    if (!fancy || !scene.textures.exists('sweep')) return
+    const streakW = Math.max(26, w * 0.24)
+    const shine = scene.add
+      .image(-w / 2 - streakW, 0, 'sweep')
+      .setDisplaySize(streakW, h * 1.35)
+      .setAngle(14)
+      .setTint(0xffffff)
+      .setAlpha(isGhost ? 0.5 : 0.72)
+      .setBlendMode(Phaser.BlendModes.ADD)
+    shine.setMask(capImg.createBitmapMask())
+    face.add(shine)
+    scene.tweens.add({
+      targets: shine,
+      x: w / 2 + streakW,
+      duration: 340,
+      ease: 'Sine.easeInOut',
+      onComplete: () => {
+        shine.clearMask(true)
+        shine.destroy()
+      },
+    })
+  }
+
   let disabled = opts.disabled ?? false
   if (disabled) face.setAlpha(0.5)
   let pressTween: Phaser.Tweens.Tween | undefined
-  const animate = (toY: number, sy: number, sx: number, dur: number, ease: string): void => {
+  const animate = (
+    toY: number,
+    sy: number,
+    sx: number,
+    dur: number,
+    ease: string | ((v: number) => number)
+  ): void => {
     pressTween?.stop()
     if (reduced) {
       face.setY(toY).setScale(sx, sy)
@@ -919,7 +1042,9 @@ function buildPressable(
     if (disabled) return
     animate(capY + press, 0.95, 1.02, 60, 'Quad.easeOut')
   }
-  const rise = (): void => animate(capY, 1, 1, 200, 'Back.easeOut')
+  // Springier release: a touch more overshoot than a plain Back so the cap "pops" back to rest — the
+  // small physical reward on letting go that modern controls have. backOut(release) ≈ 1.6 overshoot.
+  const rise = (): void => animate(capY, 1, 1, 220, reduced ? 'Back.easeOut' : backOut(OVERSHOOT.release))
   // §E3 B14: the down-thock + light haptic partner the press itself (distinct from the pointerup
   // `uiTap` on release). Skipped when disabled so an inert control stays silent. Mute/haptics-gated.
   const onDown = (): void => {
@@ -927,14 +1052,23 @@ function buildPressable(
     sfx.uiPress()
     pressHaptic()
     sink()
+    emitFlash()
   }
   zone.on('pointerdown', onDown)
   zone.on('pointerout', rise)
   zone.on('pointerup', () => {
     rise()
     if (disabled) return
+    shineOnce()
     onPress()
   })
+
+  // (c) Hero sheen — a slow recurring shine only on hero buttons (PLAY/SPIN — `juice` or the explicit
+  // `sheen` flag), so the primary action subtly catches the light on its own. Cheap (one masked streak
+  // every few seconds); governor/reduced gated via `fancy`, and killed with the scene so it never leaks.
+  if ((opts.juice || opts.sheen) && fancy) {
+    scene.time.addEvent({ delay: 3600, loop: true, startAt: 2400, callback: shineOnce })
+  }
 
   container.setDisabled = (v: boolean): void => {
     disabled = v

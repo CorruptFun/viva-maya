@@ -38,6 +38,9 @@ export interface SaveData {
   // --- v8 Jackpot Wheel field. Defaults to 0; read shape-tolerantly below. ---
   /** Jackpot meter charge — notches filled by level wins; at JACKPOT_GOAL the wheel fires, then resets. */
   jackpotMeter: number
+  /** Week keys ("YYYY-Www") whose weekly-race CHAMPION purse has been claimed (once-per-week gate;
+   *  rides the cloud-synced save so a second device can never double-award). Absent in older saves → []. */
+  championWeeks: string[]
 }
 
 const KEY = 'viva-maya:v1'
@@ -61,11 +64,12 @@ const DEFAULTS: SaveData = {
   finaleSeen: false,
   seenIntro: false,
   jackpotMeter: 0,
+  championWeeks: [],
 }
 
 function fresh(): SaveData {
   // Re-init every mutable reference type so a fresh save never aliases DEFAULTS' arrays/objects.
-  return { ...DEFAULTS, stars: {}, pendingBoosts: [], occasionsSeen: [] }
+  return { ...DEFAULTS, stars: {}, pendingBoosts: [], occasionsSeen: [], championWeeks: [] }
 }
 
 /**
@@ -103,6 +107,10 @@ export function coerceSave(raw: unknown): SaveData {
     base.seenIntro = data.seenIntro === true
     // v8 Jackpot Wheel meter — absent in pre-v8 saves → 0.
     base.jackpotMeter = typeof data.jackpotMeter === 'number' ? Math.max(0, Math.floor(data.jackpotMeter)) : 0
+    // Weekly-race champion claims — absent in older saves → none claimed.
+    base.championWeeks = Array.isArray(data.championWeeks)
+      ? data.championWeeks.filter((x): x is string => typeof x === 'string')
+      : []
     // v6 grace refill: the pool grew (3→10) and the break got much shorter — top EVERYONE up to
     // full on upgrade so nobody is left stranded at the old, stingier count (e.g. mid-session).
     const storedVersion = typeof data.v === 'number' ? (data.v as number) : 1
@@ -192,6 +200,23 @@ export function recordScore(score: number): SaveData {
 export function addChips(n: number): number {
   const save = loadSave()
   save.chips += Math.max(0, Math.floor(n))
+  persistSave(save)
+  return save.chips
+}
+
+/**
+ * Claim the weekly-race CHAMPION purse for a week — atomic load→check→award→persist. Returns the new
+ * chip balance, or null when that week was already claimed (this device or any synced one), leaving
+ * the save untouched. The claimed-week latch rides the save, so cloud sync makes the gate global.
+ */
+export function claimChampionship(week: string, purse: number): number | null {
+  const save = loadSave()
+  if (save.championWeeks.includes(week)) return null
+  save.championWeeks.push(week)
+  // Only the most recently CLOSED week is ever checked, so the latch list needn't grow for
+  // years — keep a generous tail (12 weeks) and let older entries age out of the save.
+  if (save.championWeeks.length > 12) save.championWeeks = save.championWeeks.slice(-12)
+  save.chips += Math.max(0, Math.floor(purse))
   persistSave(save)
   return save.chips
 }
