@@ -13,6 +13,7 @@
     "icons": "node scripts/gen-icons.mjs"
   },
   "dependencies": {
+    "@tonconnect/ui": "^3.0.0",
     "phaser": "^3.90.0"
   },
   "devDependencies": {

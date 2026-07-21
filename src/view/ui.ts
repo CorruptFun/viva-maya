@@ -5,6 +5,8 @@ import { formatCountdown } from '../core/lives'
 import type { LivesState } from '../core/lives'
 import { loadSave } from '../core/save'
 import type { SaveData } from '../core/save'
+import { potState } from '../core/pot'
+import type { PotHeatState } from '../core/pot'
 import {
   THEME_META,
   THEME_ORDER,
@@ -915,6 +917,119 @@ export function addChipPill(
   const update = (chips: number): void => {
     redraw(chips)
     scene.tweens.add({ targets: container, scaleX: 1.14, scaleY: 1.14, duration: 130, yoyo: true, ease: 'Quad.easeOut' })
+  }
+
+  return { container, update }
+}
+
+export interface PotPill {
+  container: Phaser.GameObjects.Container
+  update: (potChips: number, potTarget: number, heatState: PotHeatState) => void
+}
+
+/**
+ * Progressive jackpot "GROWING POT" pill — shows the pot/jar texture, the current potChips towards
+ * the target, and handles escalating visual states: calm, glowing, heating up, and ready!
+ */
+export function addPotPill(
+  scene: Phaser.Scene,
+  x: number,
+  y: number,
+  opts: { compact?: boolean } = {}
+): PotPill {
+  const compact = opts.compact ?? false
+  const h = compact ? 44 : 52
+  const iconSize = Math.round(h * 0.66)
+  const padX = compact ? 15 : 18
+  const gap = compact ? 7 : 9
+  const container = scene.add.container(x, y).setDepth(50)
+  const g = scene.add.graphics()
+  
+  const icon = scene.add.image(0, 0, 'pot').setDisplaySize(iconSize, iconSize)
+  const label = scene.add
+    .text(0, 1, '', { fontFamily: FONT, fontSize: `${Math.round(h * 0.44)}px`, fontStyle: '900', color: '#4a3305' })
+    .setOrigin(0, 0.5)
+  container.add([g, icon, label])
+
+  let pulseTween: Phaser.Tweens.Tween | null = null
+  let shakeTween: Phaser.Tweens.Tween | null = null
+
+  const redraw = (potChips: number, potTarget: number, heatState: PotHeatState): void => {
+    let txt = `${potChips}/${potTarget}`
+    if (heatState === 'ready') {
+      txt = 'READY!'
+    }
+    label.setText(txt)
+
+    const w = padX + iconSize + gap + label.width + padX
+    g.clear()
+
+    let pillStyle = READOUT_STYLE
+    if (heatState === 'glowing') {
+      pillStyle = { id: 'pot-glowing', fill: 0xfff3d6, border: 0xeab308, textColor: '#854d0e' }
+    } else if (heatState === 'heating_up') {
+      pillStyle = { id: 'pot-heating', fill: 0xffedd5, border: 0xea580c, textColor: '#7c2d12' }
+    } else if (heatState === 'ready') {
+      pillStyle = { id: 'pot-ready', fill: 0xfef9c3, border: 0xd97706, textColor: '#713f12' }
+    }
+
+    drawPillFace(g, -w / 2, -h / 2, w, h, pillStyle)
+    icon.setPosition(-w / 2 + padX + iconSize / 2, 0)
+    label.setPosition(icon.x + iconSize / 2 + gap, 1)
+
+    if (pulseTween) {
+      pulseTween.remove()
+      pulseTween = null
+    }
+    if (shakeTween) {
+      shakeTween.remove()
+      shakeTween = null
+    }
+    container.setScale(1)
+    container.setAngle(0)
+
+    const reduced = prefersReducedMotion()
+
+    if (heatState === 'heating_up' && !reduced) {
+      pulseTween = scene.tweens.add({
+        targets: container,
+        scaleX: 1.08,
+        scaleY: 1.08,
+        duration: 450,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut'
+      })
+    } else if (heatState === 'ready' && !reduced) {
+      shakeTween = scene.tweens.add({
+        targets: container,
+        angle: { from: -3, to: 3 },
+        scaleX: { from: 1.02, to: 1.06 },
+        scaleY: { from: 1.02, to: 1.06 },
+        duration: 100,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut'
+      })
+    }
+  }
+
+  const initial = potState()
+  redraw(initial.potChips, initial.potTarget, initial.heatState)
+
+  const update = (potChips: number, potTarget: number, heatState: PotHeatState): void => {
+    redraw(potChips, potTarget, heatState)
+    const reduced = prefersReducedMotion()
+    if (!reduced) {
+      scene.tweens.add({
+        targets: container,
+        scaleX: 1.12,
+        scaleY: 1.12,
+        duration: 120,
+        yoyo: true,
+        ease: 'Quad.easeOut'
+      })
+    }
   }
 
   return { container, update }

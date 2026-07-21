@@ -32,6 +32,7 @@ import {
   openThemePanel,
   startScene,
 } from '../view/ui'
+import { web3Overlay } from '../view/web3Overlay'
 
 /**
  * Power-on latch (§E10 / Signature #1). Set once the app's first Home paint has run its full
@@ -293,17 +294,23 @@ export class HomeScene extends Phaser.Scene {
         .setOrigin(0.5)
     }
 
+    // TON Web3 Wallet Portal — core TON network integration
+    const tonBtn = addPillButton(this, DESIGN_W / 2, 1090, 340, 76, 'TON WALLET', GOLD_PILL, () => {
+      web3Overlay.show()
+    })
+    menuButtons.push(tonBtn)
+
     // Endless weekly race — unlocks after level 30.
     if (endlessUnlocked(save)) {
       const wkBest = endlessBestThisWeek(save)
-      const endless = addPillButton(this, DESIGN_W / 2, 1108, 340, 72, 'ENDLESS', ROSE_PILL, () =>
+      const endless = addPillButton(this, DESIGN_W / 2, 1190, 340, 72, 'ENDLESS', ROSE_PILL, () =>
         startScene(this,'game', { endless: true })
       )
       menuButtons.push(endless)
       this.add
         .text(
           DESIGN_W / 2,
-          1158,
+          1240,
           wkBest > 0 ? `this week's board  ·  best ${wkBest.toLocaleString()}` : `new weekly board  ·  set the pace`,
           { fontFamily: FONT, fontSize: '20px', color: getTheme().onBackdropMuted }
         )

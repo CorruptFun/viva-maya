@@ -724,6 +724,57 @@ class Sfx {
     })
   }
 
+  /** Small tick sound for progressive pot increment. */
+  potTick(): void {
+    this.voice((ctx, t, out) => {
+      const f = this.snap(1200)
+      this.tone(ctx, out, t, { type: 'triangle', freq: f, endFreq: f * 1.2, peak: 0.12, dur: 0.05, attack: 0.002 })
+      this.tone(ctx, out, t, { type: 'sine', freq: f * 2, peak: 0.06, dur: 0.03, attack: 0.002 })
+    })
+  }
+
+  /** Escalating riser followed by explosive boom and golden ring for progressive pot jackpot. */
+  potPop(): void {
+    this.voice((ctx, t, out) => {
+      this.duckBed(0.1, 1.8)
+      
+      const oscRiser = ctx.createOscillator()
+      oscRiser.type = 'sine'
+      oscRiser.frequency.setValueAtTime(220, t)
+      oscRiser.frequency.exponentialRampToValueAtTime(880, t + 0.6)
+      const gainRiser = ctx.createGain()
+      gainRiser.gain.setValueAtTime(0.0001, t)
+      gainRiser.gain.exponentialRampToValueAtTime(0.25, t + 0.5)
+      gainRiser.gain.exponentialRampToValueAtTime(0.0001, t + 0.6)
+      oscRiser.connect(gainRiser).connect(out)
+      oscRiser.start(t)
+      oscRiser.stop(t + 0.6)
+
+      const tBoom = t + 0.6
+      this.tone(ctx, out, tBoom, { type: 'sine', freq: 150, endFreq: 38, peak: 0.8, dur: 0.8, attack: 0.01 })
+      
+      const bellFreqs = [880, 1320, 1760, 2640]
+      bellFreqs.forEach((f, idx) => {
+        const peak = 0.18 / (idx + 1)
+        this.tone(ctx, out, tBoom, { type: 'sine', freq: this.snap(f), peak, dur: 1.2, attack: 0.005 })
+      })
+
+      const noise = this.noiseSource(ctx)
+      const filter = ctx.createBiquadFilter()
+      filter.type = 'lowpass'
+      filter.frequency.setValueAtTime(1000, tBoom)
+      filter.frequency.exponentialRampToValueAtTime(150, tBoom + 0.6)
+      const gainNoise = ctx.createGain()
+      gainNoise.gain.setValueAtTime(0.0001, tBoom)
+      gainNoise.gain.exponentialRampToValueAtTime(0.35, tBoom + 0.03)
+      gainNoise.gain.exponentialRampToValueAtTime(0.0001, tBoom + 0.7)
+      
+      noise.connect(filter).connect(gainNoise).connect(out)
+      noise.start(tBoom)
+      noise.stop(tBoom + 0.75)
+    })
+  }
+
   /** Soft swirling filtered noise — the board reshuffle. */
   reshuffleSwirl(): void {
     this.voice((ctx, t, out) => {
