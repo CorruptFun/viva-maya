@@ -989,9 +989,13 @@ function buildPressable(
       .setBlendMode(Phaser.BlendModes.ADD)
       .setAlpha(isGhost ? 0.28 : 0.4)
     face.add(flash) // rides inside the face, so it sinks with the cap
+    // Pass 2 secondary motion: the flash blooms ~10% as it fades, so the light reads as spreading
+    // outward (a decaying glow) instead of dimming flat in place.
+    flash.setScale(0.96)
     scene.tweens.add({
       targets: flash,
       alpha: 0,
+      scale: 1.06,
       duration: 260,
       ease: 'Quad.easeOut',
       onComplete: () => flash.destroy(),
@@ -1147,7 +1151,16 @@ export function addChipPill(
 
   const update = (chips: number): void => {
     redraw(chips)
-    scene.tweens.add({ targets: container, scaleX: 1.14, scaleY: 1.14, duration: 130, yoyo: true, ease: 'Quad.easeOut' })
+    // Pass 2 follow-through: punch out fast, then settle back with a gentle overshoot (vs a symmetric
+    // yoyo that stops dead). Adds the missing reduced-motion guard so the pill just redraws at rest.
+    if (prefersReducedMotion()) return
+    scene.tweens.chain({
+      targets: container,
+      tweens: [
+        { scaleX: 1.14, scaleY: 1.14, duration: 90, ease: 'Quad.easeOut' },
+        { scaleX: 1, scaleY: 1, duration: 150, ease: backOut(OVERSHOOT.gentle) },
+      ],
+    })
   }
 
   return { container, update }
