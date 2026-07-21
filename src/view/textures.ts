@@ -457,15 +457,42 @@ function makeCard(scene: Phaser.Scene): void {
   g.destroy()
 }
 
-/** Marquee bulb (white so it can be tinted red/gold per position). */
+/**
+ * Marquee bulb — a lit GLASS LAMP (white-body so it tints gold/rose/accent per position, on every
+ * theme). Structure is ALPHA-ONLY (never hue) so setTint stays true: a soft glass bloom holding the
+ * old ~r8 footprint (nothing shifts in world space), a translucent envelope with the light pooled
+ * UP-LEFT so the lower-right belly falls off, a hot filament core + peak, a thin glass rim that reads
+ * as blown glass (not a glow blob), and an off-centre specular glint whose brightness survives the
+ * tint. The premium lit-lamp read at its 13–20px display sizes vs the old flat concentric rings.
+ * Key 'bulb', 16×16 — both unchanged.
+ */
 function makeBulb(scene: Phaser.Scene): void {
   const g = scene.make.graphics({ x: 0, y: 0 }, false)
-  g.fillStyle(0xffffff, 0.22)
+  // Glass bloom + halo — the lamp's soft glow (same ~r8 extent the old bulb had).
+  g.fillStyle(0xffffff, 0.16)
   g.fillCircle(8, 8, 8)
+  g.fillStyle(0xffffff, 0.26)
+  g.fillCircle(8, 8, 6.6)
+  // Translucent glass envelope.
+  g.fillStyle(0xffffff, 0.44)
+  g.fillCircle(8, 8, 5.4)
+  // Light pooled up-left inside the glass — the lit interior; leaving the envelope showing lower-right
+  // as the shaded belly (the offset-disc lit-dome trick, in alpha).
+  g.fillStyle(0xffffff, 0.64)
+  g.fillCircle(7.6, 7.4, 4.2)
+  // Hot filament core + peak.
   g.fillStyle(0xffffff, 0.9)
-  g.fillCircle(8, 8, 4.5)
+  g.fillCircle(7.4, 7.2, 2.5)
   g.fillStyle(0xffffff, 1)
-  g.fillCircle(8, 8, 2.4)
+  g.fillCircle(7.3, 7.1, 1.1)
+  // Thin glass rim — the envelope edge catching light, so it reads as blown glass.
+  g.lineStyle(1, 0xffffff, 0.4)
+  g.strokeCircle(8, 8, 5.5)
+  // Off-centre specular glint (upper-left) — brightness contrast carries it through the tint.
+  g.fillStyle(0xffffff, 0.9)
+  g.fillCircle(5.7, 5.8, 1.5)
+  g.fillStyle(0xffffff, 1)
+  g.fillCircle(5.5, 5.6, 0.7)
   g.generateTexture('bulb', 16, 16)
   g.destroy()
 }
