@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>VM Sound &amp; Haptics Bench (dev)</title>
+    <style>
+      :root {
+        --bg: #13111c;
+        --panel: #1d1a29;
+        --panel-2: #24202f;
+        --ink: #ece9f6;
+        --muted: #9a93b0;
+        --line: #322c44;
+        --accent: #f2b234;
+        --accent-2: #ff7a85;
+        --on: #3fae5a;
+        --off: #6a6479;
+        --danger: #d3304f;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; }
+      body {
+        background: var(--bg);
+        color: var(--ink);
+        font: 15px/1.4 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+        -webkit-tap-highlight-color: transparent;
+        padding-bottom: env(safe-area-inset-bottom);
+      }
+      header {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        background: rgba(19, 17, 28, 0.94);
+        backdrop-filter: blur(8px);
+        border-bottom: 1px solid var(--line);
+        padding: 10px 14px calc(10px + env(safe-area-inset-top));
+        padding-top: max(10px, env(safe-area-inset-top));
+      }
+      header h1 { font-size: 15px; margin: 0 0 6px; letter-spacing: 0.02em; }
+      header h1 span { color: var(--muted); font-weight: 400; }
+      .status { display: flex; flex-wrap: wrap; gap: 6px; }
+      .chip {
+        font: 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+        background: var(--panel-2);
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 5px 9px;
+        color: var(--muted);
+        white-space: nowrap;
+      }
+      .chip b { color: var(--ink); font-weight: 600; }
+      #log {
+        margin-top: 6px;
+        font: 12px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
+        color: var(--accent);
+        min-height: 15px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      main { padding: 14px; max-width: 900px; margin: 0 auto; }
+      section {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 12px 14px 14px;
+        margin: 0 0 14px;
+      }
+      section h2 {
+        font-size: 13px;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--accent);
+        margin: 0 0 2px;
+      }
+      .hint { color: var(--muted); font-size: 12px; margin: 0 0 10px; }
+      .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+      button {
+        appearance: none;
+        border: 1px solid var(--line);
+        background: linear-gradient(180deg, var(--panel-2), #1b1826);
+        color: var(--ink);
+        font: 600 14px/1 system-ui, sans-serif;
+        min-height: 46px;
+        padding: 0 14px;
+        border-radius: 11px;
+        cursor: pointer;
+        transition: transform 0.04s ease, border-color 0.12s ease, background 0.12s ease;
+        touch-action: manipulation;
+      }
+      button:hover { border-color: #4a4360; }
+      button:active { transform: translateY(1px) scale(0.985); background: #2b2638; }
+      button.wide { flex: 1 1 100%; }
+      button.big { min-height: 54px; font-size: 15px; }
+      button.accent { border-color: #6a5312; background: linear-gradient(180deg, #3a2e10, #241c09); color: #ffdf8f; }
+      button.rose { border-color: #6a2333; background: linear-gradient(180deg, #3a1420, #240d14); color: #ffc6cf; }
+      button.toggle[data-on='1'] { border-color: var(--on); color: #bff0cb; background: linear-gradient(180deg, #15351f, #0e2415); }
+      button.toggle[data-on='0'] { border-color: var(--line); color: var(--muted); }
+      button.theme[data-active='1'] { outline: 2px solid var(--accent); outline-offset: 1px; }
+      .ctl { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+      .ctl b { color: var(--ink); font-variant-numeric: tabular-nums; }
+      .ctl input[type='range'] { width: 150px; accent-color: var(--accent); }
+      .ctl input[type='number'] { width: 58px; min-height: 40px; background: var(--panel-2); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px; font: inherit; }
+      .sep { flex-basis: 100%; height: 0; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>VM Sound &amp; Haptics Bench <span>· dev-only · procedural WebAudio · zero assets</span></h1>
+      <div class="status" id="status"></div>
+      <div id="log">tap any button once to unlock audio (browser autoplay policy)</div>
+    </header>
+    <main id="bench"></main>
+    <script type="module" src="/dev/soundbench.ts"></script>
+  </body>
+</html>
