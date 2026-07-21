@@ -5,9 +5,10 @@ import { endlessBestThisWeek, endlessUnlocked } from '../core/endless'
 import { LEVEL_COUNT } from '../core/levels'
 import { loadSave } from '../core/save'
 import { addCasinoBackdrop } from '../view/background'
+import { D, E, OVERSHOOT, backOut } from '../view/motion'
 import { quality } from '../view/quality'
-import { getTheme, prefersReducedMotion } from '../view/theme'
-import { FONT, GHOST_PILL, ROSE_PILL, addMarquee, addMuteChip, addPillButton, goldFace, startScene } from '../view/ui'
+import { getTheme, prefersReducedMotion, reduceFlashing } from '../view/theme'
+import { FONT, GHOST_PILL, ROSE_PILL, addMarquee, addMuteChip, addPillButton, applyEntrance, goldFace, startScene } from '../view/ui'
 
 const GRID_COLS = 5
 const CHIP = 108
@@ -15,8 +16,13 @@ const GAP = 18
 const ROW_H = CHIP + GAP
 /** L2: gold frame band width — a milestone chip's cream face insets this much so the baked `goldFace` rim shows as an ornamental border. */
 const MILESTONE_FRAME = 7
-/** Grid entrance cascade: per (visible) row delay + pop duration, tuned so the whole ripple lands under ~500ms. */
+/**
+ * Grid entrance cascade: per (visible) row delay + a small per-column offset + pop duration, tuned so
+ * the whole ripple lands under ~600ms. The column offset turns the old row-at-a-time drop into a
+ * diagonal wave that sweeps the grid the way the journey trail reads (left→right, top→bottom).
+ */
 const CASCADE_STAGGER = 36
+const CASCADE_COL_STAGGER = 13
 const CASCADE_DURATION = 200
 /**
  * L1 flick-scroll tuning. Velocity is carried as content-px per 60fps frame; on release the drag's
@@ -34,6 +40,15 @@ const FLICK_IDLE_MS = 90 // a release this long after the last move is a hold, n
  * glow at `TRAIL_LIT_ALPHA`, the run beyond sits muted at `TRAIL_DIM_ALPHA`. `TRAIL_RETURN_BOW` bows
  * each row-wrap "carriage return" downward so the path winds rather than cutting a hard diagonal.
  */
+/**
+ * L5 rubber-band edges. Dragging past a bound moves the grid at `EDGE_RESIST` of the finger (capped at
+ * `EDGE_MAX` px of stretch) and springs back on release; a flick that slams a bound converts its
+ * remaining speed into a small overshoot (≤ `EDGE_BOUNCE_MAX`) that springs back — the native-list
+ * edge feel. Reduced motion (§E8) keeps today's hard clamp on both paths.
+ */
+const EDGE_RESIST = 0.3
+const EDGE_MAX = 72
+const EDGE_BOUNCE_MAX = 40
 const TRAIL_DOT_GAP = 15
 const TRAIL_DOT_R = 3.4
 const TRAIL_LIT_ALPHA = 0.5
@@ -52,6 +67,8 @@ export class LevelSelectScene extends Phaser.Scene {
   private maxScroll = 0
   /** L1: flick velocity (content-px/frame); friction-decayed each update() after release, 0 at rest. */
   private scrollVel = 0
+  /** L5: in-flight edge snap-back / bounce tween — stopped the instant a new touch grabs the list. */
+  private edgeSpring?: Phaser.Tweens.Tween | Phaser.Tweens.TweenChain
   /** C4: rising-edge latch for `quality.idle()` — true once the current idle beat has fired; re-armed on activity. */
   private wasIdle = false
   /** C4: the current-level chip + its steady "you are here" breathe — the idle beat pauses it for one nudge. */
@@ -70,12 +87,14 @@ export class LevelSelectScene extends Phaser.Scene {
     // Warm cream fade-in (never black) — the receiving half of every startScene cross-fade.
     this.cameras.main.fadeIn(this.prefersReducedMotion() ? 90 : 180, 255, 253, 248)
     this.cameras.main.setScroll(0, restScrollY()) // centre the design box in the taller world
+    applyEntrance(this) // §E10 directional push-in + §F2 light-wipe (no-ops under reduced motion)
     // C4: reset the idle-attract state per entry — Phaser reuses the scene instance across navigation, so
     // clear the latch + any stale current-chip/tween ref (e.g. from a visit that HAD a current chip) before
     // the grid rebuilds; startChipPulse re-captures the live chip once its entrance settles.
     this.wasIdle = false
     this.currentChip = undefined
     this.currentChipPulse = undefined
+    this.edgeSpring = undefined // L5: stale tween refs die with the old grid — never resurrect one
     const save = loadSave()
     addCasinoBackdrop(this, 'menu')
     addMarquee(this, DESIGN_W / 2, 96)
@@ -97,7 +116,7 @@ export class LevelSelectScene extends Phaser.Scene {
     // second mask). Static → reduced motion unaffected.
     content.add(this.buildPathTrail(startX, topPad, viewTop, save.unlocked))
     const reduced = this.prefersReducedMotion()
-    const chipEntries: { container: Phaser.GameObjects.Container; cy: number; current: boolean }[] = []
+    const chipEntries: { container: Phaser.GameObjects.Container; cy: number; col: number; current: boolean }[] = []
     for (let n = 1; n <= LEVEL_COUNT; n++) {
       const row = Math.floor((n - 1) / GRID_COLS)
       const col = (n - 1) % GRID_COLS
@@ -105,7 +124,7 @@ export class LevelSelectScene extends Phaser.Scene {
       const cy = viewTop + topPad + row * ROW_H + CHIP / 2
       const chip = this.buildChip(n, cx, cy, save.unlocked, save.stars[n] ?? 0, viewTop, viewBottom, content)
       content.add(chip)
-      chipEntries.push({ container: chip, cy, current: n === save.unlocked })
+      chipEntries.push({ container: chip, cy, col, current: n === save.unlocked })
     }
     const rows = Math.ceil(LEVEL_COUNT / GRID_COLS)
     const contentBottom = viewTop + topPad + rows * ROW_H + 24
@@ -126,10 +145,12 @@ export class LevelSelectScene extends Phaser.Scene {
     content.y = Phaser.Math.Clamp((viewTop + viewBottom) / 2 - curCy, this.minScroll, this.maxScroll)
 
     // Grid entrance cascade: chips (with their star icons, nested in each container) scale + fade
-    // in, rippling down by on-screen row. Runs after content.y is finalised so the stagger tracks
-    // what the player actually sees; rows clipped by the mask fall out harmlessly at the clamped
-    // ends. The current chip's idle pulse waits for its pop so the two scale tweens don't collide.
-    for (const { container, cy, current } of chipEntries) {
+    // in, springing up with a calibrated overshoot in a diagonal wave — on-screen row sets the main
+    // beat, the column offset tips each row left→right so the ripple sweeps the way the trail reads.
+    // Runs after content.y is finalised so the stagger tracks what the player actually sees; rows
+    // clipped by the mask fall out harmlessly at the clamped ends. The current chip's idle pulse
+    // waits for its pop so the two scale tweens don't collide.
+    for (const { container, cy, col, current } of chipEntries) {
       const startPulse = current ? () => this.startChipPulse(container) : undefined
       if (reduced) {
         // Reduced motion (§E8): skip the entrance pop AND the "you are here" breathing pulse —
@@ -143,8 +164,8 @@ export class LevelSelectScene extends Phaser.Scene {
         scale: 1,
         alpha: 1,
         duration: CASCADE_DURATION,
-        delay: visRow * CASCADE_STAGGER,
-        ease: 'Back.easeOut',
+        delay: visRow * CASCADE_STAGGER + col * CASCADE_COL_STAGGER,
+        ease: backOut(OVERSHOOT.pop),
         onComplete: startPulse,
       })
     }
@@ -163,6 +184,8 @@ export class LevelSelectScene extends Phaser.Scene {
       startContentY = content.y
       this.dragMoved = 0
       this.scrollVel = 0 // touching the list halts any in-flight coast (native feel)
+      this.edgeSpring?.stop() // L5: grabbing mid-bounce hands the grid straight back to the finger
+      this.edgeSpring = undefined
       flickVel = 0
       lastMoveAt = this.time.now
     })
@@ -171,8 +194,16 @@ export class LevelSelectScene extends Phaser.Scene {
       const dy = p.y - startPointerY
       this.dragMoved = Math.max(this.dragMoved, Math.abs(dy))
       const prevY = content.y
-      content.y = Phaser.Math.Clamp(startContentY + dy, this.minScroll, this.maxScroll)
-      if (reduced) return // reduced motion (§E8): 1:1 drag only — never build a fling velocity
+      const target = startContentY + dy
+      const clamped = Phaser.Math.Clamp(target, this.minScroll, this.maxScroll)
+      if (reduced) {
+        content.y = clamped
+        return // reduced motion (§E8): hard-clamped 1:1 drag only — never build a fling velocity
+      }
+      // L5 rubber-band: past a bound the grid follows at EDGE_RESIST of the finger (capped), so the
+      // end of the list reads as stretch, not a wall; pointerup below springs any stretch back.
+      const excess = target - clamped
+      content.y = clamped + Math.sign(excess) * Math.min(Math.abs(excess) * EDGE_RESIST, EDGE_MAX)
       // Smoothed velocity: normalise this move's travel to a 60fps step and blend it into the running
       // estimate (newest weighted 0.6), so a fast release carries momentum and a slow one fades. A
       // clamp at a bound zeroes the step naturally, so momentum can't build while pinned to an end.
@@ -183,6 +214,15 @@ export class LevelSelectScene extends Phaser.Scene {
     })
     this.input.on('pointerup', () => {
       dragging = false
+      // L5: released while stretched past a bound → spring back to the clamp with a gentle overshoot
+      // and never fling (the stretch already spent the gesture). Reduced motion can't reach here —
+      // its drag path stays hard-clamped above.
+      const snapped = Phaser.Math.Clamp(content.y, this.minScroll, this.maxScroll)
+      if (content.y !== snapped) {
+        this.scrollVel = 0
+        this.edgeSpring = this.tweens.add({ targets: content, y: snapped, duration: D.settle, ease: backOut(OVERSHOOT.gentle) })
+        return
+      }
       // Hand the smoothed velocity to update()'s coast only for a genuine flick: motion allowed, above
       // the flick floor, and released promptly after the last move (a hold-then-lift stops dead, as today).
       if (!reduced && Math.abs(flickVel) >= FLICK_MIN && this.time.now - lastMoveAt <= FLICK_IDLE_MS) {
@@ -231,7 +271,21 @@ export class LevelSelectScene extends Phaser.Scene {
     const next = Phaser.Math.Clamp(raw, this.minScroll, this.maxScroll)
     this.scrollContent.y = next
     if (next !== raw) {
-      this.scrollVel = 0 // a bound swallowed the step — halt at the end
+      // L5: a coasting flick that slams a bound converts its remaining speed into a tiny overshoot
+      // that springs back — the native-list edge bounce. scrollVel only exists when motion is allowed
+      // (reduced never builds one), so this path is implicitly §E8-safe; the guard is belt-and-braces.
+      const vel = this.scrollVel
+      this.scrollVel = 0 // the bound swallowed the step — the bounce (if any) takes over from here
+      if (!this.prefersReducedMotion() && Math.abs(vel) > 2) {
+        const over = Math.sign(vel) * Math.min(Math.abs(vel) * 3, EDGE_BOUNCE_MAX)
+        this.edgeSpring = this.tweens.chain({
+          targets: this.scrollContent,
+          tweens: [
+            { y: next + over, duration: D.micro, ease: E.settle },
+            { y: next, duration: D.settle, ease: backOut(OVERSHOOT.gentle) },
+          ],
+        })
+      }
       return
     }
     this.scrollVel *= FLICK_FRICTION
@@ -279,6 +333,28 @@ export class LevelSelectScene extends Phaser.Scene {
     // Held for the C4 idle beat: the attract nudge pauses this breathe, pulses once, then resumes it.
     this.currentChip = container
     this.currentChipPulse = this.tweens.add({ targets: container, scale: 1.06, duration: 600, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' })
+  }
+
+  /**
+   * L5 · selection acknowledgement — the moment a chip tap commits, it springs up past rest with an
+   * eager overshoot (a hair bigger on the current "you are here" chip) and, unless flashing is
+   * reduced, one transient gold ring blooms from the chip and rides the outgoing cross-fade — the
+   * departing half of the C6 "this chip opened into the board" story. The ring destroys itself (or
+   * dies with the scene shutdown, which sweeps its tween); reduced motion (§E8) keeps today's plain
+   * tap-through with zero added movement.
+   */
+  private acknowledgeChip(container: Phaser.GameObjects.Container, current: boolean): void {
+    if (this.prefersReducedMotion()) return
+    this.tweens.add({ targets: container, scale: current ? 1.14 : 1.1, duration: D.pop, ease: backOut(OVERSHOOT.pop) })
+    if (reduceFlashing() || quality.tier() === 'low') return // the pop alone carries the acknowledgement
+    const ring = this.add
+      .image(container.x, container.y + (this.scrollContent?.y ?? 0), 'ring')
+      .setDisplaySize(CHIP * 1.15, CHIP * 1.15)
+      .setTint(getTheme().gold)
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setAlpha(0.85)
+      .setDepth(40)
+    this.tweens.add({ targets: ring, scale: ring.scale * 1.7, alpha: 0, duration: D.pop, ease: E.settle, onComplete: () => ring.destroy() })
   }
 
   /**
@@ -448,14 +524,44 @@ export class LevelSelectScene extends Phaser.Scene {
         }
       }
       const zone = this.add.rectangle(0, 0, CHIP, CHIP, 0xffffff, 0.001).setInteractive({ useHandCursor: true })
-      zone.on('pointerdown', () => container.setScale(0.94))
-      zone.on('pointerout', () => container.setScale(1))
+      // L5 · springy press feel: the chip squashes on touch and springs back with a release overshoot —
+      // the same physical grammar as the pill buttons. One reusable tween slot per chip so press/release
+      // never stack; the current chip's breathe pulse is paused for the press so the two scale tweens
+      // can't fight, and resumes once the spring settles. Reduced motion (§E8) keeps the instant snap.
+      let pressTween: Phaser.Tweens.Tween | undefined
+      const resumePulse = (): void => {
+        if (container === this.currentChip) this.currentChipPulse?.resume()
+      }
+      zone.on('pointerdown', () => {
+        if (container === this.currentChip) this.currentChipPulse?.pause()
+        pressTween?.stop()
+        if (this.prefersReducedMotion()) {
+          container.setScale(0.94)
+          return
+        }
+        pressTween = this.tweens.add({ targets: container, scale: 0.94, duration: D.micro, ease: E.press })
+      })
+      const springBack = (): void => {
+        pressTween?.stop()
+        if (this.prefersReducedMotion()) {
+          container.setScale(1)
+          resumePulse()
+          return
+        }
+        pressTween = this.tweens.add({ targets: container, scale: 1, duration: D.settle, ease: backOut(OVERSHOOT.release), onComplete: resumePulse })
+      }
+      zone.on('pointerout', springBack)
       zone.on('pointerup', () => {
-        container.setScale(1)
         // Ignore taps that were really a scroll, or land on a chip clipped outside the viewport.
         const screenY = cy + content.y
-        if (this.dragMoved >= 12 || screenY < viewTop || screenY > viewBottom) return
+        if (this.dragMoved >= 12 || screenY < viewTop || screenY > viewBottom) {
+          springBack()
+          return
+        }
         sfx.uiTap()
+        pressTween?.stop()
+        // L5 · selection acknowledgement — a confident overshoot pop + gold ring riding the cross-fade.
+        this.acknowledgeChip(container, current)
         // C6 · opt-in shared-element bloom: hand the destination this chip's live on-screen centre
         // (cx, cy+scroll) + size so the board "opens" from the tapped chip. Additive — reduced motion
         // never queues it (gated in startScene), so the calm path keeps today's flat cross-fade.

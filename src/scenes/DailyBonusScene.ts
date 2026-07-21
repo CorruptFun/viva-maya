@@ -8,10 +8,10 @@ import { loadSave, markOccasionSeen } from '../core/save'
 import { SYMBOLS } from '../core/types'
 import type { Piece, PieceKind } from '../core/types'
 import { addCasinoBackdrop } from '../view/background'
-import { OVERSHOOT, backOut } from '../view/motion'
-import { getTheme, hapticsOff, prefersReducedMotion } from '../view/theme'
+import { D, E, OVERSHOOT, backOut, fadeRise, popIn } from '../view/motion'
+import { getTheme, hapticsOff, prefersReducedMotion, reduceFlashing } from '../view/theme'
 import { ensurePieceTexture } from '../view/textures'
-import { FONT, GHOST_PILL, GOLD_PILL, addPillButton, startScene } from '../view/ui'
+import { FONT, GHOST_PILL, GOLD_PILL, addPillButton, applyEntrance, startScene } from '../view/ui'
 
 const REEL_W = 150
 const REEL_H = 210
@@ -75,6 +75,7 @@ export class DailyBonusScene extends Phaser.Scene {
     // Warm cream fade-in (never black) — the receiving half of every startScene cross-fade.
     this.cameras.main.fadeIn(this.prefersReducedMotion() ? 90 : 180, 255, 253, 248)
     this.cameras.main.setScroll(0, restScrollY()) // centre the design box in the taller world
+    applyEntrance(this) // §E10 directional push-in + §F2 light-wipe (no-ops under reduced motion)
     addCasinoBackdrop(this, 'home')
     const save = loadSave()
     const params = new URLSearchParams(location.search)
@@ -139,16 +140,27 @@ export class DailyBonusScene extends Phaser.Scene {
     }
     paintStreak(save.streak)
     // One gentle pop on TODAY's dot — the day about to be claimed (spin available) or the one just
-    // claimed (already spun). Gated (§E8): reduced motion leaves the strip fully static, no steady cost.
+    // claimed (already spun). Gated (§E8): reduced motion leaves the strip fully static, no steady
+    // cost. Delayed past the dot-by-dot entrance below so the two scale tweens never overlap.
     if (!reduced) {
       const earnedNow = weekDots(save.streak)
       const today = streakDots[Phaser.Math.Clamp(available ? earnedNow : earnedNow - 1, 0, 6)]
       const base = today.scaleX
-      this.tweens.add({ targets: today, scale: base * 1.22, duration: 260, delay: 260, yoyo: true, ease: 'Sine.easeInOut' })
+      this.tweens.add({ targets: today, scale: base * 1.22, duration: 260, delay: 720, yoyo: true, ease: 'Sine.easeInOut' })
     }
+    // D5 · entrance choreography: the week strip pops in dot-by-dot, left→right, with the milestone
+    // star arriving just after its dot — so the streak's payoff structure announces itself on entry.
+    // popIn collapses to an instant resting state under reduced motion (§E8).
+    streakDots.forEach((sd, i) => popIn(this, sd, { from: 0.3, delay: 90 + i * 40, overshoot: OVERSHOOT.gentle }))
+    popIn(this, milestoneStar, { from: 0.3, delay: 90 + DOT_MID * 40 + 70 })
 
-    // Machine cabinet.
+    // Machine cabinet — frame, reel windows, payline, bulbs and (below) the idle symbols all live in
+    // one container so the D5 entrance can rise the whole machine into place as a single unit. It
+    // rests at (0,0), so every child keeps its absolute design-space coords, and the reel-spin strips
+    // (scene-level, built at rest) still align with the windows exactly.
+    const cabinet = this.add.container(0, 0)
     const g = this.add.graphics()
+    cabinet.add(g)
     const cabW = 560
     const cabH = 340
     const cabX = (DESIGN_W - cabW) / 2
@@ -190,22 +202,47 @@ export class DailyBonusScene extends Phaser.Scene {
           .image(bx, by, 'bulb')
           .setDisplaySize(16, 16)
           .setTint(i % 2 === 0 ? T.gold : T.rose)
+        cabinet.add(bulb)
         if (reduced) {
           bulb.setAlpha(0.85)
         } else {
-          bulb.setAlpha(0.5)
-          this.tweens.add({
-            targets: bulb,
-            alpha: 1,
-            duration: 650,
-            yoyo: true,
-            repeat: -1,
-            ease: 'Sine.easeInOut',
-            delay: (i % 5) * 200,
-          })
+          // The steady twinkle (unchanged): a slow phase-spread alpha breathe once the bulb is lit.
+          const twinkle = (): void => {
+            this.tweens.add({
+              targets: bulb,
+              alpha: 1,
+              duration: 650,
+              yoyo: true,
+              repeat: -1,
+              ease: 'Sine.easeInOut',
+              delay: (i % 5) * 200,
+            })
+          }
+          if (reduceFlashing()) {
+            // Flash-averse (§E8): no power-on chase — the bulbs start lit and just breathe, as today.
+            bulb.setAlpha(0.5)
+            twinkle()
+          } else {
+            // D5 · power-on chase: each bulb fades up in sequence around the frame (top edge leads,
+            // bottom follows a beat later) before settling into its twinkle — the cabinet "switching
+            // on" as the scene arrives. Gentle staggered fades, not strobes.
+            bulb.setAlpha(0)
+            this.tweens.add({
+              targets: bulb,
+              alpha: 0.5,
+              duration: D.base,
+              delay: 140 + i * 45 + (by === cabY ? 0 : 40),
+              ease: E.settle,
+              onComplete: twinkle,
+            })
+          }
         }
       }
     }
+    // D5 · entrance choreography — the whole cabinet rises softly into place as one unit while the
+    // bulbs chase on over it. fadeRise collapses instantly under reduced motion (§E8), so the calm
+    // path still opens at rest.
+    fadeRise(this, cabinet, { rise: 18, duration: D.pop, ease: backOut(OVERSHOOT.gentle) })
 
     // §E9 special-date dress-up (signature moment #5) — DORMANT unless an occasion is configured for
     // today. Dress the subtitle up with the occasion greeting, and once per day fire a heart-shower.
@@ -253,10 +290,19 @@ export class DailyBonusScene extends Phaser.Scene {
       // One looping timer, created ONLY in this unavailable branch. Phaser auto-removes scene timers
       // on shutdown (incl. the restart above); the local ref never outlives the scene, so no leak.
       this.time.addEvent({ delay: 1000, loop: true, callback: tick })
-      for (const w of windows) {
-        this.add.image(w.x + REEL_W / 2, w.y + REEL_H / 2, SYMBOLS[Math.floor(Math.random() * 6)]).setDisplaySize(96, 96).setAlpha(0.5)
-      }
-      addPillButton(this, DESIGN_W / 2, 830, 280, 72, 'HOME', GOLD_PILL, () => startScene(this,'home'))
+      // D5: the ghosted reels pop in left→right and the countdown/HOME settle in a beat later, so
+      // even the "come back tomorrow" state composes in instead of snapping flat (§E8-safe helpers).
+      windows.forEach((w, i) => {
+        const ghost = this.add
+          .image(w.x + REEL_W / 2, w.y + REEL_H / 2, SYMBOLS[Math.floor(Math.random() * 6)])
+          .setDisplaySize(96, 96)
+          .setAlpha(0.5)
+        cabinet.add(ghost)
+        popIn(this, ghost, { from: 0.55, delay: 200 + i * 80, overshoot: OVERSHOOT.gentle })
+      })
+      fadeRise(this, countdown, { rise: 12, delay: 200 })
+      const homeBtn = addPillButton(this, DESIGN_W / 2, 830, 280, 72, 'HOME', GOLD_PILL, () => startScene(this,'home'))
+      popIn(this, homeBtn, { from: 0.75, delay: 280, overshoot: OVERSHOOT.gentle })
       return
     }
 
@@ -264,11 +310,17 @@ export class DailyBonusScene extends Phaser.Scene {
     const idle: Phaser.GameObjects.Image[] = windows.map(w =>
       this.add.image(w.x + REEL_W / 2, w.y + REEL_H / 2, SYMBOLS[Math.floor(Math.random() * 6)]).setDisplaySize(96, 96)
     )
+    idle.forEach(img => cabinet.add(img)) // ride the cabinet's D5 entrance as part of the machine
     // §D2 baselines — every symbol bakes into the same TEX_SIZE² frame and every reel window shares one
     // y, so all three idle symbols rest at an identical scale + y. Captured here so the idle bob and the
-    // SPIN wind-up (below) can spring the whole group back to one exact resting transform.
+    // SPIN wind-up (below) can spring the whole group back to one exact resting transform. (Captured
+    // BEFORE the entrance pop below shrinks the live scale — popIn lands back on this exact rest.)
     const idleBase = idle[0].scaleX
     const idleRestY = windows[0].y + REEL_H / 2
+    // D5 · entrance choreography: each idle symbol pops onto its reel with a small left→right stagger
+    // once the cabinet is up. Scale-only, so it composes with the y-bob below; §E8-gated in popIn, and
+    // the SPIN wind-up's killTweensOf(idle) retires a still-running pop along with the bob.
+    idle.forEach((img, i) => popIn(this, img, { from: 0.4, delay: 220 + i * 90 }))
 
     // §D2 pre-spin tease — a subtle vertical BOB so the idle reels breathe instead of sitting dead,
     // staggered per reel so the three symbols float out of lockstep. Gated (§E8): reduced motion leaves
@@ -320,10 +372,24 @@ export class DailyBonusScene extends Phaser.Scene {
         onComplete: launch,
       })
     }
-    const spinBtn = addPillButton(this, DESIGN_W / 2, 740, 300, 92, 'SPIN', GOLD_PILL, doSpin)
-    // SPIN breathe — gated (§E8): reduced motion leaves it at its resting scale.
+    // SPIN — the scene's hero, so it takes the shared hero treatment (`juice`: breathing glow ring +
+    // periodic sheen from buildPressable) on top of its own anticipation breathe below.
+    const spinBtn = addPillButton(this, DESIGN_W / 2, 740, 300, 92, 'SPIN', GOLD_PILL, doSpin, { juice: true })
+    // D5 · SPIN entrance + breathe — the hero pops in after the cabinet settles, THEN starts its
+    // breathe, so the two scale tweens never fight. Gated (§E8): reduced motion rests at scale 1.
     if (!reduced) {
-      this.tweens.add({ targets: spinBtn, scale: 1.05, duration: 700, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' })
+      spinBtn.setScale(0.7).setAlpha(0)
+      this.tweens.add({
+        targets: spinBtn,
+        scale: 1,
+        alpha: 1,
+        duration: D.pop,
+        delay: 300,
+        ease: backOut(OVERSHOOT.pop),
+        onComplete: () => {
+          this.tweens.add({ targets: spinBtn, scale: 1.05, duration: 700, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' })
+        },
+      })
     }
     if (import.meta.env.DEV && params.has('autospin')) this.time.delayedCall(300, doSpin)
   }

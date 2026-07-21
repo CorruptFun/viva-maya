@@ -1,6 +1,6 @@
 # Viva Maya ❤️🎰
 
-Casino match-3 made for Maya — the Homescapes board loop with zero meta-game.
+Casino match-3 made for Maya — a modern match-3 board loop with zero meta-game.
 Mobile-first, installable, fully offline PWA. (Formerly "Vegas Match".)
 
 **Play:** https://corruptfun.github.io/viva-maya/ — on iPhone: Share → Add to Home

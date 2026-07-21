@@ -8,11 +8,13 @@ import { refreshLives } from '../core/lives'
 import { greeting, occasionFor, pendingOccasion, secretNote, withName } from '../core/maya'
 import { loadSave, markOccasionSeen, touchOpen } from '../core/save'
 import { addCasinoBackdrop } from '../view/background'
+import { addWeeklyRaceChip, devRaceOpts, openWeeklyRacePanel } from '../view/leaderboardpanel'
+import { addScreenGloss } from '../view/fx'
 import { maybeShowInstallNudge } from '../view/installnudge'
 import { addJackpotMeter } from '../view/jackpot'
 import { OVERSHOOT, backOut, fadeRise, heartbeat } from '../view/motion'
 import { quality } from '../view/quality'
-import { getTheme, prefersReducedMotion } from '../view/theme'
+import { getTheme, prefersReducedMotion, reduceFlashing } from '../view/theme'
 import {
   FONT,
   GHOST_PILL,
@@ -100,6 +102,9 @@ export class HomeScene extends Phaser.Scene {
     const menuButtons: Phaser.GameObjects.Container[] = []
 
     addCasinoBackdrop(this, 'home')
+    // §F3 · ambient screen gloss — the over-screen vignette + drifting warm light-leaks (fx.ts).
+    // Governor-gated inside (skipped on the low tier); static under reduced motion.
+    addScreenGloss(this)
 
     // How-to-play / FAQ, tucked in the top-left corner.
     const helpChip = addHelpChip(this, 60, 44)
@@ -116,6 +121,12 @@ export class HomeScene extends Phaser.Scene {
     // Theme picker — paired with the sound chip (both are look-and-feel pickers).
     addThemeChip(this, 604, 44)
     if (import.meta.env.DEV && new URLSearchParams(location.search).has('theme')) openThemePanel(this)
+
+    // Weekly-race panel, opened directly for testing (mirrors the ?help pattern). `?race=<variant>`
+    // maps to the DEV fixture boards (rich / out / empty / loading / error); bare `?race` = live data.
+    if (import.meta.env.DEV && new URLSearchParams(location.search).has('race')) {
+      openWeeklyRacePanel(this, devRaceOpts(new URLSearchParams(location.search).get('race')))
+    }
 
     // §E14 first-run advertisement: pulse the ? help chip ONCE for a truly-new player (seenIntro
     // still false AND on level 1) so a first-timer notices where help lives. Reduced motion → no
@@ -321,8 +332,13 @@ export class HomeScene extends Phaser.Scene {
     // C6 · opt-in shared-element bloom: hand the destination PLAY's on-screen spot + size so the board
     // "opens" from right here. Additive — only this one nav passes a focus; reduced motion never queues
     // it (gated in startScene), so the calm path keeps today's flat cream cross-fade untouched.
-    const play = addPillButton(this, DESIGN_W / 2, 720, 340, 96, 'PLAY', GOLD_PILL, () =>
+    const play = addPillButton(this, DESIGN_W / 2, 720, 340, 96, 'PLAY', GOLD_PILL, () => {
+      // §F2 launch bloom fires FIRST (a full-screen gold swell from the button), then the nav —
+      // composing with, never replacing, the C6 shared-element focus handed to the destination.
+      this.launchBloom(DESIGN_W / 2, 720, 340, 96)
       startScene(this, 'game', { level: currentLevel }, undefined, { x: DESIGN_W / 2, y: 720, w: 340, h: 96, tint: getTheme().gold })
+    },
+      { sheen: true }
     )
     menuButtons.push(play)
     // Held for the C4/H3 idle attract beat — the "come play" pulse pauses this breathe, nudges, resumes.
@@ -386,6 +402,9 @@ export class HomeScene extends Phaser.Scene {
         startScene(this,'game', { endless: true })
       )
       menuButtons.push(endless)
+      // Weekly-race trophy chip — the ENDLESS row's satellite: opens the WEEKLY RACE leaderboard
+      // panel. Joins menuButtons so it rises into place with the rest of the stack.
+      menuButtons.push(addWeeklyRaceChip(this, DESIGN_W / 2 + 240, 1108))
       this.add
         .text(
           DESIGN_W / 2,
@@ -503,6 +522,57 @@ export class HomeScene extends Phaser.Scene {
       yoyo: true,
       ease: 'Sine.easeInOut',
       onComplete: () => ghost.destroy(),
+    })
+  }
+
+  /**
+   * §F2 · launch bloom — PLAY answers with a quick full-screen radial gold bloom swelling from the
+   * button's own footprint: a warm `bgglow` flare that grows past the screen edges as the cream
+   * fade-out takes over, plus one expanding `ring` echo of the pill itself. It COMPOSES with the
+   * C6 shared-element focus (queued separately by the same tap) — the bloom is the send-off on this
+   * side of the cut, the focus is the landing on the other. Both transients destroy themselves (the
+   * scene stop reaps them early if the cut lands first — by then the cream fade owns the screen).
+   * Gated on reduced motion AND reduce-flashing (it is a bright full-screen swell) AND the low tier.
+   */
+  private launchBloom(x: number, y: number, w: number, h: number): void {
+    if (this.prefersReducedMotion() || reduceFlashing() || quality.tier() === 'low') return
+    const T = getTheme()
+    // The radial gold swell: button-footprint → past every screen edge, peaking early so most of
+    // the light reads before the 180ms cream fade covers it.
+    const glow = this.add
+      .image(x, y, 'bgglow')
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setTint(T.gold)
+      .setDisplaySize(w * 1.4, h * 2.4)
+      .setAlpha(0)
+      .setDepth(120)
+    this.tweens.add({
+      targets: glow,
+      displayWidth: 2400,
+      displayHeight: 2400,
+      duration: 320,
+      ease: 'Sine.easeOut',
+      onComplete: () => glow.destroy(),
+    })
+    // Fast attack + short hold: the bloom has to peak inside the clear first beats of the cream
+    // fade-out, before the deepening cream washes the light away.
+    this.tweens.add({ targets: glow, alpha: 0.55, duration: 90, yoyo: true, hold: 60, ease: 'Quad.easeOut' })
+    // A single bright ring echo of the pill, expanding + fading — the "shockwave" of the launch.
+    const ring = this.add
+      .image(x, y, 'ring')
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setTint(T.goldBright)
+      .setDisplaySize(w, h)
+      .setAlpha(0.7)
+      .setDepth(120)
+    this.tweens.add({
+      targets: ring,
+      displayWidth: w * 4.4,
+      displayHeight: h * 4.4,
+      alpha: 0,
+      duration: 300,
+      ease: 'Sine.easeOut',
+      onComplete: () => ring.destroy(),
     })
   }
 

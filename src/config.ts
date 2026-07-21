@@ -56,11 +56,15 @@ export const PIECE_SIZE = CELL * 0.92
 export const POINTS_PER_PIECE = 20
 export const MOVES_BONUS = 60
 
-// Lives / energy: a generous pool that only a LOSS (or mid-level quit) drains — wins are free.
-// One life regenerates every 8 min (wall clock); an empty pool fully refills in ~80 min, and
-// a single life comes back after a short break. Kept forgiving so a learning player rarely stalls.
-export const LIVES_MAX = 10
-export const LIFE_REGEN_MS = 8 * 60 * 1000
+// Lives / energy: a pool that only a LOSS (or mid-level quit) drains — wins are always free.
+// Tuned 2026-07-21 (was 10 hearts / 8 min — effectively infinite; the owner never hit zero):
+// 5 hearts, one regenerating every 20 min (empty → full in ~100 min). Still gentler than the
+// genre-standard 5/30. Beginners are protected by LIVES_GRACE_LEVELS instead of pool size, so
+// scarcity only exists once a player is invested — and heart-refill rewards actually mean something.
+export const LIVES_MAX = 5
+export const LIFE_REGEN_MS = 20 * 60 * 1000
+// Losses on levels BELOW this never cost a heart (the learning ramp) — see lives.spendLifeFor.
+export const LIVES_GRACE_LEVELS = 10
 
 export const SWAP_MS = 130
 export const INVALID_MS = 150

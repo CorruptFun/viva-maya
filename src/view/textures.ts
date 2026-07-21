@@ -303,9 +303,10 @@ function makeTile(scene: Phaser.Scene): void {
   const bw = S - m * 2
   const r = 22
   // Drop shadow onto the tray floor — neutral black survives the per-cell tint (0×tint = 0).
-  g.fillStyle(0x000000, 0.1)
+  // (§R3 depth pass: a touch denser than the original 0.10s, so the cushions sit deeper IN the well.)
+  g.fillStyle(0x000000, 0.12)
   g.fillRoundedRect(m, m + 5, bw, bw, r)
-  g.fillStyle(0x000000, 0.1)
+  g.fillStyle(0x000000, 0.12)
   g.fillRoundedRect(m, m + 3, bw, bw, r)
   // Pure-white cushion body — the ONLY thing a per-cell setTint() colours.
   g.fillStyle(0xffffff, 1)
@@ -316,10 +317,36 @@ function makeTile(scene: Phaser.Scene): void {
     g.fillStyle(0x000000, a)
     g.fillRoundedRect(m, m + bw * f, bw, bw * (1 - f), { tl: 0, tr: 0, bl: r, br: r })
   }
-  // Faint seated-edge bevel (dark → survives tint) for tile-to-tile separation.
-  g.lineStyle(2.5, 0x000000, 0.09)
+  // Faint seated-edge bevel (dark → survives tint) for tile-to-tile separation. (§R3: a hair
+  // stronger than the original 0.09 so pieces read as seated IN a well, not floating on a sheet.)
+  g.lineStyle(2.5, 0x000000, 0.11)
   g.strokeRoundedRect(m, m, bw, bw, r)
   g.generateTexture('tile', S, S)
+  g.destroy()
+}
+
+/**
+ * Soft rounded ELEVATION shadow (§R3 depth stack) — a feathered neutral-black rounded square baked
+ * once with the same stacked falling-alpha trick as `bgglow`, but rounded to match the app's
+ * card/slab silhouettes. Pure black so it stays a neutral darkener on every theme wash (tint is
+ * pointless on black — 0×tint = 0), display-scaled + alpha'd at the use site, NORMAL blend. This is
+ * the one shared "the surface floats" underlay for the board cabinet and the HUD rail: bake once,
+ * draw as plain Images, zero per-frame cost.
+ */
+function makeSoftShadow(scene: Phaser.Scene): void {
+  if (scene.textures.exists('softshadow')) return
+  const S = 256
+  const passes = 12
+  const feather = 44 // px of feathered falloff baked around the dense core rect
+  const edge = 8 // clear margin so the outermost pass never clips at the texture edge
+  const g = scene.make.graphics({ x: 0, y: 0 }, false)
+  for (let i = 0; i < passes; i++) {
+    const inset = edge + feather * (i / (passes - 1)) // outermost (largest) → innermost (core)
+    const a = 0.028 * (i + 1) // faint rim → dense centre; stacking composites to a soft gradient
+    g.fillStyle(0x000000, a)
+    g.fillRoundedRect(inset, inset, S - inset * 2, S - inset * 2, Math.max(14, 46 - i * 2.5))
+  }
+  g.generateTexture('softshadow', S, S)
   g.destroy()
 }
 
@@ -375,6 +402,79 @@ function makeFireball(scene: Phaser.Scene): void {
   g.fillStyle(0xfff6d9, 1)
   g.fillCircle(c, c, 5)
   g.generateTexture('fireball', 48, 48)
+  g.destroy()
+}
+
+/**
+ * Score MEDALLION (§R3 reward layer) — ONE chunky star-burst coin baked for every "+N" match
+ * medallion. Same tint-stability trick as the board tile: the body is PURE WHITE (a single
+ * `setTint()` colours the whole medallion warm gold → bright gold → rose across the cascade) and
+ * all shading is BLACK-alpha (0×tint = stays neutral-dark), so rays read as chunky facets and the
+ * disc reads as a raised coin face on every heat tint. The "+N" is a Phaser Text layered on top at
+ * the use site. Baked once, pooled at the use site (hard cap), zero per-frame cost.
+ */
+function makeMedallion(scene: Phaser.Scene): void {
+  if (scene.textures.exists('medallion')) return
+  const S = 112
+  const c = S / 2
+  const g = scene.make.graphics({ x: 0, y: 0 }, false)
+  // 12-point star-burst: alternating long/short rays for the chunky minted-coin silhouette.
+  const burst = (rOut: number, rIn: number): Array<{ x: number; y: number }> => {
+    const pts: Array<{ x: number; y: number }> = []
+    for (let i = 0; i < 24; i++) {
+      const a = (i / 24) * Math.PI * 2 - Math.PI / 2
+      const r = i % 2 === 0 ? (i % 4 === 0 ? rOut : rOut * 0.9) : rIn
+      pts.push({ x: c + Math.cos(a) * r, y: c + Math.sin(a) * r })
+    }
+    return pts
+  }
+  // Soft drop shadow under the burst (neutral black → survives every tint).
+  g.fillStyle(0x000000, 0.14)
+  g.fillPoints(burst(53, 36).map(p => ({ x: p.x, y: p.y + 3 })), true)
+  // White burst body — the tintable metal.
+  g.fillStyle(0xffffff, 1)
+  g.fillPoints(burst(53, 36), true)
+  // Ray shading: a smaller dark burst overlay so the rays read as bevelled facets, not a flat star.
+  g.fillStyle(0x000000, 0.1)
+  g.fillPoints(burst(50, 34), true)
+  // Coin disc: dark rim groove → white raised face → faint lower-half shade (top-lit dome).
+  g.fillStyle(0x000000, 0.16)
+  g.fillCircle(c, c, 35)
+  g.fillStyle(0xffffff, 1)
+  g.fillCircle(c, c, 31)
+  g.fillStyle(0x000000, 0.07)
+  g.fillEllipse(c, c + 12, 56, 30)
+  // Bevel ring on the face edge.
+  g.lineStyle(2.5, 0x000000, 0.12)
+  g.strokeCircle(c, c, 30)
+  g.generateTexture('medallion', S, S)
+  g.destroy()
+}
+
+/**
+ * Star GLINT (§R3 reward layer) — a crisp 4-point light star (thin diamond cross + soft halo +
+ * hot core), pure white for clean ADD-blend tinting. The shared sparkle for special payoffs:
+ * jackpot conversion pops, bomb spark spray, collect-comet arrival ticks. Baked once.
+ */
+function makeGlint(scene: Phaser.Scene): void {
+  if (scene.textures.exists('glint')) return
+  const S = 48
+  const c = S / 2
+  const g = scene.make.graphics({ x: 0, y: 0 }, false)
+  g.fillStyle(0xffffff, 0.16)
+  g.fillCircle(c, c, 13) // soft halo
+  const ray = (len: number, half: number, vertical: boolean): void => {
+    const pts = vertical
+      ? [{ x: c, y: c - len }, { x: c + half, y: c }, { x: c, y: c + len }, { x: c - half, y: c }]
+      : [{ x: c - len, y: c }, { x: c, y: c + half }, { x: c + len, y: c }, { x: c, y: c - half }]
+    g.fillPoints(pts, true)
+  }
+  g.fillStyle(0xffffff, 0.9)
+  ray(21, 3.4, true)
+  ray(21, 3.4, false)
+  g.fillStyle(0xffffff, 1)
+  g.fillCircle(c, c, 3.2) // hot core
+  g.generateTexture('glint', S, S)
   g.destroy()
 }
 
@@ -681,6 +781,9 @@ export function createAllTextures(scene: Phaser.Scene): void {
   makeTile(scene)
   makeRaybeam(scene)
   makeHeartglow(scene)
+  makeSoftShadow(scene) // §R3 — shared elevation shadow for the board slab + HUD rail
+  makeMedallion(scene) // §R3 reward layer — score medallion star-burst
+  makeGlint(scene) // §R3 reward layer — 4-point star sparkle for special payoffs
   // Glyphs baked at a larger native size so they stay crisp on hi-DPI. 'heart' stays small (it's
   // only used tiny — satellites, lives pips, particle bursts); the big Home/GameScene emblems use
   // 'heartbig' (baked large) via setDisplaySize, so the small-heart particle scales are untouched.
@@ -724,9 +827,12 @@ export function warmPieceTextures(scene: Phaser.Scene): void {
   // sufficient. In the real boot flow `createAllTextures` already baked these, so the exists() guard
   // makes each a no-op — we never re-generate (and warn on) a live texture key.
   if (!scene.textures.exists('tile')) makeTile(scene)
+  if (!scene.textures.exists('softshadow')) makeSoftShadow(scene)
   if (!scene.textures.exists('spark')) makeSpark(scene)
   if (!scene.textures.exists('ring')) makeRing(scene)
   if (!scene.textures.exists('confetti')) makeConfetti(scene)
   if (!scene.textures.exists('fireball')) makeFireball(scene)
   if (!scene.textures.exists('shockwave')) makeShockwave(scene)
+  if (!scene.textures.exists('medallion')) makeMedallion(scene)
+  if (!scene.textures.exists('glint')) makeGlint(scene)
 }

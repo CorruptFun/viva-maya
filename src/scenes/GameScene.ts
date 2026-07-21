@@ -23,7 +23,7 @@ import { Board } from '../core/board'
 import { todayKey } from '../core/daily'
 import { ENDLESS_MOVES, endlessBestForWeek, endlessRngForWeek, recordEndless, weekKey } from '../core/endless'
 import { LEVEL_COUNT, levelSpec } from '../core/levels'
-import { devSetLives, formatCountdown, refreshLives, spendLife } from '../core/lives'
+import { devSetLives, formatCountdown, refreshLives, spendLifeFor } from '../core/lives'
 import { maya, pendingOccasion, warmLoseLine, warmWinSubtitle } from '../core/maya'
 import { mulberry32 } from '../core/rng'
 import { addChips, bumpJackpotMeter, loadSave, markFinaleSeen, markOccasionSeen, persistSave, recordResult, recordScore, resetJackpotMeter, spendChips, takePendingBoosts } from '../core/save'
@@ -31,11 +31,11 @@ import { POWER_ITEMS } from '../core/store'
 import type { PowerItem } from '../core/store'
 import { jackpotReady } from '../core/jackpot'
 import { SYMBOLS, key } from '../core/types'
-import type { BoostType, ClearWave, Coord, FallMove, LevelSpec, Piece, Spawn, SymbolType } from '../core/types'
+import type { BlastEvent, BoostType, ClearWave, Coord, FallMove, LevelSpec, Piece, Spawn, SymbolType } from '../core/types'
 import { addCasinoBackdrop } from '../view/background'
 import { addJackpotMeter, openJackpotWheel } from '../view/jackpot'
 import type { JackpotMeter } from '../view/jackpot'
-import { heartbeat } from '../view/motion'
+import { D, E, OVERSHOOT, backOut, heartbeat } from '../view/motion'
 import { quality } from '../view/quality'
 import { css, getTheme, hapticsOff, prefersReducedMotion, reduceFlashing as prefReduceFlashing } from '../view/theme'
 import { TEX_SIZE, ensurePieceTexture } from '../view/textures'
@@ -85,6 +85,23 @@ interface ObjectiveState {
   /** C5 latch — the rising "almost there" tone fires at most once, when remaining first crosses low. */
   nearFired?: boolean
 }
+
+/**
+ * §R3 reward layer — one pooled score-medallion slot: the star-burst coin + its "+N" label under a
+ * single container so the pop/float/fade tweens drive ONE target. `live` marks it in flight; `born`
+ * orders slots so a spawn past the hard cap recycles the OLDEST (its tweens killed first — Phaser
+ * 3.90 never sweeps tweens for reused targets).
+ */
+interface MedallionSlot {
+  root: Phaser.GameObjects.Container
+  badge: Phaser.GameObjects.Image
+  label: Phaser.GameObjects.Text
+  live: boolean
+  born: number
+}
+
+/** §R3 hard cap on concurrent score medallions — the 5th mint recycles the oldest in flight. */
+const MEDALLION_CAP = 4
 
 const PIECE_SCALE = PIECE_SIZE / TEX_SIZE
 const DRAG_THRESHOLD = CELL * 0.3
@@ -148,6 +165,8 @@ export class GameScene extends Phaser.Scene {
   private impactFlash?: Phaser.GameObjects.Image
   /** Wall-clock deadline of the active hitstop freeze; guards "one freeze at a time, deepest owns it." */
   private hitstopUntil = 0
+  /** The one live camera-breath zoom tween (big clears) — guards "one breath at a time". */
+  private cameraBreathTween: Phaser.Tweens.Tween | null = null
   /** Tween/timer timescale to restore after a hitstop (1, or ?turbo=N in DEV). */
   private baseTimeScale = 1
   /** A11y "reduce flashing" switch (photosensitivity ≠ vestibular) — read from the real toggle in create(). */
@@ -213,6 +232,11 @@ export class GameScene extends Phaser.Scene {
    */
   private comboText?: Phaser.GameObjects.Text
   private comboTween: Phaser.Tweens.Tween | null = null
+
+  /** §R3 score-medallion pool (≤MEDALLION_CAP slots, built lazily, reused for the whole round). */
+  private medallionPool: MedallionSlot[] = []
+  /** §R3 monotonic mint counter — orders medallion slots so recycling always takes the oldest. */
+  private medallionSeq = 0
 
   /** Compact chip-balance pill in the HUD; the win payout flies a chip into it. */
   private chipHud?: ChipPill
@@ -349,7 +373,9 @@ export class GameScene extends Phaser.Scene {
     this.hitstopUntil = 0
     this.baseTimeScale = 1
     this.impactFlash = undefined
+    this.cameraBreathTween = null // stale tween ref from a prior create (restart re-runs create, not field inits)
     this.cameras.main.setScroll(0, restScrollY())
+    this.cameras.main.setZoom(1) // in case a prior round ended mid camera-breath
     this.activeBoosts = []
     // In-level helpers — drop any stale refs (scene.restart re-runs create, not field inits) + reset counters.
     this.powerBar = undefined
@@ -389,7 +415,10 @@ export class GameScene extends Phaser.Scene {
     this.buildBackdrop()
     this.buildCabinet()
     this.buildHud()
-    this.buildPieceLayer()
+    // §R3: when the level intro will play (numbered level with objectives, full motion), the deal
+    // is DEFERRED — the intro card runs over an empty tray, then the board builds in as it exits.
+    // The same condition gates playLevelIntro inside showGoalCallout below.
+    this.buildPieceLayer(this.wantsLevelIntro())
     this.buildParticles()
     if (!this.endless) this.buildPowerBar() // mid-level helper shelf below the jackpot meter (numbered levels only)
 
@@ -554,7 +583,7 @@ export class GameScene extends Phaser.Scene {
    * (wins are free) or double-charge one that's about to lose.
    */
   private exitToLevels(): void {
-    if (!this.endless && this.state === 'idle' && this.moveMade) spendLife()
+    if (!this.endless && this.state === 'idle' && this.moveMade) spendLifeFor(this.level)
     startScene(this,'levelselect')
   }
 
@@ -666,24 +695,64 @@ export class GameScene extends Phaser.Scene {
   }
 
   /**
-   * Level-start "COLLECT" callout: a brief cream card over the board naming the goal symbol(s)
-   * large the moment the level opens, then it pops in, holds, and fades up/out (~1.5s). Reuses the
-   * showBoostBanner pattern; shown instantly (no pop, no fade) under reduced-motion. No-op in
-   * endless / when there are no objectives.
+   * §R3 — true when the full level-intro beat plays this round: a numbered level with objectives,
+   * full motion. The SAME predicate gates the deferred deal in create() and playLevelIntro below,
+   * so the board can never end up both un-dealt and intro-less.
+   */
+  private wantsLevelIntro(): boolean {
+    return !this.reducedMotion && !this.endless && this.objectives.length > 0
+  }
+
+  /**
+   * Level-start "COLLECT" callout. Under reduced motion this is the original instant card exactly
+   * (shown at rest, gone after ~1.4s, board already filled instantly). Otherwise it upgrades into
+   * the full §R3 LEVEL INTRO (playLevelIntro): scrim + card pop, goal counters ticking up, a
+   * "get ready" heart cameo, a light-sweep exit — and THEN the board builds in as a fast diagonal
+   * wave. No-op in endless / when there are no objectives.
    */
   private showGoalCallout(): void {
     if (this.endless || this.objectives.length === 0) return
+    if (!this.reducedMotion) {
+      this.playLevelIntro()
+      return
+    }
+    // Reduced motion — the instant resting card, byte-for-byte the old behaviour.
+    const { layer, fit } = this.buildGoalCard(false)
+    layer.setScale(fit)
+    this.time.delayedCall(1400, () => layer.destroy())
+  }
+
+  /**
+   * Build the goal card layer (cream panel + COLLECT header + goal icons + ×N counters), shared by
+   * the reduced-motion instant callout and the full intro. `withReady` adds the intro-only
+   * "get ready" row (small heart cameo + caption) and grows the panel to fit it. Returns the parts
+   * the intro choreographs; the reduced path only uses `layer` + `fit`.
+   */
+  private buildGoalCard(withReady: boolean): {
+    layer: Phaser.GameObjects.Container
+    icons: Phaser.GameObjects.Image[]
+    counts: Phaser.GameObjects.Text[]
+    ready: Array<Phaser.GameObjects.Image | Phaser.GameObjects.Text>
+    heart: Phaser.GameObjects.Image | null
+    fit: number
+    w: number
+    halfH: number
+  } {
     const T = getTheme()
     const cx = DESIGN_W / 2
     const cy = BOARD_Y + BOARD_W * 0.36
-    const layer = this.add.container(cx, cy).setDepth(34)
+    const layer = this.add.container(cx, cy).setDepth(44)
 
+    const headY = withReady ? -84 : -66
+    const iconY = withReady ? -6 : 8
     const header = this.add
-      .text(0, -66, 'COLLECT', { fontFamily: FONT, fontSize: '32px', fontStyle: '900', color: T.goldText })
+      .text(0, headY, 'COLLECT', { fontFamily: FONT, fontSize: '32px', fontStyle: '900', color: T.goldText })
       .setOrigin(0.5)
       .setLetterSpacing(5)
       .setShadow(0, 3, 'rgba(90,70,20,0.22)', 5, false, true)
     const content: Phaser.GameObjects.GameObject[] = [header]
+    const icons: Phaser.GameObjects.Image[] = []
+    const counts: Phaser.GameObjects.Text[] = []
 
     const iconSize = 80
     const gap = 34
@@ -692,16 +761,31 @@ export class GameScene extends Phaser.Scene {
     const startX = -rowW / 2 + iconSize / 2
     this.objectives.forEach((o, i) => {
       const ix = startX + i * (iconSize + gap)
-      content.push(this.add.image(ix, 8, o.symbol).setDisplaySize(iconSize, iconSize))
-      content.push(
-        this.add
-          .text(ix, 8 + iconSize / 2 + 22, `×${o.total}`, { fontFamily: FONT, fontSize: '24px', fontStyle: '900', color: T.navyText })
-          .setOrigin(0.5)
-      )
+      const icon = this.add.image(ix, iconY, o.symbol).setDisplaySize(iconSize, iconSize)
+      const count = this.add
+        .text(ix, iconY + iconSize / 2 + 22, `×${o.total}`, { fontFamily: FONT, fontSize: '24px', fontStyle: '900', color: T.navyText })
+        .setOrigin(0.5)
+      icons.push(icon)
+      counts.push(count)
+      content.push(icon, count)
     })
 
+    // Intro-only "get ready" row: a small heart-emblem cameo + caption below the counters.
+    const ready: Array<Phaser.GameObjects.Image | Phaser.GameObjects.Text> = []
+    let heart: Phaser.GameObjects.Image | null = null
+    if (withReady) {
+      const readyY = iconY + iconSize / 2 + 66
+      const caption = this.add
+        .text(16, readyY, 'GET READY…', { fontFamily: FONT, fontSize: '22px', fontStyle: '900', color: T.goldText })
+        .setOrigin(0.5)
+        .setLetterSpacing(3)
+      heart = this.add.image(caption.x - caption.width / 2 - 26, readyY, 'heartbig').setDisplaySize(30, 30)
+      ready.push(heart, caption)
+      content.push(heart, caption)
+    }
+
     const w = Math.max(header.width, rowW) + 84
-    const halfH = 96
+    const halfH = withReady ? 122 : 96
     const g = this.add.graphics()
     g.fillStyle(T.shadow, 0.22)
     g.fillRoundedRect(-w / 2 + 3, -halfH + 8, w, halfH * 2, 30)
@@ -713,21 +797,202 @@ export class GameScene extends Phaser.Scene {
     layer.add(content)
 
     const fit = Math.min(1, (BOARD_W + 16) / w)
-    if (this.reducedMotion) {
-      layer.setScale(fit)
-      this.time.delayedCall(1400, () => layer.destroy())
-      return
+    return { layer, icons, counts, ready, heart, fit, w, halfH }
+  }
+
+  /**
+   * §R3 LEVEL INTRO — the proper opening moment on a numbered level, replacing the old
+   * pop-hold-fade callout. Choreography (all tween-scheduled, ~1.9s total, tap-to-skip anywhere):
+   *   1. A warm theme scrim settles over the empty tray; the goal card pops in.
+   *   2. Goal icons pop in staggered; each ×N counter TICKS UP from ×0 to its total.
+   *   3. The "get ready" row fades up; the heart cameo gives one lub-dub double pulse.
+   *   4. A light sweep crosses the card; card + scrim exit; and as they go the BOARD BUILDS IN —
+   *      a fast diagonal stagger wave (top-left → bottom-right, < 700ms) with per-column landing
+   *      thunks + floor dust, then input unlocks.
+   * A tap at ANY point kills every intro tween, destroys the transients, snaps all 64 pieces to
+   * rest and unlocks immediately (the settle-actions discipline: kill → destroy → snap → handoff).
+   * Never runs under reduced motion (showGoalCallout keeps the instant card + instant fill).
+   */
+  private playLevelIntro(): void {
+    const T = getTheme()
+    const { layer, icons, counts, ready, heart, fit, w } = this.buildGoalCard(true)
+    const cy = layer.y
+    // Warm scrim between board and card — same idiom as the win overlay's (depth 40 < card 44).
+    // Full fillAlpha baked into the fill, object alpha drives the fade (fill × object multiply).
+    const scrim = this.add.rectangle(DESIGN_W / 2, 640, DESIGN_W, worldH(), T.scrim, 0.32).setDepth(40)
+    scrim.setAlpha(0)
+    const introTweens: Phaser.Tweens.Tween[] = []
+    const tw = (cfg: Record<string, unknown>): void => {
+      introTweens.push(this.tweens.add(cfg as unknown as Phaser.Types.Tweens.TweenBuilderConfig))
     }
+
+    let done = false
+    let skipped = false
+    let waveStarted = false
+
+    // Final settle: unlock the board + retire the skip listener (idempotent).
+    const handoff = (): void => {
+      if (done || !this.scene.isActive()) return
+      done = true
+      this.input.off('pointerdown', skip)
+      this.state = 'idle'
+      this.scheduleAutoplay()
+      this.armHint()
+    }
+
+    // The build-in wave: every piece born at its own cell, dropping in a short third-of-a-cell
+    // with a gentle Back settle, staggered along the (row+col) diagonal — the whole board
+    // assembles in ≈ 600ms (14 bands × 26ms + 230ms settle), never slow on replay.
+    const dealWave = (): void => {
+      if (done || skipped || waveStarted) return
+      waveStarted = true
+      const STEP = 26
+      const total = ROWS * COLS
+      let landed = 0
+      for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+          const at = { row: r, col: c }
+          const sprite = this.createSprite(this.board.get(at)!, at)
+          const to = this.cellToXY(at)
+          sprite.setPosition(to.x, to.y - CELL * 0.34).setAlpha(0)
+          sprite.setScale(PIECE_SCALE * 0.6)
+          this.tweens.add({
+            targets: sprite,
+            y: to.y,
+            alpha: 1,
+            scaleX: PIECE_SCALE,
+            scaleY: PIECE_SCALE,
+            delay: (r + c) * STEP,
+            duration: 230,
+            ease: backOut(OVERSHOOT.gentle),
+            onComplete: () => {
+              // One thunk + dust puff per column as its deepest cell lands — the wave's rhythm.
+              if (r === ROWS - 1) {
+                sfx.land(0.4, this.colPan(c))
+                this.floorDust(to.x, to.y, 3)
+              }
+              if (++landed >= total) handoff()
+            },
+          })
+        }
+      }
+    }
+
+    // Tap-to-skip: kill intro tweens FIRST (Phaser 3.90 never sweeps tweens for destroyed
+    // targets — `remove()` is parent-guarded, so already-finished ones are a safe no-op), drop the
+    // transients, snap all 64 pieces to rest, unlock. The unlock itself is deferred a microtask so
+    // the very tap that skipped can't fall through to onDown as a board tap (state is still
+    // 'resolving' while this dispatch loop runs).
+    const skip = (): void => {
+      if (done || skipped) return
+      skipped = true
+      for (const t of introTweens) t.remove()
+      this.tweens.killTweensOf(scrim)
+      scrim.destroy()
+      layer.destroy(true) // children's tweens are all in introTweens (already removed)
+      for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+          const at = { row: r, col: c }
+          const piece = this.board.get(at)!
+          const sprite = this.sprites.get(piece.id) ?? this.createSprite(piece, at)
+          this.tweens.killTweensOf(sprite)
+          const to = this.cellToXY(at)
+          sprite.setPosition(to.x, to.y).setScale(PIECE_SCALE).setAlpha(1)
+        }
+      }
+      void Promise.resolve().then(handoff)
+    }
+    this.input.on('pointerdown', skip)
+
+    // ---- Beat 1 (0–320ms): scrim settles, card pops. ----------------------------------------
+    tw({ targets: scrim, alpha: 1, duration: 200, ease: E.settle })
     layer.setScale(0)
-    this.tweens.add({ targets: layer, scale: fit, duration: 320, ease: 'Back.easeOut' })
-    this.tweens.add({
+    tw({ targets: layer, scale: fit, duration: 320, ease: backOut(OVERSHOOT.pop) })
+    sfx.uiTap()
+
+    // ---- Beat 2 (200–940ms): icons pop in staggered; counters tick up to their totals. ------
+    icons.forEach((icon, i) => {
+      const s0 = icon.scaleX
+      icon.setScale(0)
+      tw({ targets: icon, scale: s0, delay: 200 + i * 80, duration: 260, ease: backOut(OVERSHOOT.pop) })
+    })
+    counts.forEach((count, i) => {
+      const total = this.objectives[i].total
+      count.setText('×0')
+      const proxy = { v: 0 }
+      let shown = 0
+      tw({
+        targets: proxy,
+        v: total,
+        delay: 280 + i * 80,
+        duration: 340,
+        ease: E.glide,
+        onUpdate: () => {
+          const v = Math.round(proxy.v)
+          if (v !== shown) {
+            shown = v
+            count.setText(`×${v}`)
+          }
+        },
+        onComplete: () => {
+          count.setText(`×${total}`)
+          sfx.scoreTick()
+          count.setScale(1)
+          tw({ targets: count, scale: 1.22, duration: 90, yoyo: true, ease: E.press })
+        },
+      })
+    })
+
+    // ---- Beat 3 (700–1470ms): "get ready" rises; the heart gives one lub-dub. ---------------
+    for (const item of ready) {
+      const y0 = item.y
+      item.setAlpha(0)
+      item.setY(y0 + 10)
+      tw({ targets: item, alpha: 1, y: y0, delay: 700, duration: 240, ease: E.release })
+    }
+    if (heart) {
+      const hs = heart.scaleX
+      tw({ targets: heart, scaleX: hs * 1.22, scaleY: hs * 1.22, delay: 1000, duration: 130, yoyo: true, repeat: 1, ease: E.hero })
+    }
+
+    // ---- Beat 4 (1150ms+): light sweep → card + scrim exit → the board builds in. -----------
+    // The sweep's alpha yoyos 0 → 0.55 → 0 across the same window as its travel, so it is only
+    // bright mid-card and effectively invisible where it overhangs the rounded corners (no mask).
+    const travel = w / 2 + 20
+    const sweep = this.add
+      .image(-travel, 0, 'sweep')
+      .setDisplaySize(64, 300)
+      .setAngle(14)
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setAlpha(0)
+    layer.add(sweep)
+    tw({ targets: sweep, x: travel, delay: 1150, duration: 220, ease: E.glide })
+    tw({ targets: sweep, alpha: 0.55, delay: 1150, duration: 110, yoyo: true, ease: E.hero })
+    tw({
       targets: layer,
       alpha: 0,
-      y: cy - 30,
-      delay: 1200,
-      duration: 420,
-      ease: 'Sine.easeIn',
-      onComplete: () => layer.destroy(),
+      y: cy - 26,
+      scale: fit * 0.94,
+      delay: 1330,
+      duration: 240,
+      ease: E.exit,
+      onStart: () => {
+        sfx.whoosh(0)
+        dealWave() // the board assembles UNDER the departing card — no dead beat
+      },
+      onComplete: () => {
+        if (!done) layer.destroy(true)
+      },
+    })
+    tw({
+      targets: scrim,
+      alpha: 0,
+      delay: 1330,
+      duration: 260,
+      ease: E.exit,
+      onComplete: () => {
+        if (!done) scrim.destroy()
+      },
     })
   }
 
@@ -822,9 +1087,40 @@ export class GameScene extends Phaser.Scene {
     const startScale = PIECE_SCALE * 0.7
     const total = sources.length
     let landed = 0
+    // §R3 collect comet: each goal piece reads as LIGHT IN MOTION — an additive head glint riding
+    // the flyer (brightening as it nears the counter) + a short spark tail (follow-emitter). Both
+    // governor-gated: the LOW tier flies the bare symbol exactly as before. ≤3 flyers/wave (caller),
+    // so at most 3 emitters live at once; each stops, un-follows and self-destroys on arrival.
+    const T = getTheme()
+    const dress = quality.count(1) > 0
     sources.forEach((at, i) => {
       const from = this.cellToXY(at)
       const flyer = this.add.image(from.x, from.y, o.symbol).setDepth(32).setScale(startScale)
+      const head = dress
+        ? this.add
+            .image(from.x, from.y, 'glint')
+            .setBlendMode(Phaser.BlendModes.ADD)
+            .setDepth(33)
+            .setTint(T.goldBright)
+            .setDisplaySize(CELL * 0.5, CELL * 0.5)
+            .setAlpha(0.55)
+        : null
+      const tail = dress
+        ? this.add
+            .particles(0, 0, 'spark', {
+              speed: { min: 8, max: 46 },
+              scale: { start: 0.55, end: 0 },
+              alpha: { start: 0.9, end: 0 },
+              lifespan: { min: 160, max: 320 },
+              tint: [T.gold, T.goldBright],
+              blendMode: Phaser.BlendModes.ADD, // the tail is LIGHT, not confetti
+              quantity: 1,
+              frequency: quality.tier() === 'high' ? 12 : 26,
+              emitting: true,
+            })
+            .setDepth(31)
+        : null
+      tail?.startFollow(flyer)
       // Control point lifted above both ends → a gentle board→chip arc (no Path object needed).
       const ctrlX = (from.x + targetX) / 2 + (Math.random() * 2 - 1) * 30
       const ctrlY = Math.min(from.y, targetY) - 70 - Math.random() * 30
@@ -842,8 +1138,16 @@ export class GameScene extends Phaser.Scene {
           flyer.y = u * u * from.y + 2 * u * t * ctrlY + t * t * targetY
           flyer.setScale(startScale * (1 - 0.4 * t))
           flyer.rotation = t * 1.1
+          head?.setPosition(flyer.x, flyer.y).setAlpha(0.55 + 0.45 * t) // the head glints brighter on approach
         },
         onComplete: () => {
+          head?.destroy()
+          if (tail) {
+            tail.stop()
+            tail.stopFollow()
+            this.time.delayedCall(320, () => tail.destroy())
+          }
+          if (dress) this.cometArrival(targetX, targetY) // impact bloom + glint on the counter
           flyer.destroy()
           if (++landed >= total) this.settleCollect(o)
           else this.stepCollect(o)
@@ -1018,6 +1322,13 @@ export class GameScene extends Phaser.Scene {
   // ----------------------------------------------------------------- build
 
   private buildBackdrop(): void {
+    // §R3 PLAY-FOCUS SCRIM: one translucent theme-ink sheet over the ENTIRE atmospheric backdrop
+    // (all negative depths) but under every gameplay object (≥ 0). It pushes the lounge wash a
+    // touch darker and duller while playing, so the elevated cabinet + HUD rail pop forward.
+    // Warm ink from the theme's own `scrim` token (never black) at whisper alpha — all four themes
+    // stay warm, not muddy. Static, zero motion → no reduced-motion path needed.
+    this.add.rectangle(DESIGN_W / 2, 640, DESIGN_W, worldH(), getTheme().scrim, 0.07).setDepth(-24)
+
     // Reddish "screen is on" glow behind the board — the opaque card covers its center, so only
     // a soft rose halo bleeds past the frame. Surges on a win (see celebrateBoard).
     this.cabinetGlow = this.add
@@ -1035,16 +1346,25 @@ export class GameScene extends Phaser.Scene {
     // Recessed gold TRAY: an opaque gold-bezel cabinet with a well floor DARKER than the tiles,
     // so the 64 raised glossy cushions pop out of a real 3-D setting. Baked once (static graphics),
     // footprint (pad 18 → x22/y282/size676) unchanged so the marquee bulbs stay aligned.
-    const g = this.add.graphics()
     const pad = 18
     const x = BOARD_X - pad
     const y = BOARD_Y - pad
     const size = BOARD_W + pad * 2
-    // Cabinet drop shadow.
-    g.fillStyle(0x8a7a52, 0.1)
-    g.fillRoundedRect(x + 3, y + 8, size, size, 28)
-    g.fillStyle(0x8a7a52, 0.07)
-    g.fillRoundedRect(x + 6, y + 13, size, size, 28)
+    // §R3 ELEVATION: the cabinet now FLOATS. Two baked `softshadow` layers under the slab — a
+    // tight, darker CONTACT shadow hugging the silhouette plus a wide, faint AMBIENT falloff —
+    // replace the old flat gold-tint offset fills. Both are plain Images of one baked texture
+    // (zero per-frame cost, one key light from above per E7 → offsets straight DOWN). Neutral
+    // black at low alpha reads as depth on all four theme washes.
+    this.add.image(x + size / 2, y + size / 2 + 26, 'softshadow').setDisplaySize(size + 96, size + 96).setAlpha(0.32)
+    this.add.image(x + size / 2, y + size / 2 + 11, 'softshadow').setDisplaySize(size + 38, size + 38).setAlpha(0.3)
+
+    const g = this.add.graphics()
+    // §R3 chunky under-bezel: a darker gold SIDE WALL peeking a few px below the face, so the slab
+    // reads as a thick raised surface (the face fill below covers all but the bottom lip).
+    g.fillStyle(0x8a6206, 1)
+    g.fillRoundedRect(x, y + 7, size, size, 28)
+    g.fillStyle(0x6b4c05, 0.5)
+    g.fillRoundedRect(x + 2, y + 9, size - 4, size, 28)
     // Gold bezel frame (opaque) + a lit inner sheen and a dark outer edge for bevel depth.
     g.fillStyle(0xc9930a, 1)
     g.fillRoundedRect(x, y, size, size, 28)
@@ -1061,12 +1381,15 @@ export class GameScene extends Phaser.Scene {
     const ws = size - wi * 2
     const wr = 20
     // §E12 High-Contrast: a much darker well floor so the (inset) light cushions read as a crisp
-    // grid — the dark floor peeking between tiles IS the 1px cell separator. Warm look untouched otherwise.
-    const wellFloor = this.hc ? 0x241f18 : 0xe4d8bd
+    // grid — the dark floor peeking between tiles IS the 1px cell separator. Warm look untouched
+    // otherwise. (§R3 depth pass: the warm floor drops a shade from 0xe4d8bd so the cushions sit
+    // deeper IN the tray — still warm parchment, just recessed.)
+    const wellFloor = this.hc ? 0x241f18 : 0xddcfae
     g.fillStyle(wellFloor, 1)
     g.fillRoundedRect(wx, wy, ws, ws, wr)
     // Top inner-shadow (the recess): stacked dark bands from the top edge, rounded to the well.
-    for (const [f, a] of [[0.18, 0.05], [0.12, 0.05], [0.06, 0.06]] as Array<[number, number]>) {
+    // (§R3: a hair denser than the original 0.05s — a deeper recess under the raised bezel.)
+    for (const [f, a] of [[0.18, 0.06], [0.12, 0.06], [0.06, 0.07]] as Array<[number, number]>) {
       g.fillStyle(0x000000, a)
       g.fillRoundedRect(wx, wy, ws, ws * f, { tl: wr, tr: wr, bl: 0, br: 0 })
     }
@@ -1236,8 +1559,15 @@ export class GameScene extends Phaser.Scene {
         new Promise(res => openJackpotWheel(this, { onClaim: res }))
     }
 
-    // Second row: moves card + objective chips.
+    // Second row: moves card + objective chips — the console's ELEVATED RAIL (§R3). Each card gets
+    // one baked `softshadow` underlay (offset straight down per ui.ts's E7 one-key-light law) below
+    // its existing crisp offset shadow, so the whole cluster lifts off the darkened backdrop the
+    // same way the board slab does. Plain Images of one baked texture — zero per-frame cost.
     const cardY = 196
+    const lift = (cx: number, cy: number, w: number, h: number): Phaser.GameObjects.Image =>
+      this.add.image(cx, cy + 8, 'softshadow').setDisplaySize(w + 48, h + 48).setAlpha(0.28)
+    lift(BOARD_X + 85, cardY, 170, 104) // moves card
+    if (this.endless) lift(BOARD_X + BOARD_W - 290 / 2, cardY, 290, 104) // week's-best card
     const g = this.add.graphics()
     g.fillStyle(T.shadow, 0.12)
     g.fillRoundedRect(BOARD_X + 2, cardY - 52 + 5, 170, 104, 20)
@@ -1294,6 +1624,8 @@ export class GameScene extends Phaser.Scene {
       this.objectives.forEach((o, i) => {
         const cx = BOARD_X + BOARD_W - chipW / 2 - (n - 1 - i) * (chipW + chipGap)
         const chip = this.add.container(cx, cardY)
+        // §R3 elevated-rail underlay — BELOW the gold halo so the additive breathe stays luminous.
+        chip.add(this.add.image(0, 8, 'softshadow').setDisplaySize(chipW + 48, 104 + 48).setAlpha(0.28))
         // Soft gold halo bleeding out around the (opaque) chip — breathes to pull the eye to an
         // incomplete target. A separate object from the chip so it never touches chip.scale (the
         // decrement "pop" guards on chip.scale === 1). Static + fainter under reduced-motion.
@@ -1610,7 +1942,7 @@ export class GameScene extends Phaser.Scene {
     void this.resolveLoop(wave)
   }
 
-  private buildPieceLayer(): void {
+  private buildPieceLayer(deferDeal = false): void {
     const maskShape = this.make.graphics({ x: 0, y: 0 }, false)
     maskShape.fillStyle(0xffffff)
     maskShape.fillRect(BOARD_X - 4, BOARD_Y - 4, BOARD_W + 8, BOARD_W + 8)
@@ -1646,6 +1978,15 @@ export class GameScene extends Phaser.Scene {
           this.createSprite(this.board.get(at)!, at)
         }
       }
+      return
+    }
+
+    // §R3 level-intro handoff: on a numbered level with objectives the goal card now OWNS the
+    // opening beat — the board stays empty under the intro scrim and assembles via the diagonal
+    // build-in wave when the card exits (see playLevelIntro). Gate input; the intro hands back
+    // to idle (or a tap-to-skip snaps everything to rest instantly).
+    if (deferDeal) {
+      this.state = 'resolving'
       return
     }
 
@@ -2166,10 +2507,22 @@ export class GameScene extends Phaser.Scene {
       }
       if (cascade >= 4) hitstopMs = Math.max(hitstopMs, 70)
 
-      for (const e of wave.events) this.chargeFlare(e.at) // wind-up on every detonating tile
+      for (const e of wave.events) {
+        this.chargeFlare(e.at) // wind-up on every detonating tile
+        // §R3: the jackpot chip's colour-clear earns a charge-up shimmer riding the same wind-up
+        // window (gleam + gold swell overlap the release, so the payoff reads charged, not instant).
+        if (e.type === 'jackpot') this.jackpotChargeShimmer(e.at)
+      }
+      let flashes = 0 // §R3 activation-flash budget — ≤3/wave (photosensitivity + fill-rate cap)
       this.time.delayedCall(chargeMs, () => {
         this.hitstop(hitstopMs) // freeze, then release the explosions on the same frame
         for (const e of wave.events) {
+          // §R3 activation flash: a soft white radial at the special's cell the moment it fires.
+          // Created under the freeze, so it HOLDS at peak through the hitstop and decays on release.
+          if (flashes < 3) {
+            this.activationFlash(e.at)
+            flashes++
+          }
           if (e.type === 'reel') this.detonateReel(e.at, e.horizontal, cascade)
           else if (e.type === 'bomb') this.detonateBomb(e.at, e.radius, cascade)
           else this.detonateJackpot()
@@ -2229,6 +2582,10 @@ export class GameScene extends Phaser.Scene {
       // Cascade rumble routed through the single trauma authority (crisp + decayed, never muddy).
       this.punch({ trauma: Math.min(0.5, 0.12 + cascade * 0.06) })
     }
+    // The screen inhales with a big beat: a soft one-shot zoom kiss on deep cascades and chunky
+    // clears, layered under the trauma shake (which stays the crisp part of the hit). Self-gated
+    // (reduced motion / LOW tier → no-op) and amplitude-capped so it reads as breath, never lurch.
+    if (cascade >= 3 || pops.length >= 7) this.cameraBreath(Math.min(0.016, 0.006 + cascade * 0.003))
 
     // Pop cleared sprites, staggered outward from the first effect's epicenter.
     const epicenter = wave.events[0]?.at ?? pops[0]?.at
@@ -2242,6 +2599,11 @@ export class GameScene extends Phaser.Scene {
     // + panned by column, so the cells you see clear right you hear right. Capped so a huge jackpot
     // clear stays a shimmer, not a clatter; the outward stagger spreads them into an arpeggio.
     let tinks = 0
+    // §R3 payoff sparkles: in a wave with a SPECIAL payoff, every cleared cell earns a small white
+    // star-glint (budgeted per wave, quality.count-scaled, spent at schedule time so a huge clear
+    // can never over-spawn); the jackpot's colour-matched victims pop the BIG bright variant.
+    const jackpotEvt = wave.events.find((e): e is Extract<BlastEvent, { type: 'jackpot' }> => e.type === 'jackpot')
+    let glintBudget = hasEvents && !this.reducedMotion ? quality.count(14) : 0
     for (const { piece, at } of pops) {
       const sprite = this.sprites.get(piece.id)
       if (!sprite) continue
@@ -2251,10 +2613,19 @@ export class GameScene extends Phaser.Scene {
       const pos = this.cellToXY(at)
       const tink = tinks < 10
       if (tink) tinks++
+      const sparkle = glintBudget > 0
+      if (sparkle) glintBudget--
+      const jackpotHit =
+        sparkle && jackpotEvt !== undefined && piece.kind === 'normal' && (jackpotEvt.symbol === null || jackpotEvt.symbol === piece.symbol)
+      // Escalating clear richness: baseline burst counts are untouched on wave 1, then each cell earns
+      // a few EXTRA fragments/sparks as the chain deepens (capped at +3 waves, `quality.count`-thinned
+      // per device) — a deep cascade visibly showers harder without a huge jackpot clear ever clattering.
+      const heatBoost = Math.min(cascade - 1, 3)
       this.time.delayedCall(delay, () => {
         if (tink) sfx.clearTink(cascade, this.colPan(at.col))
-        this.emitters[piece.symbol]?.explode(6, pos.x, pos.y)
-        this.sparkEmitter.explode(4, pos.x, pos.y)
+        if (sparkle) this.payoffGlint(pos.x, pos.y, jackpotHit) // §R3 special-payoff star-sparkle
+        this.emitters[piece.symbol]?.explode(6 + quality.count(heatBoost * 3), pos.x, pos.y)
+        this.sparkEmitter.explode(4 + quality.count(heatBoost * 2), pos.x, pos.y)
         // Subtle gloss pop — the emptied tile catches light on the clear. Reuses bgglow (ADD,
         // below the emitters), governor-gated for alpha/count, skipped under reduced-motion.
         if (!this.reducedMotion && quality.count(1) > 0) {
@@ -2391,6 +2762,80 @@ export class GameScene extends Phaser.Scene {
   }
 
   /**
+   * Subtle camera breath on a big clear: a one-beat zoom kiss (≈1.01×, yoyo) so the whole screen
+   * inhales with the blast — the soft, slow complement to the trauma shake's crisp rattle. One
+   * breath at a time (a deeper wave landing mid-breath simply rides the live one), and it composes
+   * with hitstop for free (the tween freezes with the timescale and resumes on release). Reduced
+   * motion / LOW tier → no-op; the camera already rests at zoom 1, so there is nothing to collapse.
+   */
+  private cameraBreath(amount: number): void {
+    if (this.reducedMotion || quality.tier() === 'low') return
+    if (this.cameraBreathTween?.isPlaying()) return
+    const cam = this.cameras.main
+    cam.setZoom(1)
+    this.cameraBreathTween = this.tweens.add({
+      targets: cam,
+      zoom: 1 + amount,
+      duration: D.quick,
+      ease: E.press,
+      yoyo: true,
+      hold: 40,
+      onComplete: () => {
+        cam.setZoom(1)
+        this.cameraBreathTween = null
+      },
+    })
+  }
+
+  /**
+   * Cascade escalation tick: four thin additive glow bands hug the SCREEN edges and pulse once per
+   * combo wave, heat-ramped in step with the combo readout (warm gold → hot amber → rose at the
+   * MEGA peak) and a touch wider/brighter per wave — so the whole room registers a deepening chain,
+   * not just the board. Transient by construction (each band destroys itself when its pulse ends).
+   * Gates: reduced motion skips whole (a transient's resting state is nothing); reduce-flashing
+   * swaps the quick pop for a slower, dimmer swell (a glow, never a strobe); LOW tier skips whole
+   * (it's an optional fill-rate layer); `quality.scale()` thins the peak alpha on MED.
+   */
+  private cascadeEdgeTick(cascade: number): void {
+    if (this.reducedMotion || quality.tier() === 'low') return
+    const T = getTheme()
+    // Same heat ramp as showCombo, in fill-colour form: x2 warm gold → x3 bright amber → x4+ rose.
+    const tint = cascade <= 2 ? T.gold : cascade === 3 ? T.goldBright : T.rose
+    const soft = this.reduceFlashing
+    const peak = Math.min(0.34, 0.1 + cascade * 0.045) * (soft ? 0.55 : 1) * quality.scale()
+    const H = worldH()
+    const cy = 640 // DESIGN_H/2 — the overlay scrim's world-centring idiom
+    const th = Math.min(120, 54 + cascade * 12)
+    // Centre-x/y · display-w/h for the four edge bands: left, right, top, bottom. Each band's
+    // radial core sits ON its screen edge, so the bright inner half bleeds inward and the outer
+    // half falls off-screen — a rim of light, not a floating bar.
+    const bands: Array<[number, number, number, number]> = [
+      [0, cy, th, H],
+      [DESIGN_W, cy, th, H],
+      [DESIGN_W / 2, cy - H / 2, DESIGN_W, th],
+      [DESIGN_W / 2, cy + H / 2, DESIGN_W, th],
+    ]
+    for (const [x, y, w, h] of bands) {
+      const band = this.add
+        .image(x, y, 'bgglow')
+        .setTint(tint)
+        .setBlendMode(Phaser.BlendModes.ADD)
+        .setDepth(39) // above the board + HUD (≤34), below every overlay scrim (40+)
+        .setDisplaySize(w, h)
+        .setAlpha(0)
+      this.tweens.add({
+        targets: band,
+        alpha: peak,
+        duration: soft ? D.settle : D.quick,
+        ease: E.press,
+        yoyo: true,
+        hold: 30,
+        onComplete: () => band.destroy(),
+      })
+    }
+  }
+
+  /**
    * Charge→release wind-up (E6, signature moment #4): the detonating tile scale-punches DOWN (~0.9)
    * and a gold glow flares for ~70ms, so the explosion feels earned (its clear-pop is delayed by the
    * same window in playWave, so the two don't fight). No-op under reduced motion (instant release).
@@ -2423,14 +2868,184 @@ export class GameScene extends Phaser.Scene {
   }
 
   /**
-   * Fall/spawn squash-&-settle (E5): on landing, squash scaleY down (bulge X for volume) then
-   * Back-ease to rest over ~110ms, amplitude ∝ drop distance. Reduced motion → none.
+   * §R3 special activation flash: a soft white radial bloom (~110ms) at the special's cell the
+   * moment it fires. Deliberately created UNDER the hitstop freeze, so it holds at peak through the
+   * freeze frame and decays on release — the same composition trick as the impact frame. Neutral
+   * white by design (the one colour every theme reads as raw energy discharge — mirrors
+   * impactFrame). reduce-flashing → a slower, dimmer swell; reduced motion → none. ≤3/wave (caller).
+   */
+  private activationFlash(atCoord: Coord): void {
+    if (this.reducedMotion) return
+    const soft = this.reduceFlashing
+    const pos = this.cellToXY(atCoord)
+    const f = this.add
+      .image(pos.x, pos.y, 'bgglow')
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setDepth(26)
+      .setDisplaySize(CELL * 1.15, CELL * 1.15)
+      .setAlpha((soft ? 0.34 : 0.85) * quality.scale())
+    this.tweens.add({
+      targets: f,
+      alpha: 0,
+      scaleX: f.scaleX * 2.1,
+      scaleY: f.scaleY * 2.1,
+      duration: soft ? 360 : 110,
+      ease: E.press,
+      onComplete: () => f.destroy(),
+    })
+  }
+
+  /**
+   * §R3 jackpot charge-up: the chip shimmers for a breath before the payoff — a white gleam sweeps
+   * across its cell while a gold under-glow swells, overlapping the charge window into the release
+   * so the colour-clear reads CHARGED, never instant. Never touches the sprite's transform
+   * (chargeFlare owns the squeeze — springs must not fight). Reduced motion → none.
+   */
+  private jackpotChargeShimmer(atCoord: Coord): void {
+    if (this.reducedMotion) return
+    const T = getTheme()
+    const pos = this.cellToXY(atCoord)
+    // Gold under-glow swelling beneath the chip, then releasing.
+    const glow = this.add
+      .image(pos.x, pos.y, 'bgglow')
+      .setTint(T.goldBright)
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setDepth(23)
+      .setDisplaySize(CELL * 1.05, CELL * 1.05)
+      .setAlpha(0)
+    this.tweens.add({
+      targets: glow,
+      alpha: 0.55 * quality.scale(),
+      scaleX: glow.scaleX * 1.5,
+      scaleY: glow.scaleY * 1.5,
+      duration: 150,
+      ease: E.press,
+      yoyo: true,
+      onComplete: () => glow.destroy(),
+    })
+    // The gleam: one slim additive blade crossing the chip (the twinklePiece idiom, unmasked —
+    // it lives ~210ms over a cell that is about to detonate, so a hair of bleed reads as charge).
+    const gleam = this.add
+      .image(pos.x - CELL * 0.45, pos.y, 'sweep')
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setDepth(24)
+      .setAngle(14)
+      .setDisplaySize(CELL * 0.34, CELL * 0.95)
+      .setAlpha(0)
+    this.tweens.add({
+      targets: gleam,
+      x: pos.x + CELL * 0.45,
+      alpha: { from: 0.8, to: 0 },
+      duration: 210,
+      ease: E.glide,
+      onComplete: () => gleam.destroy(),
+    })
+  }
+
+  /**
+   * §R3 payoff star-sparkle: a small white star-glint popping on a cleared cell during a SPECIAL
+   * payoff — the jackpot's colour-matched conversions get the big bright gold variant. Two beats:
+   * pop in on an eager overshoot, then spin-fade to nothing. The per-wave budget (quality.count-
+   * scaled hard cap) lives in the caller; reduced motion never schedules one.
+   */
+  private payoffGlint(x: number, y: number, big: boolean): void {
+    const T = getTheme()
+    const s = (CELL / 48) * (big ? 0.95 : 0.55) // 48 = the glint texture's baked size
+    const star = this.add
+      .image(x, y, 'glint')
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setDepth(24)
+      .setTint(big ? T.goldBright : T.sparkleTint)
+      .setScale(0)
+      .setAngle(Phaser.Math.Between(-30, 30))
+    this.tweens.add({
+      targets: star,
+      scale: s,
+      duration: 120,
+      ease: backOut(OVERSHOOT.pop),
+      onComplete: () =>
+        this.tweens.add({
+          targets: star,
+          scale: 0,
+          angle: star.angle + 40,
+          alpha: 0,
+          duration: 200,
+          ease: E.exit,
+          onComplete: () => star.destroy(),
+        }),
+    })
+  }
+
+  /**
+   * §R3 comet arrival: the goal counter takes the hit of light — a soft additive bloom on the chip
+   * plus a star glint popping over its icon (the counter's pop-tick itself is owned by
+   * stepCollect/settleCollect, which land right after this). Never reached under reduced motion
+   * (the caller keeps today's instant collect exactly). reduce-flashing → dimmer, slower bloom
+   * (a swell, not a flash); the whole beat is governor-gated.
+   */
+  private cometArrival(x: number, y: number): void {
+    if (quality.count(1) === 0) return
+    const T = getTheme()
+    const soft = this.reduceFlashing
+    const bloom = this.add
+      .image(x, y, 'bgglow')
+      .setTint(T.sparkleTint)
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setDepth(33)
+      .setDisplaySize(CELL * 1.1, CELL * 1.1)
+      .setAlpha((soft ? 0.3 : 0.6) * quality.scale())
+    this.tweens.add({
+      targets: bloom,
+      alpha: 0,
+      scaleX: bloom.scaleX * 1.7,
+      scaleY: bloom.scaleY * 1.7,
+      duration: soft ? D.pop : D.base,
+      ease: E.press,
+      onComplete: () => bloom.destroy(),
+    })
+    const star = this.add
+      .image(x, y, 'glint')
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setDepth(34)
+      .setTint(T.goldBright)
+      .setScale(0)
+      .setAngle(Phaser.Math.Between(-24, 24))
+    this.tweens.add({
+      targets: star,
+      scale: (CELL * 0.7) / 48,
+      angle: star.angle + 30,
+      alpha: { from: 1, to: 0 },
+      duration: D.settle,
+      ease: E.press,
+      onComplete: () => star.destroy(),
+    })
+  }
+
+  /**
+   * Fall/spawn squash-&-settle (E5, deepened §R3): on landing the piece takes its weight — an
+   * instant squash frame (scaleY flattened, scaleX counter-bulged for volume, plus a hair of
+   * downward sink so the cushion visibly compresses) that springs back to rest through a
+   * calibrated Back overshoot (`backOut(OVERSHOOT.release)`), so scaleY briefly OVER-stretches
+   * past rest before settling — the heavy, springy landing. Amplitude ∝ drop distance; timing
+   * stays inside the FALL_* rhythm (~130ms tail, same footprint as the old 110ms settle).
+   * Any straggler tween on the sprite (a prior squash) is killed first so springs never fight.
+   * Reduced motion → none.
    */
   private settleSquash(sprite: Phaser.GameObjects.Sprite, dropCells: number): void {
     if (this.reducedMotion || !sprite.active) return
     const amp = Phaser.Math.Clamp(dropCells / ROWS, 0.2, 1)
-    sprite.setScale(PIECE_SCALE * (1 + 0.1 * amp), PIECE_SCALE * (1 - 0.16 * amp))
-    this.tweens.add({ targets: sprite, scaleX: PIECE_SCALE, scaleY: PIECE_SCALE, duration: 110, ease: 'Back.easeOut' })
+    this.tweens.killTweensOf(sprite)
+    const restY = sprite.y
+    sprite.setScale(PIECE_SCALE * (1 + 0.14 * amp), PIECE_SCALE * (1 - 0.22 * amp))
+    sprite.y = restY + CELL * 0.05 * amp // the sink: bottom edge stays planted while the top drops
+    this.tweens.add({
+      targets: sprite,
+      scaleX: PIECE_SCALE,
+      scaleY: PIECE_SCALE,
+      y: restY,
+      duration: 130,
+      ease: backOut(OVERSHOOT.release), // overshoot = the counter-stretch rebound before rest
+    })
   }
 
   /**
@@ -2648,13 +3263,55 @@ export class GameScene extends Phaser.Scene {
         })
         .setDepth(26)
       trail.startFollow(missile)
+      // §R3: the travelling clear reads as LIGHT — a white-hot star glint riding the fireball head
+      // + one reused additive streak stretching from the epicenter back to the head (repositioned
+      // in onUpdate; nothing is spawned per frame). Reduced motion keeps the plain missile.
+      const dress = !this.reducedMotion && quality.count(1) > 0
+      const head = dress
+        ? this.add
+            .image(at.x, at.y, 'glint')
+            .setBlendMode(Phaser.BlendModes.ADD)
+            .setDepth(28)
+            .setDisplaySize(CELL * 0.85, CELL * 0.85)
+            .setAlpha(0.95)
+        : null
+      const streak = dress
+        ? this.add
+            .image(at.x, at.y, 'sweep')
+            .setBlendMode(Phaser.BlendModes.ADD)
+            .setDepth(26)
+            .setAlpha(0.8)
+            .setAngle(horizontal ? 0 : 90)
+            .setDisplaySize(8, CELL * 0.5)
+        : null
       this.tweens.add({
         targets: missile,
         x: endX,
         y: endY,
         duration: dur,
         ease: 'Sine.easeIn',
+        onUpdate: () => {
+          head?.setPosition(missile.x, missile.y)
+          if (streak) {
+            // Tail anchored between origin and head; display width IS the distance travelled.
+            streak.setPosition((at.x + missile.x) / 2, (at.y + missile.y) / 2)
+            const len = Math.max(8, Math.abs(horizontal ? missile.x - at.x : missile.y - at.y))
+            streak.setDisplaySize(len, CELL * 0.5)
+          }
+        },
         onComplete: () => {
+          head?.destroy()
+          if (streak) {
+            // The streak lingers a beat and collapses — an afterglow, not a hard cut.
+            this.tweens.add({
+              targets: streak,
+              alpha: 0,
+              scaleY: streak.scaleY * 0.35,
+              duration: 150,
+              ease: E.exit,
+              onComplete: () => streak.destroy(),
+            })
+          }
           trail.stop()
           trail.stopFollow()
           missile.destroy()
@@ -2733,6 +3390,51 @@ export class GameScene extends Phaser.Scene {
       ease: 'Cubic.easeOut',
       onComplete: () => ring.destroy(),
     })
+
+    // §R3 double shockwave: a second, tighter echo ring chasing ~90ms behind the first — the
+    // beefier two-beat concussion read. Reduced motion keeps the single ring (the echo is pure
+    // extra transient, and its resting state is nothing).
+    if (!this.reducedMotion) {
+      const echo = this.add
+        .image(at.x, at.y, 'shockwave')
+        .setBlendMode(Phaser.BlendModes.ADD)
+        .setDepth(26)
+        .setAlpha(0)
+        .setDisplaySize(CELL * 0.7, CELL * 0.7)
+      this.tweens.add({
+        targets: echo,
+        alpha: { from: 0.7, to: 0 },
+        scaleX: echo.scaleX * (2.6 + power * 0.5),
+        scaleY: echo.scaleY * (2.6 + power * 0.5),
+        delay: 90,
+        duration: 400,
+        ease: 'Cubic.easeOut',
+        onComplete: () => echo.destroy(),
+      })
+    }
+
+    // §R3 radial star spray: crisp 4-point glints thrown outward on straight fast radials (reads
+    // as light shrapnel, distinct from the ballistic fire debris below) — governor + reduced-motion
+    // scaled, one-shot, self-destroying.
+    const sprayN = this.motionCount(quality.count(Math.min(12, 6 + radius * 3)))
+    if (sprayN > 0) {
+      const T = getTheme()
+      const spray = this.add
+        .particles(0, 0, 'glint', {
+          speed: { min: 160, max: 320 + radius * 40 },
+          angle: { min: 0, max: 360 },
+          scale: { start: 0.7, end: 0 },
+          alpha: { start: 1, end: 0 },
+          lifespan: { min: 240, max: 420 },
+          rotate: { min: -90, max: 90 },
+          blendMode: Phaser.BlendModes.ADD,
+          tint: [0xffffff, T.sparkleTint, T.goldBright],
+          emitting: false,
+        })
+        .setDepth(28)
+      spray.explode(sprayN, at.x, at.y)
+      this.time.delayedCall(520, () => spray.destroy())
+    }
 
     // Debris sparks + fiery chunks (capped, one-shot self-destructing emitter).
     this.sparkEmitter.explode(this.motionCount(Math.min(20, 8 + radius * 4 + boost)), at.x, at.y)
@@ -3314,7 +4016,7 @@ export class GameScene extends Phaser.Scene {
     this.state = 'ended'
     this.stopMovesPulse()
     this.powerBar?.setVisible(false) // retire the helper shelf — the result card takes the screen
-    spendLife() // a loss costs a life (numbered levels only ever reach finishLose)
+    spendLifeFor(this.level) // a loss costs a life (grace below level 10; numbered levels only reach finishLose)
     recordScore(this.score)
     this.time.delayedCall(400, () => this.showOverlay(false, 0, 0))
   }
@@ -3549,24 +4251,28 @@ export class GameScene extends Phaser.Scene {
     g.strokeRoundedRect(-w / 2, -halfH, w, halfH * 2, 34)
     card.add(g)
 
+    // The lose card's content stagger (below) needs the single-alpha surface every child exposes;
+    // narrower than the Alpha component so Containers (livesHud, pills) qualify too.
+    type Fadeable = Phaser.GameObjects.GameObject & { alpha: number; setAlpha(value?: number): unknown }
+
     // §E9 warm lose copy — a kind rotating line instead of the cold "OUT OF MOVES". Seeded by score
     // so it stays stable for this result. Navy (not the warn colour) reads as gentle, not an error.
-    card.add(
-      this.add
-        .text(0, -160, warmLoseLine(this.score), { fontFamily: FONT, fontSize: '42px', fontStyle: '900', color: T.navyText })
-        .setOrigin(0.5)
-        .setShadow(0, 3, 'rgba(0,0,0,0.15)', 6, false, true)
-    )
+    const loseTitle = this.add
+      .text(0, -160, warmLoseLine(this.score), { fontFamily: FONT, fontSize: '42px', fontStyle: '900', color: T.navyText })
+      .setOrigin(0.5)
+      .setShadow(0, 3, 'rgba(0,0,0,0.15)', 6, false, true)
+    card.add(loseTitle)
 
     // Show WHICH symbols still need collecting (icon + count), not bare numbers — a learning player
     // reads "which ones do I still need?" at a glance. A finished goal dims to a green check.
     const objs = this.objectives
-    card.add(
-      this.add
-        .text(0, -112, 'STILL NEEDED', { fontFamily: FONT, fontSize: '18px', color: T.inkMuted })
-        .setOrigin(0.5)
-        .setLetterSpacing(3)
-    )
+    const goalRow: Fadeable[] = []
+    const stillLabel = this.add
+      .text(0, -112, 'STILL NEEDED', { fontFamily: FONT, fontSize: '18px', color: T.inkMuted })
+      .setOrigin(0.5)
+      .setLetterSpacing(3)
+    card.add(stillLabel)
+    goalRow.push(stillLabel)
     // "So close" emphasis — the nearest-to-complete goal (smallest count still OWED) gets a soft warm
     // shimmer below, so a loss reads as "you almost had this". Only the single nearest one is picked;
     // nearIdx stays -1 if nothing is owed (never on a real loss), which harmlessly skips the highlight.
@@ -3598,29 +4304,29 @@ export class GameScene extends Phaser.Scene {
       }
       const icon = this.add.image(ox, -66, o.symbol).setDisplaySize(48, 48).setAlpha(done ? 0.4 : 1)
       card.add(icon)
+      goalRow.push(icon)
       if (i === nearIdx) nearIcon = icon
-      card.add(
-        this.add
-          .text(ox, -30, done ? '✓' : String(o.remaining), {
-            fontFamily: FONT,
-            fontSize: '26px',
-            fontStyle: '900',
-            color: done ? T.ok : T.ink,
-          })
-          .setOrigin(0.5)
-      )
-    })
-
-    card.add(
-      this.add
-        .text(0, 10, `SCORE  ${this.score.toLocaleString()}`, {
+      const count = this.add
+        .text(ox, -30, done ? '✓' : String(o.remaining), {
           fontFamily: FONT,
-          fontSize: '34px',
+          fontSize: '26px',
           fontStyle: '900',
-          color: T.ink,
+          color: done ? T.ok : T.ink,
         })
         .setOrigin(0.5)
-    )
+      card.add(count)
+      goalRow.push(count)
+    })
+
+    const scoreLine = this.add
+      .text(0, 10, `SCORE  ${this.score.toLocaleString()}`, {
+        fontFamily: FONT,
+        fontSize: '34px',
+        fontStyle: '900',
+        color: T.ink,
+      })
+      .setOrigin(0.5)
+    card.add(scoreLine)
 
     // A loss spent a life — show what's left + when the next one lands.
     const livesHud = addLivesHud(this, 0, 56, { size: 28 })
@@ -3629,14 +4335,46 @@ export class GameScene extends Phaser.Scene {
     refresh()
     this.time.addEvent({ delay: 1000, loop: true, callback: refresh })
 
-    card.add(addPillButton(this, 0, 140, 300, 72, 'RETRY', GOLD_PILL, () => startScene(this,'game', { level: this.level })))
-    card.add(addPillButton(this, 0, 140 + 84, 300, 60, 'LEVELS', GHOST_PILL, () => startScene(this,'levelselect')))
+    const retryBtn = addPillButton(this, 0, 140, 300, 72, 'RETRY', GOLD_PILL, () => startScene(this,'game', { level: this.level }))
+    const levelsBtn = addPillButton(this, 0, 140 + 84, 300, 60, 'LEVELS', GHOST_PILL, () => startScene(this,'levelselect'))
+    card.add(retryBtn)
+    card.add(levelsBtn)
 
-    // Entrance — mirror buildWinCard's calm Back.easeOut settle, from a slightly smaller scale + a
-    // fade, so the card eases in rather than snapping. Reduced motion → instant card (today's feel).
+    // Entrance — a gentler, sympathetic beat than the win card's elastic pop: the card EXHALES into
+    // place (a soft rise + settle, deliberately no overshoot), and its contents breathe in as a
+    // quiet top-down stagger (title → goals → score → lives → buttons) so a loss lands kindly,
+    // never as a punchline. Reduced motion → instant card, no stagger (today's feel).
     if (!this.reducedMotion) {
-      card.setScale(0.9).setAlpha(0)
-      this.tweens.add({ targets: card, scale: 1, alpha: 1, duration: 320, ease: 'Back.easeOut' })
+      card.setScale(0.96).setAlpha(0).setY(cy + 22)
+      this.tweens.add({ targets: card, scale: 1, alpha: 1, y: cy, duration: 420, ease: E.settle })
+      // Content stagger: fade each row up to ITS resting alpha (icons may rest dimmed at 0.4), on
+      // top of the card's own unit fade. The halos stay out of it — the near-goal halo's breathe
+      // below owns that alpha. Delays stay short so RETRY is never kept from a fast tap.
+      const rows: Fadeable[][] = [[loseTitle], goalRow, [scoreLine], [livesHud.container], [retryBtn, levelsBtn]]
+      rows.forEach((row, i) => {
+        for (const o of row) {
+          const resting = o.alpha
+          o.setAlpha(0)
+          this.tweens.add({ targets: o, alpha: resting, delay: 140 + i * 80, duration: D.settle, ease: E.settle })
+        }
+      })
+      // One quiet heart drifts up off the card's crown and fades — sympathy, not celebration (the
+      // full shower stays the win's beat). A lone transient that destroys itself.
+      const heart = this.add
+        .image(cx, cy - halfH - 6, 'heart')
+        .setDisplaySize(34, 34)
+        .setDepth(41)
+        .setAlpha(0)
+      this.tweens.add({
+        targets: heart,
+        alpha: { from: 0, to: 0.7 },
+        y: cy - halfH - 60,
+        delay: 520,
+        duration: 800,
+        ease: E.settle,
+        onComplete: () =>
+          this.tweens.add({ targets: heart, alpha: 0, y: heart.y - 26, duration: 480, ease: E.exit, onComplete: () => heart.destroy() }),
+      })
     }
     // Shimmer the nearest goal once the card has settled — a gentle icon + halo breath (soft tint/
     // scale, never a hard flash). Reduced motion keeps the static highlight above, no breathing.
@@ -3701,13 +4439,31 @@ export class GameScene extends Phaser.Scene {
       .setShadow(0, 3, 'rgba(0,0,0,0.15)', 6, false, true)
     card.add(title)
 
+    // Sharpened entrance stagger: the LEVEL tab and rank word pop in a beat AFTER the card lands
+    // (card → tab → title, each with a calibrated overshoot) instead of riding one monolithic
+    // scale-in — the eye gets three small arrivals rather than one blob. Reduced motion keeps the
+    // instant settled card (the tweens never start); tap-to-skip snaps both to rest via settleActions.
+    if (animate && !this.reducedMotion) {
+      title.setScale(0.4).setAlpha(0)
+      this.tweens.add({ targets: title, scale: 1, alpha: 1, delay: 120, duration: D.pop, ease: backOut(OVERSHOOT.pop) })
+      settleActions.push(() => title.setScale(1).setAlpha(1))
+      tab.setScale(0)
+      this.tweens.add({ targets: tab, scale: 1, delay: 200, duration: D.pop, ease: backOut(OVERSHOOT.pop) })
+      settleActions.push(() => tab.setScale(1))
+    }
+
     // §E9 warm subtitle under the rank word — always-on, non-name gentle encouragement (seeded by
-    // score so it stays stable for this result).
-    card.add(
-      this.add
-        .text(0, -176, warmWinSubtitle(this.score), { fontFamily: FONT, fontSize: '20px', fontStyle: '700', color: T.inkSoft })
-        .setOrigin(0.5)
-    )
+    // score so it stays stable for this result). It follows the rank word into place (a quiet fade
+    // a beat behind the title's pop) so the pair always reads top-down; instant under reduced motion.
+    const subtitle = this.add
+      .text(0, -176, warmWinSubtitle(this.score), { fontFamily: FONT, fontSize: '20px', fontStyle: '700', color: T.inkSoft })
+      .setOrigin(0.5)
+    card.add(subtitle)
+    if (animate && !this.reducedMotion) {
+      subtitle.setAlpha(0)
+      this.tweens.add({ targets: subtitle, alpha: 1, delay: 300, duration: D.settle, ease: E.settle })
+      settleActions.push(() => subtitle.setAlpha(1))
+    }
 
     // §E9 NEW BEST! ribbon — a small rose banner across the card's top-left corner on a record score.
     if (this.newBestThisWin) {
@@ -3821,7 +4577,11 @@ export class GameScene extends Phaser.Scene {
       if (!this.reducedMotion) this.tweens.add({ targets: rglow, alpha: 0.5, duration: 700, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' })
     }
 
-    // Rose skip/close chip (top-right) — a tap jumps straight to the settled card.
+    // Rose skip/close chip (top-right) — a tap jumps straight to the settled card. It's the one
+    // board-adjacent control NOT built via buildPressable (a bespoke round chip), so it speaks the
+    // same tactile language by hand: press-thock + quick sink on touch, springy overshoot rise on
+    // a release that slides off. (A committed release destroys the chip via overlaySettle, so the
+    // sink simply vanishes with it.) Reduced motion keeps the instant chip — no sink/rise tweens.
     if (animate) {
       const close = this.add.container(w / 2 - 40, -halfH + 40)
       const cg = this.add.graphics()
@@ -3832,10 +4592,56 @@ export class GameScene extends Phaser.Scene {
       const cIcon = this.add.text(0, 0, '»', { fontFamily: FONT, fontSize: '26px', fontStyle: '900', color: T.onRose }).setOrigin(0.5)
       // Invisible hit circle grown to the ≥44pt floor (§E8) — the visual chip (r22) is unchanged.
       const cZone = this.add.circle(0, 0, 42, 0xffffff, 0.001).setInteractive({ useHandCursor: true })
+      cZone.on('pointerdown', () => {
+        sfx.uiPress()
+        if (this.reducedMotion) return
+        this.tweens.killTweensOf(close)
+        this.tweens.add({ targets: close, scale: 0.88, duration: 60, ease: E.press })
+      })
+      cZone.on('pointerout', () => {
+        if (this.reducedMotion || !close.active) return
+        this.tweens.killTweensOf(close)
+        this.tweens.add({ targets: close, scale: 1, duration: D.settle, ease: backOut(OVERSHOOT.release) })
+      })
       cZone.on('pointerup', () => this.overlaySettle?.())
       close.add([cg, cIcon, cZone])
       card.add(close)
-      settleActions.push(() => close.destroy())
+      settleActions.push(() => {
+        this.tweens.killTweensOf(close) // 3.90 doesn't sweep tweens on destroy — kill the sink/rise first
+        close.destroy()
+      })
+    }
+
+    // One light sweep across the settled card — a specular streak glides over the panel (masked to
+    // the card's exact rounded rect, so light travels over the glass and never smears the scene),
+    // timed to land just after the star dings. The same "release shine" language as the pressables,
+    // scaled up to the hero surface. Self-destroying; a mid-sweep tap-to-skip kills it via
+    // settleActions. Gated off under reduced motion and on the LOW tier.
+    if (animate && !this.reducedMotion && quality.tier() !== 'low') {
+      at(560, () => {
+        const mg = this.make.graphics({ x: 0, y: 0 }, false)
+        mg.fillStyle(0xffffff, 1)
+        mg.fillRoundedRect(cx - w / 2, cy - halfH, w, halfH * 2, 34)
+        const shine = this.add
+          .image(cx - w / 2 - 90, cy - halfH * 0.3, 'sweep')
+          .setDisplaySize(150, halfH * 2.6)
+          .setAngle(12)
+          .setAlpha(0.38)
+          .setBlendMode(Phaser.BlendModes.ADD)
+          .setDepth(42)
+          .setMask(mg.createGeometryMask())
+        const cleanup = (): void => {
+          shine.clearMask(true)
+          shine.destroy()
+          mg.destroy()
+        }
+        this.tweens.add({ targets: shine, x: cx + w / 2 + 90, duration: 520, ease: E.glide, onComplete: cleanup })
+        settleActions.push(() => {
+          if (!shine.active) return
+          this.tweens.killTweensOf(shine)
+          cleanup()
+        })
+      })
     }
 
     // Entrance + settle wiring.
@@ -4175,6 +4981,9 @@ export class GameScene extends Phaser.Scene {
     // the audio arc mirrors the visual combo arc. ONE voice, retriggered per wave (never accumulates).
     // Reduced motion drops this sustained riser (E11), matching its dropped colour-pulse.
     if (!this.reducedMotion) sfx.cascadeRiser(cascade)
+    // Screen-edge heat tick — the room registers each wave of the chain (self-gated: reduced
+    // motion / LOW tier skip it; reduce-flashing softens the pulse into a swell).
+    this.cascadeEdgeTick(cascade)
     const label = big ? 'MEGA WIN!' : `COMBO x${cascade}`
     // Heat ramp: x2 warm gold → x3 hot amber → x4+ hot rose/red.
     const heat = cascade <= 2 ? getTheme().goldText : cascade === 3 ? css(getTheme().gold) : css(getTheme().rose)
@@ -4235,29 +5044,90 @@ export class GameScene extends Phaser.Scene {
 
   // --------------------------------------------------------------- helpers
 
-  /** Small gold, navy-outlined "+N" that floats up and fades, then self-destroys. One per wave. */
+  /**
+   * §R3 score medallion — the constant micro-reward: a chunky star-burst coin stamped "+N" minted
+   * at the match centroid, popping in on an eager overshoot, floating up ~40px and fading. One per
+   * wave; escalates with the cascade — wave 1 mints a small warm-gold coin, deeper waves mint
+   * bigger + brighter, rose-tinged at the MEGA peak (the medallion TINT is the accent there: the
+   * screen-level MEGA pulse is owned by cascadeEdgeTick, so nothing double-pulses) — and waves 3+
+   * add a tiny spark ring. Pooled with a HARD CAP (a mint past the cap recycles the oldest in
+   * flight), spark accents governor-scaled. Reduced motion → skip entirely: a transient's resting
+   * state is nothing, and the rolling score readout already carries the information.
+   */
   private spawnScorePopup(points: number, x: number, y: number, cascade: number): void {
-    if (points <= 0) return
-    const big = cascade >= 3
-    const t = this.add
-      .text(x, y, `+${points}`, {
-        fontFamily: FONT,
-        fontSize: big ? '40px' : '32px',
-        color: css(getTheme().gold),
-        fontStyle: '900',
-      })
-      .setOrigin(0.5)
-      .setDepth(28)
-      .setStroke(getTheme().navyText, 6)
-      .setShadow(0, 2, 'rgba(0,0,0,0.18)', 4, false, true)
+    if (points <= 0 || this.reducedMotion) return
+    const T = getTheme()
+    const mega = cascade >= 4
+    // Heat ramp mirrors showCombo: warm gold → bright gold → rose-tinged at MEGA.
+    const tint = mega ? T.roseLight : cascade >= 2 ? T.goldBright : T.gold
+    const size = Math.min(1.3, 0.78 + cascade * 0.13) // wave 1 small → deep waves chunky (capped)
+    const slot = this.takeMedallion()
+    slot.badge.setTint(tint)
+    slot.label.setText(`+${points.toLocaleString()}`)
+    slot.label.setScale(Math.min(1, 56 / Math.max(1, slot.label.width))) // long totals stay on the coin face
+    slot.root.setPosition(x, y).setAlpha(1).setScale(0).setAngle(Phaser.Math.Between(-7, 7)).setVisible(true)
+    // Beat 1 — MINT: eager overshoot pop-in, straightening as it lands.
+    this.tweens.add({ targets: slot.root, scale: size, angle: 0, duration: D.base, ease: backOut(OVERSHOOT.pop) })
+    // Beat 2 — DRIFT: hold a breath, then float up and fade; the slot frees itself on completion.
     this.tweens.add({
-      targets: t,
+      targets: slot.root,
       y: y - 40,
-      alpha: { from: 1, to: 0 },
-      duration: 600,
-      ease: 'Quad.easeOut',
-      onComplete: () => t.destroy(),
+      alpha: 0,
+      delay: 300,
+      duration: 430,
+      ease: E.exit,
+      onComplete: () => {
+        slot.root.setVisible(false)
+        slot.live = false
+      },
     })
+    // Wave 3+ accent: a tiny expanding spark ring + a few motes — governor-scaled, self-destroying.
+    if (cascade >= 3 && quality.count(1) > 0) {
+      const ring = this.add
+        .image(x, y, 'shockwave')
+        .setBlendMode(Phaser.BlendModes.ADD)
+        .setDepth(27)
+        .setTint(tint)
+        .setDisplaySize(CELL * 0.5, CELL * 0.5)
+        .setAlpha(0.75 * quality.scale())
+      this.tweens.add({
+        targets: ring,
+        alpha: 0,
+        scaleX: ring.scaleX * 2.6,
+        scaleY: ring.scaleY * 2.6,
+        duration: D.pop,
+        ease: E.press,
+        onComplete: () => ring.destroy(),
+      })
+      this.sparkEmitter.explode(quality.count(mega ? 8 : 5), x, y)
+    }
+  }
+
+  /**
+   * §R3: check a medallion slot out of the pool — a free slot if one exists, a NEW slot while under
+   * the hard cap, else the OLDEST live one recycled (tweens killed before reuse; Phaser 3.90 never
+   * sweeps tweens for retargeted objects). Slots live for the whole round and die with the scene.
+   */
+  private takeMedallion(): MedallionSlot {
+    let slot = this.medallionPool.find(s => !s.live)
+    if (!slot && this.medallionPool.length < MEDALLION_CAP) {
+      const T = getTheme()
+      const badge = this.add.image(0, 0, 'medallion').setDisplaySize(CELL * 1.2, CELL * 1.2)
+      const label = this.add
+        .text(0, 0, '', { fontFamily: FONT, fontSize: '26px', fontStyle: '900', color: css(T.cardFill) })
+        .setOrigin(0.5)
+        .setStroke(T.navyText, 5)
+      const root = this.add.container(0, 0, [badge, label]).setDepth(28).setVisible(false)
+      slot = { root, badge, label, live: false, born: 0 }
+      this.medallionPool.push(slot)
+    }
+    if (!slot) {
+      slot = this.medallionPool.reduce((a, b) => (a.born <= b.born ? a : b))
+      this.tweens.killTweensOf(slot.root)
+    }
+    slot.live = true
+    slot.born = ++this.medallionSeq
+    return slot
   }
 
   /** Kill the urgent-moves pulse and settle the number back to rest scale (called when a level ends). */
