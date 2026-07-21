@@ -418,35 +418,28 @@ function makeMedallion(scene: Phaser.Scene): void {
   const S = 112
   const c = S / 2
   const g = scene.make.graphics({ x: 0, y: 0 }, false)
-  // 12-point star-burst: alternating long/short rays for the chunky minted-coin silhouette.
-  const burst = (rOut: number, rIn: number): Array<{ x: number; y: number }> => {
-    const pts: Array<{ x: number; y: number }> = []
-    for (let i = 0; i < 24; i++) {
-      const a = (i / 24) * Math.PI * 2 - Math.PI / 2
-      const r = i % 2 === 0 ? (i % 4 === 0 ? rOut : rOut * 0.9) : rIn
-      pts.push({ x: c + Math.cos(a) * r, y: c + Math.sin(a) * r })
-    }
-    return pts
+  // Soft radial halo — concentric falling-alpha white discs (tint turns them into warm glow).
+  // This replaces the old 12-point star-burst, which read as a flat cartoon sun against the
+  // board's glossy dimensional art (owner feedback, 2026-07-21). Light, not geometry.
+  for (let r = 54, a = 0.045; r >= 38; r -= 4, a += 0.02) {
+    g.fillStyle(0xffffff, a)
+    g.fillCircle(c, c, r)
   }
-  // Soft drop shadow under the burst (neutral black → survives every tint).
-  g.fillStyle(0x000000, 0.14)
-  g.fillPoints(burst(53, 36).map(p => ({ x: p.x, y: p.y + 3 })), true)
-  // White burst body — the tintable metal.
-  g.fillStyle(0xffffff, 1)
-  g.fillPoints(burst(53, 36), true)
-  // Ray shading: a smaller dark burst overlay so the rays read as bevelled facets, not a flat star.
-  g.fillStyle(0x000000, 0.1)
-  g.fillPoints(burst(50, 34), true)
-  // Coin disc: dark rim groove → white raised face → faint lower-half shade (top-lit dome).
+  // Soft drop shadow under the coin (neutral black → survives every heat tint).
   g.fillStyle(0x000000, 0.16)
-  g.fillCircle(c, c, 35)
+  g.fillEllipse(c, c + 4, 74, 68)
+  // Coin: dark rim groove → raised white face → top-lit dome shading (the house gold-token look).
+  g.fillStyle(0x000000, 0.18)
+  g.fillCircle(c, c, 37)
   g.fillStyle(0xffffff, 1)
-  g.fillCircle(c, c, 31)
-  g.fillStyle(0x000000, 0.07)
-  g.fillEllipse(c, c + 12, 56, 30)
-  // Bevel ring on the face edge.
-  g.lineStyle(2.5, 0x000000, 0.12)
-  g.strokeCircle(c, c, 30)
+  g.fillCircle(c, c, 33)
+  g.fillStyle(0x000000, 0.08)
+  g.fillEllipse(c, c + 13, 58, 30)
+  // Bevel ring on the face edge + a faint inner ring so the face reads minted, not flat.
+  g.lineStyle(2.5, 0x000000, 0.13)
+  g.strokeCircle(c, c, 32)
+  g.lineStyle(1.5, 0x000000, 0.07)
+  g.strokeCircle(c, c, 27)
   g.generateTexture('medallion', S, S)
   g.destroy()
 }
