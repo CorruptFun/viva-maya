@@ -82,37 +82,95 @@ function makeEmoji(scene: Phaser.Scene, key: SymbolType, glyph: string): void {
 }
 
 function makeSeven(scene: Phaser.Scene): void {
-  const text = scene.make.text(
-    {
-      x: 0,
-      y: 0,
-      text: '7',
-      style: {
-        fontFamily: '"Arial Black", "Helvetica Neue", Arial, sans-serif',
-        fontStyle: '900',
-        fontSize: '104px',
-        color: '#e0312e',
-        padding: { x: 12, y: 12 },
-        shadow: { offsetX: 0, offsetY: 5, color: 'rgba(90,20,10,0.28)', blur: 8, fill: true },
-      },
-    },
-    false
-  )
+  // Layered text stack fakes an embossed, glossy cast-metal "7" (Phaser Text can't gradient
+  // natively): a solid dark cast copy offset down-right for depth, a lit rose bevel edge peeking
+  // up-left behind the body, the bold red body carrying a dark minted outline + soft ground
+  // shadow, and a cream specular sheen nudged high-left for gloss. Same silhouette/palette as
+  // before (Direction A) — the flat glyph now reads as a raised, top-lit slot 7.
+  const FONT = '"Arial Black", "Helvetica Neue", Arial, sans-serif'
+  const mk = (
+    color: string,
+    alpha: number,
+    stroke?: string,
+    strokeThickness?: number
+  ): Phaser.GameObjects.Text => {
+    const style: Phaser.Types.GameObjects.Text.TextStyle = {
+      fontFamily: FONT,
+      fontStyle: '900',
+      fontSize: '104px',
+      color,
+      padding: { x: 16, y: 16 },
+    }
+    if (stroke !== undefined && strokeThickness !== undefined) {
+      style.stroke = stroke
+      style.strokeThickness = strokeThickness
+    }
+    const t = scene.make.text({ x: 0, y: 0, text: '7', style }, false)
+    t.setAlpha(alpha)
+    return t
+  }
+  const cast = mk('#7a1329', 0.5) // solid dark maroon cast — the emboss's deep base
+  const edge = mk('#ff7a85', 0.9) // lit rose bevel edge (roseLight), peeks behind the body
+  const body = mk('#e0312e', 1, '#8f1a20', 4) // red body + dark minted outline
+  body.setShadow(0, 5, 'rgba(90,20,10,0.28)', 8, false, true)
+  const gloss = mk('#fff3d6', 0.22) // cream specular sheen (soft high-left highlight)
   intoTexture(scene, 'seven', dt => {
     seatShadow(scene, dt)
-    dt.draw(text, (BASE - text.width) / 2, (BASE - text.height) / 2)
+    const place = (t: Phaser.GameObjects.Text, dx: number, dy: number): void => {
+      dt.draw(t, (BASE - t.width) / 2 + dx, (BASE - t.height) / 2 + dy)
+    }
+    place(cast, 3, 5) // depth cast, down-right
+    place(edge, -1.5, -3) // lit bevel rim, up-left (behind body)
+    place(body, 0, 0) // bold red body on top
+    place(gloss, -2, -3) // cream gloss sheen, up-left
   })
-  text.destroy()
+  cast.destroy()
+  edge.destroy()
+  body.destroy()
+  gloss.destroy()
 }
 
 function makeBar(scene: Phaser.Scene): void {
   const g = scene.make.graphics({ x: 0, y: 0 }, false)
-  g.fillStyle(0x1f2a4d, 0.25)
-  g.fillRoundedRect(18, 42, 92, 52, 14)
+  const x = 16
+  const y = 36
+  const w = 96
+  const h = 54
+  const r = 14
+  // Soft drop shadow directly under the plate — neutral black, two feathered layers.
+  g.fillStyle(0x000000, 0.14)
+  g.fillRoundedRect(x, y + 7, w, h, r)
+  g.fillStyle(0x000000, 0.14)
+  g.fillRoundedRect(x, y + 4, w, h, r)
+  // Navy plate body.
   g.fillStyle(0x26304d, 1)
-  g.fillRoundedRect(16, 36, 96, 54, 14)
-  g.lineStyle(3, 0x3d4a75, 1)
-  g.strokeRoundedRect(16, 36, 96, 54, 14)
+  g.fillRoundedRect(x, y, w, h, r)
+  // Glossy top highlight — lighter-navy bands anchored at the crown, brightest + narrowest on
+  // top (stacked flat bands; Phaser 3.90 only fillGradientStyles reliably on fillRect, so the
+  // pill gloss is faked with alpha bands like makeTile's dome — square bottoms sit hidden mid-body).
+  const hi: Array<[number, number, number]> = [
+    [30, 0x3a4778, 0.55],
+    [20, 0x4a5a8f, 0.42],
+    [11, 0x5f70a8, 0.32],
+  ]
+  for (const [bh, col, a] of hi) {
+    g.fillStyle(col, a)
+    g.fillRoundedRect(x, y, w, bh, { tl: r, tr: r, bl: 0, br: 0 })
+  }
+  // Gradient-shaded body — darker toward the bottom (black-alpha bands anchored at the base,
+  // rounded bottom corners matching the pill; square tops hide mid-body).
+  for (const [f, a] of [[0.52, 0.06], [0.7, 0.07], [0.86, 0.1]] as Array<[number, number]>) {
+    g.fillStyle(0x000000, a)
+    g.fillRoundedRect(x, y + h * f, w, h * (1 - f), { tl: 0, tr: 0, bl: r, br: r })
+  }
+  // Bevel frame: a dark bottom groove (shifted low → the shaded underside), a crisp gold-bezel
+  // frame, and a lit gold inner top edge — a raised chrome-and-gold slot plate.
+  g.lineStyle(3, 0x141a2e, 0.85)
+  g.strokeRoundedRect(x, y + 2, w, h, r)
+  g.lineStyle(3, 0xf2c14e, 1)
+  g.strokeRoundedRect(x, y, w, h, r)
+  g.lineStyle(1.5, 0xffe08a, 0.85)
+  g.strokeRoundedRect(x + 2, y + 1, w - 4, h - 4, r - 2)
   const text = scene.make.text(
     {
       x: 0,
@@ -131,7 +189,16 @@ function makeBar(scene: Phaser.Scene): void {
   intoTexture(scene, 'bar', dt => {
     seatShadow(scene, dt)
     dt.draw(g)
-    dt.draw(text, (BASE - text.width) / 2, 36 + (54 - text.height) / 2)
+    // Embossed 'BAR': a dark edge copy (offset down-right) + a light glint (offset up-left) under
+    // the full gold body drawn last, so the glyph stays fully legible while its edges read carved.
+    const bx = (BASE - text.width) / 2
+    const by = y + (h - text.height) / 2
+    text.setColor('#3a2405')
+    dt.draw(text, bx + 1.5, by + 2)
+    text.setColor('#fff3d6')
+    dt.draw(text, bx - 1, by - 1.5)
+    text.setColor('#ffd75e')
+    dt.draw(text, bx, by)
   })
   text.destroy()
   g.destroy()
@@ -179,21 +246,69 @@ function makeGlyphTexture(scene: Phaser.Scene, key: string, glyph: string, fontS
   text.destroy()
 }
 
+/**
+ * JACKPOT token — a minted, top-lit GOLD coin behind the 🎰 glyph (Direction B: bold casino-lux).
+ * Built like makeMedallion/drawBomb but in full gold: a warm radial halo, a soft contact shadow, a
+ * dark rim GROOVE, a reeded/milled outer edge (alternating bright-ridge + dark-groove radial ticks
+ * that read as 3D milling even when the coin blurs to ~73px on the board), a raised domed face faked
+ * with stacked falling-alpha gold discs pushed UPWARD (deep gold at the belly → cream at the crown,
+ * since Phaser 3.90 can't gradient a circle), a lit/dark bevel step, and a broad crown gloss +
+ * specular. The 🎰 emoji is drawn LAST so it stays crisp on top. 128-space, baked ×2 → 256².
+ */
 function makeJackpot(scene: Phaser.Scene): void {
+  const c = 64
   const g = scene.make.graphics({ x: 0, y: 0 }, false)
+  // Soft contact shadow so the token reads SEATED on its tile (neutral black, feathered — the
+  // seatShadow idiom, sized round for the coin). Drawn first; the opaque disc covers its top.
+  g.fillStyle(0x000000, 0.09)
+  g.fillEllipse(c, c + 9, 108, 98)
+  g.fillStyle(0x000000, 0.1)
+  g.fillEllipse(c, c + 7, 98, 88)
+  g.fillStyle(0x000000, 0.12)
+  g.fillEllipse(c, c + 5, 86, 78)
+  // Milled outer rim base (goldDeep) — the reeded knurl sits on this dark ground.
   g.fillStyle(0xc9930a, 1)
-  g.fillCircle(64, 64, 52)
-  g.fillStyle(0xf2b234, 1)
-  g.fillCircle(64, 64, 47)
-  g.fillStyle(0xffd75e, 1)
-  g.fillCircle(64, 64, 39)
-  g.lineStyle(4, 0xa87410, 1)
-  for (let i = 0; i < 12; i++) {
-    const a = (i / 12) * Math.PI * 2
-    const c = Math.cos(a)
-    const s = Math.sin(a)
-    g.lineBetween(64 + c * 41, 64 + s * 41, 64 + c * 50, 64 + s * 50)
+  g.fillCircle(c, c, 52)
+  // Reeded / knurled edge: alternating LIT + SHADOWED radial teeth so the rim reads as 3D milling
+  // (light facet + dark facet per notch) instead of the old flat gold ring. Chunky enough (18 teeth)
+  // to survive the downscale to ~73px — dimensional shimmer, not vanishing filigree.
+  const teeth = 18
+  for (let i = 0; i < teeth; i++) {
+    const a = (i / teeth) * Math.PI * 2
+    const co = Math.cos(a)
+    const si = Math.sin(a)
+    const lit = i % 2 === 0
+    g.lineStyle(3.6, lit ? 0xffd75e : 0x7a5a08, lit ? 0.9 : 0.85)
+    g.lineBetween(c + co * 43, c + si * 43, c + co * 51, c + si * 51)
   }
+  // Dark rim GROOVE — the recessed channel between the milled edge and the raised face.
+  g.lineStyle(4, 0x7a5a08, 0.55)
+  g.strokeCircle(c, c, 43)
+  // Raised domed face: goldBezel base, then a brighter goldBright upper form offset UP (the drawBomb
+  // lit-dome idiom) — the base gold left showing along the bottom becomes the shaded underside.
+  g.fillStyle(0xf2c14e, 1)
+  g.fillCircle(c, c, 41)
+  g.fillStyle(0xffd75e, 1)
+  g.fillCircle(c, c - 5, 34)
+  // Warm cream light pool near the crown → the top-lit highlight of the dome.
+  g.fillStyle(0xfff3d6, 0.5)
+  g.fillCircle(c, c - 10, 20)
+  // Underside shading — black-alpha ellipses hugging the lower face (kept inside the r41 disc so the
+  // shadow never spills onto the rim), deepening the bottom of the dome.
+  g.fillStyle(0x000000, 0.08)
+  g.fillEllipse(c, c + 28, 58, 20)
+  g.fillStyle(0x000000, 0.09)
+  g.fillEllipse(c, c + 34, 46, 14)
+  // Bevel ring on the face edge + a lit inner ring → the face reads minted, not printed.
+  g.lineStyle(2.5, 0x7a5a08, 0.5)
+  g.strokeCircle(c, c, 40)
+  g.lineStyle(2, 0xffd75e, 0.6)
+  g.strokeCircle(c, c, 37)
+  // Top gloss crescent + specular sheen at the crown, above where the emoji sits.
+  g.fillStyle(0xfffdf8, 0.32)
+  g.fillEllipse(c, c - 24, 34, 11)
+  g.fillStyle(0xffffff, 0.5)
+  g.fillEllipse(c - 8, c - 26, 13, 5)
   const text = scene.make.text(
     {
       x: 0,
@@ -217,45 +332,126 @@ function makeChip(scene: Phaser.Scene): void {
   const g = scene.make.graphics({ x: 0, y: 0 }, false)
   const c = 24
   const r = 22
-  g.fillStyle(0xc4223e, 1)
-  g.fillCircle(c, c, r) // rose-red rim
-  g.fillStyle(0xfff3d6, 1)
+  // Seated contact shadow — a soft dark ellipse under the token so it grounds on
+  // the HUD rail instead of floating (kept low + wide so only a sliver peeks past
+  // the rim at the bottom; neutral black reads as depth at every size).
+  g.fillStyle(0x000000, 0.1)
+  g.fillEllipse(c, 46, 42, 9)
+  g.fillStyle(0x000000, 0.1)
+  g.fillEllipse(c, 46, 30, 7)
+
+  // Rim BEVEL: three stacked discs fake a lit rounded rim — deep rose shadow at
+  // the lower-right, bright rose at the upper-left, main tone between (the same
+  // offset-disc trick drawBomb uses for its lit upper form). Keeps the silhouette.
+  g.fillStyle(0xa8213c, 1) // roseDeep — shadowed lower-right crescent
+  g.fillCircle(c, c, r)
+  g.fillStyle(0xff7a85, 1) // roseLight — lit upper-left edge
+  g.fillCircle(c - 1.6, c - 1.8, r - 0.6)
+  g.fillStyle(0xc4223e, 1) // original rim tone (identity preserved)
+  g.fillCircle(c - 0.4, c - 0.6, r - 2.4)
+
+  // 8 cream edge spots — each with a faint black seat so it reads inset, then the
+  // cream nudged up into the light for a hair of relief.
+  const sr = r * 0.82
   for (let i = 0; i < 8; i++) {
     const a = (i / 8) * Math.PI * 2
-    g.fillCircle(c + Math.cos(a) * r * 0.82, c + Math.sin(a) * r * 0.82, 3.2) // edge spots
+    const sx = c + Math.cos(a) * sr
+    const sy = c + Math.sin(a) * sr
+    g.fillStyle(0x000000, 0.16) // dark seat under the spot
+    g.fillCircle(sx, sy + 0.6, 3.7)
+    g.fillStyle(0xfff3d6, 1) // cream spot
+    g.fillCircle(sx, sy - 0.4, 3.2)
   }
-  g.fillStyle(0xf2b234, 1)
-  g.fillCircle(c, c, r * 0.62) // gold inner ring
+
+  // Gold inner ring — beveled with the same three-disc trick: goldDeep groove,
+  // goldBright lit edge, gold main tone.
+  g.fillStyle(0xc9930a, 1) // goldDeep — groove / lower-right shadow
+  g.fillCircle(c, c, r * 0.62 + 1)
+  g.fillStyle(0xffd75e, 1) // goldBright — lit upper-left
+  g.fillCircle(c - 1, c - 1.2, r * 0.62)
+  g.fillStyle(0xf2b234, 1) // gold main tone
+  g.fillCircle(c - 0.3, c - 0.4, r * 0.62 - 1.4)
+
+  // Cream face with subtle CONCAVE shading (black pooled low) + a top-lit sheen,
+  // so the recessed centre reads dished instead of flat.
   g.fillStyle(0xfff3d6, 1)
-  g.fillCircle(c, c, r * 0.5) // cream face
-  g.fillStyle(0xd3304f, 1)
-  g.fillCircle(c, c, r * 0.22) // center pip
+  g.fillCircle(c, c, r * 0.5)
+  g.fillStyle(0x000000, 0.08) // concave shadow across the lower face
+  g.fillEllipse(c, c + 4, r * 0.9, r * 0.5)
+  g.fillStyle(0xffffff, 0.45) // top-lit sheen on the upper face
+  g.fillEllipse(c - 1.5, c - 4, r * 0.62, r * 0.34)
+
+  // Center pip — a small rose dome pressed into the face (dark seat, deep base,
+  // lit top offset up, tiny specular), matching drawBomb's dome+specular idiom.
+  const pr = r * 0.22
+  g.fillStyle(0x000000, 0.1) // pressed-in seat around the pip
+  g.fillCircle(c, c + 0.5, pr + 1.6)
+  g.fillStyle(0xa8213c, 1) // roseDeep base
+  g.fillCircle(c, c + 0.4, pr)
+  g.fillStyle(0xd3304f, 1) // rose top (offset up = lit dome)
+  g.fillCircle(c, c - 0.4, pr - 0.6)
+  g.fillStyle(0xff7a85, 0.7) // specular highlight
+  g.fillCircle(c - 1, c - 1.6, pr * 0.34)
+
+  // Unifying GLOSS sweep across the whole upper half — the signature glassy arc
+  // that ties rim + ring + face into one top-lit 3D token. Faint so it never
+  // washes out the palette.
+  g.fillStyle(0xffffff, 0.11)
+  g.fillEllipse(c - 2, c - 9, r * 1.5, r * 0.9)
+
   g.generateTexture('chip', 48, 48)
   g.destroy()
 }
 
-/** Mini playing card (red diamond pip). */
+/** Mini playing card (red diamond pip) — a glossy stock card so it reads dimensional beside the
+ * minted chip in the win-burst spray. A top-lit stock (warm belly -> lit upper -> a gloss sweep),
+ * a soft two-tone bevel frame, and a RAISED diamond pip (dark seat -> rose face -> cream glint),
+ * matching the depth idiom of makeChip. Same 40x56 'card' key; nothing downstream moves. */
 function makeCard(scene: Phaser.Scene): void {
   const g = scene.make.graphics({ x: 0, y: 0 }, false)
   const w = 40
   const h = 56
+  const r = 7
+  // Stock as a shallow top-lit dome: warm belly base, a lit upper band, then a soft gloss sweep.
+  g.fillStyle(0xf1e6cf, 1)
+  g.fillRoundedRect(0, 0, w, h, r) // warm belly
   g.fillStyle(0xfffdf8, 1)
-  g.fillRoundedRect(0, 0, w, h, 7)
-  g.lineStyle(2, 0xe8dfc9, 1)
-  g.strokeRoundedRect(1, 1, w - 2, h - 2, 6)
+  g.fillRoundedRect(0, 0, w, h * 0.56, { tl: r, tr: r, bl: 0, br: 0 }) // lit upper
+  g.fillStyle(0xffffff, 0.4)
+  g.fillEllipse(w / 2 - 2, h * 0.2, w * 0.9, h * 0.28) // gloss sweep across the top
+  // Two-tone bevel frame: a warm seated outer edge + a fine bright top rim.
+  g.lineStyle(1.5, 0xe0d4b8, 1)
+  g.strokeRoundedRect(0.75, 0.75, w - 1.5, h - 1.5, r - 0.5)
+  g.lineStyle(1, 0xffffff, 0.55)
+  g.strokeRoundedRect(2, 1.5, w - 4, h - 4, r - 1.5)
   const cx = w / 2
   const cy = h / 2
+  const diamond = (dx: number, dy: number): Array<{ x: number; y: number }> => [
+    { x: cx + dx, y: cy - 11 + dy },
+    { x: cx + 8 + dx, y: cy + dy },
+    { x: cx + dx, y: cy + 11 + dy },
+    { x: cx - 8 + dx, y: cy + dy },
+  ]
+  // Raised diamond pip: a dark seat below, the rose face, and a cream top glint (top-lit dome).
+  g.fillStyle(0x000000, 0.12)
+  g.fillPoints(diamond(0, 1.4), true) // pressed seat
+  g.fillStyle(0xa8213c, 1)
+  g.fillPoints(diamond(0, 0.5), true) // deep base
   g.fillStyle(0xd3304f, 1)
+  g.fillPoints(diamond(0, -0.5), true) // rose face lifted toward the light
+  g.fillStyle(0xff8a97, 0.65)
   g.fillPoints(
     [
-      { x: cx, y: cy - 11 },
-      { x: cx + 8, y: cy },
-      { x: cx, y: cy + 11 },
-      { x: cx - 8, y: cy },
+      { x: cx, y: cy - 8 },
+      { x: cx + 4, y: cy - 3.5 },
+      { x: cx, y: cy - 1 },
+      { x: cx - 4, y: cy - 3.5 },
     ],
     true
-  )
-  g.fillCircle(7, 8, 2.4) // corner pip
+  ) // cream/rose top glint
+  // Corner pips (kept from the original identity).
+  g.fillStyle(0xd3304f, 1)
+  g.fillCircle(7, 8, 2.4)
   g.fillCircle(w - 7, h - 8, 2.4)
   g.generateTexture('card', 40, 56)
   g.destroy()
