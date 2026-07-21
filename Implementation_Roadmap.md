@@ -1,4 +1,4 @@
-# Implementation Roadmap: Viva Maya Web3
+# Implementation Roadmap: Viva Ton Web3
 
 This document breaks the architecture down into actionable Epics and Tasks for the development team. 
 
@@ -33,7 +33,7 @@ This document breaks the architecture down into actionable Epics and Tasks for t
     - Update ledger on success/failure.
 
 ## Epic 4: Client Integration & "Gift Shop"
-*   **Task 4.1:** Strip `localStorage` state from Viva Maya and replace it with Supabase REST calls.
-*   **Task 4.2:** Build the "Maya Tickets" UI overlay (replacing old score displays).
+*   **Task 4.1:** Strip `localStorage` state from Viva Ton and replace it with Supabase REST calls.
+*   **Task 4.2:** Build the "Ton Tickets" UI overlay (replacing old score displays).
 *   **Task 4.3:** Build the "Prize Tent" React/Phaser UI (Remote Feature Flagged).
 *   **Task 4.4:** Integrate Cloudflare Turnstile CAPTCHA on the withdrawal button.

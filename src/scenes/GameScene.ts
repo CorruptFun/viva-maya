@@ -22,7 +22,7 @@ import { todayKey } from '../core/daily'
 import { ENDLESS_MOVES, endlessBestForWeek, endlessRngForWeek, recordEndless, weekKey } from '../core/endless'
 import { LEVEL_COUNT, levelSpec } from '../core/levels'
 import { devSetLives, formatCountdown, refreshLives, spendLife } from '../core/lives'
-import { maya, pendingOccasion, warmLoseLine, warmWinSubtitle } from '../core/maya'
+import { warmth, pendingOccasion, warmLoseLine, warmWinSubtitle } from '../core/warmth'
 import { mulberry32 } from '../core/rng'
 import { addChips, loadSave, markFinaleSeen, markOccasionSeen, persistSave, recordResult, recordScore, takePendingBoosts } from '../core/save'
 import { SYMBOLS, key } from '../core/types'
@@ -108,7 +108,7 @@ export class GameScene extends Phaser.Scene {
   private state: GameState = 'idle'
   /** §E4 latch — a jackpot chip detonated this round, so the Heartbloom hero win fires even below 3-star. */
   private jackpotOccurred = false
-  /** §E4 guard — the Heartbloom (giant heart of light + Maya leitmotif) fires at most ONCE per round. */
+  /** §E4 guard — the Heartbloom (giant heart of light + Ton leitmotif) fires at most ONCE per round. */
   private heartbloomFired = false
   /** §E9 — set in finishWin when this win's score beats the stored best; drives the NEW BEST! ribbon. */
   private newBestThisWin = false
@@ -334,7 +334,7 @@ export class GameScene extends Phaser.Scene {
   /**
    * §E14 first-run onboarding: show the gentle teach-card ONCE, and only for a TRULY-NEW player —
    * `seenIntro` still false AND still on level 1 (`unlocked <= 1`). The second clause is the guard
-   * that keeps it from ever popping for an existing player mid-progress (Maya at Level 46 has
+   * that keeps it from ever popping for an existing player mid-progress (Ton at Level 46 has
    * `unlocked = 47`). Never in endless. Marked seen immediately (so it can't re-show even if the card
    * is dismissed by tapping away), then rendered; `introOpen` gates board taps while it's up.
    */
@@ -2243,7 +2243,7 @@ export class GameScene extends Phaser.Scene {
 
     // BEAT 0 — the Heartbloom hero win (§E4, signature moment #3). Fires ONLY on the biggest wins:
     // a PERFECT (3-star) clear OR a jackpot strike this round. A giant heart of light blooms from
-    // board-center under the Maya leitmotif — LAYERED beneath the existing bloom/flash/rank-word/
+    // board-center under the Ton leitmotif — LAYERED beneath the existing bloom/flash/rank-word/
     // fireworks/coin-payout, never replacing them. Scarce by construction: plain 1–2 star wins never
     // qualify, and it self-guards to one fire per round. Fired synchronously (not via `at`) so an
     // instant tap-skip can't rob the hero moment. Nothing else here is gated on it.
@@ -2396,7 +2396,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   /**
-   * The HEARTBLOOM (§E4, signature moment #3) — Viva Maya's ownable hero-win beat. A giant translucent
+   * The HEARTBLOOM (§E4, signature moment #3) — Viva Ton's ownable hero-win beat. A giant translucent
    * heart of light (the baked `heartglow`, ADD, tinted the theme's warm `bloom`) blooms from board-
    * center, BEATS TWICE (lub-DUB) on a cadence inspired by Home's ~620/340 emblem heartbeat, and
    * streams heart-particles up from its apex — all under `sfx.mayaMotif()`, the 3-note leitmotif heard
@@ -2538,7 +2538,7 @@ export class GameScene extends Phaser.Scene {
   /**
    * §E9 ALL CLEAR (signature moment #6) — the one-time grand finale on clearing the FINAL level.
    * A full marquee celebration + the Heartbloom hero beat + a lingering, staggered heart shower + a
-   * heartfelt line, with the owner's private sign-off appended ONLY when maya.secretMessage is set
+   * heartfelt line, with the owner's private sign-off appended ONLY when warmth.secretMessage is set
    * (else a clean generic close). Reuses existing emitters/textures; reduced motion → static text +
    * one soft heart puff, no staggered showers. Latched by finaleSeen upstream — plays once, ever.
    */
@@ -2578,7 +2578,7 @@ export class GameScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setStroke('#ffffff', 6)
     // The heartfelt line — always-on, non-name. Owner sign-off appended ONLY when secretMessage is set.
-    const sign = maya.secretMessage?.trim()
+    const sign = warmth.secretMessage?.trim()
     const heartfelt =
       sign && sign.length > 0
         ? `You finished every level.\nThank you for playing. ♥\n\n${sign}`
@@ -2652,7 +2652,7 @@ export class GameScene extends Phaser.Scene {
     g.strokeRoundedRect(cx - 260, cy - halfH, 520, halfH * 2, 34)
   }
 
-  /** Maya's touch: a shower of hearts bursting from (x, y). */
+  /** Ton's touch: a shower of hearts bursting from (x, y). */
   private overlayHearts(x: number, count: number, y = 400): void {
     const hearts = this.add
       .particles(0, 0, 'heart', {

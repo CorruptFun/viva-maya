@@ -41,7 +41,7 @@ export interface SaveData {
   seenIntro: boolean
 }
 
-const KEY = 'viva-maya:v1'
+const KEY = 'viva-ton:v1'
 
 const DEFAULTS: SaveData = {
   v: 7,

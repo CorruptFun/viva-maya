@@ -31,10 +31,10 @@ export const FONT = '"Arial Black", "Helvetica Neue", Arial, sans-serif'
 // High-Contrast board flag (§E12). Kept OUT of theme.ts (owned by that module's a11y block) but
 // following the same shape-tolerant one-key pattern: a self-contained localStorage flag the
 // settings panel flips and GameScene reads at create(). Default OFF → the board's warm look is
-// untouched until Maya opts in. No save-schema coupling (mirrors theme/sfx storage).
+// untouched until Ton opts in. No save-schema coupling (mirrors theme/sfx storage).
 // ─────────────────────────────────────────────────────────────────────────────
 
-const HC_BOARD_KEY = 'viva-maya:hcBoard'
+const HC_BOARD_KEY = 'viva-ton:hcBoard'
 
 function readHcBoard(): boolean {
   try {
@@ -63,13 +63,13 @@ export function setHcBoard(v: boolean): void {
 
 /**
  * Raw in-app Reduce-Motion pref for the settings TOGGLE display (§E8) — read straight from the a11y
- * key so the switch reflects exactly what Maya set, independent of the OS query. Writes still go
+ * key so the switch reflects exactly what Ton set, independent of the OS query. Writes still go
  * through theme.ts's `setReduceMotion` (single source of truth); the effective motion state
  * (`prefersReducedMotion`) still OR's the OS setting. Shape-tolerant: any bad/absent value → false.
  */
 function rawReduceMotionPref(): boolean {
   try {
-    const raw = localStorage.getItem('viva-maya:a11y')
+    const raw = localStorage.getItem('viva-ton:a11y')
     if (raw === null) return false
     return (JSON.parse(raw) as { reduceMotion?: unknown }).reduceMotion === true
   } catch {
@@ -204,7 +204,7 @@ export interface Marquee {
   bulbs: Phaser.GameObjects.Image[]
   /**
    * Power-on reveal (Signature #1): the wordmark darks IMMEDIATELY (call synchronously so it never
-   * flashes visible first), then after `leadIn` ms a single gold sweep glides VIVA→MAYA lighting the
+   * flashes visible first), then after `leadIn` ms a single gold sweep glides VIVA→TON lighting the
    * words as it passes, the marquee bulbs cascade-light left→right in its wake, and the heart flourish
    * pops in last. Returns roughly when the reveal finishes (ms) so the caller can chain the glow bloom
    * + button stagger. Under reduced motion everything is simply left statically lit.
@@ -225,7 +225,7 @@ export function addMarquee(scene: Phaser.Scene, centerX: number, y: number, opts
     .setShadow(0, 3, 'rgba(90,70,20,0.25)', 6, false, true)
   viva.setTint(0xffd75e, 0xffd75e, 0xc9930a, 0xc9930a)
   const maya = scene.add
-    .text(0, y, 'MAYA', { fontFamily: FONT, fontSize: '58px', fontStyle: '900', color: '#ffffff' })
+    .text(0, y, 'TON', { fontFamily: FONT, fontSize: '58px', fontStyle: '900', color: '#ffffff' })
     .setOrigin(0, 0.5)
     .setLetterSpacing(4)
     .setShadow(0, 3, 'rgba(90,20,15,0.25)', 6, false, true)
@@ -272,7 +272,7 @@ export function addMarquee(scene: Phaser.Scene, centerX: number, y: number, opts
     }
   }
 
-  // Slow light-sweep shine: a masked cream gloss that periodically glides VIVA→MAYA. Each word
+  // Slow light-sweep shine: a masked cream gloss that periodically glides VIVA→TON. Each word
   // gets its own streak clipped to its glyphs (bitmap mask), and the two share one tween value so
   // the highlight reads as a single continuous band travelling across the whole wordmark. Skipped
   // under reduced motion.
@@ -485,7 +485,7 @@ function safeR(r: number, w: number, h: number): number {
 // Material + lighting law (E7). ONE key light so every baked shadow agrees where the
 // light is (disagreeing shadows are the tell of cheap UI); a canonical real-metal gold
 // face; and a dark-theme-only lit accent rim. All baked, zero runtime cost — the light
-// themes (Golden Hour / Maya's Heart) are visually untouched.
+// themes (Golden Hour / Ton's Heart) are visually untouched.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** The one key light for the whole UI (design-space, above-centre). Every surface casts away from it. */
@@ -530,7 +530,7 @@ function isDarkTheme(T: Theme = getTheme()): boolean {
 
 /**
  * Dark-theme-only lit accent rim along the TOP inner edge of a cream card/pill. A coloured lit rim
- * is what makes neon read expensive; on Golden Hour / Maya's Heart this is a no-op (cost + look
+ * is what makes neon read expensive; on Golden Hour / Ton's Heart this is a no-op (cost + look
  * unchanged). Draw AFTER the fill/bezel so the rim sits on top of the top edge.
  */
 function accentRimTop(

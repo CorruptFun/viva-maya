@@ -1,5 +1,5 @@
 /**
- * Design-token layer for Viva Maya — the single source of truth for every brand
+ * Design-token layer for Viva Ton — the single source of truth for every brand
  * colour, wash, glow, gloss and text ink the visual overhaul reads from.
  *
  * Two representations, because Phaser needs both:
@@ -118,7 +118,7 @@ export interface Theme {
 /** Number → `#rrggbb`. The bridge for Phaser `Text` colours drawn from graphics tokens. */
 export const css = (n: number): string => '#' + (n & 0xffffff).toString(16).padStart(6, '0')
 
-const THEME_KEY = 'viva-maya:theme'
+const THEME_KEY = 'viva-ton:theme'
 export const DEFAULT_THEME_ID: ThemeId = 'golden'
 /** Picker display order (§2.1): the two free themes first, then the progress-gated pair. */
 export const THEME_ORDER: ThemeId[] = ['golden', 'mayaHeart', 'roseMidnight', 'neonVegas']
@@ -205,11 +205,11 @@ const golden: Theme = {
   pageBg: '#f6f3ec',
 }
 
-/** Maya's Heart — tender valentine (free). Soft rose wash, rose glows, rose accent. */
+/** Ton's Heart — tender valentine (free). Soft rose wash, rose glows, rose accent. */
 const mayaHeart: Theme = {
   ...golden,
   id: 'mayaHeart',
-  name: "Maya's Heart",
+  name: "Ton's Heart",
   washTop: 0xfdf1f0,
   washBottom: 0xf7e6e6,
   washGlowWarm: 0xf5b6c0,
@@ -307,7 +307,7 @@ export interface ThemeMeta {
 
 export const THEME_META: Record<ThemeId, ThemeMeta> = {
   golden: { name: 'Golden Hour', feel: 'the warm default', unlockLevel: 0 },
-  mayaHeart: { name: "Maya's Heart", feel: 'a tender valentine', unlockLevel: 0 },
+  mayaHeart: { name: "Ton's Heart", feel: 'a tender valentine', unlockLevel: 0 },
   roseMidnight: { name: 'Rose Midnight', feel: 'after-hours velvet', unlockLevel: 10 },
   neonVegas: { name: 'Neon Vegas', feel: 'the strip at night', unlockLevel: 30 },
 }
@@ -379,12 +379,12 @@ export function applyPageChrome(T: Theme): void {
 // ─────────────────────────────────────────────────────────────────────────────
 // In-app accessibility preferences (§E8). Two switches (vestibular ≠ photosensitivity) plus a
 // haptics opt-out, persisted in one shape-tolerant localStorage key so users needn't touch the OS
-// setting. Defaults are all OFF, so Maya's default experience is unchanged: every motion loop still
+// setting. Defaults are all OFF, so Ton's default experience is unchanged: every motion loop still
 // animates and every flash still fires unless she (or her OS) opts out. The settings panel (a later
 // slice) is the UI that flips these; this module owns the state + persistence.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const A11Y_KEY = 'viva-maya:a11y'
+const A11Y_KEY = 'viva-ton:a11y'
 
 interface A11yPrefs {
   /** In-app Reduce-Motion override — OR'd into `prefersReducedMotion()` alongside the OS query. */

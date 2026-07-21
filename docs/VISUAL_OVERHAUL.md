@@ -1,4 +1,4 @@
-# Viva Maya — Visual Overhaul: Full-Juicy Design & Orchestration Plan
+# Viva Ton — Visual Overhaul: Full-Juicy Design & Orchestration Plan
 
 > Authoritative design spec for the "make it ALIVE with real depth and premium gloss" overhaul.
 > Zero binary assets. All depth is faked with layered graphics + `generateTexture` + tweens — there are no shaders.
@@ -55,7 +55,7 @@ export type ThemeId = 'golden' | 'roseMidnight' | 'neonVegas' | 'mayaHeart'
 export interface Theme { id: ThemeId; name: string; /* ~60 flat tokens, §2.2 */ }
 
 export const css = (n: number): string => '#' + (n & 0xffffff).toString(16).padStart(6, '0')
-const THEME_KEY = 'viva-maya:theme'
+const THEME_KEY = 'viva-ton:theme'
 export const DEFAULT_THEME_ID: ThemeId = 'golden'
 export const THEME_ORDER: ThemeId[] = ['golden', 'mayaHeart', 'roseMidnight', 'neonVegas']
 export const THEMES: Record<ThemeId, Theme> = { /* §3e */ }
@@ -261,7 +261,7 @@ Each scene's `create()` gets one line at the very top (before any early-return):
 | Theme | Feel | Unlock | Wash | Signature swing |
 |---|---|---|---|---|
 | **`golden` — Golden Hour** | warm default (today's look) | free | `0xfaf3ec→0xefe7d6` cream | the base; zero diff |
-| **`mayaHeart` — tender valentine** | soft rose (the Maya tribute) | free | `0xfdf1f0→0xf7e6e6` | rose glows, `accent 0xd3304f`, `onBackdropInk #6a3a45` |
+| **`mayaHeart` — tender valentine** | soft rose (the Ton tribute) | free | `0xfdf1f0→0xf7e6e6` | rose glows, `accent 0xd3304f`, `onBackdropInk #6a3a45` |
 | **`roseMidnight` — after-hours velvet** | plum near-dark | `save.unlocked ≥ 10` | `0x241a2e→0x1a1526` | gold+rose aurora on dark, `onBackdropInk #f3e8f0`, deep `shadow 0x0d0912` |
 | **`neonVegas` — the strip at night** | navy neon | `unlocked > 30` (= `endlessUnlocked`) | `0x14203a→0x0e1730` | magenta `accent 0xff3d81` + cyan `accentAlt 0x35d0e0`, **cabinet halo stays warm gold**, cards stay cream |
 

@@ -1,6 +1,6 @@
-# Supabase Architecture & Game Security Protocol: Viva Maya Web3
+# Supabase Architecture & Game Security Protocol: Viva Ton Web3
 
-This document outlines the core Supabase SQL schemas and the secure client-server handshake protocol for Viva Maya Web3. The primary objective is to build a trustless architecture where the backend deterministically validates all game outcomes to prevent botting, API spoofing, and score manipulation.
+This document outlines the core Supabase SQL schemas and the secure client-server handshake protocol for Viva Ton Web3. The primary objective is to build a trustless architecture where the backend deterministically validates all game outcomes to prevent botting, API spoofing, and score manipulation.
 
 ---
 

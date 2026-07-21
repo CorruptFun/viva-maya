@@ -135,7 +135,7 @@ export class Web3OverlayController {
       const result = await response.json();
       if (response.ok && result.success) {
         save.chips = result.balance
-        localStorage.setItem('viva-maya-save', JSON.stringify(save))
+        localStorage.setItem('viva-ton-save', JSON.stringify(save))
       }
     } catch (e) {
       console.warn('[Sync] Server offline, falling back to local save data.');
@@ -218,7 +218,7 @@ export class Web3OverlayController {
           // Sync client-side chips balance
           const save = loadSave()
           save.chips = result.balance
-          localStorage.setItem('viva-maya-save', JSON.stringify(save))
+          localStorage.setItem('viva-ton-save', JSON.stringify(save))
           
           if (this.chipsBalanceEl) {
             this.chipsBalanceEl.textContent = result.balance.toLocaleString()

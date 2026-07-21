@@ -1,5 +1,5 @@
 /**
- * Motion language for Viva Maya — the timing/easing sibling of `theme.ts` (E1).
+ * Motion language for Viva Ton — the timing/easing sibling of `theme.ts` (E1).
  *
  * Where `theme.ts` centralises COLOUR, this module centralises MOTION: a small
  * named vocabulary of durations (`D`), brand easing curves (`E`), and combined

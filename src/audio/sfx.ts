@@ -1,5 +1,5 @@
 /**
- * Procedural Web Audio SFX for Viva Maya.
+ * Procedural Web Audio SFX for Viva Ton.
  *
  * Every sound is synthesized at runtime from oscillators, noise buffers, filters
  * and gain envelopes — the PWA ships ZERO audio assets and stays fully offline.
@@ -9,9 +9,9 @@
 
 import { getTheme } from '../view/theme'
 
-const MUTE_KEY = 'viva-maya:muted'
-const SWAP_KEY = 'viva-maya:swapSound'
-const AMBIENCE_KEY = 'viva-maya:ambience'
+const MUTE_KEY = 'viva-ton:muted'
+const SWAP_KEY = 'viva-ton:swapSound'
+const AMBIENCE_KEY = 'viva-ton:ambience'
 
 /** Subtle level every dry voice bleeds into the shared reverb bus (§E3-A1) — a light send, not a wash. */
 const REVERB_SEND = 0.12
@@ -640,7 +640,7 @@ class Sfx {
   }
 
   /**
-   * The "Maya" leitmotif (§E4) — the ownable signature. A 3-note RISING motif (major-third → fifth →
+   * The "Ton" leitmotif (§E4) — the ownable signature. A 3-note RISING motif (major-third → fifth →
    * octave) closed by winFanfare's sparkle-chord tail, KEY-LOCKED to the active theme (each degree
    * snapped to the theme's pentatonic, anchored 3 octaves above `bedRoot`) and bathed in the shared
    * reverb room, so it "sits in the theme's lounge." This voice is fired ONLY by the Heartbloom hero
