@@ -2421,10 +2421,10 @@ export class GameScene extends Phaser.Scene {
     // B1: a faint spark trail rides the grabbed piece across the glide (physical intent), retired the
     // instant the pieces snap. Reduced-motion / low tier → no trail (handled inside the helper).
     this.startSwipeTrail(sa)
-    // Follow-through (Pass 2): a gentle backOut so the pieces SETTLE into their swapped cells instead
-    // of stopping dead — matches the settleSquash gold standard. Curve-only, same SWAP_MS; reduced
-    // motion keeps the flat glide (the move itself must still run).
-    const swapEase = this.reducedMotion ? 'Quad.easeOut' : backOut(OVERSHOOT.gentle)
+    // Anticipation + follow-through (Pass 2, medium): a gentle Back.InOut so each piece winds up ~1-2px
+    // against the swap vector, then glides over and SETTLES with a small overshoot — a "load then
+    // release" swap in one free curve. Curve-only, same SWAP_MS; reduced motion keeps the flat glide.
+    const swapEase = this.reducedMotion ? 'Quad.easeOut' : (v: number) => Phaser.Math.Easing.Back.InOut(v, 1.1)
     await Promise.all([
       this.t({ targets: sa, x: posB.x, y: posB.y, duration: SWAP_MS, ease: swapEase }),
       this.t({ targets: sb, x: posA.x, y: posA.y, duration: SWAP_MS, ease: swapEase }),
@@ -2711,7 +2711,9 @@ export class GameScene extends Phaser.Scene {
           alpha: 0,
           delay,
           duration: CLEAR_MS,
-          ease: 'Quad.easeOut',
+          // Pass 2 (medium): a tiny Back.easeIn squash-dip (~-3.5%) before the piece pops to 1.4x and
+          // vanishes — a wind-up on every match-pop. reducedMotion keeps the flat decelerate-out.
+          ease: this.reducedMotion ? 'Quad.easeOut' : 'Back.easeIn',
         }).then(() => sprite.destroy())
       )
     }
@@ -2913,13 +2915,15 @@ export class GameScene extends Phaser.Scene {
       .setTint(0xffe6a8)
       .setBlendMode(Phaser.BlendModes.ADD)
       .setDepth(24)
-      .setDisplaySize(CELL * 0.9, CELL * 0.9)
+      // Pass 2 (medium): the charge glow starts WIDE + dim and GATHERS inward to a hot point during
+      // the coil (implodes), so the outward bloom belongs to the release, not the wind-up.
+      .setDisplaySize(CELL * 1.7, CELL * 1.7)
       .setAlpha(0)
     this.tweens.add({
       targets: flare,
       alpha: 0.85,
-      scaleX: flare.scaleX * 1.9,
-      scaleY: flare.scaleY * 1.9,
+      scaleX: flare.scaleX * 0.5,
+      scaleY: flare.scaleY * 0.5,
       duration: 80,
       ease: 'Quad.easeOut',
       onComplete: () => flare.destroy(),
@@ -3540,7 +3544,7 @@ export class GameScene extends Phaser.Scene {
           targets: sprite,
           y: to.y,
           duration: FALL_BASE_MS + FALL_PER_CELL_MS * dist,
-          ease: 'Back.easeOut',
+          ease: 'Quad.easeIn', // Pass 2 (medium): ACCELERATE downward (gravity) so settleSquash owns the whole landing bounce, not a double-bounce
         }).then(() => this.settleSquash(sprite, dist)) // E5: squash-&-settle on landing
       )
     }
@@ -3553,7 +3557,7 @@ export class GameScene extends Phaser.Scene {
           targets: sprite,
           y: to.y,
           duration: FALL_BASE_MS + FALL_PER_CELL_MS * spawn.dropCells,
-          ease: 'Back.easeOut',
+          ease: 'Quad.easeIn', // Pass 2 (medium): refills accelerate in to match the falls above (gravity)
         }).then(() => this.settleSquash(sprite, spawn.dropCells)) // E5: squash-&-settle on landing
       )
     }
