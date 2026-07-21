@@ -16,11 +16,13 @@ const BASE = 128
 const SS = 2
 export const TEX_SIZE = BASE * SS
 
-const EMOJI: Partial<Record<SymbolType, string>> = {
+const EMOJI: Record<SymbolType, string> = {
   cherry: '🍒',
-  diamond: '💎',
-  bell: '🔔',
-  clover: '🍀',
+  seven: '🦆',
+  diamond: '🐻',
+  bell: '🐊',
+  clover: '🍑',
+  bar: '🐱',
 }
 
 /**
@@ -78,62 +80,6 @@ function makeEmoji(scene: Phaser.Scene, key: SymbolType, glyph: string): void {
     dt.draw(text, (BASE - text.width) / 2, (BASE - text.height) / 2)
   })
   text.destroy()
-}
-
-function makeSeven(scene: Phaser.Scene): void {
-  const text = scene.make.text(
-    {
-      x: 0,
-      y: 0,
-      text: '7',
-      style: {
-        fontFamily: '"Arial Black", "Helvetica Neue", Arial, sans-serif',
-        fontStyle: '900',
-        fontSize: '104px',
-        color: '#e0312e',
-        padding: { x: 12, y: 12 },
-        shadow: { offsetX: 0, offsetY: 5, color: 'rgba(90,20,10,0.28)', blur: 8, fill: true },
-      },
-    },
-    false
-  )
-  intoTexture(scene, 'seven', dt => {
-    seatShadow(scene, dt)
-    dt.draw(text, (BASE - text.width) / 2, (BASE - text.height) / 2)
-  })
-  text.destroy()
-}
-
-function makeBar(scene: Phaser.Scene): void {
-  const g = scene.make.graphics({ x: 0, y: 0 }, false)
-  g.fillStyle(0x1f2a4d, 0.25)
-  g.fillRoundedRect(18, 42, 92, 52, 14)
-  g.fillStyle(0x26304d, 1)
-  g.fillRoundedRect(16, 36, 96, 54, 14)
-  g.lineStyle(3, 0x3d4a75, 1)
-  g.strokeRoundedRect(16, 36, 96, 54, 14)
-  const text = scene.make.text(
-    {
-      x: 0,
-      y: 0,
-      text: 'BAR',
-      style: {
-        fontFamily: '"Arial Black", "Helvetica Neue", Arial, sans-serif',
-        fontStyle: '900',
-        fontSize: '34px',
-        color: '#ffd75e',
-        padding: { x: 4, y: 4 },
-      },
-    },
-    false
-  )
-  intoTexture(scene, 'bar', dt => {
-    seatShadow(scene, dt)
-    dt.draw(g)
-    dt.draw(text, (BASE - text.width) / 2, 36 + (54 - text.height) / 2)
-  })
-  text.destroy()
-  g.destroy()
 }
 
 function makeSpark(scene: Phaser.Scene): void {
@@ -400,12 +346,12 @@ export function pieceTextureKey(piece: Piece): string {
 
 /** Representative colour per symbol — the "match by colour" accent carried onto specials. */
 const SYMBOL_TINT: Record<SymbolType, number> = {
-  cherry: 0xd3304f,
-  seven: 0xe0312e,
-  diamond: 0x49c6ee,
-  bell: 0xf2b234,
-  clover: 0x3fae5a,
-  bar: 0x4a5a8f,
+  cherry: 0xff3366,
+  seven: 0xffd700,
+  diamond: 0xb45309,
+  bell: 0x22c55e,
+  clover: 0xf97316,
+  bar: 0x818cf8,
 }
 
 /**
@@ -716,8 +662,6 @@ export function createAllTextures(scene: Phaser.Scene): void {
   for (const [key, glyph] of Object.entries(EMOJI) as Array<[SymbolType, string]>) {
     makeEmoji(scene, key, glyph)
   }
-  makeSeven(scene)
-  makeBar(scene)
   makeSpark(scene)
   makeRing(scene)
   makeJackpot(scene)
