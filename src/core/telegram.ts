@@ -76,7 +76,7 @@ export const tg = {
     app.ready()
     app.expand()
     
-    // Theme alignment matching Viva Maya's warm off-white cream palette
+    // Theme alignment matching Viva Ton's warm off-white cream palette
     try {
       app.setHeaderColor('#f6f3ec')
       app.setBackgroundColor('#f6f3ec')

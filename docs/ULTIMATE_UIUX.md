@@ -1,4 +1,4 @@
-# Viva Maya — ULTIMATE UI/UX ELEVATION
+# Viva Ton — ULTIMATE UI/UX ELEVATION
 
 *Creative-director synthesis of 7 expert lenses (game-juice, art-direction, motion, delight, a11y-ux, sound↔visual, perf-realist) into ONE prioritized plan that goes BEYOND the shipped 9-phase `docs/VISUAL_OVERHAUL.md`.*
 
@@ -8,7 +8,7 @@
 
 ## The gap the 9 phases leave
 
-The overhaul makes Viva Maya look **generically expensive** (gloss, depth, themes, transitions) but it leaves four things on the table that separate "polished" from best-in-class:
+The overhaul makes Viva Ton look **generically expensive** (gloss, depth, themes, transitions) but it leaves four things on the table that separate "polished" from best-in-class:
 
 1. **No impact language** — nothing on the board ever winds up before it strikes, no hitstop registers a big hit, survivor tiles are inert. (game-juice)
 2. **No ownable identity** — the heart is decoration, not the game's structural signature; the four themes look different but **sound identical**; there's no memorable "you did it" beat. (art + sound + delight)
@@ -52,7 +52,7 @@ Effort: **S** ≈ hours · **M** ≈ a phase-day · **L** ≈ multi-file. "Slots
 - **What:** the 9-phase overhaul has **no audio at all** — every new visual beat ships silent, and the 4 themes sound identical. This track gives each beat a partner and makes the themes four *rooms you can hear*. Foundation → per-beat, in order:
   - **A1 shared reverb/space bus** — one algorithmic FDN (3–4 `DelayNode`s, the `swapAurora` shimmer generalized) as a `reverbSend`; every one-shot drops a tail into the same lounge (the sonic vignette).
   - **A2 ambient bed** — warm detuned pad + low room-tone under one LFO *whose period matches the backdrop breath*; toggle-gated, suspend on blur.
-  - **A3 theme audio palettes** — add a tiny `audio{}` block to the `Theme` interface (bedRoot, waveBias, filterWarmth, reverbMix); Golden=warm sine, Maya's Heart=softer/higher/more reverb, Rose Midnight=darker/longer tail, Neon Vegas=saw bias + cyan shimmer. P8's `scene.restart()` rebuilds the bed in the new palette **for free**.
+  - **A3 theme audio palettes** — add a tiny `audio{}` block to the `Theme` interface (bedRoot, waveBias, filterWarmth, reverbMix); Golden=warm sine, Ton's Heart=softer/higher/more reverb, Rose Midnight=darker/longer tail, Neon Vegas=saw bias + cyan shimmer. P8's `scene.restart()` rebuilds the bed in the new palette **for free**.
   - **A4 ducking** — bed inhales under `winFanfare`/`jackpotStrike`/`bombBoom`.
   - **A10 harmonic key-lock** — snap all pitched voices (pop climb, coinCount, dings) to C-pentatonic on `bedRoot` so busy cascades *arpeggiate consonantly*.
   - **A8 positional stereo pan** — `pop`/detonations pan by board column; the clear you see right you hear right.
@@ -61,8 +61,8 @@ Effort: **S** ≈ hours · **M** ≈ a phase-day · **L** ≈ multi-file. "Slots
 - **Perf:** **entirely off the fill-rate budget.** Voice polyphony tamed by the existing master compressor; only discipline is suspend-on-blur.
 - **Slots:** **NEW parallel track "Phase A," runs alongside P0–P8** — A1–A4 land early (touch only `sfx.ts` + a tiny `theme.ts` interface add, zero scene-file contention); partner beats land *with* their visual phase (A-press with P1, whoosh with P5/P6, clear-pop with P3).
 
-### E4 — The Heartbloom + Maya leitmotif (the ownable signature win) — **M**
-- **What:** replace the generic big-win beat (fireworks+confetti+coins) with the game's memorable hero moment — on PERFECT wins, jackpot strikes, and the daily claim, a giant translucent **heart of light blooms from board-center, beats twice (lub-DUB), and heart-particles stream from its apex**, under a 3-note "Maya" leitmotif that plays *nowhere else*.
+### E4 — The Heartbloom + Ton leitmotif (the ownable signature win) — **M**
+- **What:** replace the generic big-win beat (fireworks+confetti+coins) with the game's memorable hero moment — on PERFECT wins, jackpot strikes, and the daily claim, a giant translucent **heart of light blooms from board-center, beats twice (lub-DUB), and heart-particles stream from its apex**, under a 3-note "Ton" leitmotif that plays *nowhere else*.
 - **Why high-impact:** this is the identity the 9 phases lack entirely — the thing people remember and hum. Promotes the heart from decoration to the win's structural keystone.
 - **How:** bake one `heartglow` texture (feathered heart via `fillPoints` at ~10 falling-alpha passes, same trick as `bgglow`); ADD, tint bloom/accent, double-`Back.easeOut` scale envelope matching Home's existing 620/340 heartbeat; fire in `runWinSequence` Beat 1 (~L1318) and `DailyBonusScene.celebrate`. `sfx.mayaMotif()` = 3 `tone()` calls with the `winFanfare` sparkle tail.
 - **Perf:** 1 ADD sprite + 1 bake, transient <500ms during a win where nothing competes (~0.9 FSE, safe). Reduced-motion → single static heart, no beat.
@@ -92,7 +92,7 @@ Effort: **S** ≈ hours · **M** ≈ a phase-day · **L** ≈ multi-file. "Slots
 - **What:** the coherent lighting/material pass that makes *everything already on screen* read expensive, near-zero runtime cost.
   - **One key light** — declare `LIGHT = {x:360, y:-200}`; route all ~8 baked drop-shadows through one `dropShadow()` helper so every shadow agrees where the light is (disagreeing shadows are *the* tell of cheap UI).
   - **Real metal** — a canonical `goldFace()` (stacked flat-alpha rounded rects bright-crown→deep-belly + one thin `glossHi` specular band at ~40% height) replacing flat `0xf2b234` "yellow plastic" on pills, marquee lozenge, win-card tab, payline. Tokens already exist (`goldBright/gold/goldDeep/goldDarkest/glossHi`).
-  - **Dark-theme accent rim** — 1–2px `accent`-tinted inner stroke on the top edge of cards/tiles for dark themes only (neon reads expensive because of a colored lit rim). Zero cost on Golden/Maya.
+  - **Dark-theme accent rim** — 1–2px `accent`-tinted inner stroke on the top edge of cards/tiles for dark themes only (neon reads expensive because of a colored lit rim). Zero cost on Golden/Ton.
   - **Board tray AO** — bake soft dark corner occlusion + under-bezel inner-shadow into the tray floor (sells "recessed" more than the bevel).
 - **Why high-impact:** one material/lighting module makes the entire existing surface look like money for baked-once (zero runtime) cost, and *reduces* draw calls where shared textures replace per-instance pill graphics.
 - **Perf:** all baked, +0 runtime; shares/reduces draws.
@@ -116,7 +116,7 @@ Effort: **S** ≈ hours · **M** ≈ a phase-day · **L** ≈ multi-file. "Slots
   - **Special-date dress-up** — `occasionFor(date)` on every `create()`: on a configured date the app quietly leans rose/heart-heavy, the daily spin guarantees generous, and a once-per-day heart-shower fires (gated by `occasionsSeen`). The "it knew" moment.
   - **Warm win/lose copy** — rotate encouragement under the rank word; swap cold "OUT OF MOVES" for kind rotating lines ("So close! One more?"). Touches *every* session.
   - **New-best ribbon** on numbered wins; **ALL CLEAR grand finale** on L100 (one-time `finaleSeen`).
-- **Why high-impact:** makes the game feel like it *loves Maya back* — the retold "it knew my birthday" moment and the flip from "did you clear the chore?" to "come back soon."
+- **Why high-impact:** makes the game feel like it *loves Ton back* — the retold "it knew my birthday" moment and the flip from "did you clear the chore?" to "come back soon."
 - **Perf:** transient beats + copy only; no steady overdraw. Reduced-motion → static cards/hearts.
 - **Slots:** **NEW warmth phase after P6/P7**; `maya.ts` + save-v7 are the foundation (build with P0-era foundations).
 
@@ -149,7 +149,7 @@ Effort: **S** ≈ hours · **M** ≈ a phase-day · **L** ≈ multi-file. "Slots
 
 ### E14 — First-run onboarding + idle-hint ship + CSS letterbox frame — **S–M**
 - **What:** a gentle first-launch overlay ("swipe two neighbors to match 3") gated on `seenIntro`; **ship the idle hint now** (P6-3d) — `board.findFirstValidMove()` already exists but is DEV-only — pulse a valid pair after ~5s idle (reduced-motion → static ring); pulse the `?` chip once on first run. Plus a **CSS radial-gradient warm frame** on `<body>` so the FIT letterbox bars (large on iPad) read intentional — *literally free* (browser compositor, zero FSE).
-- **Why high-impact:** a stuck first-timer (Maya) currently gets nothing; the letterbox frame is free premium on every non-9:16 device.
+- **Why high-impact:** a stuck first-timer (Ton) currently gets nothing; the letterbox frame is free premium on every non-9:16 device.
 - **Perf:** transient / free.
 - **Slots:** onboarding **extends P6**; letterbox = **extends P0's `applyPageChrome`** (flat `pageBg` → gradient).
 
@@ -163,9 +163,9 @@ Effort: **S** ≈ hours · **M** ≈ a phase-day · **L** ≈ multi-file. "Slots
 
 ## SIGNATURE MOMENTS (the memorable beats)
 
-1. **Power-on (first open).** BootScene→Home is choreographed as the app's identity reveal: heart draws in → single gold sweep unveils the VIVA·MAYA wordmark → marquee bulbs cascade-light left-to-right → warm glow blooms → button stagger → an audio "power-on" swell tinted by the active theme. (E10 + E3-A12)
+1. **Power-on (first open).** BootScene→Home is choreographed as the app's identity reveal: heart draws in → single gold sweep unveils the VIVA·TON wordmark → marquee bulbs cascade-light left-to-right → warm glow blooms → button stagger → an audio "power-on" swell tinted by the active theme. (E10 + E3-A12)
 2. **The Deal-In (every level start).** 64 tiles rain into the recessed gold tray column-by-column with `E.release` overshoot and a per-column rain of height-mapped thunks — the board *assembles* instead of blinking on. (E5)
-3. **The Heartbloom (the hero win).** On PERFECT / jackpot / daily claim, a giant heart of light blooms from center, beats twice (lub-DUB), streams heart-particles from its apex, under the 3-note Maya leitmotif heard nowhere else — the "you did it" people hum. (E4)
+3. **The Heartbloom (the hero win).** On PERFECT / jackpot / daily claim, a giant heart of light blooms from center, beats twice (lub-DUB), streams heart-particles from its apex, under the 3-note Ton leitmotif heard nowhere else — the "you did it" people hum. (E4)
 4. **The Mega-Combo strike.** A special fires: charge (scale-down + glow flare + rising `charge()` tick) → **hitstop freeze** → release into explosion + a single crisp white impact frame + a *directional* trauma kick along the blast axis + the cascade riser resolving into fanfare. Anticipation buys the impact. (E6 + E11)
 5. **"It knew" (special dates).** On her birthday/anniversary the app opens already dressed up — rose-leaning backdrop, occasion greeting, a guaranteed-generous spin, a once-that-day heart-shower. The moment that gets retold. (E9)
 6. **ALL CLEAR (level 100).** A bespoke one-time crescendo before the win card — full marquee celebration, a lingering heart shower, a heartfelt line, and (owner-gated) a personal sign-off. The finale a 100-level journey earns. (E9)
@@ -179,7 +179,7 @@ Effort: **S** ≈ hours · **M** ≈ a phase-day · **L** ≈ multi-file. "Slots
 - **The four themes are four rooms you can hear** — theme `audio{}` palettes (E3-A3) rebuild the bed on `scene.restart()` for free; pick Neon Vegas and the room turns electric.
 - **The bed breathes with the backdrop** — the ambient LFO period matches the aurora/`cabinetGlow` breath, and phase-locks conceptually to the E1 heartbeat clock; the machine sounds "powered on."
 - **Busy moments stay musical** — harmonic key-lock (E3-A10) snaps cascades to a consonant scale; positional pan (E3-A8) ties sound to the visual grid; the cascade riser (E11) mirrors the visual chain's arc; ducking (E3-A4) makes wins hit harder.
-- **The leitmotif is scarce** — the Maya motif plays *only* on the Heartbloom and daily claim, so it stays special.
+- **The leitmotif is scarce** — the Ton motif plays *only* on the Heartbloom and daily claim, so it stays special.
 - **Haptics are one event with sound + visual** — routed through the same call sites (button thock→light tap, win→heavier), not authored separately.
 - **All of it is procedural/zero-asset, off the fill-rate budget, mute- and ambience-toggle-gated, and `ctx.suspend()`s on tab-blur.**
 

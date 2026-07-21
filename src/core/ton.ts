@@ -33,7 +33,7 @@ export class TonService {
       }
 
       this.tonConnectUI = new TonConnectUI({
-        manifestUrl: 'https://corruptfun.github.io/viva-maya/tonconnect-manifest.json',
+        manifestUrl: 'https://corruptfun.github.io/viva-ton/tonconnect-manifest.json',
         buttonRootId: 'ton-connect-hidden'
       })
 
@@ -130,7 +130,7 @@ export class TonService {
    * Request a signature/payment from user's TON wallet.
    * Transacts native TON from player to developer/vault hot wallet.
    */
-  public async sendTransaction(amountTon: number, memo = 'Viva Maya Web3 Purchases'): Promise<boolean> {
+  public async sendTransaction(amountTon: number, memo = 'Viva Ton Web3 Purchases'): Promise<boolean> {
     if (!this.tonConnectUI || !this.wallet) {
       throw new Error('Wallet not connected')
     }

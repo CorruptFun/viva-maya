@@ -1,7 +1,7 @@
 module.exports = {
   apps: [
     {
-      name: "viva-maya-bot",
+      name: "viva-ton-bot",
       script: "bot/index.js",
       interpreter: "node",
       env: {

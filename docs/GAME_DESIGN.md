@@ -1,7 +1,7 @@
-# Viva Maya — Game Design & Mechanics Reference
+# Viva Ton — Game Design & Mechanics Reference
 
-Casino match-3 PWA (Phaser 3.90 + Vite 7 + TS strict). Live: https://corruptfun.github.io/viva-maya/
-Repo: github.com/CorruptFun/viva-maya · Local: `~/Creative/viva-maya/` (Mac mini)
+Casino match-3 PWA (Phaser 3.90 + Vite 7 + TS strict). Live: https://corruptfun.github.io/viva-ton/
+Repo: github.com/CorruptFun/viva-ton · Local: `~/Creative/viva-ton/` (Mac mini)
 This file is the canonical mechanics reference — keep it updated when rules change.
 
 ## Pillars
@@ -13,7 +13,7 @@ This file is the canonical mechanics reference — keep it updated when rules ch
   (Direction change 2026-07-17: the earlier "no energy systems" rule was reversed at Austin's
   request — energy that forces a short break is now a wanted return hook.)
 - Warm "modern slot screen" look: off-white #f6f3ec, gold #f2b234/#c9930a, rose #d3304f,
-  navy #26304d, system-emoji symbols. Heart motif = Maya tribute (name carries it; no
+  navy #26304d, system-emoji symbols. Heart motif = Ton tribute (name carries it; no
   explicit dedication text in product copy).
 
 ## Board & matching (src/core/board.ts — pure TS, no Phaser imports)
@@ -81,7 +81,7 @@ clears a RANDOM present color. Swap-combos (both consumed, epicenter = drag dest
 
 ## Lives / energy (src/core/lives.ts + GameScene gate)
 - Generous pool: LIVES_MAX=10, LIFE_REGEN_MS=8 min (config.ts) — tuned way up from the original
-  3/30min after Maya burned through a stingy pool while learning (2026-07-17). Only a LOSS drains
+  3/30min after Ton burned through a stingy pool while learning (2026-07-17). Only a LOSS drains
   a life; a mid-level QUIT after ≥1 move also drains one (closes the quit-to-dodge-loss exploit).
   WINS ARE FREE — so a steady/skilled player never hits the wall.
 - Regen is wall-clock (device clock trusted, like the daily spin): +1 life every 8 min, so a
@@ -108,13 +108,13 @@ clears a RANDOM present color. Swap-combos (both consumed, epicenter = drag dest
 - Home button: gold+pulse when ready ("DAILY BONUS"), ghost "SPUN · DAY N" after.
   NOTE: no emoji in pill labels — letterSpacing splits surrogate pairs (renders tofu).
 
-## Save (src/core/save.ts — localStorage key 'viva-maya:v1', all access try/catch)
+## Save (src/core/save.ts — localStorage key 'viva-ton:v1', all access try/catch)
 v6: { v:6, best, unlocked, stars{level:1..3}, lastSpinDate|null, streak, pendingBoosts[],
       endlessWeek|null, endlessBest, lives, livesAnchor }
 Migrations: v1 {best} → v2 (+unlocked/stars) → v3 (+daily) → v4 (+endless: endlessWeek
 "YYYY-Www", endlessBest) → v5 (+lives/energy: lives, livesAnchor — pre-v5 saves start full)
 → v6 (grace refill: tops every save to full — lives=LIVES_MAX, livesAnchor=0 — on upgrade).
-Loader is shape-tolerant (old saves default new fields). Mute flag is separate: 'viva-maya:muted'.
+Loader is shape-tolerant (old saves default new fields). Mute flag is separate: 'viva-ton:muted'.
 
 ## Audio (src/audio/sfx.ts — procedural WebAudio, zero assets)
 Singleton, lazy AudioContext, unlocked on first pointerdown (iOS), master gain 0.5 →
@@ -144,7 +144,7 @@ vite-plugin-pwa autoUpdate SW precaches everything except og-image.png. Install:
 Share → Add to Home Screen. base:'./' keeps builds host-agnostic.
 
 ## Icons & social (scripts/gen-icons.mjs — macOS: headless Chrome + sips)
-icon.html → 5×5 emoji board + VIVA MAYA banner (checkerboard = (row+col)%2). Banner on
+icon.html → 5×5 emoji board + VIVA TON banner (checkerboard = (row+col)%2). Banner on
 ≥180px; 16/32/48 + favicon.ico are board-only (#plain hash). og.html → 1200×630 poster.
 `npm run icons` regenerates all of public/. favicon.svg is hand-authored.
 
@@ -167,6 +167,6 @@ builds and deploys automatically. Legacy fallback: publish dist/ to gh-pages bra
 DONE: streak flame on Home (addStreakBadge) · endless weekly-seed race after L30 (shared board,
 BEST race — src/core/endless.ts) · star-milestone celebration every 10 levels (milestoneSplash) ·
 lives/energy (lose-only, 10-pool, 8-min regen — src/core/lives.ts).
-TODO: tune levelSpec from Maya's real play · optionally let the daily spin grant a bonus life.
+TODO: tune levelSpec from Ton's real play · optionally let the daily spin grant a bonus life.
 Still rejected: purchasable currencies, home-decorating meta, pay-to-win. (Lives/energy was
 previously rejected but reintroduced 2026-07-17 at Austin's request as a self-refilling return hook.)

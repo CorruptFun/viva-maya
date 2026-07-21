@@ -1,7 +1,7 @@
 # UI & Polish Cookbook — Reusable Patterns
 
 > A portable reference for building **chunky, tactile, "expensive-looking" UI** in a canvas/WebGL game
-> (built against **Phaser 3.90**, but most of it generalizes to any UI). Written from the Viva Maya build;
+> (built against **Phaser 3.90**, but most of it generalizes to any UI). Written from the Viva Ton build;
 > file/function names below point at the reference implementation in this repo (`src/view/ui.ts`,
 > `src/view/textures.ts`, `src/main.ts`, `index.html`). Copy this file into any new project as a starting point.
 
@@ -195,4 +195,4 @@ A fixed 9:16 (720×1280) game letterboxes hard on a ~19.5:9 phone. To make it fe
 
 ---
 
-*Reference implementation: Viva Maya (`src/view/ui.ts`, `textures.ts`, `theme.ts`, `motion.ts`, `quality.ts`, `background.ts`, `src/main.ts`, `index.html`). See also `docs/VISUAL_OVERHAUL.md` and `docs/ULTIMATE_UIUX.md` for the full design system this cookbook distills.*
+*Reference implementation: Viva Ton (`src/view/ui.ts`, `textures.ts`, `theme.ts`, `motion.ts`, `quality.ts`, `background.ts`, `src/main.ts`, `index.html`). See also `docs/VISUAL_OVERHAUL.md` and `docs/ULTIMATE_UIUX.md` for the full design system this cookbook distills.*

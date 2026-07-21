@@ -5,7 +5,7 @@ import { spinAvailable, todayKey } from '../core/daily'
 import { endlessBestThisWeek, endlessUnlocked } from '../core/endless'
 import { LEVEL_COUNT } from '../core/levels'
 import { refreshLives } from '../core/lives'
-import { greeting, occasionFor, pendingOccasion, secretNote, withName } from '../core/maya'
+import { greeting, occasionFor, pendingOccasion, secretNote, withName } from '../core/warmth'
 import { loadSave, markOccasionSeen, touchOpen } from '../core/save'
 import { addCasinoBackdrop } from '../view/background'
 import { quality } from '../view/quality'
@@ -92,7 +92,7 @@ export class HomeScene extends Phaser.Scene {
 
     // §E14 first-run advertisement: pulse the ? help chip ONCE for a truly-new player (seenIntro
     // still false AND on level 1) so a first-timer notices where help lives. Reduced motion → no
-    // pulse (the onboarding card itself carries the teach). Never fires for Maya's Level-46 save.
+    // pulse (the onboarding card itself carries the teach). Never fires for Ton's Level-46 save.
     if (!save.seenIntro && save.unlocked <= 1 && !reduced) {
       this.tweens.add({
         targets: helpChip,
@@ -117,7 +117,7 @@ export class HomeScene extends Phaser.Scene {
     // Daily-spin streak flame — hidden at streak 0.
     addStreakBadge(this, DESIGN_W / 2, 176, save.streak)
 
-    // §E9 time-of-day greeting — NAMELESS by default; the name appears ONLY when maya.showName.
+    // §E9 time-of-day greeting — NAMELESS by default; the name appears ONLY when warmth.showName.
     // On a configured special date it becomes the occasion greeting (the app "already knew").
     // Backdrop-drawn → routed through onBackdrop* tokens (legible on the dark themes too).
     const occToday = occasionFor(today.slice(5))
@@ -195,7 +195,7 @@ export class HomeScene extends Phaser.Scene {
     }
 
     // Marquee wordmark (+ a subtle bulb row for the power-on to cascade-light). On boot, beats #2/#3:
-    // a single gold sweep unveils VIVA·MAYA and the bulbs cascade left→right after the emblem draws in.
+    // a single gold sweep unveils VIVA·TON and the bulbs cascade left→right after the emblem draws in.
     const marquee = addMarquee(this, DESIGN_W / 2, 500, { bulbs: true })
     if (powerOn) marquee.powerOn(this, 420)
     this.add

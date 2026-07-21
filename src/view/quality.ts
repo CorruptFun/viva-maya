@@ -1,5 +1,5 @@
 /**
- * Adaptive quality governor for Viva Maya (E2) — the perf keystone that turns
+ * Adaptive quality governor for Viva Ton (E2) — the perf keystone that turns
  * §5's fixed fill-rate budgets into adaptive ones, so full juice can ship on the
  * owner's iPhone 16 Pro Max AND stay 60fps on old hardware from one build.
  *

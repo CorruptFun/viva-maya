@@ -2,7 +2,7 @@ import Phaser from 'phaser'
 import { sfx } from '../audio/sfx'
 import { DESIGN_W } from '../config'
 import { performSpin, spinAvailable, todayKey } from '../core/daily'
-import { occasionFor, pendingOccasion } from '../core/maya'
+import { occasionFor, pendingOccasion } from '../core/warmth'
 import { mulberry32 } from '../core/rng'
 import { loadSave, markOccasionSeen } from '../core/save'
 import { SYMBOLS } from '../core/types'
@@ -24,7 +24,7 @@ const STRIP_LEN = 14
  */
 export class DailyBonusScene extends Phaser.Scene {
   private spinning = false
-  /** §E4 guard — the Heartbloom (heart of light + Maya leitmotif) fires at most ONCE per claim. */
+  /** §E4 guard — the Heartbloom (heart of light + Ton leitmotif) fires at most ONCE per claim. */
   private heartbloomFired = false
 
   constructor() {
@@ -297,7 +297,7 @@ export class DailyBonusScene extends Phaser.Scene {
 
   private celebrate(labels: string[], blurbs: string[], streak: number): void {
     // §E4 — the daily prize claim is one of the three Heartbloom beats. Layered UNDER the existing
-    // fanfare/jackpot/hearts/sparks/confetti celebration; the Maya leitmotif rings only here + PERFECT/jackpot.
+    // fanfare/jackpot/hearts/sparks/confetti celebration; the Ton leitmotif rings only here + PERFECT/jackpot.
     this.heartbloom(DESIGN_W / 2, 450) // the cabinet's center, where the reels just settled
     this.streakMilestone(streak) // §E15 — a tiered flourish layered on when the streak hits 7 / 30 / 100
     sfx.winFanfare()

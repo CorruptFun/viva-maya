@@ -12,8 +12,8 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['apple-touch-icon.png', 'favicon.ico', 'favicon.svg', 'favicon-32.png', 'favicon-16.png'],
       manifest: {
-        name: 'Viva Maya',
-        short_name: 'Viva Maya',
+        name: 'Viva Ton',
+        short_name: 'Viva Ton',
         description: 'A casino match-3 — spin up cascades, chase the jackpot.',
         start_url: './',
         scope: './',

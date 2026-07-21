@@ -1,0 +1,7 @@
+tunnel: 0bcfb455-40d8-480b-ad3f-f7905b75fc38
+credentials-file: /Users/gravity/.cloudflared/0bcfb455-40d8-480b-ad3f-f7905b75fc38.json
+
+ingress:
+  - hostname: tonstickerpop.corrupt.solutions
+    service: http://localhost:8319
+  - service: http_status:404

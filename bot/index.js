@@ -10,7 +10,7 @@ let token = process.env.TELEGRAM_BOT_TOKEN;
 let webAppUrl = process.env.WEBAPP_URL;
 
 if (!token || !webAppUrl) {
-  const envPath = path.join(os.homedir(), '.secrets', 'viva_maya_bot.env');
+  const envPath = path.join(os.homedir(), '.secrets', 'viva_ton_bot.env');
   if (fs.existsSync(envPath)) {
     console.log(`[Server] Loading secrets from: ${envPath}`);
     const content = fs.readFileSync(envPath, 'utf8');
@@ -41,7 +41,7 @@ if (!token || !webAppUrl) {
 const PORT = 8319;
 
 // Ledger & Safe Paths
-const LEDGER_PATH = path.join(os.homedir(), '.secrets', 'viva_maya_ledger.json');
+const LEDGER_PATH = path.join(os.homedir(), '.secrets', 'viva_ton_ledger.json');
 
 // Ensure ledger exists
 if (!fs.existsSync(LEDGER_PATH)) {
@@ -381,7 +381,7 @@ async function handleMessage(message) {
   const text = message.text || '';
 
   if (text.startsWith('/start')) {
-    const welcomeText = `🏛️ **WELCOME TO VIVA MAYA WEB3** 🏛️\n\n` +
+    const welcomeText = `🏛️ **WELCOME TO VIVA TON WEB3** 🏛️\n\n` +
       `Dive into the ancient temple, gather artifacts, and spin to win! This Telegram WebApp is fully integrated with the **TON Blockchain Network**.\n\n` +
       `⚡ Connect your TON Wallet (Tonkeeper, MyTonWallet, etc.)\n` +
       `⚡ Seamless deposits & withdrawals of $VIVA chips\n` +
@@ -392,7 +392,7 @@ async function handleMessage(message) {
       inline_keyboard: [
         [
           {
-            text: '🎮 Play Viva Maya',
+            text: '🎮 Play Viva Ton',
             web_app: { url: webAppUrl },
           },
         ],

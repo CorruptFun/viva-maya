@@ -1,4 +1,4 @@
-# Viva Maya Web3: Treasury Infrastructure & Tokenomics
+# Viva Ton Web3: Treasury Infrastructure & Tokenomics
 
 ## 1. Token Deployment Specifications
 
