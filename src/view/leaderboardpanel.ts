@@ -143,20 +143,109 @@ function ensurePlate(scene: Phaser.Scene, kind: PlateKind, w: number, h: number)
   return key
 }
 
-/** Rank medallion: a small gold coin with the rank numeral — #1 gets the full gold material. */
-function makeMedal(scene: Phaser.Scene, rank: number, r: number): Phaser.GameObjects.Container {
+/**
+ * Rank medallion: a STRUCK-MINTED rank coin — a milled/reeded rim, a recessed engraved numeral field,
+ * belly falloff, and a specular pip, so it reads pressed-not-printed. #1 gets the full bright-gold
+ * material; #2/#3 are the quieter cream-gold. Theme-token drawn, so it recolours on every theme for
+ * free. Exported so the dev atlas ('medals' page) can render #1/#2/#3 at their true row sizes.
+ */
+export function makeMedal(scene: Phaser.Scene, rank: number, r: number): Phaser.GameObjects.Container {
   const T = getTheme()
   const c = scene.add.container(0, 0)
   const g = scene.add.graphics()
-  // Coin: deep ring → face → top-biased gloss arc. #1 is bright gold; 2/3 are quieter cream-gold.
-  g.fillStyle(T.goldDarkest, rank === 1 ? 0.5 : 0.3)
-  g.fillCircle(0, 2.5, r)
-  g.fillStyle(rank === 1 ? T.gold : T.cardFillWarm, 1)
+  const g1 = rank === 1
+  // Per-rank metal (light falls from the top): #1 hot gold, #2/#3 the quieter cream-gold.
+  const rimBase = g1 ? T.goldDeep : T.goldBezel
+  const rimLit = T.goldBright
+  const rimDark = g1 ? T.goldDarkest : T.goldDeep
+  const domeBase = g1 ? T.goldDeep : T.goldBezel
+  const domeLit = g1 ? T.gold : T.cardFillWarm
+  const domeCrown = g1 ? T.goldBright : T.glossHi
+  // Seated contact shadow → coin blank (a deep base offset DOWN so the shaded underside shows low) → rim metal.
+  g.fillStyle(0x000000, 0.1)
+  g.fillEllipse(0, r * 0.96, r * 1.4, r * 0.4)
+  g.fillStyle(rimDark, 1)
+  g.fillCircle(0, r * 0.05, r)
+  g.fillStyle(rimBase, 1)
   g.fillCircle(0, 0, r)
-  g.fillStyle(rank === 1 ? T.goldBright : T.glossHi, rank === 1 ? 0.45 : 0.5)
-  g.fillCircle(0, -r * 0.22, r * 0.74)
-  g.lineStyle(2.5, rank === 1 ? T.goldDeep : T.goldBezel, 1)
+  // Milled/reeded rim — 20 alternating lit/shadowed radial teeth (chunky enough to survive r=26).
+  const teeth = 20
+  const inR = r * 0.84
+  const outR = r * 0.99
+  const tw = Math.max(1.4, r * 0.075)
+  for (let i = 0; i < teeth; i++) {
+    const a = (i / teeth) * Math.PI * 2 - Math.PI / 2
+    const lit = i % 2 === 0
+    g.lineStyle(tw, lit ? rimLit : rimDark, lit ? 0.9 : 0.7)
+    g.lineBetween(Math.cos(a) * inR, Math.sin(a) * inR, Math.cos(a) * outR, Math.sin(a) * outR)
+  }
+  // Dark rim groove — the recessed channel between the milled rim and the raised face.
+  g.lineStyle(Math.max(1.6, r * 0.055), rimDark, 0.65)
+  g.strokeCircle(0, 0, r * 0.8)
+  // RAISED DOMED FACE — a deep base, then a lit face offset UP toward the light (offset-disc dome), a
+  // warm crown light-pool, and a brighter core high on the dome.
+  g.fillStyle(domeBase, 1)
+  g.fillCircle(0, r * 0.02, r * 0.76)
+  g.fillStyle(domeLit, 1)
+  g.fillCircle(0, -r * 0.05, r * 0.71)
+  g.fillStyle(domeCrown, g1 ? 0.5 : 0.62)
+  g.fillCircle(0, -r * 0.16, r * 0.46)
+  g.fillStyle(domeCrown, 0.5)
+  g.fillCircle(0, -r * 0.22, r * 0.24)
+  // Belly falloff — the lower dome sinks into shadow (kept inside the dome so it never bleeds past the rim).
+  g.fillStyle(0x000000, g1 ? 0.13 : 0.08)
+  g.fillEllipse(0, r * 0.34, r * 1.05, r * 0.52)
+  // Dome bevel: a dark edge ring + a lit inner ring → the face reads raised and minted.
+  g.lineStyle(Math.max(1.2, r * 0.04), rimDark, 0.5)
+  g.strokeCircle(0, 0, r * 0.75)
+  g.lineStyle(Math.max(1, r * 0.03), rimLit, 0.5)
+  g.strokeCircle(0, 0, r * 0.7)
+  // Engraved numeral cartouche — a pressed recess (dark disc + an inner-top shadow lip + a lit lower
+  // bounce) so the numeral sits struck INTO the dome.
+  g.fillStyle(rimDark, g1 ? 0.14 : 0.09)
+  g.fillCircle(0, r * 0.04, r * 0.44)
+  g.fillStyle(0x000000, 0.1)
+  g.fillEllipse(0, -r * 0.15, r * 0.64, r * 0.24)
+  g.fillStyle(domeCrown, 0.22)
+  g.fillEllipse(0, r * 0.24, r * 0.54, r * 0.18)
+  // Beaded inner ring — 12 tiny relief dots framing the field (a dark seat + a lit cap offset up).
+  const beads = 12
+  const bR = r * 0.63
+  const bd = Math.max(1, r * 0.05)
+  for (let i = 0; i < beads; i++) {
+    const ba = (i / beads) * Math.PI * 2 - Math.PI / 2
+    const bx = Math.cos(ba) * bR
+    const by = Math.sin(ba) * bR
+    g.fillStyle(rimDark, 0.5)
+    g.fillCircle(bx, by + bd * 0.5, bd + 0.4)
+    g.fillStyle(rimLit, g1 ? 0.85 : 0.9)
+    g.fillCircle(bx, by - bd * 0.3, bd)
+  }
+  // Signature: two raised laurel sprigs flanking the numeral (dark seat + a lit cap offset up = relief).
+  const lw = Math.max(1.2, r * 0.05)
+  const leafLen = r * 0.15
+  for (const s of [-1, 1]) {
+    const leaves: Array<[number, number]> = [
+      [s * r * 0.4, r * 0.28],
+      [s * r * 0.44, r * 0.06],
+      [s * r * 0.4, -r * 0.16],
+    ]
+    for (const [lx, ly] of leaves) {
+      const ex = lx - s * leafLen * 0.7
+      const ey = ly - leafLen * 0.72
+      g.lineStyle(lw, T.goldDarkest, 0.5)
+      g.lineBetween(lx, ly, ex, ey)
+      g.lineStyle(Math.max(1, lw * 0.7), T.goldBright, 0.7)
+      g.lineBetween(lx, ly - 0.6, ex, ey - 0.6)
+    }
+  }
+  // Top gloss crescent, a crisp dark outer edge, and a hard specular glint upper-left.
+  g.fillStyle(0xffffff, g1 ? 0.13 : 0.16)
+  g.fillEllipse(0, -r * 0.42, r * 0.95, r * 0.36)
+  g.lineStyle(2, rimDark, 0.75)
   g.strokeCircle(0, 0, r)
+  g.fillStyle(0xffffff, 0.7)
+  g.fillCircle(-r * 0.28, -r * 0.4, r * 0.09)
   c.add(g)
   const num = scene.add
     .text(0, 1, String(rank), {
