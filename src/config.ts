@@ -29,12 +29,12 @@ export const FALL_BASE_MS = 100
 export const FALL_PER_CELL_MS = 50
 
 export const SYMBOL_COLORS: Record<SymbolType, number> = {
-  cherry: 0xd3302f,
-  seven: 0xe0312e,
-  diamond: 0x3d9df0,
-  bell: 0xe8a91d,
-  clover: 0x2fae4c,
-  bar: 0x26304d,
+  cherry: 0xff3366,
+  seven: 0xffd700,
+  diamond: 0xb45309,
+  bell: 0x22c55e,
+  clover: 0xf97316,
+  bar: 0x818cf8,
 }
 
 // Progressive jackpot "GROWING POT" settings
