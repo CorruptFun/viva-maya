@@ -1063,7 +1063,7 @@ export class GameScene extends Phaser.Scene {
     o.shown = o.remaining
     o.text?.setText(o.remaining > 0 ? String(o.remaining) : '✓')
     if (o.chip && o.chip.scale === 1) {
-      this.tweens.add({ targets: o.chip, scale: 1.14, duration: 120, yoyo: true, ease: 'Quad.easeOut' })
+      this.tweens.add({ targets: o.chip, scale: 1.14, duration: 120, yoyo: true, ease: this.reducedMotion ? 'Quad.easeOut' : backOut(OVERSHOOT.gentle) })
     }
     if (o.remaining > 0) {
       // C5 · one subtle rising "almost there" tone as this objective crosses into its final piece(s).
@@ -1090,7 +1090,7 @@ export class GameScene extends Phaser.Scene {
     o.shown = shown
     o.text?.setText(shown > 0 ? String(shown) : '✓')
     if (o.chip && o.chip.scale === 1) {
-      this.tweens.add({ targets: o.chip, scale: 1.12, duration: 110, yoyo: true, ease: 'Quad.easeOut' })
+      this.tweens.add({ targets: o.chip, scale: 1.12, duration: 110, yoyo: true, ease: this.reducedMotion ? 'Quad.easeOut' : backOut(OVERSHOOT.gentle) })
     }
     if (o.remaining > 0) {
       o.text?.setColor(css(getTheme().gold))
@@ -1531,7 +1531,8 @@ export class GameScene extends Phaser.Scene {
         y: cy + Math.sin(ang) * dist - 40,
         scale: 0.85,
         rotation: (Math.random() * 2 - 1) * 3,
-        duration: 680,
+        delay: i * 16, // Pass 2 overlap: fan the burst into a staggered volley...
+        duration: 680 - i * 16, // ...while every token still lands on the same beat (delay+dur constant)
         ease: 'Cubic.easeOut',
         onComplete: () =>
           this.tweens.add({ targets: token, alpha: 0, y: token.y + 140, duration: 480, onComplete: () => token.destroy() }),
@@ -1815,12 +1816,14 @@ export class GameScene extends Phaser.Scene {
     this.movesText.setColor(this.movesLeft <= 5 ? getTheme().warn : getTheme().ink)
     if (this.movesLeft > 3) this.stopMovesPulse()
     if (!this.reducedMotion) {
-      this.tweens.add({
+      // Pass 2 follow-through: punch out fast, then SETTLE back with a gentle overshoot (vs a
+      // symmetric yoyo that stops dead). Whole block already gated by `if (!this.reducedMotion)`.
+      this.tweens.chain({
         targets: this.movesText,
-        scale: 1.2,
-        duration: 150,
-        yoyo: true,
-        ease: 'Quad.easeOut',
+        tweens: [
+          { scale: 1.2, duration: 90, ease: 'Quad.easeOut' },
+          { scale: 1, duration: 150, ease: backOut(OVERSHOOT.gentle) },
+        ],
         onComplete: () => this.movesText.setScale(1),
       })
     }
@@ -2724,7 +2727,7 @@ export class GameScene extends Phaser.Scene {
       const sprite = this.createSprite(t.to, t.at)
       sprite.setScale(0)
       promises.push(
-        this.t({ targets: sprite, scale: PIECE_SCALE, delay: 80, duration: 200, ease: 'Back.easeOut' })
+        this.t({ targets: sprite, scale: PIECE_SCALE, delay: 80, duration: 200, ease: backOut(OVERSHOOT.pop) })
       )
       // 3e: a quick gold ring implosion + spark celebrates the birth (cap ≤2/wave).
       if (births < 2) {
@@ -2901,7 +2904,9 @@ export class GameScene extends Phaser.Scene {
     const piece = this.board.get(atCoord)
     const sprite = piece ? this.sprites.get(piece.id) : undefined
     if (sprite && sprite.active) {
-      this.tweens.add({ targets: sprite, scaleX: PIECE_SCALE * 0.9, scaleY: PIECE_SCALE * 0.9, duration: 70, ease: 'Quad.easeIn' })
+      // Pass 2 anticipation: an anisotropic coil (sides pinch more than the top) so the piece visibly
+      // crouches before it blasts — matches settleSquash's squash vocabulary. reducedMotion → chargeFlare early-returns.
+      this.tweens.add({ targets: sprite, scaleX: PIECE_SCALE * 0.85, scaleY: PIECE_SCALE * 0.92, duration: 70, ease: 'Quad.easeIn' })
     }
     const flare = this.add
       .image(pos.x, pos.y, 'bgglow')
@@ -3289,6 +3294,7 @@ export class GameScene extends Phaser.Scene {
       duration: 90,
       yoyo: true,
       hold: 120,
+      ease: E.press, // Pass 2 follow-through: snap to full brightness, then the yoyo eases the fade out
       onComplete: () => sweep.destroy(),
     })
 
@@ -3420,6 +3426,7 @@ export class GameScene extends Phaser.Scene {
       .setAlpha(1)
     this.tweens.add({
       targets: ball,
+      delay: 20, // Pass 2 overlap: bloom trails the flash core (core → bloom → pressure-wave)
       alpha: 0,
       scaleX: 1.6 + power * 0.6,
       scaleY: 1.6 + power * 0.6,
@@ -3437,6 +3444,7 @@ export class GameScene extends Phaser.Scene {
       .setDisplaySize(CELL, CELL)
     this.tweens.add({
       targets: ring,
+      delay: 40, // Pass 2 overlap: the pressure wave lands a beat behind core + bloom
       alpha: 0,
       scaleX: ring.scaleX * (3.2 + power * 0.6),
       scaleY: ring.scaleY * (3.2 + power * 0.6),
