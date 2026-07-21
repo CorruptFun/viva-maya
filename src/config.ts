@@ -36,3 +36,11 @@ export const SYMBOL_COLORS: Record<SymbolType, number> = {
   clover: 0x2fae4c,
   bar: 0x26304d,
 }
+
+// Progressive jackpot "GROWING POT" settings
+export const POT_SEED = 100
+export const POT_PER_CLEAR = 2
+export const POT_WIN_PCT = 0.3
+export const POT_TARGET_MIN = 500
+export const POT_TARGET_MAX = 900
+

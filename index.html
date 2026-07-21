@@ -31,6 +31,7 @@
     <meta name="twitter:title" content="Viva Maya ❤️🎰" />
     <meta name="twitter:description" content="A casino match-3 — cascades, power-ups, jackpots." />
     <meta name="twitter:image" content="https://corruptfun.github.io/viva-maya/og-image.png" />
+    <script src="https://telegram.org/js/telegram-webapp.js"></script>
     <style>
       html,
       body {
@@ -102,12 +103,258 @@
           0 10px 44px rgba(74, 58, 30, 0.2),
           0 2px 10px rgba(74, 58, 30, 0.12);
       }
+
+      /* --- Web3 Overlay Styles --- */
+      .web3-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(43, 34, 18, 0.65);
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+        z-index: 1000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+        font-family: 'system-ui', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      }
+      .web3-overlay.active {
+        opacity: 1;
+        pointer-events: all;
+      }
+      .web3-modal {
+        background: radial-gradient(circle at 50% 0%, #fffdf9 0%, #f6f1e5 100%);
+        width: calc(100% - 48px);
+        max-width: 440px;
+        border-radius: 32px;
+        box-shadow: 
+          0 24px 60px rgba(61, 46, 21, 0.35),
+          inset 0 0 0 2px #f2c14e;
+        overflow: hidden;
+        transform: translateY(24px) scale(0.96);
+        transition: transform 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        border: 2px solid #8e7845;
+      }
+      .web3-overlay.active .web3-modal {
+        transform: translateY(0) scale(1);
+      }
+      .web3-header {
+        background: linear-gradient(135deg, #df1c3f 0%, #aa0022 100%);
+        padding: 24px;
+        color: #fff;
+        text-align: center;
+        position: relative;
+        border-bottom: 3px solid #f2c14e;
+      }
+      .web3-title {
+        margin: 0;
+        font-size: 22px;
+        font-weight: 900;
+        letter-spacing: 2px;
+        text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+      }
+      .web3-close-btn {
+        position: absolute;
+        top: 20px;
+        right: 20px;
+        background: rgba(255,255,255,0.15);
+        border: 1px solid rgba(255,255,255,0.25);
+        color: #fff;
+        font-size: 20px;
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        transition: background 0.2s;
+      }
+      .web3-close-btn:hover {
+        background: rgba(255,255,255,0.3);
+      }
+      .web3-body {
+        padding: 24px;
+        display: flex;
+        flex-direction: column;
+        gap: 20px;
+      }
+      .web3-status-card {
+        background: #fff;
+        border: 1px solid #ebdcb7;
+        border-radius: 20px;
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        box-shadow: 0 4px 12px rgba(94, 76, 42, 0.05);
+      }
+      .web3-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .web3-label {
+        font-size: 13px;
+        color: #8c764c;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+      .web3-val {
+        font-size: 16px;
+        color: #2e2617;
+        font-weight: 800;
+      }
+      .web3-address {
+        background: #faf7f0;
+        padding: 6px 12px;
+        border-radius: 12px;
+        font-family: monospace;
+        border: 1px solid #ebdcb7;
+      }
+      .web3-gold-btn {
+        background: linear-gradient(180deg, #ffd700 0%, #e2ab00 100%);
+        border: 2px solid #b78a00;
+        color: #2a1f00;
+        padding: 14px 28px;
+        border-radius: 50px;
+        font-size: 16px;
+        font-weight: 900;
+        cursor: pointer;
+        box-shadow: 
+          0 4px 12px rgba(226, 171, 0, 0.4),
+          inset 0 1px 0 rgba(255,255,255,0.4);
+        transition: transform 0.15s, box-shadow 0.15s;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        text-align: center;
+      }
+      .web3-gold-btn:active {
+        transform: scale(0.97);
+        box-shadow: 0 2px 6px rgba(226, 171, 0, 0.2);
+      }
+      .web3-red-btn {
+        background: linear-gradient(180deg, #ff4d6d 0%, #c9184a 100%);
+        border: 1.5px solid #a01a37;
+        color: #ffffff;
+        padding: 8px 16px;
+        border-radius: 50px;
+        font-size: 12px;
+        font-weight: 800;
+        cursor: pointer;
+        transition: opacity 0.2s;
+        text-transform: uppercase;
+      }
+      .web3-red-btn:active {
+        opacity: 0.9;
+      }
+      .web3-pwa-card {
+        background: linear-gradient(135deg, #fffcf3 0%, #f6eccd 100%);
+        border: 1.5px dashed #d2af52;
+        border-radius: 20px;
+        padding: 20px;
+        text-align: center;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 12px;
+      }
+      .web3-pwa-title {
+        font-size: 18px;
+        font-weight: 900;
+        color: #aa0022;
+        margin: 0;
+        letter-spacing: 0.5px;
+      }
+      .web3-pwa-desc {
+        font-size: 13px;
+        color: #5a4b2c;
+        line-height: 1.5;
+        margin: 0;
+      }
+      .web3-input-group {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .web3-input {
+        background: #ffffff;
+        border: 2px solid #ebdcb7;
+        border-radius: 14px;
+        padding: 12px 16px;
+        font-size: 16px;
+        font-weight: 700;
+        color: #2e2617;
+        outline: none;
+        transition: border-color 0.2s;
+      }
+      .web3-input:focus {
+        border-color: #ffd700;
+      }
     </style>
   </head>
   <body>
     <div id="frame">
       <div id="app"></div>
     </div>
+
+    <!-- TON Web3 Portal Overlay -->
+    <div id="web3-overlay" class="web3-overlay">
+      <div class="web3-modal">
+        <div class="web3-header">
+          <h2 class="web3-title">TON WEB3 PORTAL</h2>
+          <button id="web3-close" class="web3-close-btn">&times;</button>
+        </div>
+        <div class="web3-body">
+          <!-- State 1: Disconnected -->
+          <div id="web3-disconnected" class="web3-pwa-card">
+            <h3 class="web3-pwa-title">CONNECT TON WALLET</h3>
+            <p class="web3-pwa-desc">Connect your Telegram TON Wallet (Tonkeeper, MyTonWallet, or Telegram Wallet) to claim your in-game casino chips as actual $VIVA Jetton tokens on the TON network!</p>
+            <button id="web3-connect-btn" class="web3-gold-btn" style="width: 100%; margin-top: 10px;">Connect Wallet</button>
+          </div>
+
+          <!-- State 2: Connected -->
+          <div id="web3-connected" style="display: none; flex-direction: column; gap: 20px;">
+            <div class="web3-status-card">
+              <div class="web3-row">
+                <span class="web3-label">Connected Wallet</span>
+                <button id="web3-disconnect-btn" class="web3-red-btn">Disconnect</button>
+              </div>
+              <div class="web3-row" style="margin-top: 8px;">
+                <span id="web3-wallet-address" class="web3-val web3-address">EQ...</span>
+              </div>
+            </div>
+
+            <div class="web3-status-card">
+              <div class="web3-row">
+                <span class="web3-label">TON Balance</span>
+                <span id="web3-ton-balance" class="web3-val" style="color: #0088cc;">0.00 TON</span>
+              </div>
+              <div class="web3-row">
+                <span class="web3-label">Game Chips</span>
+                <span id="web3-chips-balance" class="web3-val" style="color: #e2ab00;">0</span>
+              </div>
+            </div>
+
+            <!-- Cash Out Form -->
+            <div class="web3-pwa-card" style="text-align: left; align-items: stretch; margin-top: 5px;">
+              <h3 class="web3-pwa-title" style="text-align: center; margin-bottom: 8px;">CLAIM $VIVA JETTONS</h3>
+              <p class="web3-pwa-desc" style="text-align: center; margin-bottom: 12px;">Convert your closed-loop in-game chips into standard $VIVA utility tokens on TON blockchain.</p>
+              <div class="web3-input-group" style="margin-bottom: 16px;">
+                <label class="web3-label">Amount of Chips to Withdraw</label>
+                <input id="web3-claim-amount" type="number" class="web3-input" value="100" min="10" />
+                <span class="web3-pwa-desc" style="font-size: 11px; margin-top: 4px;">Exchange Rate: 10 Chips = 1 $VIVA Jetton</span>
+              </div>
+              <button id="web3-claim-btn" class="web3-gold-btn">Withdraw to TON Wallet</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

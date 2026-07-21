@@ -24,6 +24,10 @@ export interface SaveData {
   livesAnchor: number
   /** Earned chip balance — a closed-loop reward token banked from level wins and spent in the Gift Store. */
   chips: number
+  /** Progressive jackpot pot chips. */
+  potChips: number
+  /** Progressive jackpot target threshold. */
+  potTarget: number
   // --- v7 personal-warmth fields (§E9). All default EMPTY/OFF; read shape-tolerantly below. ---
   /** YYYY-MM-DD (local) of the very first app open; null until the first Home entry stamps it. */
   firstPlayDate: string | null
@@ -52,6 +56,8 @@ const DEFAULTS: SaveData = {
   lives: LIVES_MAX,
   livesAnchor: 0,
   chips: 0,
+  potChips: 100,
+  potTarget: 600,
   firstPlayDate: null,
   lastOpenDate: null,
   occasionsSeen: [],
@@ -86,6 +92,12 @@ export function loadSave(): SaveData {
     base.livesAnchor = typeof data.livesAnchor === 'number' ? data.livesAnchor : 0
     // Earned chip balance (Phase 1 reward token). Absent in pre-chip saves → 0.
     base.chips = typeof data.chips === 'number' ? Math.max(0, Math.floor(data.chips)) : 0
+    // Progressive jackpot pot state. Shape-tolerant initialization if absent.
+    base.potChips = typeof data.potChips === 'number' ? Math.max(0, Math.floor(data.potChips)) : 100
+    base.potTarget = typeof data.potTarget === 'number' && data.potTarget > 0 ? Math.floor(data.potTarget) : 0
+    if (base.potTarget === 0) {
+      base.potTarget = 500 + Math.floor(Math.random() * 401) // 500 to 900 (matches POT_TARGET_MIN and MAX)
+    }
     // v7 personal-warmth fields (§E9) — absent in pre-v7 saves → the empty/off defaults. Read
     // shape-tolerantly like everything above so a malformed blob can never throw or leak a bad shape.
     base.firstPlayDate = typeof data.firstPlayDate === 'string' ? data.firstPlayDate : null

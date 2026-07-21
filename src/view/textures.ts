@@ -661,6 +661,57 @@ function makeHeartglow(scene: Phaser.Scene): void {
   g.destroy()
 }
 
+/** Procedurally drawn pot/jar for the progressive jackpot (Growing Pot). */
+function makePot(scene: Phaser.Scene): void {
+  if (scene.textures.exists('pot')) return
+  const g = scene.make.graphics({ x: 0, y: 0 }, false) as any
+  const size = 48
+  const c = size / 2
+  
+  g.fillStyle(0xd97706, 1)
+  g.beginPath()
+  g.moveTo(c - 8, c - 14)
+  g.lineTo(c + 8, c - 14)
+  g.lineTo(c + 16, c - 4)
+  g.bezierCurveTo(c + 24, c + 4, c + 18, c + 16, c + 10, c + 18)
+  g.lineTo(c - 10, c + 18)
+  g.bezierCurveTo(c - 18, c + 16, c - 24, c + 4, c - 16, c - 4)
+  g.closePath()
+  g.fill()
+  
+  g.fillStyle(0xf59e0b, 1)
+  g.fillRoundedRect(c - 12, c - 18, 24, 6, 2)
+  
+  g.fillStyle(0xfef08a, 0.4)
+  g.beginPath()
+  g.moveTo(c - 12, c)
+  g.bezierCurveTo(c - 16, c + 4, c - 14, c + 12, c - 8, c + 14)
+  g.bezierCurveTo(c - 10, c + 10, c - 12, c + 4, c - 10, c)
+  g.closePath()
+  g.fill()
+  
+  g.fillStyle(0xfacc15, 1)
+  g.fillCircle(c - 4, c - 16, 5)
+  g.fillStyle(0xeab308, 1)
+  g.fillCircle(c + 4, c - 15, 4.5)
+  
+  g.lineStyle(1.5, 0x78350f, 1)
+  g.beginPath()
+  g.moveTo(c - 8, c - 14)
+  g.lineTo(c + 8, c - 14)
+  g.lineTo(c + 16, c - 4)
+  g.bezierCurveTo(c + 24, c + 4, c + 18, c + 16, c + 10, c + 18)
+  g.lineTo(c - 10, c + 18)
+  g.bezierCurveTo(c - 18, c + 16, c - 24, c + 4, c - 16, c - 4)
+  g.closePath()
+  g.stroke()
+  
+  g.strokeRoundedRect(c - 12, c - 18, 24, 6, 2)
+  
+  g.generateTexture('pot', size, size)
+  g.destroy()
+}
+
 export function createAllTextures(scene: Phaser.Scene): void {
   for (const [key, glyph] of Object.entries(EMOJI) as Array<[SymbolType, string]>) {
     makeEmoji(scene, key, glyph)
@@ -680,6 +731,7 @@ export function createAllTextures(scene: Phaser.Scene): void {
   makeTile(scene)
   makeRaybeam(scene)
   makeHeartglow(scene)
+  makePot(scene)
   // Glyphs baked at a larger native size so they stay crisp on hi-DPI. 'heart' stays small (it's
   // only used tiny — satellites, lives pips, particle bursts); the big Home/GameScene emblems use
   // 'heartbig' (baked large) via setDisplaySize, so the small-heart particle scales are untouched.
