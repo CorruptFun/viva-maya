@@ -1,12 +1,10 @@
 import Phaser from 'phaser'
 import { SWAP_SOUNDS, SWAP_SOUND_LABELS, sfx } from '../audio/sfx'
-import { LIVES_MAX } from '../config'
+import { DESIGN_W, LIVES_MAX, restScrollY, worldH } from '../config'
 import { formatCountdown } from '../core/lives'
 import type { LivesState } from '../core/lives'
 import { loadSave } from '../core/save'
 import type { SaveData } from '../core/save'
-import { potState } from '../core/pot'
-import type { PotHeatState } from '../core/pot'
 import {
   THEME_META,
   THEME_ORDER,
@@ -24,6 +22,9 @@ import {
   themeUnlocked,
 } from './theme'
 import type { Theme, ThemeId } from './theme'
+import { openCloudModal } from './cloudmodal'
+import { quality } from './quality'
+import { D, E, OVERSHOOT, backOut } from './motion'
 
 export const FONT = '"Arial Black", "Helvetica Neue", Arial, sans-serif'
 
@@ -63,7 +64,7 @@ export function setHcBoard(v: boolean): void {
 
 /**
  * Raw in-app Reduce-Motion pref for the settings TOGGLE display (§E8) — read straight from the a11y
- * key so the switch reflects exactly what Ton set, independent of the OS query. Writes still go
+ * key so the switch reflects exactly what Maya set, independent of the OS query. Writes still go
  * through theme.ts's `setReduceMotion` (single source of truth); the effective motion state
  * (`prefersReducedMotion`) still OR's the OS setting. Shape-tolerant: any bad/absent value → false.
  */
@@ -95,12 +96,66 @@ const ENTRANCE_OFFSET = 24
 /** Pending entrance direction for the NEXT scene's create(), set by startScene, read by applyEntrance. */
 let nextEntrance: SceneDir = 'deeper'
 
+/** Pending shared-element focus (§C6) for the NEXT scene's create(), set by startScene, read by consumeFocus. */
+let nextFocus: SceneFocus | undefined
+
 /** Count of in-app scene navigations this page-load — lets Home tell a true BootScene→Home open apart. */
 let sceneNavigations = 0
 
 /** True once any in-app `startScene` navigation has happened (i.e. we're past the initial Boot→Home open). */
 export function hasNavigated(): boolean {
   return sceneNavigations > 0
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Transition light-wipe (§F2). The cream cross-fade stays the structural backbone of every scene
+// change; this layers a soft travelling light band OVER it so a navigation reads as light moving
+// across the screen instead of a flat dip to cream. It speaks the same directional grammar as the
+// §E10 entrance: going DEEPER the band RISES (bottom → up and off the top), going BACK it SETTLES
+// (top → down and off the bottom). Each nav plays two halves — the leaving scene carries the band
+// through mid-screen during its 180ms fade-out, and the arriving scene picks it up and carries it
+// off-screen during its entrance settle — so the cut reads as ONE light passing across the change.
+// STRICTLY ADDITIVE: reduced motion and the LOW quality tier skip the wipe entirely (today's flat
+// cream fade, byte-for-byte), and the §C6 shared-element focus path is untouched — the wipe is pure
+// screen-space light (scrollFactor 0, ADD blend), two transient images that destroy themselves.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * One half of the travelling light band: a broad warm halo + a tighter bright core (both the baked
+ * pre-blurred `bgglow`, stretched wide), gliding across the screen in the nav's direction while a
+ * half-duration alpha yoyo swells them in and back out. `'leave'` rides the fade-out (D.base, the
+ * fade's own length); `'arrive'` rides the entrance settle (D.pop). Screen-space (scrollFactor 0),
+ * so the §E10 camera nudge under it never bends the light's path. No-op under reduced motion / on
+ * the low tier / where `bgglow` hasn't baked — every fallback keeps the exact flat cream fade.
+ */
+function lightWipe(scene: Phaser.Scene, dir: SceneDir, phase: 'leave' | 'arrive'): void {
+  if (prefersReducedMotion() || quality.tier() === 'low') return
+  if (!scene.textures.exists('bgglow')) return
+  const T = getTheme()
+  const H = worldH()
+  const rising = dir === 'deeper'
+  const leave = phase === 'leave'
+  // Travel fractions of the screen: the leaving half sweeps through the middle band of the screen;
+  // the arriving half starts where the cut left the light and carries it past the opposite edge.
+  const fromF = leave ? (rising ? 0.88 : 0.12) : (rising ? 0.66 : 0.34)
+  const toF = leave ? (rising ? 0.34 : 0.66) : (rising ? -0.24 : 1.24)
+  const dur = leave ? D.base : D.pop
+  const band = (h: number, tint: number, peak: number): void => {
+    const img = scene.add
+      .image(DESIGN_W / 2, H * fromF, 'bgglow')
+      .setDisplaySize(DESIGN_W * 2.1, h)
+      .setTint(tint)
+      .setAlpha(0)
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setScrollFactor(0)
+      .setDepth(120) // over every panel/overlay — it is light on the glass, not part of the scene
+    scene.tweens.add({ targets: img, y: H * toF, duration: dur, ease: E.glide, onComplete: () => img.destroy() })
+    // Fast attack, brief hold, then decay — the light must land EARLY, in the clear first third of
+    // the cream fade, or the deepening cream simply washes it out before it ever reads.
+    scene.tweens.add({ targets: img, alpha: peak, duration: dur * 0.3, yoyo: true, hold: dur * 0.15, ease: E.settle })
+  }
+  band(560, T.bloom, leave ? 0.42 : 0.34) // the broad warm halo
+  band(210, T.goldBright, leave ? 0.36 : 0.3) // the tighter bright core riding its centre
 }
 
 /**
@@ -112,17 +167,30 @@ export function hasNavigated(): boolean {
  * §E10: the optional `dir` sets the destination's directional entrance. Explicit dir wins; otherwise
  * returning to Home reads as 'back' (settles down) and going anywhere else reads as 'deeper' (rises
  * in). Back-compatible — the existing 3-arg call sites keep working with `dir` left undefined.
+ *
+ * §C6: the optional `focus` descriptor (the tapped element's centre + size + tint) is queued for the
+ * destination's OPT-IN shared-element bloom, so the thing the player tapped "opens into" the board.
+ * Only the two opt-in call sites (Home PLAY, a LevelSelect chip) pass it; every other call queues
+ * nothing → the destination finds no focus and keeps today's EXACT flat cross-fade. Never queued under
+ * reduced motion (gated below), so the calm path is byte-for-byte unchanged. Strictly additive.
  */
-export function startScene(from: Phaser.Scene, key: string, data?: object, dir?: SceneDir): void {
+export function startScene(from: Phaser.Scene, key: string, data?: object, dir?: SceneDir, focus?: SceneFocus): void {
   if (!from.input.enabled) return // already transitioning
   from.input.enabled = false
   sfx.whoosh() // §E3 B14: a short airy sweep partners the cream cross-fade
   nextEntrance = dir ?? (key === 'home' ? 'back' : 'deeper')
+  // §C6 — queue the opt-in shared-element focus for the destination. Overwrite on EVERY nav (undefined
+  // at the non-opt-in call sites) so a stale focus can never leak into a later navigation, and NEVER
+  // queue one under reduced motion → that path stays exactly today's flat cross-fade (fallback rule #1).
+  nextFocus = prefersReducedMotion() ? undefined : focus
   sceneNavigations += 1
   const dur = prefersReducedMotion() ? 90 : 180
   const cam = from.cameras.main
   cam.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => from.scene.start(key, data))
   cam.fadeOut(dur, 255, 253, 248)
+  // §F2 — the leaving half of the transition light-wipe rides the fade-out (no-ops under reduced
+  // motion / low tier, so those paths keep the flat cream fade exactly as it is today).
+  lightWipe(from, nextEntrance, 'leave')
 }
 
 /** Read + clear the pending directional entrance (defaults 'deeper' when nothing is queued). */
@@ -130,6 +198,39 @@ export function consumeEntrance(): SceneDir {
   const dir = nextEntrance
   nextEntrance = 'deeper'
   return dir
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Shared-element focus (§C6). An OPT-IN companion to the cream cross-fade: the element the player
+// tapped (Home PLAY, a LevelSelect chip) hands a small descriptor to the NEXT scene, and the
+// destination blooms ONE transient light from that on-screen spot INTO its board frame as the cameras
+// cross-fade — the "the thing I tapped opened into the board" continuity. Mirrors the directional
+// grammar's handoff EXACTLY: queued by `startScene` into `nextFocus`, read once by the destination via
+// `consumeFocus()`. STRICTLY ADDITIVE — the destination owns the resolution (it knows its board
+// geometry); a scene that never consumes a focus, or a nav that queued none, keeps today's flat fade.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Opt-in shared-element descriptor (§C6): where the tapped element sat + how big, for the destination bloom. */
+export interface SceneFocus {
+  /** Source element centre, world/design space. Both scenes share `restScrollY`, so world maps 1:1 across the cut. */
+  x: number
+  y: number
+  /** Source element size — the bloom starts here and grows into the board frame. */
+  w: number
+  h: number
+  /** Additive-bloom tint (the destination defaults to theme gold when omitted). */
+  tint?: number
+}
+
+/**
+ * Read + clear the pending shared-element focus (§C6). Returns undefined when the triggering nav queued
+ * none — every call site except Home PLAY / a LevelSelect chip — so the destination silently keeps
+ * today's flat cross-fade. Always clears, so a queued focus resolves at most once.
+ */
+export function consumeFocus(): SceneFocus | undefined {
+  const f = nextFocus
+  nextFocus = undefined
+  return f
 }
 
 /**
@@ -142,8 +243,14 @@ export function consumeEntrance(): SceneDir {
 export function applyEntrance(scene: Phaser.Scene, dir: SceneDir = consumeEntrance()): SceneDir {
   if (prefersReducedMotion()) return dir
   const cam = scene.cameras.main
-  cam.setScroll(cam.scrollX, dir === 'deeper' ? -ENTRANCE_OFFSET : ENTRANCE_OFFSET)
-  scene.tweens.add({ targets: cam, scrollY: 0, duration: 340, ease: 'Back.easeOut' })
+  // Rest at the centring scroll (restScrollY), not 0, so the entrance nudge settles onto the
+  // vertically-centred design box instead of yanking it back to the top on flexible-height screens.
+  const rest = restScrollY()
+  cam.setScroll(cam.scrollX, rest + (dir === 'deeper' ? -ENTRANCE_OFFSET : ENTRANCE_OFFSET))
+  scene.tweens.add({ targets: cam, scrollY: rest, duration: 340, ease: 'Back.easeOut' })
+  // §F2 — the arriving half of the light-wipe: pick the band up where the cut left it and carry it
+  // off-screen over the entrance settle. Screen-space, so the camera nudge above never bends it.
+  lightWipe(scene, dir, 'arrive')
   return dir
 }
 
@@ -183,7 +290,36 @@ export function addLivesHud(
       .setOrigin(0.5)
     container.add(timer)
   }
+  // ── H2 · lives-regen "heart fills" micro-beat ──────────────────────────────────────────────────
+  // Remember the last displayed filled-count so an INCREASE (a life quietly regenerated while the
+  // player was away) can pop + warm-flash the exact pip(s) that just filled — turning invisible regen
+  // into a felt "you got a life back." Reduced motion keeps today's instant fill (gated in update).
+  // Visual only; the paired soft "life restored" chime lands in C5.
+  let prevFilled = -1
+  const white = Phaser.Display.Color.ValueToColor(0xffffff)
+  const flash = Phaser.Display.Color.ValueToColor(getTheme().rose)
+  const popPip = (heart: Phaser.GameObjects.Image): void => {
+    const base = heart.scaleX
+    const POP = 0.34
+    scene.tweens.add({
+      targets: heart,
+      scaleX: base * (1 + POP),
+      scaleY: base * (1 + POP),
+      duration: 170,
+      yoyo: true,
+      ease: 'Quad.easeOut',
+      onUpdate: () => {
+        // Warm rose glint strongest at the peak of the pop, easing back to normal as the pip settles —
+        // derived from the live scale so the colour tracks the yoyo with no extra tween bookkeeping.
+        const amt = Phaser.Math.Clamp((heart.scaleX / base - 1) / POP, 0, 1)
+        const c = Phaser.Display.Color.Interpolate.ColorWithColor(white, flash, 100, Math.round(amt * 100))
+        heart.setTint(Phaser.Display.Color.GetColor(c.r, c.g, c.b))
+      },
+      onComplete: () => heart.clearTint(),
+    })
+  }
   const update = (state: LivesState): void => {
+    const filledCount = Phaser.Math.Clamp(state.lives, 0, LIVES_MAX)
     hearts.forEach((heart, i) => {
       const filled = i < state.lives
       heart.setAlpha(filled ? 1 : 0.24)
@@ -191,6 +327,16 @@ export function addLivesHud(
       else heart.setTint(0x7a7266)
     })
     if (timer) timer.setText(state.full ? '' : `next life  ${formatCountdown(state.nextInMs)}`)
+    // Celebrate only a genuine increase in filled hearts — never the first paint (prevFilled seeded to -1).
+    // C5 · a soft "life restored" chime partners the crossing — ONE gentle chime per regen (not per pip);
+    // it plays even under reduced motion (a sound is no motion hazard, always mute-gated in sfx), while the
+    // visual pop below stays reduced-motion-gated, instant exactly as before.
+    const regen = prevFilled >= 0 && filledCount > prevFilled
+    if (regen) sfx.lifeRestored()
+    if (regen && !prefersReducedMotion()) {
+      for (let i = prevFilled; i < filledCount; i++) popPip(hearts[i])
+    }
+    prevFilled = filledCount
   }
   return { container, update }
 }
@@ -204,7 +350,7 @@ export interface Marquee {
   bulbs: Phaser.GameObjects.Image[]
   /**
    * Power-on reveal (Signature #1): the wordmark darks IMMEDIATELY (call synchronously so it never
-   * flashes visible first), then after `leadIn` ms a single gold sweep glides VIVA→TON lighting the
+   * flashes visible first), then after `leadIn` ms a single gold sweep glides VIVA→MAYA lighting the
    * words as it passes, the marquee bulbs cascade-light left→right in its wake, and the heart flourish
    * pops in last. Returns roughly when the reveal finishes (ms) so the caller can chain the glow bloom
    * + button stagger. Under reduced motion everything is simply left statically lit.
@@ -225,7 +371,7 @@ export function addMarquee(scene: Phaser.Scene, centerX: number, y: number, opts
     .setShadow(0, 3, 'rgba(90,70,20,0.25)', 6, false, true)
   viva.setTint(0xffd75e, 0xffd75e, 0xc9930a, 0xc9930a)
   const maya = scene.add
-    .text(0, y, 'TON', { fontFamily: FONT, fontSize: '58px', fontStyle: '900', color: '#ffffff' })
+    .text(0, y, 'MAYA', { fontFamily: FONT, fontSize: '58px', fontStyle: '900', color: '#ffffff' })
     .setOrigin(0, 0.5)
     .setLetterSpacing(4)
     .setShadow(0, 3, 'rgba(90,20,15,0.25)', 6, false, true)
@@ -272,7 +418,7 @@ export function addMarquee(scene: Phaser.Scene, centerX: number, y: number, opts
     }
   }
 
-  // Slow light-sweep shine: a masked cream gloss that periodically glides VIVA→TON. Each word
+  // Slow light-sweep shine: a masked cream gloss that periodically glides VIVA→MAYA. Each word
   // gets its own streak clipped to its glyphs (bitmap mask), and the two share one tween value so
   // the highlight reads as a single continuous band travelling across the whole wordmark. Skipped
   // under reduced motion.
@@ -653,10 +799,20 @@ function ensureBaseTexture(scene: Phaser.Scene, key: string, w: number, h: numbe
   g.fillRoundedRect(ox + 2, oy + 2, w - 4, H - 4, safeR(r - 2, w - 4, h - 4))
   // Dark interior well at the top (revealed as the cap sinks); its rounded bottom stays hidden under the cap.
   const wellH = Math.round(h * 0.6)
+  // The well strips sit at the pedestal's TOP edge, so — exactly like the cap's gloss bands above —
+  // each MUST be inset by its (radius − height-clamped-radius) shortfall. A short strip clamps to a
+  // small radius, so its near-square top corners would poke past the cap's ROUNDED top corners as dark
+  // "horns" (hidden on the dark themes where dark-on-dark masks them, obvious on the light ones). The
+  // inset slides those corners inward to follow the pedestal's corner curve, tucking them under the cap.
+  const wellRb = safeR(r - 4, w - 8, wellH)
+  const wellIns = Math.max(0, r - 4 - wellRb)
   g.fillStyle(tok.well, 1)
-  g.fillRoundedRect(ox + 4, oy + 3, w - 8, wellH, safeR(r - 4, w - 8, wellH))
+  g.fillRoundedRect(ox + 4 + wellIns, oy + 3, w - 8 - wellIns * 2, wellH, wellRb)
+  const wellHiH = Math.max(3, Math.round(press * 0.7))
+  const hiRb = safeR(r - 4, w - 8, wellHiH)
+  const hiIns = Math.max(0, r - 4 - hiRb)
   g.fillStyle(shade(tok.well, -0.35), 1)
-  g.fillRoundedRect(ox + 4, oy + 3, w - 8, Math.max(3, Math.round(press * 0.7)), safeR(r - 4, w - 8, wellH))
+  g.fillRoundedRect(ox + 4 + hiIns, oy + 3, w - 8 - hiIns * 2, wellHiH, hiRb)
   g.generateTexture(key, texW, texH)
   g.destroy()
 }
@@ -736,8 +892,11 @@ const READOUT_STYLE: PillStyle = { id: 'readout', fill: 0xfff3d6, border: 0xf2c1
 
 /** Opt-in extras for a pressable control (additive — every call site works without passing this). */
 export interface PillOpts {
-  /** Hero flag (PLAY / SPIN): a soft breathing glow ring behind the pedestal. */
+  /** Hero flag (PLAY / SPIN): a soft breathing glow ring behind the pedestal + a periodic sheen. */
   juice?: boolean
+  /** Periodic hero sheen only (a slow specular sweep) WITHOUT the glow ring — for heroes that already
+   *  own a bespoke halo (e.g. Home's heartbeat-coherent PLAY glow) but still want the light-catch. */
+  sheen?: boolean
   /** Start dimmed + inert; toggle later via the returned container's `setDisabled`. */
   disabled?: boolean
 }
@@ -800,17 +959,82 @@ function buildPressable(
 
   const baseImg = scene.add.image(0, capY + ext / 2, `btnbase:${id}`)
   const face = scene.add.container(0, capY)
-  face.add(scene.add.image(0, 0, `btnface:${id}`))
+  const capImg = scene.add.image(0, 0, `btnface:${id}`)
+  face.add(capImg)
   // Hit-zone grows to the ≥44pt minimum in each axis (visual art unchanged) — §E8 touch targets.
   const zone = scene.add
     .rectangle(0, capY, Math.max(w, MIN_HIT), Math.max(h, MIN_HIT), 0xffffff, 0.001)
     .setInteractive({ useHandCursor: true })
   container.add([baseImg, face, zone])
 
+  // ── §F1 · tactile press polish ────────────────────────────────────────────────────────────────
+  // Modern-app depth on every pressable, layered on top of the existing sink/rise. Three additive,
+  // reduced-motion + governor-gated beats that compose over the baked 3D cap:
+  //   (a) TAP FLASH    — the cap's exact shape flares bright for a beat on press-down (a crisp
+  //       acknowledgement that reads on any pill/round aspect — no geometry mismatch).
+  //   (b) RELEASE SHINE — a specular streak glides across the cap on a committed release (masked to
+  //       the cap's exact pill/round shape, so light travels over the glass, never a rectangle).
+  //   (c) HERO SHEEN   — hero buttons (PLAY/SPIN — `juice`/`sheen`) get a slow periodic shine so the
+  //       primary action quietly catches the light and reads "alive".
+  // Every beat no-ops under reduced motion and on the LOW quality tier (transform-only feel remains),
+  // and each spawns a lone transient it destroys itself — nothing accumulates, no per-frame cost.
+  const fancy = !reduced && quality.tier() !== 'low'
+  const isGhost = style.id === 'ghost'
+  const emitFlash = (): void => {
+    if (!fancy) return
+    // Reuse the baked cap texture as a white ADD ghost → the flash is exactly the cap silhouette.
+    const flash = scene.add
+      .image(0, 0, `btnface:${id}`)
+      .setTint(0xffffff)
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setAlpha(isGhost ? 0.28 : 0.4)
+    face.add(flash) // rides inside the face, so it sinks with the cap
+    // Pass 2 secondary motion: the flash blooms ~10% as it fades, so the light reads as spreading
+    // outward (a decaying glow) instead of dimming flat in place.
+    flash.setScale(0.96)
+    scene.tweens.add({
+      targets: flash,
+      alpha: 0,
+      scale: 1.06,
+      duration: 260,
+      ease: 'Quad.easeOut',
+      onComplete: () => flash.destroy(),
+    })
+  }
+  const shineOnce = (): void => {
+    if (!fancy || !scene.textures.exists('sweep')) return
+    const streakW = Math.max(26, w * 0.24)
+    const shine = scene.add
+      .image(-w / 2 - streakW, 0, 'sweep')
+      .setDisplaySize(streakW, h * 1.35)
+      .setAngle(14)
+      .setTint(0xffffff)
+      .setAlpha(isGhost ? 0.5 : 0.72)
+      .setBlendMode(Phaser.BlendModes.ADD)
+    shine.setMask(capImg.createBitmapMask())
+    face.add(shine)
+    scene.tweens.add({
+      targets: shine,
+      x: w / 2 + streakW,
+      duration: 340,
+      ease: 'Sine.easeInOut',
+      onComplete: () => {
+        shine.clearMask(true)
+        shine.destroy()
+      },
+    })
+  }
+
   let disabled = opts.disabled ?? false
   if (disabled) face.setAlpha(0.5)
   let pressTween: Phaser.Tweens.Tween | undefined
-  const animate = (toY: number, sy: number, sx: number, dur: number, ease: string): void => {
+  const animate = (
+    toY: number,
+    sy: number,
+    sx: number,
+    dur: number,
+    ease: string | ((v: number) => number)
+  ): void => {
     pressTween?.stop()
     if (reduced) {
       face.setY(toY).setScale(sx, sy)
@@ -822,7 +1046,9 @@ function buildPressable(
     if (disabled) return
     animate(capY + press, 0.95, 1.02, 60, 'Quad.easeOut')
   }
-  const rise = (): void => animate(capY, 1, 1, 200, 'Back.easeOut')
+  // Springier release: a touch more overshoot than a plain Back so the cap "pops" back to rest — the
+  // small physical reward on letting go that modern controls have. backOut(release) ≈ 1.6 overshoot.
+  const rise = (): void => animate(capY, 1, 1, 220, reduced ? 'Back.easeOut' : backOut(OVERSHOOT.release))
   // §E3 B14: the down-thock + light haptic partner the press itself (distinct from the pointerup
   // `uiTap` on release). Skipped when disabled so an inert control stays silent. Mute/haptics-gated.
   const onDown = (): void => {
@@ -830,14 +1056,23 @@ function buildPressable(
     sfx.uiPress()
     pressHaptic()
     sink()
+    emitFlash()
   }
   zone.on('pointerdown', onDown)
   zone.on('pointerout', rise)
   zone.on('pointerup', () => {
     rise()
     if (disabled) return
+    shineOnce()
     onPress()
   })
+
+  // (c) Hero sheen — a slow recurring shine only on hero buttons (PLAY/SPIN — `juice` or the explicit
+  // `sheen` flag), so the primary action subtly catches the light on its own. Cheap (one masked streak
+  // every few seconds); governor/reduced gated via `fancy`, and killed with the scene so it never leaks.
+  if ((opts.juice || opts.sheen) && fancy) {
+    scene.time.addEvent({ delay: 3600, loop: true, startAt: 2400, callback: shineOnce })
+  }
 
   container.setDisabled = (v: boolean): void => {
     disabled = v
@@ -916,120 +1151,16 @@ export function addChipPill(
 
   const update = (chips: number): void => {
     redraw(chips)
-    scene.tweens.add({ targets: container, scaleX: 1.14, scaleY: 1.14, duration: 130, yoyo: true, ease: 'Quad.easeOut' })
-  }
-
-  return { container, update }
-}
-
-export interface PotPill {
-  container: Phaser.GameObjects.Container
-  update: (potChips: number, potTarget: number, heatState: PotHeatState) => void
-}
-
-/**
- * Progressive jackpot "GROWING POT" pill — shows the pot/jar texture, the current potChips towards
- * the target, and handles escalating visual states: calm, glowing, heating up, and ready!
- */
-export function addPotPill(
-  scene: Phaser.Scene,
-  x: number,
-  y: number,
-  opts: { compact?: boolean } = {}
-): PotPill {
-  const compact = opts.compact ?? false
-  const h = compact ? 44 : 52
-  const iconSize = Math.round(h * 0.66)
-  const padX = compact ? 15 : 18
-  const gap = compact ? 7 : 9
-  const container = scene.add.container(x, y).setDepth(50)
-  const g = scene.add.graphics()
-  
-  const icon = scene.add.image(0, 0, 'pot').setDisplaySize(iconSize, iconSize)
-  const label = scene.add
-    .text(0, 1, '', { fontFamily: FONT, fontSize: `${Math.round(h * 0.44)}px`, fontStyle: '900', color: '#4a3305' })
-    .setOrigin(0, 0.5)
-  container.add([g, icon, label])
-
-  let pulseTween: Phaser.Tweens.Tween | null = null
-  let shakeTween: Phaser.Tweens.Tween | null = null
-
-  const redraw = (potChips: number, potTarget: number, heatState: PotHeatState): void => {
-    let txt = `${potChips}/${potTarget}`
-    if (heatState === 'ready') {
-      txt = 'READY!'
-    }
-    label.setText(txt)
-
-    const w = padX + iconSize + gap + label.width + padX
-    g.clear()
-
-    let pillStyle = READOUT_STYLE
-    if (heatState === 'glowing') {
-      pillStyle = { id: 'pot-glowing', fill: 0xfff3d6, border: 0xeab308, textColor: '#854d0e' }
-    } else if (heatState === 'heating_up') {
-      pillStyle = { id: 'pot-heating', fill: 0xffedd5, border: 0xea580c, textColor: '#7c2d12' }
-    } else if (heatState === 'ready') {
-      pillStyle = { id: 'pot-ready', fill: 0xfef9c3, border: 0xd97706, textColor: '#713f12' }
-    }
-
-    drawPillFace(g, -w / 2, -h / 2, w, h, pillStyle)
-    icon.setPosition(-w / 2 + padX + iconSize / 2, 0)
-    label.setPosition(icon.x + iconSize / 2 + gap, 1)
-
-    if (pulseTween) {
-      pulseTween.remove()
-      pulseTween = null
-    }
-    if (shakeTween) {
-      shakeTween.remove()
-      shakeTween = null
-    }
-    container.setScale(1)
-    container.setAngle(0)
-
-    const reduced = prefersReducedMotion()
-
-    if (heatState === 'heating_up' && !reduced) {
-      pulseTween = scene.tweens.add({
-        targets: container,
-        scaleX: 1.08,
-        scaleY: 1.08,
-        duration: 450,
-        yoyo: true,
-        repeat: -1,
-        ease: 'Sine.easeInOut'
-      })
-    } else if (heatState === 'ready' && !reduced) {
-      shakeTween = scene.tweens.add({
-        targets: container,
-        angle: { from: -3, to: 3 },
-        scaleX: { from: 1.02, to: 1.06 },
-        scaleY: { from: 1.02, to: 1.06 },
-        duration: 100,
-        yoyo: true,
-        repeat: -1,
-        ease: 'Sine.easeInOut'
-      })
-    }
-  }
-
-  const initial = potState()
-  redraw(initial.potChips, initial.potTarget, initial.heatState)
-
-  const update = (potChips: number, potTarget: number, heatState: PotHeatState): void => {
-    redraw(potChips, potTarget, heatState)
-    const reduced = prefersReducedMotion()
-    if (!reduced) {
-      scene.tweens.add({
-        targets: container,
-        scaleX: 1.12,
-        scaleY: 1.12,
-        duration: 120,
-        yoyo: true,
-        ease: 'Quad.easeOut'
-      })
-    }
+    // Pass 2 follow-through: punch out fast, then settle back with a gentle overshoot (vs a symmetric
+    // yoyo that stops dead). Adds the missing reduced-motion guard so the pill just redraws at rest.
+    if (prefersReducedMotion()) return
+    scene.tweens.chain({
+      targets: container,
+      tweens: [
+        { scaleX: 1.14, scaleY: 1.14, duration: 90, ease: 'Quad.easeOut' },
+        { scaleX: 1, scaleY: 1, duration: 150, ease: backOut(OVERSHOOT.gentle) },
+      ],
+    })
   }
 
   return { container, update }
@@ -1162,7 +1293,7 @@ export function openHelpPanel(scene: Phaser.Scene): void {
   const H = 1280
   const layer = scene.add.container(0, 0).setDepth(60)
 
-  const scrim = scene.add.rectangle(W / 2, H / 2, W, H, 0x2a2417, 0.6).setInteractive()
+  const scrim = scene.add.rectangle(W / 2, H / 2, W, worldH(), 0x2a2417, 0.6).setInteractive()
   scrim.on('pointerup', () => { sfx.whoosh(); layer.destroy() }) // §E3 B14: tap-outside close partner
 
   const px = 40
@@ -1256,7 +1387,7 @@ export function openSoundPanel(scene: Phaser.Scene): void {
   const H = 1280
   const layer = scene.add.container(0, 0).setDepth(60)
 
-  const scrim = scene.add.rectangle(W / 2, H / 2, W, H, 0x2a2417, 0.6).setInteractive()
+  const scrim = scene.add.rectangle(W / 2, H / 2, W, worldH(), 0x2a2417, 0.6).setInteractive()
   scrim.on('pointerup', () => { sfx.whoosh(); layer.destroy() }) // §E3 B14: tap-outside close partner
 
   const px = 40
@@ -1462,10 +1593,17 @@ export function openThemePanel(scene: Phaser.Scene, openingThemeId: ThemeId = ge
   const ph = 792
   const pyTop = (H - ph) / 2
 
-  const scrim = scene.add.rectangle(W / 2, H / 2, W, H, 0x2a2417, 0.6).setInteractive()
+  const scrim = scene.add.rectangle(W / 2, H / 2, W, worldH(), 0x2a2417, 0.6).setInteractive()
   const close = (): void => {
     sfx.whoosh() // §E3 B14: airy sweep partners the panel closing
     const changed = getThemeId() !== openingThemeId
+    if (changed) {
+      // C5 · theme APPLY was silent — the picker only repaints via the scene.restart() below. setTheme()
+      // already applied on the row tap, so retune the shared reverb (+ rebuild the opt-in bed) into the NEW
+      // room, then bloom a brief confirmation chord voiced in the new palette — a sonic partner for the swap.
+      sfx.refreshTheme()
+      sfx.themeSwap()
+    }
     layer.destroy()
     if (changed) scene.scene.restart()
   }
@@ -1619,9 +1757,10 @@ function buildToggleRow(
 }
 
 /**
- * Settings / Accessibility overlay (§E8): a scrim + cream card titled "SETTINGS" with four labelled
- * ON/OFF toggle rows — Reduce Motion, Reduce Flashing, Haptics, High-Contrast Board. Each row reads
- * its live pref and persists on tap via the shared authority. Restart-affecting toggles (Reduce
+ * Settings / Accessibility overlay (§E8): a scrim + cream card titled "SETTINGS" with five labelled
+ * ON/OFF toggle rows — Reduce Motion, Reduce Flashing, Haptics, High-Contrast Board, Ambient sound —
+ * plus a CLOUD & BACKUP pill below them that opens the DOM cloud sign-in / backup modal (openCloudModal).
+ * Each row reads its live pref and persists on tap via the shared authority. Restart-affecting toggles (Reduce
  * Motion + High-Contrast Board change the CURRENT paint) are snapshotted at open; on CLOSE, if either
  * changed, the calling scene restarts so its art repaints — mirroring the theme picker's pattern.
  * Reduce Flashing / Haptics are read live at effect time, so they need no restart.
@@ -1634,14 +1773,17 @@ export function openSettingsPanel(scene: Phaser.Scene): void {
 
   const px = 40
   const pw = W - 80
-  const ph = 700
-  const pyTop = (H - ph) / 2
+  // Height sized for FIVE toggle rows + the CLOUD & BACKUP pill above DONE: rows start pyTop+176,
+  // step 104 → last row centre pyTop+592 (bottom pyTop+637); the cloud pill sits at pyTop+696 (72 tall,
+  // bottom pyTop+732) and DONE at pyTop+ph-62 (top edge pyTop+ph-96) clears it with ph=860.
+  const ph = 860
+  const pyTop = (H - ph) / 2 // stays vertically centred: (1280-800)/2 = 240px margins
 
   // Snapshot the restart-affecting prefs at open (raw in-app reduce-motion + HC board).
   const startedRM = rawReduceMotionPref()
   const startedHC = hcBoard()
 
-  const scrim = scene.add.rectangle(W / 2, H / 2, W, H, 0x2a2417, 0.6).setInteractive()
+  const scrim = scene.add.rectangle(W / 2, H / 2, W, worldH(), 0x2a2417, 0.6).setInteractive()
   const close = (): void => {
     sfx.whoosh() // §E3 B14: airy sweep partners the panel closing
     const changed = rawReduceMotionPref() !== startedRM || hcBoard() !== startedHC
@@ -1680,6 +1822,9 @@ export function openSettingsPanel(scene: Phaser.Scene): void {
     { label: 'Reduce Flashing', sub: 'Soften flashes & impacts', get: reduceFlashing, set: setReduceFlashing },
     { label: 'Haptics', sub: 'Vibrate on big moments', get: () => !hapticsOff(), set: v => setHapticsOff(!v) },
     { label: 'High-Contrast Board', sub: 'Bolder tiles & outlines', get: hcBoard, set: setHcBoard },
+    // §E3-A2 — unlock the built-but-unreached ambient bed. Default OFF (sfx.ambience); toggling it
+    // starts/stops the warm per-theme lounge pad and persists exactly like mute.
+    { label: 'Ambient sound', sub: 'Warm lounge music', get: () => sfx.ambience, set: () => sfx.toggleAmbience() },
   ]
   const rowW = pw - 80
   const rowH = 90
@@ -1688,6 +1833,15 @@ export function openSettingsPanel(scene: Phaser.Scene): void {
     buildToggleRow(scene, layer, W / 2, y, rowW, rowH, cfg, reduced)
     y += 104
   }
+
+  // CLOUD & BACKUP — opens the DOM cloud sign-in / device-backup modal (a high-z overlay above the
+  // canvas). Placed between the toggle rows and DONE; the panel height (ph) was grown to make room.
+  layer.add(
+    addPillButton(scene, W / 2, pyTop + 696, 460, 72, 'CLOUD & BACKUP', GOLD_PILL, () => {
+      sfx.whoosh() // §E3 B14: the airy sweep partners the cloud modal opening
+      openCloudModal()
+    })
+  )
 
   layer.add(addPillButton(scene, W / 2, pyTop + ph - 62, 240, 68, 'DONE', GOLD_PILL, close))
 }
@@ -1710,7 +1864,7 @@ export function openOnboarding(scene: Phaser.Scene, onClose?: () => void): void 
   const cardW = 600
   const cardH = 520
 
-  const scrim = scene.add.rectangle(W / 2, H / 2, W, H, 0x2a2417, 0.6).setInteractive()
+  const scrim = scene.add.rectangle(W / 2, H / 2, W, worldH(), 0x2a2417, 0.6).setInteractive()
   const close = (): void => {
     layer.destroy()
     onClose?.()

@@ -23,7 +23,7 @@ export interface Occasion {
   message?: string
 }
 
-export interface WarmthConfig {
+export interface MayaConfig {
   /** Her name. Shown ONLY when `showName` is also true — otherwise the product stays nameless. */
   name?: string
   /** Master switch for the name. Default FALSE → the default product never shows a name anywhere. */
@@ -42,10 +42,10 @@ export interface WarmthConfig {
 //  (and uncomment the occasion examples) to wake the hidden touches. Nothing here changes the
 //  save, gameplay, or the default look while it stays at these defaults.
 // ═══════════════════════════════════════════════════════════════════════════════════════════
-export const warmth: WarmthConfig = {
-  name: undefined, //            → e.g. 'Ton'   (only ever shown when showName is true)
+export const maya: MayaConfig = {
+  name: undefined, //            → e.g. 'Maya'   (only ever shown when showName is true)
   showName: false, //            → flip to true (with a name) to greet her by name
-  secretMessage: undefined, //   → e.g. 'For Ton — every level was built thinking of you. ♥'
+  secretMessage: undefined, //   → e.g. 'For Maya — every level was built thinking of you. ♥'
   occasions: [
     // { date: '02-14', label: 'Happy Valentine’s Day', message: 'For my valentine. ♥' },
     // { date: '06-21', label: 'Happy birthday', message: 'Happy birthday, my love. ♥' },
@@ -61,7 +61,7 @@ export function dateKeyMMDD(now: Date = new Date()): string {
 }
 
 /** The configured occasion for a given 'MM-DD' key, or null. First match wins. */
-export function occasionFor(mmdd: string, cfg: WarmthConfig = warmth): Occasion | null {
+export function occasionFor(mmdd: string, cfg: MayaConfig = maya): Occasion | null {
   return cfg.occasions.find(o => o.date === mmdd) ?? null
 }
 
@@ -71,7 +71,7 @@ export function occasionFor(mmdd: string, cfg: WarmthConfig = warmth): Occasion 
  * beat. `todayKey` is the full 'YYYY-MM-DD' (so the occasion recurs every year but fires once a
  * day); its MM-DD tail is matched against `Occasion.date`.
  */
-export function pendingOccasion(todayKey: string, seen: string[], cfg: WarmthConfig = warmth): Occasion | null {
+export function pendingOccasion(todayKey: string, seen: string[], cfg: MayaConfig = maya): Occasion | null {
   const occ = occasionFor(todayKey.slice(5), cfg)
   return occ && !seen.includes(todayKey) ? occ : null
 }
@@ -80,7 +80,7 @@ export function pendingOccasion(todayKey: string, seen: string[], cfg: WarmthCon
  * A gentle time-of-day greeting keyed to `getHours()` (0–23). Appends her name ONLY when
  * `showName && name` — otherwise it's a clean, nameless line that works with no config.
  */
-export function greeting(hour: number, cfg: WarmthConfig = warmth): string {
+export function greeting(hour: number, cfg: MayaConfig = maya): string {
   let base: string
   if (hour < 5) base = 'Still up?'
   else if (hour < 12) base = 'Good morning'
@@ -91,12 +91,12 @@ export function greeting(hour: number, cfg: WarmthConfig = warmth): string {
 }
 
 /** Append ", <name>" only when the owner has opted in (showName && name); otherwise return `base`. */
-export function withName(base: string, cfg: WarmthConfig = warmth): string {
+export function withName(base: string, cfg: MayaConfig = maya): string {
   return cfg.showName && cfg.name ? `${base}, ${cfg.name}` : base
 }
 
 /** The discovered heart-note body: the owner's message if set, else a tasteful generic line. */
-export function secretNote(cfg: WarmthConfig = warmth): string {
+export function secretNote(cfg: MayaConfig = maya): string {
   const msg = cfg.secretMessage?.trim()
   return msg && msg.length > 0 ? msg : 'Made with ♥'
 }

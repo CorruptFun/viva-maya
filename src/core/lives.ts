@@ -1,4 +1,4 @@
-import { LIFE_REGEN_MS, LIVES_MAX } from '../config'
+import { LIFE_REGEN_MS, LIVES_GRACE_LEVELS, LIVES_MAX } from '../config'
 import { loadSave, persistSave } from './save'
 import type { SaveData } from './save'
 
@@ -63,6 +63,16 @@ export function hasLife(now = Date.now()): boolean {
 }
 
 /** Spend one life (a loss or a mid-level quit). Starts the regen clock if the pool was full. */
+/**
+ * Level-aware drain: losses on the learning ramp (level < LIVES_GRACE_LEVELS) are FREE —
+ * the pool only becomes real once a player is past the early levels. Endless never drains
+ * (its call sites already guard). Prefer this over raw spendLife at loss/quit call sites.
+ */
+export function spendLifeFor(level: number, now = Date.now()): LivesState {
+  if (level < LIVES_GRACE_LEVELS) return refreshLives(now)
+  return spendLife(now)
+}
+
 export function spendLife(now = Date.now()): LivesState {
   const save = loadSave()
   applyRegen(save, now)

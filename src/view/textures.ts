@@ -1,5 +1,6 @@
 import Phaser from 'phaser'
-import type { Piece, SymbolType } from '../core/types'
+import { SYMBOLS } from '../core/types'
+import type { Piece, PieceKind, SymbolType } from '../core/types'
 
 /**
  * Symbol art = system emoji rendered into textures at boot — crisp, high-quality
@@ -19,9 +20,9 @@ export const TEX_SIZE = BASE * SS
 const EMOJI: Record<SymbolType, string> = {
   cherry: '🍒',
   seven: '🦆',
-  diamond: '🐻',
-  bell: '🐊',
-  clover: '🍑',
+  diamond: '💎',
+  bell: '🔔',
+  clover: '🍀',
   bar: '🐱',
 }
 
@@ -76,6 +77,8 @@ function makeEmoji(scene: Phaser.Scene, key: SymbolType, _glyph: string): void {
   img.destroy()
 }
 
+
+
 function makeSpark(scene: Phaser.Scene): void {
   const g = scene.make.graphics({ x: 0, y: 0 }, false)
   g.fillStyle(0xf2b234, 0.35)
@@ -118,21 +121,69 @@ function makeGlyphTexture(scene: Phaser.Scene, key: string, glyph: string, fontS
   text.destroy()
 }
 
+/**
+ * JACKPOT token — a minted, top-lit GOLD coin behind the 🎰 glyph (Direction B: bold casino-lux).
+ * Built like makeMedallion/drawBomb but in full gold: a warm radial halo, a soft contact shadow, a
+ * dark rim GROOVE, a reeded/milled outer edge (alternating bright-ridge + dark-groove radial ticks
+ * that read as 3D milling even when the coin blurs to ~73px on the board), a raised domed face faked
+ * with stacked falling-alpha gold discs pushed UPWARD (deep gold at the belly → cream at the crown,
+ * since Phaser 3.90 can't gradient a circle), a lit/dark bevel step, and a broad crown gloss +
+ * specular. The 🎰 emoji is drawn LAST so it stays crisp on top. 128-space, baked ×2 → 256².
+ */
 function makeJackpot(scene: Phaser.Scene): void {
+  const c = 64
   const g = scene.make.graphics({ x: 0, y: 0 }, false)
+  // Soft contact shadow so the token reads SEATED on its tile (neutral black, feathered — the
+  // seatShadow idiom, sized round for the coin). Drawn first; the opaque disc covers its top.
+  g.fillStyle(0x000000, 0.09)
+  g.fillEllipse(c, c + 9, 108, 98)
+  g.fillStyle(0x000000, 0.1)
+  g.fillEllipse(c, c + 7, 98, 88)
+  g.fillStyle(0x000000, 0.12)
+  g.fillEllipse(c, c + 5, 86, 78)
+  // Milled outer rim base (goldDeep) — the reeded knurl sits on this dark ground.
   g.fillStyle(0xc9930a, 1)
-  g.fillCircle(64, 64, 52)
-  g.fillStyle(0xf2b234, 1)
-  g.fillCircle(64, 64, 47)
-  g.fillStyle(0xffd75e, 1)
-  g.fillCircle(64, 64, 39)
-  g.lineStyle(4, 0xa87410, 1)
-  for (let i = 0; i < 12; i++) {
-    const a = (i / 12) * Math.PI * 2
-    const c = Math.cos(a)
-    const s = Math.sin(a)
-    g.lineBetween(64 + c * 41, 64 + s * 41, 64 + c * 50, 64 + s * 50)
+  g.fillCircle(c, c, 52)
+  // Reeded / knurled edge: alternating LIT + SHADOWED radial teeth so the rim reads as 3D milling
+  // (light facet + dark facet per notch) instead of the old flat gold ring. Chunky enough (18 teeth)
+  // to survive the downscale to ~73px — dimensional shimmer, not vanishing filigree.
+  const teeth = 18
+  for (let i = 0; i < teeth; i++) {
+    const a = (i / teeth) * Math.PI * 2
+    const co = Math.cos(a)
+    const si = Math.sin(a)
+    const lit = i % 2 === 0
+    g.lineStyle(3.6, lit ? 0xffd75e : 0x7a5a08, lit ? 0.9 : 0.85)
+    g.lineBetween(c + co * 43, c + si * 43, c + co * 51, c + si * 51)
   }
+  // Dark rim GROOVE — the recessed channel between the milled edge and the raised face.
+  g.lineStyle(4, 0x7a5a08, 0.55)
+  g.strokeCircle(c, c, 43)
+  // Raised domed face: goldBezel base, then a brighter goldBright upper form offset UP (the drawBomb
+  // lit-dome idiom) — the base gold left showing along the bottom becomes the shaded underside.
+  g.fillStyle(0xf2c14e, 1)
+  g.fillCircle(c, c, 41)
+  g.fillStyle(0xffd75e, 1)
+  g.fillCircle(c, c - 5, 34)
+  // Warm cream light pool near the crown → the top-lit highlight of the dome.
+  g.fillStyle(0xfff3d6, 0.5)
+  g.fillCircle(c, c - 10, 20)
+  // Underside shading — black-alpha ellipses hugging the lower face (kept inside the r41 disc so the
+  // shadow never spills onto the rim), deepening the bottom of the dome.
+  g.fillStyle(0x000000, 0.08)
+  g.fillEllipse(c, c + 28, 58, 20)
+  g.fillStyle(0x000000, 0.09)
+  g.fillEllipse(c, c + 34, 46, 14)
+  // Bevel ring on the face edge + a lit inner ring → the face reads minted, not printed.
+  g.lineStyle(2.5, 0x7a5a08, 0.5)
+  g.strokeCircle(c, c, 40)
+  g.lineStyle(2, 0xffd75e, 0.6)
+  g.strokeCircle(c, c, 37)
+  // Top gloss crescent + specular sheen at the crown, above where the emoji sits.
+  g.fillStyle(0xfffdf8, 0.32)
+  g.fillEllipse(c, c - 24, 34, 11)
+  g.fillStyle(0xffffff, 0.5)
+  g.fillEllipse(c - 8, c - 26, 13, 5)
   const text = scene.make.text(
     {
       x: 0,
@@ -156,59 +207,167 @@ function makeChip(scene: Phaser.Scene): void {
   const g = scene.make.graphics({ x: 0, y: 0 }, false)
   const c = 24
   const r = 22
-  g.fillStyle(0xc4223e, 1)
-  g.fillCircle(c, c, r) // rose-red rim
-  g.fillStyle(0xfff3d6, 1)
+  // Seated contact shadow — a soft dark ellipse under the token so it grounds on
+  // the HUD rail instead of floating (kept low + wide so only a sliver peeks past
+  // the rim at the bottom; neutral black reads as depth at every size).
+  g.fillStyle(0x000000, 0.1)
+  g.fillEllipse(c, 46, 42, 9)
+  g.fillStyle(0x000000, 0.1)
+  g.fillEllipse(c, 46, 30, 7)
+
+  // Rim BEVEL: three stacked discs fake a lit rounded rim — deep rose shadow at
+  // the lower-right, bright rose at the upper-left, main tone between (the same
+  // offset-disc trick drawBomb uses for its lit upper form). Keeps the silhouette.
+  g.fillStyle(0xa8213c, 1) // roseDeep — shadowed lower-right crescent
+  g.fillCircle(c, c, r)
+  g.fillStyle(0xff7a85, 1) // roseLight — lit upper-left edge
+  g.fillCircle(c - 1.6, c - 1.8, r - 0.6)
+  g.fillStyle(0xc4223e, 1) // original rim tone (identity preserved)
+  g.fillCircle(c - 0.4, c - 0.6, r - 2.4)
+
+  // 8 cream edge spots — each with a faint black seat so it reads inset, then the
+  // cream nudged up into the light for a hair of relief.
+  const sr = r * 0.82
   for (let i = 0; i < 8; i++) {
     const a = (i / 8) * Math.PI * 2
-    g.fillCircle(c + Math.cos(a) * r * 0.82, c + Math.sin(a) * r * 0.82, 3.2) // edge spots
+    const sx = c + Math.cos(a) * sr
+    const sy = c + Math.sin(a) * sr
+    g.fillStyle(0x000000, 0.16) // dark seat under the spot
+    g.fillCircle(sx, sy + 0.6, 3.7)
+    g.fillStyle(0xfff3d6, 1) // cream spot
+    g.fillCircle(sx, sy - 0.4, 3.2)
   }
-  g.fillStyle(0xf2b234, 1)
-  g.fillCircle(c, c, r * 0.62) // gold inner ring
+
+  // Gold inner ring — beveled with the same three-disc trick: goldDeep groove,
+  // goldBright lit edge, gold main tone.
+  g.fillStyle(0xc9930a, 1) // goldDeep — groove / lower-right shadow
+  g.fillCircle(c, c, r * 0.62 + 1)
+  g.fillStyle(0xffd75e, 1) // goldBright — lit upper-left
+  g.fillCircle(c - 1, c - 1.2, r * 0.62)
+  g.fillStyle(0xf2b234, 1) // gold main tone
+  g.fillCircle(c - 0.3, c - 0.4, r * 0.62 - 1.4)
+
+  // Cream face with subtle CONCAVE shading (black pooled low) + a top-lit sheen,
+  // so the recessed centre reads dished instead of flat.
   g.fillStyle(0xfff3d6, 1)
-  g.fillCircle(c, c, r * 0.5) // cream face
-  g.fillStyle(0xd3304f, 1)
-  g.fillCircle(c, c, r * 0.22) // center pip
+  g.fillCircle(c, c, r * 0.5)
+  g.fillStyle(0x000000, 0.08) // concave shadow across the lower face
+  g.fillEllipse(c, c + 4, r * 0.9, r * 0.5)
+  g.fillStyle(0xffffff, 0.45) // top-lit sheen on the upper face
+  g.fillEllipse(c - 1.5, c - 4, r * 0.62, r * 0.34)
+
+  // Center pip — a small rose dome pressed into the face (dark seat, deep base,
+  // lit top offset up, tiny specular), matching drawBomb's dome+specular idiom.
+  const pr = r * 0.22
+  g.fillStyle(0x000000, 0.1) // pressed-in seat around the pip
+  g.fillCircle(c, c + 0.5, pr + 1.6)
+  g.fillStyle(0xa8213c, 1) // roseDeep base
+  g.fillCircle(c, c + 0.4, pr)
+  g.fillStyle(0xd3304f, 1) // rose top (offset up = lit dome)
+  g.fillCircle(c, c - 0.4, pr - 0.6)
+  g.fillStyle(0xff7a85, 0.7) // specular highlight
+  g.fillCircle(c - 1, c - 1.6, pr * 0.34)
+
+  // Unifying GLOSS sweep across the whole upper half — the signature glassy arc
+  // that ties rim + ring + face into one top-lit 3D token. Faint so it never
+  // washes out the palette.
+  g.fillStyle(0xffffff, 0.11)
+  g.fillEllipse(c - 2, c - 9, r * 1.5, r * 0.9)
+
   g.generateTexture('chip', 48, 48)
   g.destroy()
 }
 
-/** Mini playing card (red diamond pip). */
+/** Mini playing card (red diamond pip) — a glossy stock card so it reads dimensional beside the
+ * minted chip in the win-burst spray. A top-lit stock (warm belly -> lit upper -> a gloss sweep),
+ * a soft two-tone bevel frame, and a RAISED diamond pip (dark seat -> rose face -> cream glint),
+ * matching the depth idiom of makeChip. Same 40x56 'card' key; nothing downstream moves. */
 function makeCard(scene: Phaser.Scene): void {
   const g = scene.make.graphics({ x: 0, y: 0 }, false)
   const w = 40
   const h = 56
+  const r = 7
+  // Stock as a shallow top-lit dome: warm belly base, a lit upper band, then a soft gloss sweep.
+  g.fillStyle(0xf1e6cf, 1)
+  g.fillRoundedRect(0, 0, w, h, r) // warm belly
   g.fillStyle(0xfffdf8, 1)
-  g.fillRoundedRect(0, 0, w, h, 7)
-  g.lineStyle(2, 0xe8dfc9, 1)
-  g.strokeRoundedRect(1, 1, w - 2, h - 2, 6)
+  g.fillRoundedRect(0, 0, w, h * 0.56, { tl: r, tr: r, bl: 0, br: 0 }) // lit upper
+  g.fillStyle(0xffffff, 0.4)
+  g.fillEllipse(w / 2 - 2, h * 0.2, w * 0.9, h * 0.28) // gloss sweep across the top
+  // Two-tone bevel frame: a warm seated outer edge + a fine bright top rim.
+  g.lineStyle(1.5, 0xe0d4b8, 1)
+  g.strokeRoundedRect(0.75, 0.75, w - 1.5, h - 1.5, r - 0.5)
+  g.lineStyle(1, 0xffffff, 0.55)
+  g.strokeRoundedRect(2, 1.5, w - 4, h - 4, r - 1.5)
   const cx = w / 2
   const cy = h / 2
+  const diamond = (dx: number, dy: number): Array<{ x: number; y: number }> => [
+    { x: cx + dx, y: cy - 11 + dy },
+    { x: cx + 8 + dx, y: cy + dy },
+    { x: cx + dx, y: cy + 11 + dy },
+    { x: cx - 8 + dx, y: cy + dy },
+  ]
+  // Raised diamond pip: a dark seat below, the rose face, and a cream top glint (top-lit dome).
+  g.fillStyle(0x000000, 0.12)
+  g.fillPoints(diamond(0, 1.4), true) // pressed seat
+  g.fillStyle(0xa8213c, 1)
+  g.fillPoints(diamond(0, 0.5), true) // deep base
   g.fillStyle(0xd3304f, 1)
+  g.fillPoints(diamond(0, -0.5), true) // rose face lifted toward the light
+  g.fillStyle(0xff8a97, 0.65)
   g.fillPoints(
     [
-      { x: cx, y: cy - 11 },
-      { x: cx + 8, y: cy },
-      { x: cx, y: cy + 11 },
-      { x: cx - 8, y: cy },
+      { x: cx, y: cy - 8 },
+      { x: cx + 4, y: cy - 3.5 },
+      { x: cx, y: cy - 1 },
+      { x: cx - 4, y: cy - 3.5 },
     ],
     true
-  )
-  g.fillCircle(7, 8, 2.4) // corner pip
+  ) // cream/rose top glint
+  // Corner pips (kept from the original identity).
+  g.fillStyle(0xd3304f, 1)
+  g.fillCircle(7, 8, 2.4)
   g.fillCircle(w - 7, h - 8, 2.4)
   g.generateTexture('card', 40, 56)
   g.destroy()
 }
 
-/** Marquee bulb (white so it can be tinted red/gold per position). */
+/**
+ * Marquee bulb — a lit GLASS LAMP (white-body so it tints gold/rose/accent per position, on every
+ * theme). Structure is ALPHA-ONLY (never hue) so setTint stays true: a soft glass bloom holding the
+ * old ~r8 footprint (nothing shifts in world space), a translucent envelope with the light pooled
+ * UP-LEFT so the lower-right belly falls off, a hot filament core + peak, a thin glass rim that reads
+ * as blown glass (not a glow blob), and an off-centre specular glint whose brightness survives the
+ * tint. The premium lit-lamp read at its 13–20px display sizes vs the old flat concentric rings.
+ * Key 'bulb', 16×16 — both unchanged.
+ */
 function makeBulb(scene: Phaser.Scene): void {
   const g = scene.make.graphics({ x: 0, y: 0 }, false)
-  g.fillStyle(0xffffff, 0.22)
+  // Glass bloom + halo — the lamp's soft glow (same ~r8 extent the old bulb had).
+  g.fillStyle(0xffffff, 0.16)
   g.fillCircle(8, 8, 8)
+  g.fillStyle(0xffffff, 0.26)
+  g.fillCircle(8, 8, 6.6)
+  // Translucent glass envelope.
+  g.fillStyle(0xffffff, 0.44)
+  g.fillCircle(8, 8, 5.4)
+  // Light pooled up-left inside the glass — the lit interior; leaving the envelope showing lower-right
+  // as the shaded belly (the offset-disc lit-dome trick, in alpha).
+  g.fillStyle(0xffffff, 0.64)
+  g.fillCircle(7.6, 7.4, 4.2)
+  // Hot filament core + peak.
   g.fillStyle(0xffffff, 0.9)
-  g.fillCircle(8, 8, 4.5)
+  g.fillCircle(7.4, 7.2, 2.5)
   g.fillStyle(0xffffff, 1)
-  g.fillCircle(8, 8, 2.4)
+  g.fillCircle(7.3, 7.1, 1.1)
+  // Thin glass rim — the envelope edge catching light, so it reads as blown glass.
+  g.lineStyle(1, 0xffffff, 0.4)
+  g.strokeCircle(8, 8, 5.5)
+  // Off-centre specular glint (upper-left) — brightness contrast carries it through the tint.
+  g.fillStyle(0xffffff, 0.9)
+  g.fillCircle(5.7, 5.8, 1.5)
+  g.fillStyle(0xffffff, 1)
+  g.fillCircle(5.5, 5.6, 0.7)
   g.generateTexture('bulb', 16, 16)
   g.destroy()
 }
@@ -242,9 +401,10 @@ function makeTile(scene: Phaser.Scene): void {
   const bw = S - m * 2
   const r = 22
   // Drop shadow onto the tray floor — neutral black survives the per-cell tint (0×tint = 0).
-  g.fillStyle(0x000000, 0.1)
+  // (§R3 depth pass: a touch denser than the original 0.10s, so the cushions sit deeper IN the well.)
+  g.fillStyle(0x000000, 0.12)
   g.fillRoundedRect(m, m + 5, bw, bw, r)
-  g.fillStyle(0x000000, 0.1)
+  g.fillStyle(0x000000, 0.12)
   g.fillRoundedRect(m, m + 3, bw, bw, r)
   // Pure-white cushion body — the ONLY thing a per-cell setTint() colours.
   g.fillStyle(0xffffff, 1)
@@ -255,10 +415,36 @@ function makeTile(scene: Phaser.Scene): void {
     g.fillStyle(0x000000, a)
     g.fillRoundedRect(m, m + bw * f, bw, bw * (1 - f), { tl: 0, tr: 0, bl: r, br: r })
   }
-  // Faint seated-edge bevel (dark → survives tint) for tile-to-tile separation.
-  g.lineStyle(2.5, 0x000000, 0.09)
+  // Faint seated-edge bevel (dark → survives tint) for tile-to-tile separation. (§R3: a hair
+  // stronger than the original 0.09 so pieces read as seated IN a well, not floating on a sheet.)
+  g.lineStyle(2.5, 0x000000, 0.11)
   g.strokeRoundedRect(m, m, bw, bw, r)
   g.generateTexture('tile', S, S)
+  g.destroy()
+}
+
+/**
+ * Soft rounded ELEVATION shadow (§R3 depth stack) — a feathered neutral-black rounded square baked
+ * once with the same stacked falling-alpha trick as `bgglow`, but rounded to match the app's
+ * card/slab silhouettes. Pure black so it stays a neutral darkener on every theme wash (tint is
+ * pointless on black — 0×tint = 0), display-scaled + alpha'd at the use site, NORMAL blend. This is
+ * the one shared "the surface floats" underlay for the board cabinet and the HUD rail: bake once,
+ * draw as plain Images, zero per-frame cost.
+ */
+function makeSoftShadow(scene: Phaser.Scene): void {
+  if (scene.textures.exists('softshadow')) return
+  const S = 256
+  const passes = 12
+  const feather = 44 // px of feathered falloff baked around the dense core rect
+  const edge = 8 // clear margin so the outermost pass never clips at the texture edge
+  const g = scene.make.graphics({ x: 0, y: 0 }, false)
+  for (let i = 0; i < passes; i++) {
+    const inset = edge + feather * (i / (passes - 1)) // outermost (largest) → innermost (core)
+    const a = 0.028 * (i + 1) // faint rim → dense centre; stacking composites to a soft gradient
+    g.fillStyle(0x000000, a)
+    g.fillRoundedRect(inset, inset, S - inset * 2, S - inset * 2, Math.max(14, 46 - i * 2.5))
+  }
+  g.generateTexture('softshadow', S, S)
   g.destroy()
 }
 
@@ -317,6 +503,72 @@ function makeFireball(scene: Phaser.Scene): void {
   g.destroy()
 }
 
+/**
+ * Score MEDALLION (§R3 reward layer) — ONE chunky star-burst coin baked for every "+N" match
+ * medallion. Same tint-stability trick as the board tile: the body is PURE WHITE (a single
+ * `setTint()` colours the whole medallion warm gold → bright gold → rose across the cascade) and
+ * all shading is BLACK-alpha (0×tint = stays neutral-dark), so rays read as chunky facets and the
+ * disc reads as a raised coin face on every heat tint. The "+N" is a Phaser Text layered on top at
+ * the use site. Baked once, pooled at the use site (hard cap), zero per-frame cost.
+ */
+function makeMedallion(scene: Phaser.Scene): void {
+  if (scene.textures.exists('medallion')) return
+  const S = 112
+  const c = S / 2
+  const g = scene.make.graphics({ x: 0, y: 0 }, false)
+  // Soft radial halo — concentric falling-alpha white discs (tint turns them into warm glow).
+  // This replaces the old 12-point star-burst, which read as a flat cartoon sun against the
+  // board's glossy dimensional art (owner feedback, 2026-07-21). Light, not geometry.
+  for (let r = 54, a = 0.045; r >= 38; r -= 4, a += 0.02) {
+    g.fillStyle(0xffffff, a)
+    g.fillCircle(c, c, r)
+  }
+  // Soft drop shadow under the coin (neutral black → survives every heat tint).
+  g.fillStyle(0x000000, 0.16)
+  g.fillEllipse(c, c + 4, 74, 68)
+  // Coin: dark rim groove → raised white face → top-lit dome shading (the house gold-token look).
+  g.fillStyle(0x000000, 0.18)
+  g.fillCircle(c, c, 37)
+  g.fillStyle(0xffffff, 1)
+  g.fillCircle(c, c, 33)
+  g.fillStyle(0x000000, 0.08)
+  g.fillEllipse(c, c + 13, 58, 30)
+  // Bevel ring on the face edge + a faint inner ring so the face reads minted, not flat.
+  g.lineStyle(2.5, 0x000000, 0.13)
+  g.strokeCircle(c, c, 32)
+  g.lineStyle(1.5, 0x000000, 0.07)
+  g.strokeCircle(c, c, 27)
+  g.generateTexture('medallion', S, S)
+  g.destroy()
+}
+
+/**
+ * Star GLINT (§R3 reward layer) — a crisp 4-point light star (thin diamond cross + soft halo +
+ * hot core), pure white for clean ADD-blend tinting. The shared sparkle for special payoffs:
+ * jackpot conversion pops, bomb spark spray, collect-comet arrival ticks. Baked once.
+ */
+function makeGlint(scene: Phaser.Scene): void {
+  if (scene.textures.exists('glint')) return
+  const S = 48
+  const c = S / 2
+  const g = scene.make.graphics({ x: 0, y: 0 }, false)
+  g.fillStyle(0xffffff, 0.16)
+  g.fillCircle(c, c, 13) // soft halo
+  const ray = (len: number, half: number, vertical: boolean): void => {
+    const pts = vertical
+      ? [{ x: c, y: c - len }, { x: c + half, y: c }, { x: c, y: c + len }, { x: c - half, y: c }]
+      : [{ x: c - len, y: c }, { x: c, y: c + half }, { x: c + len, y: c }, { x: c, y: c - half }]
+    g.fillPoints(pts, true)
+  }
+  g.fillStyle(0xffffff, 0.9)
+  ray(21, 3.4, true)
+  ray(21, 3.4, false)
+  g.fillStyle(0xffffff, 1)
+  g.fillCircle(c, c, 3.2) // hot core
+  g.generateTexture('glint', S, S)
+  g.destroy()
+}
+
 /** Bright thin blast ring — scaled out + faded for the bomb shockwave. Additive. */
 function makeShockwave(scene: Phaser.Scene): void {
   const g = scene.make.graphics({ x: 0, y: 0 }, false)
@@ -340,12 +592,12 @@ export function pieceTextureKey(piece: Piece): string {
 
 /** Representative colour per symbol — the "match by colour" accent carried onto specials. */
 const SYMBOL_TINT: Record<SymbolType, number> = {
-  cherry: 0xff3366,
-  seven: 0xffd700,
-  diamond: 0xb45309,
-  bell: 0x22c55e,
-  clover: 0xf97316,
-  bar: 0x818cf8,
+  cherry: 0xd3304f,
+  seven: 0xe0312e,
+  diamond: 0x49c6ee,
+  bell: 0xf2b234,
+  clover: 0x3fae5a,
+  bar: 0x4a5a8f,
 }
 
 /**
@@ -601,57 +853,6 @@ function makeHeartglow(scene: Phaser.Scene): void {
   g.destroy()
 }
 
-/** Procedurally drawn pot/jar for the progressive jackpot (Growing Pot). */
-function makePot(scene: Phaser.Scene): void {
-  if (scene.textures.exists('pot')) return
-  const g = scene.make.graphics({ x: 0, y: 0 }, false) as any
-  const size = 48
-  const c = size / 2
-  
-  g.fillStyle(0xd97706, 1)
-  g.beginPath()
-  g.moveTo(c - 8, c - 14)
-  g.lineTo(c + 8, c - 14)
-  g.lineTo(c + 16, c - 4)
-  g.bezierCurveTo(c + 24, c + 4, c + 18, c + 16, c + 10, c + 18)
-  g.lineTo(c - 10, c + 18)
-  g.bezierCurveTo(c - 18, c + 16, c - 24, c + 4, c - 16, c - 4)
-  g.closePath()
-  g.fill()
-  
-  g.fillStyle(0xf59e0b, 1)
-  g.fillRoundedRect(c - 12, c - 18, 24, 6, 2)
-  
-  g.fillStyle(0xfef08a, 0.4)
-  g.beginPath()
-  g.moveTo(c - 12, c)
-  g.bezierCurveTo(c - 16, c + 4, c - 14, c + 12, c - 8, c + 14)
-  g.bezierCurveTo(c - 10, c + 10, c - 12, c + 4, c - 10, c)
-  g.closePath()
-  g.fill()
-  
-  g.fillStyle(0xfacc15, 1)
-  g.fillCircle(c - 4, c - 16, 5)
-  g.fillStyle(0xeab308, 1)
-  g.fillCircle(c + 4, c - 15, 4.5)
-  
-  g.lineStyle(1.5, 0x78350f, 1)
-  g.beginPath()
-  g.moveTo(c - 8, c - 14)
-  g.lineTo(c + 8, c - 14)
-  g.lineTo(c + 16, c - 4)
-  g.bezierCurveTo(c + 24, c + 4, c + 18, c + 16, c + 10, c + 18)
-  g.lineTo(c - 10, c + 18)
-  g.bezierCurveTo(c - 18, c + 16, c - 24, c + 4, c - 16, c - 4)
-  g.closePath()
-  g.stroke()
-  
-  g.strokeRoundedRect(c - 12, c - 18, 24, 6, 2)
-  
-  g.generateTexture('pot', size, size)
-  g.destroy()
-}
-
 export function createAllTextures(scene: Phaser.Scene): void {
   for (const [key, glyph] of Object.entries(EMOJI) as Array<[SymbolType, string]>) {
     makeEmoji(scene, key, glyph)
@@ -669,7 +870,9 @@ export function createAllTextures(scene: Phaser.Scene): void {
   makeTile(scene)
   makeRaybeam(scene)
   makeHeartglow(scene)
-  makePot(scene)
+  makeSoftShadow(scene) // §R3 — shared elevation shadow for the board slab + HUD rail
+  makeMedallion(scene) // §R3 reward layer — score medallion star-burst
+  makeGlint(scene) // §R3 reward layer — 4-point star sparkle for special payoffs
   // Glyphs baked at a larger native size so they stay crisp on hi-DPI. 'heart' stays small (it's
   // only used tiny — satellites, lives pips, particle bursts); the big Home/GameScene emblems use
   // 'heartbig' (baked large) via setDisplaySize, so the small-heart particle scales are untouched.
@@ -677,4 +880,48 @@ export function createAllTextures(scene: Phaser.Scene): void {
   makeGlyphTexture(scene, 'lock', '🔒', 104, 128)
   makeGlyphTexture(scene, 'heart', '❤️', 44, 64)
   makeGlyphTexture(scene, 'heartbig', '❤️', 330, 384)
+  // Card-suit emblem set — the Home hero shuffles through these (heart · spade · diamond · club).
+  // Baked large like 'heartbig' so they stay crisp on hi-DPI; the platform emoji give classic RED
+  // hearts/diamonds + BLACK spades/clubs for free (the ️ forces colour-emoji presentation).
+  // All four bake into the SAME 384² frame, so the emblem can `setTexture()` between them mid-tween
+  // without any size jump. Suits are decorative only — the board still uses its own symbol art.
+  makeGlyphTexture(scene, 'suitHeart', '♥️', 320, 384)
+  makeGlyphTexture(scene, 'suitSpade', '♠️', 320, 384)
+  makeGlyphTexture(scene, 'suitDiamond', '♦️', 320, 384)
+  makeGlyphTexture(scene, 'suitClub', '♣️', 320, 384)
+}
+
+/**
+ * Pre-bake the piece signatures the first in-game cascade would otherwise bake LAZILY, so a cold
+ * PWA's opening deal-in never hitches (BT2). Only the special overlays are lazy — normal-symbol and
+ * jackpot art is already baked by `createAllTextures` (`ensurePieceTexture` self-skips those keys) —
+ * so we front-load every symbol × special the board can spawn (6 × 3 = 18 signatures) through the
+ * very `ensurePieceTexture` the cascade uses, then pre-touch the board tile + core deal-in/burst
+ * particles in case warm-up ever runs before `createAllTextures`. Everything is generate-once
+ * guarded (`ensurePieceTexture` skips existing keys; each particle pre-touch skips a key already
+ * present), so this costs only a few ms once at boot with zero runtime cost. Mirrors
+ * `ui.warmButtonTextures`; adds no visible boot change (BootScene stays hard/instant by design).
+ */
+export function warmPieceTextures(scene: Phaser.Scene): void {
+  // Special overlays are the ONLY piece art baked on first use: a symbol-tinted bomb/reel drawn over
+  // the belly. Warm all match-4 wild-reels (row + col) and L/T dice-bombs across every symbol — the
+  // full set a first cascade can detonate. `id: -1` marks a synthetic piece (the key ignores id).
+  const specials: PieceKind[] = ['wildReelRow', 'wildReelCol', 'diceBomb']
+  for (const symbol of SYMBOLS) {
+    for (const kind of specials) {
+      ensurePieceTexture(scene, { id: -1, symbol, kind })
+    }
+  }
+  // Pre-touch the glossy board tile + the primary deal-in/burst particles so warm-up is self-
+  // sufficient. In the real boot flow `createAllTextures` already baked these, so the exists() guard
+  // makes each a no-op — we never re-generate (and warn on) a live texture key.
+  if (!scene.textures.exists('tile')) makeTile(scene)
+  if (!scene.textures.exists('softshadow')) makeSoftShadow(scene)
+  if (!scene.textures.exists('spark')) makeSpark(scene)
+  if (!scene.textures.exists('ring')) makeRing(scene)
+  if (!scene.textures.exists('confetti')) makeConfetti(scene)
+  if (!scene.textures.exists('fireball')) makeFireball(scene)
+  if (!scene.textures.exists('shockwave')) makeShockwave(scene)
+  if (!scene.textures.exists('medallion')) makeMedallion(scene)
+  if (!scene.textures.exists('glint')) makeGlint(scene)
 }
