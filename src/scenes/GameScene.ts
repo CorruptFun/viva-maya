@@ -2418,9 +2418,13 @@ export class GameScene extends Phaser.Scene {
     // B1: a faint spark trail rides the grabbed piece across the glide (physical intent), retired the
     // instant the pieces snap. Reduced-motion / low tier → no trail (handled inside the helper).
     this.startSwipeTrail(sa)
+    // Follow-through (Pass 2): a gentle backOut so the pieces SETTLE into their swapped cells instead
+    // of stopping dead — matches the settleSquash gold standard. Curve-only, same SWAP_MS; reduced
+    // motion keeps the flat glide (the move itself must still run).
+    const swapEase = this.reducedMotion ? 'Quad.easeOut' : backOut(OVERSHOOT.gentle)
     await Promise.all([
-      this.t({ targets: sa, x: posB.x, y: posB.y, duration: SWAP_MS, ease: 'Quad.easeOut' }),
-      this.t({ targets: sb, x: posA.x, y: posA.y, duration: SWAP_MS, ease: 'Quad.easeOut' }),
+      this.t({ targets: sa, x: posB.x, y: posB.y, duration: SWAP_MS, ease: swapEase }),
+      this.t({ targets: sb, x: posA.x, y: posA.y, duration: SWAP_MS, ease: swapEase }),
     ])
     this.stopSwipeTrail()
     this.board.swap(a, b)
@@ -2431,10 +2435,15 @@ export class GameScene extends Phaser.Scene {
         // Invalid: thud and snap back. No move spent.
         this.board.swap(a, b)
         sfx.invalidThud()
-        this.punch({ trauma: 0.22 }) // small unified thud kick (reduced-motion → still)
+        // Directional thud (P4): recoil the screen ALONG the rejected swap axis, not an undirected
+        // wash. Recoil follow-through (P3): the pieces slam home and spring a hair off the invalid
+        // "wall" via backOut instead of decelerating to a dead stop — same INVALID_MS, reduced-motion
+        // keeps the flat snap (trauma is already gated off inside punch()).
+        this.punch({ trauma: 0.22, dirX: posB.x - posA.x, dirY: posB.y - posA.y })
+        const invalidEase = this.reducedMotion ? 'Quad.easeIn' : backOut(OVERSHOOT.gentle)
         await Promise.all([
-          this.t({ targets: sa, x: posA.x, y: posA.y, duration: INVALID_MS, ease: 'Quad.easeIn' }),
-          this.t({ targets: sb, x: posB.x, y: posB.y, duration: INVALID_MS, ease: 'Quad.easeIn' }),
+          this.t({ targets: sa, x: posA.x, y: posA.y, duration: INVALID_MS, ease: invalidEase }),
+          this.t({ targets: sb, x: posB.x, y: posB.y, duration: INVALID_MS, ease: invalidEase }),
         ])
         this.state = 'idle'
         this.scheduleAutoplay()
