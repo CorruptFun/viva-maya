@@ -260,7 +260,12 @@ export class Board {
           for (let c = 0; c < this.cols; c++) {
             const p = this.grid[r][c]
             if (p && p.kind === 'normal' && p.symbol === other.symbol) {
-              this.grid[r][c] = this.newPiece(p.symbol, kind === 'diceBomb' ? 'diceBomb' : this.rng() < 0.5 ? 'wildReelRow' : 'wildReelCol')
+              // Keep the piece's IDENTITY (id) — only change its kind. The view keys its sprites by
+              // piece id, and chainExpand reports these same pieces back in `cleared`. Minting a
+              // fresh-id piece here (newPiece) would orphan the original sprite — it never lands in
+              // `cleared`, so the view never destroys it, and the next refill stacks a new piece on
+              // top of the ghost (the jackpot+reel/bomb "double-stack" bug).
+              this.grid[r][c] = { ...p, kind: kind === 'diceBomb' ? 'diceBomb' : this.rng() < 0.5 ? 'wildReelRow' : 'wildReelCol' }
               seeds.push({ row: r, col: c })
             }
           }
@@ -438,5 +443,25 @@ export class Board {
   plant(at: Coord, kind: PieceKind): void {
     const p = this.get(at)
     if (p) this.grid[at.row][at.col] = this.newPiece(p.symbol, kind)
+  }
+
+  /**
+   * Detonate a (2·radius+1)² square centred on `center` — the purchased in-level bomb. No match is
+   * required and no special is created; it simply seeds the blast square and floods through
+   * chainExpand, so any Wild Reel / Dice Bomb / Jackpot Chip caught in the blast chains for free,
+   * exactly like a matched Dice Bomb. Mutates the grid (clears the hit cells) and returns the
+   * ClearWave for the view — feed it straight to the scene's resolve loop. Mirrors swapActivation's
+   * shape (transformed is always empty; a leading `bomb` event drives the 3×3 detonation art).
+   */
+  detonate(center: Coord, radius = 1): ClearWave {
+    const seeds: Coord[] = []
+    for (let dr = -radius; dr <= radius; dr++) {
+      for (let dc = -radius; dc <= radius; dc++) {
+        const c = { row: center.row + dr, col: center.col + dc }
+        if (this.inBounds(c)) seeds.push(c)
+      }
+    }
+    const { cleared, events } = this.chainExpand(seeds, new Set())
+    return { cleared, transformed: [], events: [{ type: 'bomb', at: center, radius }, ...events] }
   }
 }

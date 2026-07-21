@@ -13,12 +13,14 @@
     "icons": "node scripts/gen-icons.mjs"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.110.7",
     "@tonconnect/ui": "^3.0.0",
     "phaser": "^3.90.0"
   },
   "devDependencies": {
     "typescript": "~5.8.3",
     "vite": "^7.0.0",
-    "vite-plugin-pwa": "^1.0.0"
+    "vite-plugin-pwa": "^1.0.0",
+    "vitest": "^4.1.10"
   }
 }

@@ -1,8 +1,8 @@
 import Phaser from 'phaser'
-import { BOARD_W, BOARD_Y, DESIGN_H, DESIGN_W } from '../config'
+import { BOARD_W, BOARD_Y, contentOffsetY, DESIGN_H, DESIGN_W } from '../config'
 import { D, E } from './motion'
 import { quality } from './quality'
-import { css, getTheme, prefersReducedMotion } from './theme'
+import { css, getTheme, getThemeId, prefersReducedMotion } from './theme'
 
 /**
  * Atmospheric warm-light backdrop for the empty margins (§3b of the visual
@@ -34,6 +34,7 @@ const Z = {
   bokehCorner: -46,
   suits: -44,
   sparkle: -42,
+  flourish: -40, // per-theme margin accent (A1) — above the sparkle dust, below the vignette
   vignette: -34,
   marquee: -30,
   proscenium: -28, // the shared frame molding — frontmost backdrop layer, still behind gameplay (≥0)
@@ -48,6 +49,7 @@ const T_SWAY = D.breath * 2.4 // ray / cone sway
 const T_TWINKLE = D.breath * 2.6 // bokeh twinkle
 const T_DRIFT = D.breath * 4 // sparkle drift
 const T_MARQUEE = D.breath * 1.9 // marquee chase loop
+const T_FLICKER = D.breath * 1.4 // per-theme neon sign-bulb flicker (A1)
 
 // Board centre (the opaque tray occludes negative-depth light across the board rect).
 const BOARD_MID_X = DESIGN_W / 2
@@ -120,7 +122,10 @@ function addGlow(
     .setDepth(depth)
 }
 
-/** Slow alpha yoyo — the canonical "breathing light" pulse. Static when `!animate`. */
+/**
+ * Slow alpha yoyo — the canonical "breathing light" pulse. Static when `!animate`.
+ * Returns the tween (or `undefined` when static) so an idle throttle (A2) can slow it.
+ */
 function breatheAlpha(
   scene: Phaser.Scene,
   obj: Phaser.GameObjects.GameObject & { setAlpha(a: number): unknown },
@@ -129,13 +134,13 @@ function breatheAlpha(
   dur: number,
   animate: boolean,
   delay = 0
-): void {
+): Phaser.Tweens.Tween | undefined {
   if (!animate) {
     obj.setAlpha((lo + hi) / 2)
-    return
+    return undefined
   }
   obj.setAlpha(lo)
-  scene.tweens.add({ targets: obj, alpha: hi, duration: dur, delay, yoyo: true, repeat: -1, ease: E.hero })
+  return scene.tweens.add({ targets: obj, alpha: hi, duration: dur, delay, yoyo: true, repeat: -1, ease: E.hero })
 }
 
 /** Gentle ± rotation of a rig container so a whole cone / ray pair sways as one tween. */
@@ -173,34 +178,46 @@ function blade(
 /** L1 (−60, NORMAL): the flat warm wash. Static — never tweened. */
 function washBase(scene: Phaser.Scene): void {
   const T = getTheme()
+  const OFF = contentOffsetY()
   const wash = scene.add.graphics().setDepth(Z.wash)
   wash.fillGradientStyle(T.washTop, T.washTop, T.washBottom, T.washBottom, 1)
-  wash.fillRect(0, 0, DESIGN_W, DESIGN_H)
+  // Fill the full letterbox-free visible world (design box + reclaimed top/bottom margins), so the
+  // margins read as warm wash instead of cream void. Extra pad absorbs minor live-resize growth.
+  wash.fillRect(0, -OFF - 60, DESIGN_W, DESIGN_H + 2 * OFF + 120)
 }
 
-/** L2 (−56, ADD): breathing aurora glows. Game keeps them small + in the margins. */
-function aurora(scene: Phaser.Scene, variant: BackdropVariant): void {
+/**
+ * L2 (−56, ADD): breathing aurora glows. Game keeps them small + in the margins. The glows live in
+ * one container at Z.aurora so the idle throttle (A2) can DIM them via the container's alpha without
+ * fighting the per-glow breathe tweens; returns that loop (or `undefined` when nothing animates).
+ */
+function aurora(scene: Phaser.Scene, variant: BackdropVariant): AmbientLoop | undefined {
   const T = getTheme()
   const reduced = prefersReducedMotion()
-  const animate = !reduced && quality.tier() !== 'low'
+  const low = quality.tier() === 'low'
+  const animate = !reduced && !low
+  const container = scene.add.container(0, 0).setDepth(Z.aurora)
+  const tweens: Phaser.Tweens.Tween[] = []
+  const glow = (x: number, y: number, w: number, h: number, tint: number, a: number, lo: number, hi: number, delay = 0): void => {
+    const g = addGlow(scene, x, y, w, h, tint, a, Z.aurora)
+    container.add(g)
+    const tw = breatheAlpha(scene, g, lo, hi, T_AURORA, animate, delay)
+    if (tw) tweens.push(tw)
+  }
 
   if (variant === 'game') {
     // Two small (<400px) margin glows: one above the board, one below. Both are
     // clamped so their bright cores never leave the top / bottom margins.
-    const warm = addGlow(scene, 210, 132, 320, 320, T.washGlowWarm, 0.1, Z.aurora)
-    breatheAlpha(scene, warm, 0.08, 0.1, T_AURORA, animate)
-    const cool = addGlow(scene, 512, 1150, 320, 320, T.washGlowCool, 0.09, Z.aurora)
-    breatheAlpha(scene, cool, 0.07, 0.09, T_AURORA, animate, T_AURORA * 0.5)
-    return
+    glow(210, 132, 320, 320, T.washGlowWarm, 0.1, 0.08, 0.1)
+    glow(512, 1150, 320, 320, T.washGlowCool, 0.09, 0.07, 0.09, T_AURORA * 0.5)
+  } else {
+    // home / menu: two full warm+cool auroras drifting in the upper + lower thirds.
+    glow(220, 420, 560, 560, T.washGlowWarm, 0.11, 0.08, 0.11)
+    // On the low tier we keep only the single warm aurora.
+    if (!low) glow(520, 860, 540, 540, T.washGlowCool, 0.1, 0.07, 0.1, T_AURORA * 0.5)
   }
 
-  // home / menu: two full warm+cool auroras drifting in the upper + lower thirds.
-  const warm = addGlow(scene, 220, 420, 560, 560, T.washGlowWarm, 0.11, Z.aurora)
-  breatheAlpha(scene, warm, 0.08, 0.11, T_AURORA, animate)
-  // On the low tier we keep only the single warm aurora.
-  if (quality.tier() === 'low') return
-  const cool = addGlow(scene, 520, 860, 540, 540, T.washGlowCool, 0.1, Z.aurora)
-  breatheAlpha(scene, cool, 0.07, 0.1, T_AURORA, animate, T_AURORA * 0.5)
+  return animate ? { container, tweens } : undefined
 }
 
 /**
@@ -413,7 +430,11 @@ function vignette(scene: Phaser.Scene): void {
   const ink = T.vignetteInk
   const g = scene.add.graphics().setDepth(Z.vignette)
   const W = DESIGN_W
-  const H = DESIGN_H
+  // Anchor the vignette to the VISIBLE world edges (design box + reclaimed margins), so the inward
+  // focus still lands at the true screen edges on flexible-height screens.
+  const OFF = contentOffsetY()
+  const VT = -OFF
+  const VH = DESIGN_H + 2 * OFF
   const Vt = 0.1
   const Vb = 0.16
   const Vs = 0.12
@@ -422,52 +443,60 @@ function vignette(scene: Phaser.Scene): void {
   const bandS = 200
   // top (fades down)
   g.fillGradientStyle(ink, ink, ink, ink, Vt, Vt, 0, 0)
-  g.fillRect(0, 0, W, bandT)
+  g.fillRect(0, VT, W, bandT)
   // bottom (fades up)
   g.fillGradientStyle(ink, ink, ink, ink, 0, 0, Vb, Vb)
-  g.fillRect(0, H - bandB, W, bandB)
+  g.fillRect(0, VT + VH - bandB, W, bandB)
   // left (fades right)
   g.fillGradientStyle(ink, ink, ink, ink, Vs, 0, Vs, 0)
-  g.fillRect(0, 0, bandS, H)
+  g.fillRect(0, VT, bandS, VH)
   // right (fades left)
   g.fillGradientStyle(ink, ink, ink, ink, 0, Vs, 0, Vs)
-  g.fillRect(W - bandS, 0, bandS, H)
+  g.fillRect(W - bandS, VT, bandS, VH)
 }
 
 /**
  * L8 (−30, NORMAL): the chasing marquee. A travelling brightness wave along the edges,
  * driven by ONE proxy tween (not one-per-dot). Home lights all four edges; menu + game
  * light the top + bottom only. Reduced-motion / low tier → flat mid-alpha, no chase.
+ *
+ * The dots live in one container at Z.marquee so the idle throttle (A2) can DIM the whole
+ * chase via the container's alpha; returns that loop (or `undefined` in the flat state).
  */
-function marquee(scene: Phaser.Scene, variant: BackdropVariant): void {
+function marquee(scene: Phaser.Scene, variant: BackdropVariant): AmbientLoop | undefined {
   const T = getTheme()
   const reduced = prefersReducedMotion()
   const flat = reduced || quality.tier() === 'low'
 
+  const container = scene.add.container(0, 0).setDepth(Z.marquee)
   const dots: Phaser.GameObjects.Image[] = []
   const line = (from: number, to: number, fixed: number, horizontal: boolean, count: number): void => {
     for (let i = 0; i < count; i++) {
       const t = from + (i * (to - from)) / (count - 1)
       const x = horizontal ? t : fixed
       const y = horizontal ? fixed : t
-      dots.push(
-        scene.add.image(x, y, 'bgdot').setTint(T.marqueeBright).setAlpha(0.32).setDepth(Z.marquee)
-      )
+      const dot = scene.add.image(x, y, 'bgdot').setTint(T.marqueeBright).setAlpha(0.32)
+      container.add(dot)
+      dots.push(dot)
     }
   }
-  line(24, DESIGN_W - 24, 26, true, 15)
-  line(24, DESIGN_W - 24, DESIGN_H - 26, true, 15)
+  // Run the marquee along the VISIBLE world edges so the chasing frame reaches the true screen edges.
+  const OFF = contentOffsetY()
+  const VT = -OFF
+  const VB = DESIGN_H + OFF
+  line(24, DESIGN_W - 24, VT + 26, true, 15)
+  line(24, DESIGN_W - 24, VB - 26, true, 15)
   if (variant === 'home') {
-    line(120, DESIGN_H - 120, 26, false, 11)
-    line(120, DESIGN_H - 120, DESIGN_W - 26, false, 11)
+    line(VT + 120, VB - 120, 26, false, 11)
+    line(VT + 120, VB - 120, DESIGN_W - 26, false, 11)
   }
 
   if (flat) {
     dots.forEach(d => d.setAlpha(0.42))
-    return
+    return undefined
   }
   const proxy = { p: 0 }
-  scene.tweens.add({
+  const tw = scene.tweens.add({
     targets: proxy,
     p: 1,
     duration: T_MARQUEE,
@@ -480,6 +509,157 @@ function marquee(scene: Phaser.Scene, variant: BackdropVariant): void {
       }
     },
   })
+  return { container, tweens: [tw] }
+}
+
+// --- Idle ambient throttle + per-theme flourish (A1 / A2) -------------------
+
+/** An ambient breathing loop the idle throttle can calm: a container to DIM (its alpha
+ *  multiplies the children) plus the tween(s) to SLOW (their `timeScale`). */
+interface AmbientLoop {
+  container: Phaser.GameObjects.Container
+  tweens: Phaser.Tweens.Tween[]
+}
+
+const IDLE_TIMESCALE = 0.6 // slow the breathing a notch once the app is left open
+const IDLE_DIM = 0.7 // and pull the ambient alpha down a notch — battery on a left-open PWA
+
+/**
+ * A2 — consume `quality.idle()` (flips true after IDLE_MS of no input, quality.ts). Once the app is
+ * left open, ease the two heaviest ambient loops (aurora glows + the marquee chase) to a calmer,
+ * dimmer profile, and restore the instant input resumes (`quality.noteActivity()` clears idle). It
+ * polls on a light 400ms timer rather than every frame — idle flips are coarse (6s) and the timer
+ * sleeps with the game loop on tab-blur. No-op when nothing animates: reduced motion / low tier are
+ * already static, so `loops` arrives empty and we never even arm the timer.
+ */
+function installIdleThrottle(scene: Phaser.Scene, loops: AmbientLoop[]): void {
+  if (!loops.length) return
+  let idle = quality.idle()
+  const apply = (on: boolean): void => {
+    for (const loop of loops) {
+      scene.tweens.killTweensOf(loop.container) // only the dim tween ever targets the container
+      scene.tweens.add({ targets: loop.container, alpha: on ? IDLE_DIM : 1, duration: D.breath, ease: E.hero })
+      for (const tw of loop.tweens) tw.timeScale = on ? IDLE_TIMESCALE : 1
+    }
+  }
+  if (idle) apply(true) // honour an already-idle governor at create() (unlikely, but correct)
+  scene.time.addEvent({
+    delay: 400,
+    loop: true,
+    callback: () => {
+      const now = quality.idle()
+      if (now === idle) return
+      idle = now
+      apply(now)
+    },
+  })
+}
+
+/**
+ * A1 — one tasteful, theme-specific ambient accent so the four themes read as different ROOMS (not
+ * just recolours) in the MARGINS beyond colour. Strictly additive and guaranteed off the board:
+ * negative depth (Z.flourish), ≤ 0.20 α, ADD blend, and confined to the top / bottom margins so it
+ * never crosses the 40–680 × 300–940 board rect. Count is capped by `quality.count()` (and to one on
+ * the budget-tight game variant); the whole layer drops under reduced motion / low tier — the accent
+ * IS motion, and colour already differs everywhere else. Reuses baked `bgdot` / `bgglow`, theme
+ * tokens only:
+ *   • Neon Vegas    → faint cyan sign-bulbs buzzing (one proxy tween, layered-sine flicker, not a strobe)
+ *   • Rose Midnight → 1–2 slow warm "stars" drifting on the velvet dark
+ *   • Golden Hour   → a single warm dust mote loafing low in the floor light
+ *   • Ton's Heart  → a pair of soft rose motes drifting aloft
+ */
+function themeFlourish(scene: Phaser.Scene, variant: BackdropVariant): void {
+  if (prefersReducedMotion() || quality.tier() === 'low') return
+  const T = getTheme()
+  // Governor-capped count, clamped to ONE on the budget-tight game variant.
+  const pick = (len: number): number =>
+    Math.min(variant === 'game' ? 1 : len, Math.max(1, quality.count(len)))
+
+  // Shared slow drift (star / mote): move + alpha yoyo, ADD, negative depth, margin-placed.
+  const drift = (
+    x: number,
+    y: number,
+    scale: number,
+    tex: string,
+    tint: number,
+    loA: number,
+    hiA: number,
+    dur: number,
+    dx: number,
+    dy: number,
+    delay = 0
+  ): void => {
+    const m = scene.add
+      .image(x, y, tex)
+      .setTint(tint)
+      .setAlpha(loA)
+      .setScale(scale)
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setDepth(Z.flourish)
+    scene.tweens.add({ targets: m, x: x + dx, y: y + dy, alpha: hiA, duration: dur, delay, yoyo: true, repeat: -1, ease: E.hero })
+  }
+
+  switch (getThemeId()) {
+    case 'neonVegas': {
+      // Faint cyan sign-bulbs in the top margin; a single proxy tween drives an irregular
+      // (layered-sine) flicker so it reads neon, never a strobe (α ≤ 0.18).
+      const spots: Array<[number, number]> = [
+        [64, 150],
+        [656, 196],
+      ]
+      const bulbs = spots.slice(0, pick(spots.length)).map(([x, y]) =>
+        scene.add
+          .image(x, y, 'bgglow')
+          .setDisplaySize(150, 150)
+          .setTint(T.accentAlt)
+          .setAlpha(0.1)
+          .setBlendMode(Phaser.BlendModes.ADD)
+          .setDepth(Z.flourish)
+      )
+      const proxy = { p: 0 }
+      scene.tweens.add({
+        targets: proxy,
+        p: 1,
+        duration: T_FLICKER,
+        repeat: -1,
+        ease: 'Linear',
+        onUpdate: () => {
+          const t = proxy.p * Math.PI * 2
+          for (let i = 0; i < bulbs.length; i++) {
+            const buzz = 0.5 + 0.32 * Math.sin(t * 3 + i * 2.1) + 0.18 * Math.sin(t * 7.3 + i)
+            bulbs[i].setAlpha(0.05 + 0.13 * Phaser.Math.Clamp(buzz, 0, 1))
+          }
+        },
+      })
+      break
+    }
+    case 'roseMidnight': {
+      // 1–2 slow warm stars drifting on the velvet dark (bright-cored bgdot = pinpoint).
+      const spots: Array<[number, number]> = [
+        [112, 170],
+        [604, 214],
+      ]
+      spots
+        .slice(0, pick(spots.length))
+        .forEach(([x, y], i) => drift(x, y, 0.62, 'bgdot', T.sparkleTint, 0.1, 0.18, T_DRIFT * 1.3, 14, 52, i * T_DRIFT * 0.5))
+      break
+    }
+    case 'mayaHeart': {
+      // A pair of tender rose motes drifting aloft in the top margin.
+      const spots: Array<[number, number]> = [
+        [150, 190],
+        [572, 150],
+      ]
+      spots
+        .slice(0, pick(spots.length))
+        .forEach(([x, y], i) => drift(x, y, 0.8, 'bgglow', T.moteTint, 0.07, 0.14, T_DRIFT * 1.15, -20, 36, i * T_DRIFT * 0.4))
+      break
+    }
+    default: {
+      // Golden Hour — a single warm dust mote loafing low in the floor light (bottom margin).
+      drift(120, 1054, 0.9, 'bgglow', T.moteTint, 0.06, 0.12, T_DRIFT * 1.4, 26, -34)
+    }
+  }
 }
 
 // --- Proscenium frame (E15) -------------------------------------------------
@@ -525,14 +705,17 @@ export function addProscenium(scene: Phaser.Scene): void {
   const T = getTheme()
   const cx = DESIGN_W / 2
   const halfW = 176
+  // Frame the VISIBLE world edges: lift the crown into the reclaimed top margin and drop the console
+  // lip into the reclaimed bottom margin, so the shared molding reaches the true screen edges.
+  const OFF = contentOffsetY()
 
   // A faint warm keystone glow first (behind the molding): the "powered-on" whisper, margin-confined.
-  addGlow(scene, cx, 22, 96, 78, T.bleedWarm, 0.09, Z.proscenium - 1)
+  addGlow(scene, cx, 22 - OFF, 96, 78, T.bleedWarm, 0.09, Z.proscenium - 1)
 
   const g = scene.add.graphics().setDepth(Z.proscenium)
 
   // ---- Crown: a shallow double-reveal molding arc, confined to the top edge ----
-  const apexY = 34
+  const apexY = 34 - OFF
   const drop = 15
   g.lineStyle(2.5, T.gold, 0.5)
   g.strokePoints(crownArc(cx, halfW, apexY, drop), false)
@@ -543,7 +726,7 @@ export function addProscenium(scene: Phaser.Scene): void {
   for (const ex of [cx - halfW, cx + halfW]) g.lineBetween(ex, apexY + drop, ex, apexY + drop + 9)
 
   // ---- Heart keystone at the apex — the shared signature ----
-  const keyY = 17
+  const keyY = 17 - OFF
   const keyR = 15
   g.fillStyle(T.goldDeep, 0.35) // soft under-shadow for a hint of depth
   g.fillPoints(heartPolygon(cx, keyY + 2, keyR), true)
@@ -553,7 +736,7 @@ export function addProscenium(scene: Phaser.Scene): void {
   g.strokePoints(heartPolygon(cx, keyY, keyR), true)
 
   // ---- Console lip: a thin matched molding mirroring the crown, at the very bottom edge ----
-  const lipY = 1250
+  const lipY = 1250 + OFF
   g.lineStyle(2.5, T.gold, 0.45)
   g.lineBetween(cx - halfW, lipY, cx + halfW, lipY)
   g.lineStyle(1.5, T.goldBezel, 0.28)
@@ -571,14 +754,21 @@ export function addCasinoBackdrop(scene: Phaser.Scene, variant: BackdropVariant)
   ensureTextures(scene)
 
   washBase(scene)
-  aurora(scene, variant)
+  const auroraLoop = aurora(scene, variant)
   boardBleed(scene, variant)
   spotlight(scene, variant)
   godRays(scene, variant)
   bokeh(scene, variant)
   suits(scene, variant)
   sparkle(scene, variant)
+  themeFlourish(scene, variant) // A1 — one theme-specific margin accent so themes read as different rooms
   vignette(scene)
-  marquee(scene, variant)
+  const marqueeLoop = marquee(scene, variant)
   addProscenium(scene) // §E15 — the shared frame, identical coords on every scene (frontmost backdrop)
+
+  // A2 — throttle the heaviest ambient loops (aurora + marquee) while the PWA is left open (idle).
+  const loops: AmbientLoop[] = []
+  if (auroraLoop) loops.push(auroraLoop)
+  if (marqueeLoop) loops.push(marqueeLoop)
+  installIdleThrottle(scene, loops)
 }
