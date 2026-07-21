@@ -31,15 +31,16 @@ import Phaser from 'phaser'
 import { DESIGN_W, worldH } from '../config'
 import { sfx } from '../audio/sfx'
 import { cloudSession } from '../core/cloud'
-import { weekKey } from '../core/endless'
-import { fetchWeeklyBoard } from '../core/leaderboard'
-import type { LeaderboardEntry, WeeklyBoard } from '../core/leaderboard'
+import { endlessBestThisWeek, weekKey } from '../core/endless'
+import { fetchChampion, fetchWeeklyBoard, previousWeekKey } from '../core/leaderboard'
+import type { Champion, LeaderboardEntry, WeeklyBoard } from '../core/leaderboard'
+import type { SaveData } from '../core/save'
 import { openCloudModal } from './cloudmodal'
 import { D, E, OVERSHOOT, backOut, fadeRise, heartbeat, popIn } from './motion'
 import { quality } from './quality'
-import { getTheme, hapticsOff, prefersReducedMotion, reduceFlashing } from './theme'
+import { getTheme, prefersReducedMotion, reduceFlashing } from './theme'
 import type { Theme } from './theme'
-import { FONT, GHOST_PILL, GOLD_PILL, addPillButton, goldFace } from './ui'
+import { FONT, GHOST_PILL, GOLD_PILL, ROSE_PILL, addPillButton, goldFace, startScene } from './ui'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Geometry — one fixed, generous card so EVERY state (board, invite, empty, loading, error) lives
@@ -68,9 +69,15 @@ const PAD = 10
 export interface WeeklyRacePanelOpts {
   /** Render THIS board instead of fetching — deterministic rich data for screenshots/audits. */
   boardOverride?: WeeklyBoard
+  /** With boardOverride: the crown-row champion (null = the closed week had none). Live opens fetch it. */
+  championOverride?: Champion | null
   /** DEV/testing hook: hold the loading shimmer forever, or open straight onto the error card. */
   simulate?: 'loading' | 'error'
 }
+
+/** Crown-row height + gap under it (the "last week's champion" strip above the podium). */
+const CROWN_H = 48
+const CROWN_GAP = 12
 
 /** Dark-wash check (mirrors ui.ts's private `isDarkTheme`): drives the dark-theme accent rim. */
 function isDarkWash(T: Theme): boolean {
@@ -262,7 +269,17 @@ export function openWeeklyRacePanel(scene: Phaser.Scene, opts: WeeklyRacePanelOp
   }
   setWeek(opts.boardOverride?.week ?? weekKey())
 
-  cardRoot.add(addPillButton(scene, 0, CARD_H / 2 - 70, 240, 68, 'CLOSE', GOLD_PILL, close))
+  // Bottom controls: the growth hook (a ghost "invite friends to race" chip — the invite row itself
+  // lives in the Gift Store) beside CLOSE. Tracked so newBody() can insert every state UNDER them.
+  const controls: Phaser.GameObjects.Container[] = []
+  const invite = addPillButton(scene, -129, CARD_H / 2 - 70, 310, 56, 'INVITE FRIENDS', GHOST_PILL, () => {
+    startScene(scene, 'store') // the panel dies with the scene; the layer DESTROY hook frees the latch
+  })
+  cardRoot.add(invite)
+  controls.push(invite)
+  const closePill = addPillButton(scene, 160, CARD_H / 2 - 70, 240, 68, 'CLOSE', GOLD_PILL, close)
+  cardRoot.add(closePill)
+  controls.push(closePill)
 
   // Card entrance: pop in from a dealt-card 0.92 with a gentle spring + a quick fade. Reduced
   // motion → popIn collapses instantly and the alpha is simply set.
@@ -295,8 +312,8 @@ export function openWeeklyRacePanel(scene: Phaser.Scene, opts: WeeklyRacePanelOp
   const newBody = (): Phaser.GameObjects.Container => {
     clearBody()
     body = scene.add.container(0, 0)
-    // Insert under the CLOSE pill so a landing row can never paint over the button.
-    cardRoot.addAt(body, cardRoot.length - 1)
+    // Insert under the INVITE + CLOSE pills so a landing row can never paint over the buttons.
+    cardRoot.addAt(body, cardRoot.getIndex(controls[0]))
     return body
   }
   // The panel closing must also stop body tweens + the heartbeat tick (targets die with the layer).
@@ -307,14 +324,21 @@ export function openWeeklyRacePanel(scene: Phaser.Scene, opts: WeeklyRacePanelOp
   let youGlow: Phaser.GameObjects.Image | null = null
 
   // ── State: the ranked board ────────────────────────────────────────────────────────────────
-  const showBoard = (board: WeeklyBoard): void => {
+  const showBoard = (board: WeeklyBoard, champ: Champion | null = null): void => {
     const b = newBody()
     setWeek(board.week)
     const fancy = !still && quality.tier() !== 'low'
+    const champYou = champ?.you === true
+
+    // Round-3 audit fix: the own-row heartbeat tick below must NOT modulate scale while the row's
+    // entrance pop is still in flight (the per-frame setScale was overwriting the Back tween when
+    // YOU landed top-3). Flipped true by the you-row's LAST entrance tween completing.
+    let youSettled = false
 
     // Does the player's own row land inside the visible rows, or does the footer carry it?
-    const footerNeeded = board.myRank !== null && !board.entries.slice(0, 10).some(e => e.you)
-    const plainMax = footerNeeded ? 6 : 7 // ranks 4..9 with a footer, 4..10 without
+    // The crown row costs one plain rank so every state keeps the same card silhouette.
+    const footerNeeded = board.myRank !== null && !board.entries.slice(0, champ ? 9 : 10).some(e => e.you)
+    const plainMax = (footerNeeded ? 6 : 7) - (champ ? 1 : 0)
     const shown = board.entries.slice(0, 3 + plainMax)
 
     /** Build one row container (plate + medal/rank + name + score [+ YOU dressing]) at rest. */
@@ -383,6 +407,12 @@ export function openWeeklyRacePanel(scene: Phaser.Scene, opts: WeeklyRacePanelOp
         const tag = makeYouTag(scene)
         tag.setPosition(name.x + name.width + 40, 0)
         row.add(tag)
+        // Reigning champion's own row wears a small crown beside the YOU tag (gold-crown YOUR row).
+        if (champYou) {
+          row.add(
+            scene.add.text(tag.x + 46, 0, '👑', { fontFamily: 'sans-serif', fontSize: '22px' }).setOrigin(0.5)
+          )
+        }
       }
       row.add(
         scene.add
@@ -401,6 +431,44 @@ export function openWeeklyRacePanel(scene: Phaser.Scene, opts: WeeklyRacePanelOp
     // Lay the rows out top-down: podium block (with its own breathing room), then the plain ranks.
     // `y` walks the TOP edge of each row; a row is centred at y + h/2 and advances y by h + gap.
     let y = CONTENT_TOP
+
+    // Crown row — "last week's champion · NAME" above the podium. A quiet honour strip on the warm
+    // podium plate; when the champion is YOU it lands on the full gold plate with an embossed YOU.
+    if (champ) {
+      const crownRow = scene.add.container(0, y + CROWN_H / 2)
+      crownRow.add(scene.add.image(0, 0, ensurePlate(scene, champYou ? 'gold' : 'podium', ROW_W, CROWN_H)))
+      const glyph = scene.add
+        .text(-ROW_W / 2 + 38, 1, '👑', { fontFamily: 'sans-serif', fontSize: '26px' })
+        .setOrigin(0.5)
+      crownRow.add(glyph)
+      crownRow.add(
+        scene.add
+          .text(-ROW_W / 2 + 68, 0, 'last week’s champion', {
+            fontFamily: 'Arial, sans-serif',
+            fontSize: '20px',
+            color: champYou ? T.goldPillText : T.inkMuted,
+          })
+          .setOrigin(0, 0.5)
+      )
+      const champName = scene.add
+        .text(ROW_W / 2 - 26, 0, champYou ? 'YOU' : champ.name, {
+          fontFamily: FONT,
+          fontSize: '24px',
+          fontStyle: '900',
+          color: champYou ? T.goldPillText : T.goldText,
+        })
+        .setOrigin(1, 0.5)
+      if (champYou) champName.setShadow(0, 2, 'rgba(74,51,5,0.35)', 2, false, true)
+      crownRow.add(champName)
+      b.add(crownRow)
+      // The honour strip leads the cascade in, its crown popping a beat after the plate lands.
+      tw(fadeRise(scene, crownRow, { rise: 10, delay: D.base - 40, duration: D.settle }))
+      if (fancy) {
+        glyph.setScale(0)
+        tw(scene.tweens.add({ targets: glyph, scale: 1, duration: D.pop, delay: D.base + 220, ease: backOut(OVERSHOOT.pop) }))
+      }
+      y += CROWN_H + CROWN_GAP
+    }
     const rows: Array<{ row: Phaser.GameObjects.Container; pod: boolean }> = []
     let goldPlateRow: Phaser.GameObjects.Container | null = null
     shown.forEach((e, i) => {
@@ -418,8 +486,19 @@ export function openWeeklyRacePanel(scene: Phaser.Scene, opts: WeeklyRacePanelOp
     // rise, biggest spring on #1 — layered, multi-beat, still only transform/alpha tweens.
     rows.forEach(({ row, pod }, i) => {
       const delay = D.base + i * 45
-      tw(fadeRise(scene, row, { rise: pod ? 16 : 12, delay, duration: D.settle }))
-      if (pod && fancy) {
+      const isYou = row === youRow
+      const popToo = pod && fancy
+      tw(
+        fadeRise(scene, row, {
+          rise: pod ? 16 : 12,
+          delay,
+          duration: D.settle,
+          // The you-row's LAST entrance tween releases the heartbeat (audit fix): the pop below runs
+          // longer than the rise when both play, so only the rise-only path hands over here.
+          onComplete: isYou && !popToo ? (): void => { youSettled = true } : undefined,
+        })
+      )
+      if (popToo) {
         row.setScale(0.86)
         tw(
           scene.tweens.add({
@@ -428,6 +507,7 @@ export function openWeeklyRacePanel(scene: Phaser.Scene, opts: WeeklyRacePanelOp
             duration: D.pop,
             delay,
             ease: backOut(i === 0 ? OVERSHOOT.pop : OVERSHOOT.release),
+            onComplete: isYou ? (): void => { youSettled = true } : undefined,
           })
         )
       }
@@ -524,16 +604,19 @@ export function openWeeklyRacePanel(scene: Phaser.Scene, opts: WeeklyRacePanelOp
         )
       }
       b.add(foot)
-      tw(fadeRise(scene, foot, { delay: D.base + rows.length * 45 + 80 }))
+      tw(fadeRise(scene, foot, { delay: D.base + rows.length * 45 + 80, onComplete: (): void => { youSettled = true } }))
       youRow = youRow ?? foot // outside the top rows the FOOTER is "you" — it carries the breathe
     }
 
     // Own-row heartbeat breathe: one shared-clock read per frame, phase-locked with every hero
-    // breather in the app. Skipped under reduced motion (halo already rests at a static warm alpha).
+    // breather in the app. Skipped under reduced motion (halo already rests at a static warm alpha),
+    // and GATED until the row's entrance tweens complete (`youSettled`) so the per-frame setScale
+    // can never fight the podium pop mid-flight (Round-3 audit fix).
     if (youRow && !still) {
       const target = youRow
       const halo = youGlow
       bodyTick = (): void => {
+        if (!youSettled) return
         const a = heartbeat.amp()
         target.setScale(1 + a * 0.012)
         halo?.setAlpha(0.12 + a * 0.14)
@@ -717,11 +800,13 @@ export function openWeeklyRacePanel(scene: Phaser.Scene, opts: WeeklyRacePanelOp
     const timeout = new Promise<'timeout'>(resolve => {
       scene.time.delayedCall(FETCH_PATIENCE, () => resolve('timeout'))
     })
-    void Promise.race([fetchWeeklyBoard(25), timeout])
+    // The crown row's champion rides the same patience window as the board (both never throw and
+    // resolve null/empty when dormant), so the card composes ONCE with everything it will show.
+    void Promise.race([Promise.all([fetchWeeklyBoard(25), fetchChampion(previousWeekKey())]), timeout])
       .then(result => {
         if (!alive) return
         if (result === 'timeout') showError()
-        else if (result.entries.length > 0) showBoard(result)
+        else if (result[0].entries.length > 0) showBoard(result[0], result[1])
         else showEmpty()
       })
       .catch(() => {
@@ -730,7 +815,7 @@ export function openWeeklyRacePanel(scene: Phaser.Scene, opts: WeeklyRacePanelOp
   }
 
   if (opts.boardOverride) {
-    if (opts.boardOverride.entries.length > 0) showBoard(opts.boardOverride)
+    if (opts.boardOverride.entries.length > 0) showBoard(opts.boardOverride, opts.championOverride ?? null)
     else showEmpty()
   } else if (opts.simulate === 'loading') {
     showLoading() // DEV: held forever, so the shimmer can be inspected/screenshotted
@@ -744,126 +829,204 @@ export function openWeeklyRacePanel(scene: Phaser.Scene, opts: WeeklyRacePanelOp
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// The Home entry chip — a compact trophy medallion seated beside the ENDLESS row.
+// The Home WEEKLY RACE module — the full-width block that seats the ENDLESS play pill over a live
+// standings line ("this week · #R of M · best N"), replacing the v1 trophy chip. One baked cream
+// plate (cards stay light on every theme) so the race reads as a first-class destination on Home.
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Module plate geometry (design px) — full-width like the overlay cards (40px side gutters). */
+const MODULE_W = 640
+const MODULE_H = 132
+
+/** Bake the module's cream plate: soft down-cast shadow + gloss bands + gold bezel (+ dark rim). */
+function ensureModulePlate(scene: Phaser.Scene): string {
+  const key = `race:module:${getTheme().id}:${MODULE_W}x${MODULE_H}`
+  if (scene.textures.exists(key)) return key
+  const T = getTheme()
+  const g = scene.make.graphics({ x: 0, y: 0 }, false)
+  const x = PAD
+  const y = PAD
+  const r = 26
+  for (let i = 3; i >= 1; i--) {
+    g.fillStyle(T.shadow, 0.07)
+    g.fillRoundedRect(x, y + i * 2, MODULE_W, MODULE_H, r)
+  }
+  g.fillStyle(T.cardFill, 1)
+  g.fillRoundedRect(x, y, MODULE_W, MODULE_H, r)
+  // Top-lit gloss — the same falling-height highlight bands the button caps and row plates use.
+  for (let i = 0; i < 3; i++) {
+    const bh = MODULE_H * (0.42 - i * 0.12)
+    if (bh < 3) break
+    g.fillStyle(T.glossHi, 0.16)
+    g.fillRoundedRect(x + 4, y + 2, MODULE_W - 8, bh, Math.min(r - 2, bh / 2))
+  }
+  g.lineStyle(3, T.goldBezel, 1)
+  g.strokeRoundedRect(x, y, MODULE_W, MODULE_H, r)
+  if (isDarkWash(T)) {
+    g.fillStyle(T.accent, 0.8)
+    g.fillRoundedRect(x + r, y + 3, MODULE_W - r * 2, 2, 1)
+  }
+  g.generateTexture(key, MODULE_W + PAD * 2, MODULE_H + PAD * 2)
+  g.destroy()
+  return key
+}
+
+// Module-level standings cache: the last live board summary, so a return to Home paints the live
+// line instantly and a fetch only refreshes it. Keyed by week — a rolled-over week falls back.
+interface RaceLineData {
+  week: string
+  myRank: number | null
+  myScore: number | null
+  /** Players on this week's board (the fetched top rows — the whole board at friends scale). */
+  total: number
+}
+let raceLineCache: RaceLineData | null = null
+
+/** DEV: seed the standings-line cache with a deterministic fixture (`?raceline=<variant>`). */
+export function devSeedRaceLine(variant: string | null): void {
+  const wk = weekKey()
+  if (variant === 'out') raceLineCache = { week: wk, myRank: 14, myScore: 1310, total: 25 }
+  else if (variant === 'new') raceLineCache = { week: wk, myRank: null, myScore: null, total: 7 }
+  else raceLineCache = { week: wk, myRank: 3, myScore: 7300, total: 12 }
+}
+
 /**
- * Compact trophy chip that opens the weekly-race panel. Speaks the pressable dialect (sink on
- * press, spring back with the calibrated release overshoot, a masked release-shine) on a bespoke
- * round medallion bake — rose-on-gold so it reads as the ENDLESS row's satellite. The plate is
- * baked once per (theme, size) and the glyph rides the sinking face, exactly like ui.ts caps.
+ * The live standings line — `🏆 this week · #R of M · best N ›` — and the WHOLE line is a
+ * pressable that opens the WEEKLY RACE panel. Paints from the module cache instantly, refreshes
+ * from `fetchWeeklyBoard` when signed in, and falls back to the save-local line (best this week /
+ * "set the pace") when offline, dormant or the board is still empty — never blank, never a spinner.
  */
-export function addWeeklyRaceChip(scene: Phaser.Scene, x: number, y: number, size = 62): Phaser.GameObjects.Container {
+function addWeeklyRaceLine(scene: Phaser.Scene, x: number, y: number, save: SaveData): Phaser.GameObjects.Container {
   const T = getTheme()
   const still = prefersReducedMotion()
-  const r = size / 2
-
-  // Bake the medallion plate: contact shadow → gold coin ring → rose face → top gloss.
-  const key = `race:chip:${T.id}:${size}`
-  if (!scene.textures.exists(key)) {
-    const g = scene.make.graphics({ x: 0, y: 0 }, false)
-    const c = r + PAD
-    for (let i = 2; i >= 1; i--) {
-      g.fillStyle(T.shadow, 0.09)
-      g.fillCircle(c, c + i * 1.5, r)
-    }
-    g.fillStyle(T.goldDeep, 1)
-    g.fillCircle(c, c, r)
-    g.fillStyle(T.roseDeep, 1)
-    g.fillCircle(c, c, r - 3.5)
-    g.fillStyle(T.rose, 1)
-    g.fillCircle(c, c - 1.5, r - 5)
-    g.fillStyle(T.roseLight, 0.4)
-    g.fillCircle(c, c - r * 0.28, r * 0.62)
-    g.lineStyle(2.5, T.goldBezel, 1)
-    g.strokeCircle(c, c, r - 1)
-    g.generateTexture(key, size + PAD * 2, size + PAD * 2)
-    g.destroy()
-  }
-
   const container = scene.add.container(x, y)
-  // Soft rose halo so the chip carries a whisper of the race's colour even at rest.
-  if (scene.textures.exists('bgglow')) {
-    const halo = scene.add
-      .image(0, 0, 'bgglow')
-      .setDisplaySize(size * 2.1, size * 2.1)
-      .setTint(T.rose)
-      .setBlendMode(Phaser.BlendModes.ADD)
-      .setAlpha(0.16)
-    container.add(halo)
-    if (!still) {
-      scene.tweens.add({ targets: halo, alpha: 0.28, duration: D.breath, yoyo: true, repeat: -1, ease: E.hero })
-    }
-  }
-  // The face container sinks on press (plate + glyph together), mirroring buildPressable's grammar.
-  const face = scene.add.container(0, 0)
-  const plate = scene.add.image(0, 0, key)
-  face.add(plate)
-  face.add(scene.add.text(0, 1, '🏆', { fontFamily: 'sans-serif', fontSize: `${Math.round(size * 0.46)}px` }).setOrigin(0.5))
-  container.add(face)
+  const line = scene.add
+    .text(0, 0, '', { fontFamily: FONT, fontSize: '20px', fontStyle: '900', color: T.inkSoft })
+    .setOrigin(0.5)
+  container.add(line)
 
-  // ≥44pt hit target (84 design px — the ui.ts MIN_HIT floor) without growing the art.
-  const zone = scene.add.rectangle(0, 0, 84, 84, 0xffffff, 0.001).setInteractive({ useHandCursor: true })
+  const setLine = (data: RaceLineData | null): void => {
+    let mid: string
+    if (data && data.myRank !== null) {
+      const total = Math.max(data.total, data.myRank)
+      const best = data.myScore !== null ? ` · best ${data.myScore.toLocaleString()}` : ''
+      mid = `this week · #${data.myRank} of ${total}${best}`
+    } else if (data && data.total > 0) {
+      mid = `this week · ${data.total} racing · set the pace`
+    } else {
+      // Offline / dormant / empty board — the save-local line the module replaced (never blank).
+      const wkBest = endlessBestThisWeek(save)
+      mid = wkBest > 0 ? `this week’s board · best ${wkBest.toLocaleString()}` : `new weekly board · set the pace`
+    }
+    line.setText(`🏆  ${mid}  ›`)
+  }
+  setLine(raceLineCache && raceLineCache.week === weekKey() ? raceLineCache : null)
+
+  // Refresh from the live board (dormant-safe: fetchWeeklyBoard resolves empty, never throws).
+  let alive = true
+  container.once(Phaser.GameObjects.Events.DESTROY, () => {
+    alive = false
+  })
+  if (cloudSession()) {
+    void fetchWeeklyBoard(25).then(board => {
+      if (board.entries.length === 0) return // dormant/empty → keep the fallback line + stale cache
+      raceLineCache = { week: board.week, myRank: board.myRank, myScore: board.myScore, total: board.entries.length }
+      if (alive) setLine(raceLineCache)
+    })
+  }
+
+  // The whole line is the tap target (≥44pt tall) → the WEEKLY RACE panel.
+  const zone = scene.add
+    .rectangle(0, 0, Math.max(300, line.width + 48), 52, 0xffffff, 0.001)
+    .setInteractive({ useHandCursor: true })
   container.add(zone)
-
-  const fancy = !still && quality.tier() !== 'low'
-  let pressTween: Phaser.Tweens.Tween | undefined
-  const seat = (toY: number, s: number, dur: number, ease: string | ((v: number) => number)): void => {
-    pressTween?.stop()
-    if (still) {
-      face.setY(toY).setScale(s)
-      return
-    }
-    pressTween = scene.tweens.add({ targets: face, y: toY, scale: s, duration: dur, ease })
-  }
   zone.on('pointerdown', () => {
     sfx.uiPress()
-    // §E14 haptic unify: the same tiny guarded tap ui.ts pressables give (haptics-off + API-absent safe).
-    try {
-      if (!hapticsOff() && 'vibrate' in navigator) navigator.vibrate?.(8)
-    } catch {
-      // no Vibration API — silent no-op
-    }
-    seat(2, 0.93, 60, E.press)
-    if (fancy) {
-      // Tap flash — the plate's own silhouette flaring for a beat (the pressables' acknowledgement).
-      const flash = scene.add.image(0, 0, key).setTint(0xffffff).setBlendMode(Phaser.BlendModes.ADD).setAlpha(0.35)
-      face.add(flash)
-      scene.tweens.add({ targets: flash, alpha: 0, duration: 260, ease: E.press, onComplete: () => flash.destroy() })
-    }
+    if (still) line.setAlpha(0.7)
+    else scene.tweens.add({ targets: line, alpha: 0.7, duration: 60, ease: E.press })
   })
-  const rise = (): void => seat(0, 1, 220, still ? 'Back.easeOut' : backOut(OVERSHOOT.release))
-  zone.on('pointerout', rise)
+  const restore = (): void => {
+    scene.tweens.killTweensOf(line)
+    line.setAlpha(1)
+  }
+  zone.on('pointerout', restore)
   zone.on('pointerup', () => {
-    rise()
-    if (fancy && scene.textures.exists('sweep')) {
-      // Release shine gliding across the medallion, masked to its exact circle.
-      const streakW = Math.max(20, size * 0.34)
-      const shine = scene.add
-        .image(-size / 2 - streakW, 0, 'sweep')
-        .setDisplaySize(streakW, size * 1.4)
-        .setAngle(14)
-        .setTint(0xffffff)
-        .setAlpha(0.7)
-        .setBlendMode(Phaser.BlendModes.ADD)
-      shine.setMask(plate.createBitmapMask())
-      face.add(shine)
-      scene.tweens.add({
-        targets: shine,
-        x: size / 2 + streakW,
-        duration: 340,
-        ease: E.arc,
-        onComplete: () => {
-          shine.clearMask(true)
-          shine.destroy()
-        },
-      })
-    }
+    restore()
     sfx.uiTap()
     sfx.whoosh() // §E3 B14: the airy sweep partners the panel opening
     openWeeklyRacePanel(scene)
   })
+  return container
+}
 
+/**
+ * Full-width WEEKLY RACE module for Home's ENDLESS block: the baked cream plate, the rose ENDLESS
+ * play pill (via `onPlay` — Home owns the navigation), a trophy + "WEEKLY RACE" side dressing, and
+ * the live tappable standings line underneath. Returns the container (joins Home's entrance stagger).
+ */
+export function addWeeklyRaceModule(
+  scene: Phaser.Scene,
+  cx: number,
+  cy: number,
+  save: SaveData,
+  onPlay: () => void
+): Phaser.GameObjects.Container {
+  const T = getTheme()
+  const still = prefersReducedMotion()
+  const container = scene.add.container(cx, cy)
+  container.add(scene.add.image(0, 0, ensureModulePlate(scene)))
+  // Side dressing flanking the pill: the race's trophy (left) + its name (right), quiet on the plate.
+  const trophy = scene.add.text(-232, -24, '🏆', { fontFamily: 'sans-serif', fontSize: '34px' }).setOrigin(0.5)
+  container.add(trophy)
+  if (!still) {
+    // A whisper of life on the trophy — slow hero breathe, phase-free (one tween, killed with the scene).
+    scene.tweens.add({ targets: trophy, scale: 1.08, duration: D.breath, yoyo: true, repeat: -1, ease: E.hero })
+  }
+  container.add(
+    scene.add
+      .text(232, -24, 'WEEKLY\nRACE', {
+        fontFamily: FONT,
+        fontSize: '17px',
+        fontStyle: '900',
+        color: T.goldText,
+        align: 'center',
+        lineSpacing: 2,
+      })
+      .setOrigin(0.5)
+      .setLetterSpacing(2)
+  )
+  // The rose ENDLESS play pill stays the hero of the block (reparented into the module so the whole
+  // block staggers in as one unit — addPillButton's press animates its inner face, so this is safe).
+  container.add(addPillButton(scene, 0, -24, 340, 72, 'ENDLESS', ROSE_PILL, onPlay))
+  container.add(addWeeklyRaceLine(scene, 0, 40, save))
+  return container
+}
+
+/**
+ * The locked WEEKLY RACE module (unlocked < 30): the same silhouette, dimmed and inert — a quiet
+ * signpost ("something is coming right here"), deliberately non-interactive and flourish-free.
+ */
+export function addWeeklyRaceLockedModule(scene: Phaser.Scene, cx: number, cy: number): Phaser.GameObjects.Container {
+  const T = getTheme()
+  const container = scene.add.container(cx, cy)
+  container.add(scene.add.image(0, 0, ensureModulePlate(scene)).setAlpha(0.5))
+  const lock = scene.textures.exists('lock')
+    ? scene.add.image(-168, 0, 'lock').setDisplaySize(30, 37).setAlpha(0.5)
+    : scene.add.text(-168, 0, '🔒', { fontFamily: 'sans-serif', fontSize: '30px' }).setOrigin(0.5).setAlpha(0.5)
+  container.add(lock)
+  container.add(
+    scene.add
+      .text(16, -16, 'WEEKLY RACE', { fontFamily: FONT, fontSize: '26px', fontStyle: '900', color: T.inkFaint })
+      .setOrigin(0.5)
+      .setLetterSpacing(2)
+      .setAlpha(0.8)
+  )
+  container.add(
+    scene.add
+      .text(16, 20, 'unlocks at level 30', { fontFamily: 'Arial, sans-serif', fontSize: '19px', color: T.inkFaint })
+      .setOrigin(0.5)
+      .setAlpha(0.8)
+  )
   return container
 }
 
@@ -894,20 +1057,28 @@ function fixtureBoard(youAt: number | null, myRank: number | null, myScore: numb
   }
 }
 
+/** A deterministic last-week champion for the crown-row fixtures. */
+function fixtureChampion(you: boolean): Champion {
+  return { week: previousWeekKey(), name: you ? 'austin' : 'marisol', score: 11240, you }
+}
+
 /**
  * Map a `?race=<variant>` value to panel opts (DEV only). '' / unknown → live data path.
- *   rich    → 12 names, you at #5 (highlight inside the list)
- *   out     → 12 names, you at #14 (the pinned "your rank" footer)
- *   empty   → a played-but-empty week ("be the first")
- *   loading → the shimmer, held forever
- *   error   → the quiet RETRY card
+ *   rich     → 12 names, you at #5, last week's champion crown row (someone else)
+ *   crownyou → 12 names, you at #2 — and YOU are last week's champion (gold crown row + row crown)
+ *   out      → 12 names, you at #14 (the pinned "your rank" footer), crown row present
+ *   empty    → a played-but-empty week ("be the first")
+ *   loading  → the shimmer, held forever
+ *   error    → the quiet RETRY card
  */
 export function devRaceOpts(variant: string | null): WeeklyRacePanelOpts {
   switch (variant) {
     case 'rich':
-      return { boardOverride: fixtureBoard(5, null, null) }
+      return { boardOverride: fixtureBoard(5, null, null), championOverride: fixtureChampion(false) }
+    case 'crownyou':
+      return { boardOverride: fixtureBoard(2, null, null), championOverride: fixtureChampion(true) }
     case 'out':
-      return { boardOverride: fixtureBoard(null, 14, 1310) }
+      return { boardOverride: fixtureBoard(null, 14, 1310), championOverride: fixtureChampion(false) }
     case 'empty':
       return { boardOverride: { week: weekKey(), entries: [], myRank: null, myScore: null } }
     case 'loading':

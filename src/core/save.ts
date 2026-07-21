@@ -41,7 +41,24 @@ export interface SaveData {
   /** Week keys ("YYYY-Www") whose weekly-race CHAMPION purse has been claimed (once-per-week gate;
    *  rides the cloud-synced save so a second device can never double-award). Absent in older saves → []. */
   championWeeks: string[]
+  // --- Referral / free-spin fields. All default EMPTY/OFF; read shape-tolerantly below. ---
+  /** The invite code this player arrived through — a UI mirror of the 'viva-maya:ref' stash
+   *  (core/referrals.ts owns registration; the stash stays authoritative). Null when organic. */
+  referredByCode: string | null
+  /** Latch for the one-time referee welcome grant (core/referrals.ts claimWelcome). */
+  referralWelcomeClaimed: boolean
+  /** Banked bonus spins for the prize wheel — earned by big cascades, spendable any day. */
+  freeSpins: number
+  /** YYYY-MM-DD (local) the daily free-spin earn counter belongs to; null until the first earn. */
+  freeSpinsDay: string | null
+  /** Free spins earned on freeSpinsDay — enforces the per-day earn cap. */
+  freeSpinsEarnedToday: number
 }
+
+/** Most free spins the bank ever holds — earning past this is quietly forfeited. */
+export const FREE_SPIN_BANK_CAP = 12
+/** Most free spins earnable per local calendar day (keeps a marathon session from minting a hoard). */
+export const FREE_SPIN_DAILY_CAP = 6
 
 const KEY = 'viva-maya:v1'
 
@@ -65,6 +82,11 @@ const DEFAULTS: SaveData = {
   seenIntro: false,
   jackpotMeter: 0,
   championWeeks: [],
+  referredByCode: null,
+  referralWelcomeClaimed: false,
+  freeSpins: 0,
+  freeSpinsDay: null,
+  freeSpinsEarnedToday: 0,
 }
 
 function fresh(): SaveData {
@@ -111,6 +133,18 @@ export function coerceSave(raw: unknown): SaveData {
     base.championWeeks = Array.isArray(data.championWeeks)
       ? data.championWeeks.filter((x): x is string => typeof x === 'string')
       : []
+    // Referral / free-spin fields — absent in older saves → the empty/off defaults.
+    base.referredByCode = typeof data.referredByCode === 'string' ? data.referredByCode : null
+    base.referralWelcomeClaimed = data.referralWelcomeClaimed === true
+    base.freeSpins =
+      typeof data.freeSpins === 'number'
+        ? Math.max(0, Math.min(FREE_SPIN_BANK_CAP, Math.floor(data.freeSpins)))
+        : 0
+    base.freeSpinsDay = typeof data.freeSpinsDay === 'string' ? data.freeSpinsDay : null
+    base.freeSpinsEarnedToday =
+      typeof data.freeSpinsEarnedToday === 'number'
+        ? Math.max(0, Math.min(FREE_SPIN_DAILY_CAP, Math.floor(data.freeSpinsEarnedToday)))
+        : 0
     // v6 grace refill: the pool grew (3→10) and the break got much shorter — top EVERYONE up to
     // full on upgrade so nobody is left stranded at the old, stingier count (e.g. mid-session).
     const storedVersion = typeof data.v === 'number' ? (data.v as number) : 1
@@ -288,6 +322,84 @@ export function addPendingBoost(type: BoostType): void {
   const save = loadSave()
   save.pendingBoosts.push(type)
   persistSave(save)
+}
+
+/**
+ * Bank earned free spins under BOTH caps — at most FREE_SPIN_DAILY_CAP earned per local day and at
+ * most FREE_SPIN_BANK_CAP held at once. `dayKey` is 'YYYY-MM-DD' (daily.todayKey()); a new day resets
+ * the earn counter. Atomic load→cap→persist; returns how many spins were ACTUALLY granted (0..n) so
+ * the caller can size the celebration honestly.
+ */
+export function addFreeSpins(n: number, dayKey: string): number {
+  const want = Math.max(0, Math.floor(n))
+  if (want === 0) return 0
+  const save = loadSave()
+  if (save.freeSpinsDay !== dayKey) {
+    save.freeSpinsDay = dayKey
+    save.freeSpinsEarnedToday = 0
+  }
+  const granted = Math.min(
+    want,
+    FREE_SPIN_DAILY_CAP - save.freeSpinsEarnedToday,
+    FREE_SPIN_BANK_CAP - save.freeSpins
+  )
+  if (granted <= 0) return 0
+  save.freeSpins += granted
+  save.freeSpinsEarnedToday += granted
+  persistSave(save)
+  return granted
+}
+
+/**
+ * Spend one banked free spin — atomic load→check→dec→persist. Returns the REMAINING bank on success,
+ * or null when the bank was empty (save untouched), so a caller can never double-spend.
+ */
+export function spendFreeSpin(): number | null {
+  const save = loadSave()
+  if (save.freeSpins <= 0) return null
+  save.freeSpins -= 1
+  persistSave(save)
+  return save.freeSpins
+}
+
+/**
+ * Grant the referrer's reward for `count` freshly-claimed referrals — chips per head PLUS a full
+ * lives refill — in ONE atomic load→grant→persist so a crash can never award half. Called by
+ * core/referrals.ts claimReferralRewards AFTER the cloud rows are stamped. Returns the new balance.
+ */
+export function grantReferralRewards(count: number, chipsEach: number): number {
+  const save = loadSave()
+  save.chips += Math.max(0, Math.floor(count)) * Math.max(0, Math.floor(chipsEach))
+  save.lives = LIVES_MAX
+  save.livesAnchor = 0
+  persistSave(save)
+  return save.chips
+}
+
+/**
+ * One-time referee welcome grant — atomic check→flag→grant→persist. Returns the new chip balance, or
+ * null when already claimed (save untouched). The latch rides the cloud-synced save, so a second
+ * device can never double-award. Constants live in core/referrals.ts; this just applies them.
+ */
+export function claimReferralWelcome(chips: number): number | null {
+  const save = loadSave()
+  if (save.referralWelcomeClaimed) return null
+  save.referralWelcomeClaimed = true
+  save.chips += Math.max(0, Math.floor(chips))
+  persistSave(save)
+  return save.chips
+}
+
+/**
+ * Mirror the captured invite code into the save for UI ("invited by ...") — set-once; the
+ * 'viva-maya:ref' localStorage stash (core/referrals.ts) stays authoritative for registration.
+ */
+export function setReferredByCode(code: string): void {
+  const save = loadSave()
+  if (save.referredByCode === null) {
+    save.referredByCode = code
+    persistSave(save)
+  }
 }
 
 /** Consume all pending boosts (they apply to the level being started, win or lose). */

@@ -196,3 +196,36 @@ A fixed 9:16 (720×1280) game letterboxes hard on a ~19.5:9 phone. To make it fe
 ---
 
 *Reference implementation: Viva Maya (`src/view/ui.ts`, `textures.ts`, `theme.ts`, `motion.ts`, `quality.ts`, `background.ts`, `src/main.ts`, `index.html`). See also `docs/VISUAL_OVERHAUL.md` and `docs/ULTIMATE_UIUX.md` for the full design system this cookbook distills.*
+
+
+## Rounds 1–4 interaction vocabulary (2026-07)
+
+New patterns; reuse these instead of inventing near-duplicates. All are reduced-motion
+collapsible, reduceFlashing-aware where they flash, governor-scaled where they spawn.
+
+- **Pressables** (`ui.ts buildPressable`): press = sink + cap-silhouette tap-flash;
+  release = springy `backOut(OVERSHOOT.release)` rise + masked specular shine sweep;
+  heroes add `juice` (glow ring + periodic sheen) or `sheen` alone.
+- **Scene transitions**: `startScene` cream cross-fade now carries a directional
+  `lightWipe` ('deeper' rises, 'back' settles); Home PLAY adds `launchBloom` (radial
+  gold from the button, composes with the C6 shared-element focus).
+- **Ambient**: `fx.addScreenGloss` (whisper vignette + heartbeat-locked light-leaks);
+  `heartbeat.amp()` is the ONE clock for all idle pulsing (never a private yoyo).
+- **Board feel**: depth stack (softshadow slab float, elevated HUD rail, recessed
+  wells), squash-and-settle refill, level-intro card → diagonal build-in wave
+  (input gate ≤~1.5s, tap-to-skip snaps to rest).
+- **Reward beats**: escalating score medallions (pooled, cap 4); collect comets with
+  impact tick on the goal readout; cascade edge-glow heat ramp (gold→amber→rose);
+  camera breath on big clears (composes with hitstop).
+- **Celebration family** (one language, three sizes): coronation (crown descent +
+  confetti + count-up), friend-joined toast queue (max 2/visit), welcome toast with
+  chip-fly. Always: celebrate FIRST, then claim/award — a crash re-offers.
+- **Jackpot wheel**: crouch → accel blur → decel ticks → near-miss creep → detent;
+  payoff = gold burst (or reduceFlashing swell) + chip fountain INTO the balance pill
+  + marquee letter-punch. Skips must snap the rig to rest scale (see the round-4
+  early-tap fix) — never leave a killTweensOf without restoring end state.
+- **Free spins**: golden-ticket punch-out at MEGA (distinct from medallions), corner
+  counter, chained cabinet spins with accelerating bulb chase.
+- **Panels**: leaderboard panel = the canonical rich-panel reference (podium bakes,
+  state machine incl. loading shimmer/error/empty, heartbeat own-row breathe gated
+  until entrance completes).

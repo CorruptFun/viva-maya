@@ -8,7 +8,8 @@ import type { BoostStoreItem } from '../core/store'
 import { SYMBOLS } from '../core/types'
 import type { Piece, PieceKind } from '../core/types'
 import { addCasinoBackdrop } from '../view/background'
-import { D, E, OVERSHOOT, backOut, popIn, stagger } from '../view/motion'
+import { INVITE_CARD_H, addInviteCard, maybeShowWelcome } from '../view/invite'
+import { D, E, OVERSHOOT, backOut, fadeRise, popIn, stagger } from '../view/motion'
 import { quality } from '../view/quality'
 import { getTheme, prefersReducedMotion, reduceFlashing } from '../view/theme'
 import { ensurePieceTexture } from '../view/textures'
@@ -17,7 +18,9 @@ import { FONT, GHOST_PILL, GOLD_PILL, addChipPill, addPillButton, applyEntrance,
 
 const CARD_X = 36
 const CARD_W = 648
-const LIST_TOP = 336
+/** Top of the INVITE FRIENDS card — it EARNS chips, so it leads the shelf above every purchasable. */
+const INVITE_TOP = 292
+const LIST_TOP = INVITE_TOP + INVITE_CARD_H + 60 // = 504; the boost shelf seats below the invite row
 const ROW_H = 104
 const CTRL_CX = 596 // center-x of the right-hand buy control
 
@@ -71,8 +74,26 @@ export class StoreScene extends Phaser.Scene {
     // read-out leads the shelf. popIn is §E8-aware — reduced motion rests it instantly.
     popIn(this, this.balance.container, { from: 0.7, delay: 60, overshoot: OVERSHOOT.gentle })
 
+    // INVITE FRIENDS leads the shelf (it EARNS chips; everything below spends them). Built once per
+    // entry — it manages its own async states (mint shimmer / stats), so purchase refreshes must
+    // never rebuild it. It takes the first beat of the entrance; the boost stagger follows.
+    const invite = addInviteCard(this, INVITE_TOP, { toast: msg => this.toast(msg, 'good') })
+    fadeRise(this, invite, { rise: 26, duration: D.pop, ease: backOut(OVERSHOOT.gentle), delay: 40 })
+
     this.listLayer = this.add.container(0, 0)
     this.renderList(true) // stagger the cards in on first paint; purchase refreshes rebuild silently
+
+    // Referee welcome moment ("welcome gift · +150") — claims + celebrates if pending, chip-flying
+    // into the balance pill. Delayed a beat so the entrance choreography lands first.
+    maybeShowWelcome(this, {
+      balanceX: this.balanceX,
+      balanceY: this.balanceY,
+      onBalance: chips => {
+        this.balance.update(chips)
+        this.renderList() // +150 may wake ghosted rows — silent affordability refresh, like a purchase
+      },
+      delay: 650,
+    })
 
     this.add
       .text(DESIGN_W / 2, DESIGN_H - 60, 'Chips are earned by winning — in-game only, no cash value.', {
@@ -108,7 +129,8 @@ export class StoreScene extends Phaser.Scene {
     // and a gentle Back overshoot so each card lands with a little spring instead of drifting flat.
     // `stagger` is reduced-motion-aware (it lands each row at its resting alpha/y instantly). Adopts
     // the shared motion helpers (item C2). Only on first paint — purchase refreshes rebuild silently.
-    if (animate) stagger(this, rows, 70, { rise: 26, duration: D.pop, ease: backOut(OVERSHOOT.gentle) })
+    // (delay 110 seats the boost rows one beat behind the invite card's fadeRise, one entrance arc.)
+    if (animate) stagger(this, rows, 70, { rise: 26, duration: D.pop, ease: backOut(OVERSHOOT.gentle), delay: 110 })
     // S3 · "play to earn" empty state: when nothing is affordable the list is all ghosted pills with
     // no next step, so point the broke player back into the earn loop (rebuilt in/out with the list).
     if (firstAffordable < 0) this.renderEmptyState()
@@ -135,7 +157,7 @@ export class StoreScene extends Phaser.Scene {
     const currentLevel = Math.min(loadSave().unlocked, LEVEL_COUNT) // same target Home's PLAY uses
     this.hold(
       this.add
-        .text(DESIGN_W / 2, 900, 'Win a level to earn more chips 💛', {
+        .text(DESIGN_W / 2, 1030, 'Win a level to earn more chips 💛', {
           fontFamily: FONT,
           fontSize: '25px',
           fontStyle: '900',
@@ -144,7 +166,7 @@ export class StoreScene extends Phaser.Scene {
         .setOrigin(0.5)
     )
     this.hold(
-      addPillButton(this, DESIGN_W / 2, 986, 300, 72, 'PLAY', GOLD_PILL, () => startScene(this, 'game', { level: currentLevel }))
+      addPillButton(this, DESIGN_W / 2, 1112, 300, 72, 'PLAY', GOLD_PILL, () => startScene(this, 'game', { level: currentLevel }))
     )
   }
 

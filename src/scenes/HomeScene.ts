@@ -1,25 +1,36 @@
 import Phaser from 'phaser'
 import { sfx } from '../audio/sfx'
-import { DESIGN_W, restScrollY } from '../config'
+import { DESIGN_W, restScrollY, worldH } from '../config'
 import { spinAvailable, todayKey } from '../core/daily'
-import { endlessBestThisWeek, endlessUnlocked } from '../core/endless'
+import { endlessUnlocked } from '../core/endless'
+import { PRIZE_TIERS, checkWeeklyPrize, previousWeekKey } from '../core/leaderboard'
+import type { WeeklyPrizeWin } from '../core/leaderboard'
 import { LEVEL_COUNT } from '../core/levels'
 import { refreshLives } from '../core/lives'
 import { greeting, occasionFor, pendingOccasion, secretNote, withName } from '../core/maya'
-import { loadSave, markOccasionSeen, touchOpen } from '../core/save'
+import { REFERRER_CHIPS, claimReferralRewards, fetchPendingRewards } from '../core/referrals'
+import type { PendingReferralReward } from '../core/referrals'
+import { claimChampionship, loadSave, markOccasionSeen, touchOpen } from '../core/save'
 import { addCasinoBackdrop } from '../view/background'
-import { addWeeklyRaceChip, devRaceOpts, openWeeklyRacePanel } from '../view/leaderboardpanel'
+import {
+  addWeeklyRaceLockedModule,
+  addWeeklyRaceModule,
+  devRaceOpts,
+  devSeedRaceLine,
+  openWeeklyRacePanel,
+} from '../view/leaderboardpanel'
 import { addScreenGloss } from '../view/fx'
 import { maybeShowInstallNudge } from '../view/installnudge'
 import { addJackpotMeter } from '../view/jackpot'
-import { OVERSHOOT, backOut, fadeRise, heartbeat } from '../view/motion'
+import { D, E, OVERSHOOT, backOut, fadeRise, heartbeat, popIn } from '../view/motion'
 import { quality } from '../view/quality'
 import { getTheme, prefersReducedMotion, reduceFlashing } from '../view/theme'
+import type { Theme } from '../view/theme'
+import type { ChipPill } from '../view/ui'
 import {
   FONT,
   GHOST_PILL,
   GOLD_PILL,
-  ROSE_PILL,
   addChipPill,
   addHelpChip,
   addLivesHud,
@@ -30,6 +41,7 @@ import {
   addStreakBadge,
   addThemeChip,
   applyEntrance,
+  goldFace,
   hasNavigated,
   openHelpPanel,
   openSettingsPanel,
@@ -46,6 +58,20 @@ import {
  */
 let bootRevealed = false
 
+/** Dark-wash check (mirrors ui.ts's private `isDarkTheme`) — drives the celebration cards' lit accent rim. */
+function darkWash(T: Theme): boolean {
+  const r = ((T.washBottom >> 16) & 0xff) / 255
+  const g = ((T.washBottom >> 8) & 0xff) / 255
+  const b = (T.washBottom & 0xff) / 255
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b < 0.4
+}
+
+/** The alpha/transform surface the celebration snap-to-end restores (containers included). */
+type SnapTarget = Phaser.GameObjects.Components.Transform & {
+  alpha: number
+  setAlpha(value?: number): unknown
+}
+
 export class HomeScene extends Phaser.Scene {
   /** Guards the discovered secret-note overlay so long-press/4-tap can't stack copies. */
   private noteOpen = false
@@ -58,6 +84,9 @@ export class HomeScene extends Phaser.Scene {
   private playGlowBaseSY = 1
   /** Gate: the heartbeat only takes over AFTER the fade-in/power-on bloom lands (never under reduced motion). */
   private playGlowLive = false
+
+  /** Guards the growth-celebration queue (coronation → friend toasts) so entries can never stack. */
+  private celebrating = false
 
   // --- C4/H3 · idle attract beat: a soft one-shot "come play" invitation fired once per idle entry ---
   /** Rising-edge latch for `quality.idle()` — true once the current idle beat has fired; re-armed on activity. */
@@ -123,9 +152,13 @@ export class HomeScene extends Phaser.Scene {
     if (import.meta.env.DEV && new URLSearchParams(location.search).has('theme')) openThemePanel(this)
 
     // Weekly-race panel, opened directly for testing (mirrors the ?help pattern). `?race=<variant>`
-    // maps to the DEV fixture boards (rich / out / empty / loading / error); bare `?race` = live data.
+    // maps to the DEV fixture boards (rich / crownyou / out / empty / loading / error); bare `?race`
+    // = live data. `?raceline=<variant>` seeds the Home standings-line cache (rich / out / new).
     if (import.meta.env.DEV && new URLSearchParams(location.search).has('race')) {
       openWeeklyRacePanel(this, devRaceOpts(new URLSearchParams(location.search).get('race')))
+    }
+    if (import.meta.env.DEV && new URLSearchParams(location.search).has('raceline')) {
+      devSeedRaceLine(new URLSearchParams(location.search).get('raceline'))
     }
 
     // §E14 first-run advertisement: pulse the ? help chip ONCE for a truly-new player (seenIntro
@@ -144,8 +177,9 @@ export class HomeScene extends Phaser.Scene {
     }
 
     // Persistent chip balance (earned reward token) — top-center, between the ? and ♪ corner
-    // chips and above the lives pool. A read-out here; chips are spent in the Gift Store.
-    addChipPill(this, DESIGN_W / 2, 44)
+    // chips and above the lives pool. A read-out here; chips are spent in the Gift Store. The
+    // handle is kept so the coronation / friend-joined purses can count up into it.
+    const chipPill = addChipPill(this, DESIGN_W / 2, 44)
 
     // Top status: lives pool (with a live "next life" countdown) above the streak flame.
     const livesHud = addLivesHud(this, DESIGN_W / 2, 100, { size: 32, timerColor: getTheme().onBackdropMuted })
@@ -389,30 +423,25 @@ export class HomeScene extends Phaser.Scene {
     if (ready && !reduced) {
       this.tweens.add({ targets: daily, scale: 1.05, duration: 650, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' })
     }
+    // Banked free spins → a glowing "×N FREE SPINS" badge pinned to the DAILY BONUS corner. Rides
+    // INSIDE the pill container so the daily breathe carries it; the glow pulse is its own beat
+    // (reduce-flashing → static soft glow; reduced motion → static badge, no pop, no pulse).
+    if (save.freeSpins > 0) daily.add(this.buildFreeSpinsBadge(save.freeSpins))
     if (save.pendingBoosts.length > 0) {
       this.add
         .text(DESIGN_W / 2, 1044, `🎁 boost ready for your next level`, { fontFamily: FONT, fontSize: '20px', color: getTheme().goldText })
         .setOrigin(0.5)
     }
 
-    // Endless weekly race — unlocks after level 30.
+    // WEEKLY RACE module — the full-width ENDLESS block (replaces the v1 trophy chip). Unlocked:
+    // the rose ENDLESS pill over a live, tappable standings line (leaderboardpanel owns the data +
+    // panel). Locked (<30): the same silhouette dimmed to a quiet "unlocks at level 30" signpost.
     if (endlessUnlocked(save)) {
-      const wkBest = endlessBestThisWeek(save)
-      const endless = addPillButton(this, DESIGN_W / 2, 1108, 340, 72, 'ENDLESS', ROSE_PILL, () =>
-        startScene(this,'game', { endless: true })
+      menuButtons.push(
+        addWeeklyRaceModule(this, DESIGN_W / 2, 1134, save, () => startScene(this, 'game', { endless: true }))
       )
-      menuButtons.push(endless)
-      // Weekly-race trophy chip — the ENDLESS row's satellite: opens the WEEKLY RACE leaderboard
-      // panel. Joins menuButtons so it rises into place with the rest of the stack.
-      menuButtons.push(addWeeklyRaceChip(this, DESIGN_W / 2 + 240, 1108))
-      this.add
-        .text(
-          DESIGN_W / 2,
-          1158,
-          wkBest > 0 ? `this week's board  ·  best ${wkBest.toLocaleString()}` : `new weekly board  ·  set the pace`,
-          { fontFamily: FONT, fontSize: '20px', color: getTheme().onBackdropMuted }
-        )
-        .setOrigin(0.5)
+    } else {
+      menuButtons.push(addWeeklyRaceLockedModule(this, DESIGN_W / 2, 1134))
     }
 
     // Entrance stagger: the stacked pill buttons fade + slide up 12px into place,
@@ -437,6 +466,14 @@ export class HomeScene extends Phaser.Scene {
         })
       })
     }
+
+    // ── Growth celebrations (coronation, then friend-joined), queued AFTER the entrance settles —
+    // and, on a true boot, after the whole power-on reveal has finished (never over it). The fetches
+    // are dormant-safe (both resolve null/empty offline), so scheduling this is always free.
+    const celebrateDelay = powerOn ? 2400 : reduced ? 300 : 800
+    this.time.delayedCall(celebrateDelay, () => {
+      void this.runCelebrations(chipPill, refreshLivesHud)
+    })
   }
 
   /**
@@ -574,6 +611,572 @@ export class HomeScene extends Phaser.Scene {
       ease: 'Sine.easeOut',
       onComplete: () => ring.destroy(),
     })
+  }
+
+  /**
+   * Growth-celebration queue: CORONATION first (the fat weekly-champion moment), then up to two
+   * FRIEND-JOINED toasts — strictly one at a time, never stacked, never over the power-on (the
+   * caller delays past it). Every data call is dormant-safe (null/empty offline), and a scene
+   * shutdown mid-queue simply stops the chain (`alive`). DEV: `?coronation` / `?friend[=n]`
+   * substitute deterministic fixtures for the network checks (mirrors the `?race` pattern).
+   */
+  private async runCelebrations(pill: ChipPill, refreshLives: () => void): Promise<void> {
+    if (this.celebrating) return
+    this.celebrating = true
+    const alive = { on: true }
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      alive.on = false
+    })
+    try {
+      const q = import.meta.env.DEV ? new URLSearchParams(location.search) : null
+      // 1 · CORONATION — did the player win an unclaimed prize for the most recently closed week?
+      let win: WeeklyPrizeWin | null = null
+      if (q?.has('coronation')) {
+        win = { week: previousWeekKey(), rank: 1, score: 9840, tier: PRIZE_TIERS[0] }
+      } else {
+        win = await checkWeeklyPrize(loadSave().championWeeks)
+      }
+      if (!alive.on) return
+      if (win) await this.openCoronation(win, pill)
+      if (!alive.on) return
+      // 2 · FRIEND-JOINED — referrer rewards, one toast each, max 2 per visit (the rest keep).
+      let rewards: Array<PendingReferralReward | null>
+      if (q?.has('friend')) {
+        rewards = new Array<null>(Math.min(2, Math.max(1, Number(q.get('friend') ?? '1') || 1))).fill(null)
+      } else {
+        rewards = (await fetchPendingRewards()).slice(0, 2)
+      }
+      for (const reward of rewards) {
+        if (!alive.on) return
+        await this.openFriendToast(reward, pill, refreshLives)
+      }
+    } finally {
+      this.celebrating = false
+    }
+  }
+
+  /**
+   * The CORONATION — Signature growth moment: scrim, a crown descending onto a marquee-grade
+   * "WEEKLY CHAMPION" card with a gold burst, governor-scaled heart+chip confetti, and the purse
+   * counting up before it lands in the chip pill. THEN the claim (save.claimChampionship) — so a
+   * crash mid-ceremony re-offers the crown, and the once-per-week latch makes any double call inert.
+   *
+   * Tap once mid-sequence → snap to the finished card (the award still happens, immediately); tap
+   * again → dismiss. Reduced motion: the finished card appears at rest, the award is instant, one
+   * tap dismisses. reduceFlashing: no bright burst/flash — a slow soft halo swell instead.
+   */
+  private openCoronation(win: WeeklyPrizeWin, pill: ChipPill): Promise<void> {
+    return new Promise(resolve => {
+      const reduced = this.prefersReducedMotion()
+      const calmFlash = reduceFlashing()
+      const fancy = !reduced && quality.tier() !== 'low'
+      const T = getTheme()
+      const cx = DESIGN_W / 2
+      const cy = 640
+      const layer = this.add.container(0, 0).setDepth(80)
+      layer.once(Phaser.GameObjects.Events.DESTROY, () => resolve())
+
+      // ── Snap bookkeeping: every animated object is registered at its RESTING pose first ──
+      const rest: Array<{ o: SnapTarget; y: number; alpha: number; scale: number }> = []
+      const reg = <Tp extends SnapTarget>(o: Tp): Tp => {
+        rest.push({ o, y: o.y, alpha: o.alpha, scale: o.scaleX })
+        return o
+      }
+      const timers: Phaser.Time.TimerEvent[] = []
+      const later = (ms: number, fn: () => void): void => {
+        timers.push(this.time.delayedCall(ms, fn))
+      }
+      const transients: Phaser.GameObjects.GameObject[] = []
+
+      // Exactly-once award. The count-up landing fires it; tap-to-skip fires it early; the save's
+      // per-week championWeeks latch makes even a raced second call a no-op.
+      let awarded = false
+      const award = (): void => {
+        if (awarded) return
+        awarded = true
+        const balance = claimChampionship(win.week, win.tier.chips)
+        if (balance !== null) pill.update(balance)
+      }
+
+      // ── Build the finished scene first (rest pose), then wind it back for the entrance ──
+      const scrim = this.add.rectangle(cx, 640, DESIGN_W, worldH(), T.scrim, 0.68).setInteractive()
+      layer.add(scrim)
+
+      const cardRoot = this.add.container(cx, cy)
+      layer.add(cardRoot)
+      reg(cardRoot)
+      const cardW = 560
+      const cardH = 620
+      const g = this.add.graphics()
+      for (let i = 3; i >= 1; i--) {
+        g.fillStyle(T.shadow, 0.1)
+        g.fillRoundedRect(-cardW / 2, -cardH / 2 + i * 3, cardW, cardH, 34)
+      }
+      g.fillStyle(T.cardFill, 1)
+      g.fillRoundedRect(-cardW / 2, -cardH / 2, cardW, cardH, 34)
+      g.lineStyle(4, T.goldBezel, 1)
+      g.strokeRoundedRect(-cardW / 2, -cardH / 2, cardW, cardH, 34)
+      if (darkWash(T)) {
+        g.fillStyle(T.accent, 0.85)
+        g.fillRoundedRect(-cardW / 2 + 34, -cardH / 2 + 3, cardW - 68, 2, 1)
+      }
+      cardRoot.add(g)
+
+      // Marquee bulb row along the card's top — the "sign" dressing the title deserves.
+      const bulbs: Phaser.GameObjects.Image[] = []
+      for (let i = 0; i < 11; i++) {
+        const bx = -230 + (460 * i) / 10
+        const bulb = this.add
+          .image(bx, -cardH / 2 + 42, 'bulb')
+          .setDisplaySize(13, 13)
+          .setTint(i % 2 === 0 ? T.gold : T.accent)
+          .setAlpha(0.62)
+        cardRoot.add(bulb)
+        bulbs.push(reg(bulb))
+      }
+
+      // Crown zone: soft gold halo + the crown itself (it DESCENDS in with the gold burst).
+      const halo = this.add
+        .image(0, -160, 'bgglow')
+        .setBlendMode(Phaser.BlendModes.ADD)
+        .setTint(T.gold)
+        .setDisplaySize(360, 300)
+        .setAlpha(0.22)
+      cardRoot.add(reg(halo))
+      const crown = this.add.text(0, -160, '👑', { fontFamily: 'sans-serif', fontSize: '116px' }).setOrigin(0.5)
+      cardRoot.add(reg(crown))
+
+      // Marquee-grade title banner — the canonical real-metal gold face carrying tier.title.
+      const banner = this.add.container(0, 0)
+      const bg = this.add.graphics()
+      bg.fillStyle(T.shadow, 0.14)
+      bg.fillRoundedRect(-240, -42 + 5, 480, 84, 20)
+      goldFace(bg, -240, -42, 480, 84, T, 20)
+      bg.lineStyle(3, T.goldDeep, 1)
+      bg.strokeRoundedRect(-240, -42, 480, 84, 20)
+      banner.add(bg)
+      const title = this.add
+        .text(0, 0, win.tier.title, { fontFamily: FONT, fontSize: '38px', fontStyle: '900', color: T.goldPillText })
+        .setOrigin(0.5)
+        .setLetterSpacing(2)
+        .setShadow(0, 2, 'rgba(74,51,5,0.35)', 2, false, true)
+      banner.add(title)
+      // Fit long future tier titles inside the banner (PODIUM / TOP 10 stay big).
+      if (title.width > 440) title.setScale(440 / title.width)
+      cardRoot.add(reg(banner))
+
+      const scoreLine = this.add
+        .text(0, 66, `your winning run  ·  ${win.score.toLocaleString()}`, {
+          fontFamily: 'Arial, sans-serif',
+          fontSize: '22px',
+          color: T.inkMuted,
+        })
+        .setOrigin(0.5)
+      cardRoot.add(reg(scoreLine))
+
+      // The purse row — chip token + the count-up number.
+      const purse = this.add.container(0, 146)
+      const purseChip = this.add.image(0, 0, 'chip').setDisplaySize(46, 46)
+      const purseFinal = `+${win.tier.chips.toLocaleString()}`
+      const purseText = this.add
+        .text(0, 1, purseFinal, { fontFamily: FONT, fontSize: '46px', fontStyle: '900', color: T.goldText })
+        .setOrigin(0, 0.5)
+        .setShadow(0, 2, 'rgba(0,0,0,0.12)', 3, false, true)
+      // Centre chip + number as one unit around x=0.
+      const purseW = 46 + 14 + purseText.width
+      purseChip.setX(-purseW / 2 + 23)
+      purseText.setX(purseChip.x + 23 + 14)
+      purse.add([purseChip, purseText])
+      cardRoot.add(reg(purse))
+      const purseSub = this.add
+        .text(0, 198, 'CHIPS · added to your balance', {
+          fontFamily: 'Arial, sans-serif',
+          fontSize: '19px',
+          color: T.inkFaint,
+        })
+        .setOrigin(0.5)
+      cardRoot.add(reg(purseSub))
+
+      const hint = this.add
+        .text(0, cardH / 2 - 44, 'tap to continue', { fontFamily: FONT, fontSize: '20px', fontStyle: '900', color: T.inkFaint })
+        .setOrigin(0.5)
+        .setLetterSpacing(1)
+      cardRoot.add(hint) // NOT registered — its rest during play is hidden; snap/end shows it
+
+      // ── The gold burst on crown landing (reduceFlashing → the soft halo swell only) ──
+      const burst = (): void => {
+        sfx.jackpotStrike()
+        if (!reduced) {
+          // The halo swells warm at the landing on EVERY motion path (soft, not a flash).
+          this.tweens.add({ targets: halo, alpha: 0.4, duration: calmFlash ? 620 : 220, yoyo: true, ease: E.hero })
+        }
+        if (fancy && !calmFlash) {
+          const ring = this.add
+            .image(cx, cy - 160, 'ring')
+            .setBlendMode(Phaser.BlendModes.ADD)
+            .setTint(T.goldBright)
+            .setDisplaySize(90, 90)
+            .setAlpha(0.85)
+          layer.add(ring)
+          transients.push(ring)
+          this.tweens.add({
+            targets: ring,
+            displayWidth: 420,
+            displayHeight: 420,
+            alpha: 0,
+            duration: 420,
+            ease: E.settle,
+            onComplete: () => ring.destroy(),
+          })
+          const sparks = this.add.particles(0, 0, 'spark', {
+            speed: { min: 180, max: 520 },
+            scale: { start: 0.9, end: 0 },
+            alpha: { start: 1, end: 0 },
+            lifespan: { min: 350, max: 700 },
+            blendMode: Phaser.BlendModes.ADD,
+            tint: T.goldBright,
+            emitting: false,
+          })
+          layer.add(sparks)
+          transients.push(sparks)
+          sparks.explode(quality.count(18), cx, cy - 160)
+        }
+        // Heart + chip confetti — celebration, not luminance: plays under reduceFlashing too.
+        if (fancy) {
+          for (const tex of ['heart', 'chip'] as const) {
+            const p = this.add.particles(0, 0, tex, {
+              speed: { min: 170, max: 470 },
+              angle: { min: 230, max: 310 },
+              scale: { start: tex === 'chip' ? 0.5 : 0.55, end: 0.1 },
+              alpha: { start: 1, end: 0 },
+              lifespan: { min: 900, max: 1600 },
+              gravityY: 520,
+              rotate: { min: -180, max: 180 },
+              emitting: false,
+            })
+            layer.add(p)
+            transients.push(p)
+            p.explode(quality.count(14), cx, cy - 220)
+          }
+        }
+      }
+
+      // Purse count-up → the award. A plain counter object tween; snap kills it via `counter`.
+      const counter = { v: 0 }
+      const countUp = (): void => {
+        sfx.coinCount()
+        this.tweens.add({
+          targets: counter,
+          v: win.tier.chips,
+          duration: 700,
+          ease: 'Cubic.easeOut',
+          onUpdate: () => purseText.setText(`+${Math.round(counter.v).toLocaleString()}`),
+          onComplete: () => {
+            purseText.setText(purseFinal)
+            award()
+            // A few chips arc up into the chip pill as the balance lands (pure garnish).
+            if (fancy) {
+              for (let i = 0; i < 3; i++) {
+                const fly = this.add.image(cx + (i - 1) * 44, cy + 146, 'chip').setDisplaySize(34, 34).setDepth(81)
+                transients.push(fly)
+                this.tweens.add({
+                  targets: fly,
+                  x: cx,
+                  y: 44,
+                  displayWidth: 20,
+                  displayHeight: 20,
+                  alpha: 0.9,
+                  duration: 520,
+                  delay: i * 80,
+                  ease: E.glide,
+                  onComplete: () => fly.destroy(),
+                })
+              }
+            }
+          },
+        })
+      }
+
+      // ── Phase machine: playing → rest → (dismiss) ──
+      let phase: 'playing' | 'rest' | 'gone' = 'playing'
+      const stopAll = (): void => {
+        for (const t of timers) t.remove(false)
+        timers.length = 0
+        this.tweens.killTweensOf(counter)
+        this.tweens.killTweensOf(scrim)
+        this.tweens.killTweensOf(hint)
+        for (const r of rest) this.tweens.killTweensOf(r.o)
+        for (const tr of transients) {
+          this.tweens.killTweensOf(tr)
+          tr.destroy()
+        }
+        transients.length = 0
+      }
+      const snapToEnd = (): void => {
+        if (phase !== 'playing') return
+        phase = 'rest'
+        stopAll()
+        for (const r of rest) {
+          r.o.setY(r.y)
+          r.o.setAlpha(r.alpha)
+          r.o.setScale(r.scale)
+        }
+        cardRoot.setX(cx) // x never animates, but be exact
+        scrim.setAlpha(0.68)
+        purseText.setText(purseFinal)
+        hint.setAlpha(1)
+        award()
+      }
+      const dismiss = (): void => {
+        if (phase === 'gone') return
+        phase = 'gone'
+        stopAll()
+        award() // belt & braces — the latch makes this free when already fired
+        sfx.whoosh()
+        if (reduced) {
+          layer.destroy() // DESTROY hook resolves
+          return
+        }
+        this.tweens.add({ targets: layer, alpha: 0, duration: 180, ease: E.exit, onComplete: () => layer.destroy() })
+      }
+      scrim.on('pointerup', () => {
+        if (phase === 'playing') snapToEnd()
+        else dismiss()
+      })
+
+      // ── Entrance choreography (reduced motion: everything already rests; claim instantly) ──
+      if (reduced) {
+        phase = 'rest'
+        hint.setAlpha(1)
+        award()
+        return
+      }
+      sfx.winFanfare()
+      hint.setAlpha(0)
+      scrim.setAlpha(0)
+      this.tweens.add({ targets: scrim, alpha: 0.68, duration: D.settle, ease: E.settle })
+      cardRoot.setAlpha(0)
+      this.tweens.add({ targets: cardRoot, alpha: 1, duration: D.base, delay: 60, ease: E.settle })
+      popIn(this, cardRoot, { from: 0.88, delay: 60, duration: D.pop, overshoot: OVERSHOOT.gentle })
+      // The crown starts high above the card and drops onto its halo with the big overshoot.
+      crown.setY(-430).setAlpha(0)
+      this.tweens.add({ targets: crown, alpha: 1, duration: 200, delay: 360, ease: E.settle })
+      this.tweens.add({ targets: crown, y: -160, duration: 560, delay: 360, ease: backOut(OVERSHOOT.pop) })
+      halo.setAlpha(0)
+      this.tweens.add({ targets: halo, alpha: 0.22, duration: 320, delay: 420, ease: E.settle })
+      later(920, burst)
+      // Bulbs cascade-light left→right behind the title reveal.
+      bulbs.forEach((b, i) => {
+        b.setAlpha(0.12)
+        this.tweens.add({ targets: b, alpha: 0.62, duration: 220, delay: 640 + i * 45, ease: E.settle })
+      })
+      fadeRise(this, banner, { rise: 14, delay: 560, duration: D.settle })
+      fadeRise(this, scoreLine, { delay: 700 })
+      purseText.setText('+0')
+      fadeRise(this, purse, { delay: 820 })
+      fadeRise(this, purseSub, { delay: 880 })
+      later(1250, countUp)
+      this.tweens.add({ targets: hint, alpha: 1, duration: 300, delay: 2500, ease: E.settle })
+      later(2600, () => {
+        if (phase === 'playing') phase = 'rest'
+      })
+    })
+  }
+
+  /**
+   * FRIEND-JOINED toast — the coronation's smaller sibling for the referrer's reward moment:
+   * scrim + compact cream card, a beating heart, a mini heart shower, then the claim lands
+   * (+REFERRER_CHIPS into the pill, hearts refilled — the lives HUD pops the pips itself).
+   * `reward === null` is the DEV fixture path (no cloud claim). Auto-dismisses; tap dismisses.
+   * NOTE: the referrals schema deliberately carries no referee display name (privacy — see
+   * migration 0004), so the live copy celebrates "a friend" rather than a name.
+   */
+  private openFriendToast(
+    reward: PendingReferralReward | null,
+    pill: ChipPill,
+    refreshLives: () => void
+  ): Promise<void> {
+    return new Promise(resolve => {
+      const reduced = this.prefersReducedMotion()
+      const fancy = !reduced && quality.tier() !== 'low'
+      const T = getTheme()
+      const cx = DESIGN_W / 2
+      const cy = 540
+      const layer = this.add.container(0, 0).setDepth(78)
+      let alive = true
+      layer.once(Phaser.GameObjects.Events.DESTROY, () => {
+        alive = false
+        resolve()
+      })
+
+      const scrim = this.add.rectangle(cx, 640, DESIGN_W, worldH(), T.scrim, 0.42).setInteractive()
+      layer.add(scrim)
+
+      const cardRoot = this.add.container(cx, cy)
+      layer.add(cardRoot)
+      const cardW = 520
+      const cardH = 300
+      const g = this.add.graphics()
+      for (let i = 2; i >= 1; i--) {
+        g.fillStyle(T.shadow, 0.1)
+        g.fillRoundedRect(-cardW / 2, -cardH / 2 + i * 3, cardW, cardH, 30)
+      }
+      g.fillStyle(T.cardFillWarm, 1)
+      g.fillRoundedRect(-cardW / 2, -cardH / 2, cardW, cardH, 30)
+      g.lineStyle(4, T.goldBezel, 1)
+      g.strokeRoundedRect(-cardW / 2, -cardH / 2, cardW, cardH, 30)
+      if (darkWash(T)) {
+        g.fillStyle(T.accent, 0.85)
+        g.fillRoundedRect(-cardW / 2 + 30, -cardH / 2 + 3, cardW - 60, 2, 1)
+      }
+      cardRoot.add(g)
+
+      const haloGlow = this.add
+        .image(0, -66, 'heartglow')
+        .setBlendMode(Phaser.BlendModes.ADD)
+        .setTint(T.bloom)
+        .setDisplaySize(220, 220)
+        .setAlpha(0.26)
+      cardRoot.add(haloGlow)
+      const heart = this.add.image(0, -66, 'heartbig').setDisplaySize(84, 84)
+      cardRoot.add(heart)
+      cardRoot.add(
+        this.add
+          .text(0, 22, 'A FRIEND JOINED THE GAME!', {
+            fontFamily: FONT,
+            fontSize: '27px',
+            fontStyle: '900',
+            color: T.ink,
+            align: 'center',
+            wordWrap: { width: cardW - 70 },
+          })
+          .setOrigin(0.5)
+          .setLetterSpacing(1)
+      )
+      cardRoot.add(
+        this.add
+          .text(0, 72, `+${REFERRER_CHIPS} chips  ·  full hearts`, {
+            fontFamily: FONT,
+            fontSize: '23px',
+            fontStyle: '900',
+            color: T.goldText,
+          })
+          .setOrigin(0.5)
+      )
+
+      let gone = false
+      const dismiss = (): void => {
+        if (gone) return
+        gone = true
+        this.tweens.killTweensOf([cardRoot, heart, haloGlow, scrim])
+        sfx.whoosh()
+        if (reduced) {
+          layer.destroy()
+          return
+        }
+        this.tweens.add({ targets: layer, alpha: 0, duration: 160, ease: E.exit, onComplete: () => layer.destroy() })
+      }
+      scrim.on('pointerup', dismiss)
+
+      // The claim happens mid-toast (celebrate → claim): stamp the row, then land chips + hearts.
+      // Fixture path (null) only re-pops the pill so captures show the beat without a fake grant.
+      this.time.delayedCall(reduced ? 100 : 700, () => {
+        if (reward === null) {
+          if (alive) {
+            pill.update(loadSave().chips)
+            refreshLives()
+          }
+          return
+        }
+        void claimReferralRewards([reward]).then(res => {
+          if (!alive || res.chips === null) return // grant is safely in the save either way
+          pill.update(res.chips)
+          refreshLives() // full hearts → the lives HUD pops the freshly-filled pips
+        })
+      })
+
+      // Entrance + life: pop the card, beat the heart, shower a few hearts. Reduced → static card.
+      if (!reduced) {
+        sfx.lifeRestored()
+        scrim.setAlpha(0)
+        this.tweens.add({ targets: scrim, alpha: 0.42, duration: D.base, ease: E.settle })
+        cardRoot.setAlpha(0)
+        this.tweens.add({ targets: cardRoot, alpha: 1, duration: D.base, ease: E.settle })
+        popIn(this, cardRoot, { from: 0.9, duration: D.pop, overshoot: OVERSHOOT.gentle })
+        popIn(this, heart, { from: 0.4, delay: 140, overshoot: OVERSHOOT.pop })
+        const hb = heart.scaleX
+        this.tweens.add({
+          targets: heart,
+          scale: hb * 1.1,
+          duration: 640,
+          delay: D.pop + 200,
+          yoyo: true,
+          repeat: -1,
+          repeatDelay: 360,
+          ease: E.hero,
+        })
+        this.tweens.add({ targets: haloGlow, alpha: 0.4, duration: 640, delay: D.pop + 200, yoyo: true, repeat: -1, repeatDelay: 360, ease: E.hero })
+        if (fancy) {
+          const hearts = this.add.particles(0, 0, 'heart', {
+            speed: { min: 120, max: 340 },
+            angle: { min: 230, max: 310 },
+            scale: { start: 0.45, end: 0.1 },
+            alpha: { start: 1, end: 0 },
+            lifespan: { min: 700, max: 1300 },
+            gravityY: 420,
+            rotate: { min: -120, max: 120 },
+            emitting: false,
+          })
+          layer.add(hearts)
+          hearts.explode(quality.count(12), cx, cy - 120)
+        }
+      }
+      // Auto-dismiss keeps the queue moving (a tap gets there sooner).
+      this.time.delayedCall(reduced ? 2200 : 3400, dismiss)
+    })
+  }
+
+  /**
+   * Glowing "×N FREE SPINS" badge for the DAILY BONUS pill's corner — banked wheel spins waiting.
+   * A rose tab (rose = the "special" accent, distinct on the gold pill) with a soft gold glow:
+   * pulse gated by reduceFlashing (static soft glow) and reduced motion (static badge, no pop).
+   */
+  private buildFreeSpinsBadge(n: number): Phaser.GameObjects.Container {
+    const T = getTheme()
+    const reduced = this.prefersReducedMotion()
+    const c = this.add.container(140, -40)
+    c.setAngle(-6)
+    const label = this.add
+      .text(0, 0, `×${n} FREE SPINS`, { fontFamily: FONT, fontSize: '17px', fontStyle: '900', color: T.onRose })
+      .setOrigin(0.5)
+      .setLetterSpacing(1)
+    const w = label.width + 28
+    const h = 34
+    if (this.textures.exists('bgglow')) {
+      const glow = this.add
+        .image(0, 0, 'bgglow')
+        .setBlendMode(Phaser.BlendModes.ADD)
+        .setTint(T.goldBright)
+        .setDisplaySize(w * 1.9, h * 3.2)
+        .setAlpha(0.3)
+      c.add(glow)
+      if (!reduced && !reduceFlashing()) {
+        this.tweens.add({ targets: glow, alpha: 0.5, duration: 900, yoyo: true, repeat: -1, ease: E.hero })
+      }
+    }
+    const g = this.add.graphics()
+    g.fillStyle(T.roseDeep, 1)
+    g.fillRoundedRect(-w / 2, -h / 2 + 2.5, w, h, h / 2)
+    g.fillStyle(T.rose, 1)
+    g.fillRoundedRect(-w / 2, -h / 2, w, h, h / 2)
+    g.fillStyle(T.roseLight, 0.45)
+    g.fillRoundedRect(-w / 2 + 5, -h / 2 + 3, w - 10, h * 0.42, h * 0.21)
+    g.lineStyle(2, T.goldBezel, 1)
+    g.strokeRoundedRect(-w / 2, -h / 2, w, h, h / 2)
+    c.add([g, label])
+    // Announce with a late pop (after the menu stagger has landed); reduced → already at rest.
+    popIn(this, c, { from: 0.5, delay: 900, overshoot: OVERSHOOT.pop })
+    return c
   }
 
   /**

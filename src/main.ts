@@ -2,6 +2,7 @@ import Phaser from 'phaser'
 import { registerSW } from 'virtual:pwa-register'
 import { DESIGN_W, restScrollY, updateWorldH, worldH } from './config'
 import { bootstrapCloud, pushCloudSave } from './core/cloud'
+import { captureRefFromUrl } from './core/referrals'
 import { setPersistListener } from './core/save'
 import { BootScene } from './scenes/BootScene'
 import { DailyBonusScene } from './scenes/DailyBonusScene'
@@ -33,6 +34,10 @@ try {
 // Cloud save (dormant unless VITE_SUPABASE_* is configured): mirror every local persist to the cloud.
 // Registered here so save.ts stays backend-agnostic; no-ops entirely when signed out / unconfigured.
 setPersistListener(pushCloudSave)
+
+// Referral capture: stash a ?ref=CODE invite before anything can navigate it away (local-only,
+// never overwrites an earlier invite; registration happens after sign-in — core/referrals.ts).
+captureRefFromUrl()
 
 // Paint the body background + <meta theme-color> to match the active theme at boot,
 // so the page chrome behind the canvas matches the wash (Golden Hour = unchanged).

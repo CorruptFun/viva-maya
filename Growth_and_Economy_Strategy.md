@@ -18,3 +18,8 @@ We don't force ads. We make ads the *key* to massive dopamine hits.
 *   **Referral Airdrops (The Ponzi Hook):** "Invite a friend. When they reach Level 10, you *both* get 5,000 Maya Tickets." The invite link contains a referral code.
 *   **Global Jackpot (Social Casino):** 5% of all daily tickets earned globally go into a "Progressive Jackpot." To enter the daily drawing, you must watch 1 specific "Jackpot Ad" and hold a minimum balance. The winner gets a massive crypto payout broadcasted on the home screen.
 *   **Creator Codes:** If a TikToker drives traffic, players can enter a Creator Code. The Creator gets 10% of the ticket value of every ad that player watches. This incentivizes influencers to market the game for free to build passive crypto income.
+
+---
+**2026-07 update:** the concrete, implemented economy/growth design now lives in
+`docs/SOCIAL_AND_ECONOMY.md` (systems + tuning table) and `docs/GO_LIVE_CHECKLIST.md`
+(activation). Where this document and those disagree, the docs/ pair is authoritative.

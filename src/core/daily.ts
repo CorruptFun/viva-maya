@@ -1,6 +1,6 @@
 import type { BoostType } from './types'
 import type { SaveData } from './save'
-import { persistSave } from './save'
+import { FREE_SPIN_BANK_CAP, FREE_SPIN_DAILY_CAP, persistSave } from './save'
 import type { Rng } from './rng'
 
 /**
@@ -40,6 +40,40 @@ export function spinAvailable(save: SaveData, now = new Date()): boolean {
   return save.lastSpinDate !== todayKey(now)
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// FREE SPINS — bonus wheel pulls earned by spectacular in-level play. A big
+// cascade banks extra spins (save.freeSpins via save.addFreeSpins) that BYPASS
+// the once-a-day latch: performFreeSpin below spends the bank and never touches
+// lastSpinDate / streak, so the daily gift keeps its own rhythm.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Re-exported caps (defined beside the save fields they clamp — see core/save.ts). */
+export { FREE_SPIN_BANK_CAP, FREE_SPIN_DAILY_CAP }
+
+export interface FreeSpinAward {
+  /** Smallest cascade chain (consecutive match waves) that earns this tier. */
+  minCascade: number
+  spins: number
+}
+
+/** Cascade → free-spin award tiers, ordered best-first (awardFreeSpinsFor takes the first hit). */
+export const FREE_SPIN_AWARDS: FreeSpinAward[] = [
+  { minCascade: 6, spins: 6 },
+  { minCascade: 4, spins: 3 },
+]
+
+/** Spins a cascade chain of `cascade` waves earns (0 when below every tier). Caps apply at banking
+ *  time — save.addFreeSpins clamps to the daily earn cap and the bank cap and reports what stuck. */
+export function awardFreeSpinsFor(cascade: number): number {
+  for (const tier of FREE_SPIN_AWARDS) if (cascade >= tier.minCascade) return tier.spins
+  return 0
+}
+
+/** Can the player pull the wheel AT ALL right now — today's daily spin, or a banked free spin? */
+export function hasAnySpin(save: SaveData, now = new Date()): boolean {
+  return spinAvailable(save, now) || save.freeSpins > 0
+}
+
 export function rollPrize(rng: Rng): Prize {
   const total = PRIZES.reduce((sum, p) => sum + p.weight, 0)
   let roll = rng() * total
@@ -64,4 +98,20 @@ export function performSpin(save: SaveData, rng: Rng, now = new Date()): { prize
   save.pendingBoosts.push(...prizes.map(p => p.type))
   persistSave(save)
   return { prizes, streak: save.streak }
+}
+
+/**
+ * Spend one BANKED free spin — the daily latch's sibling. Decrements save.freeSpins, awards a single
+ * prize into pendingBoosts, and persists BEFORE any animation (same crash-safety as performSpin).
+ * Deliberately does NOT touch lastSpinDate or streak (free spins ride alongside the daily rhythm,
+ * they never substitute for it) and never pays the streak double. Returns null when the bank is
+ * empty — the save is left untouched, so a caller can never double-spend a race.
+ */
+export function performFreeSpin(save: SaveData, rng: Rng): { prizes: Prize[]; remaining: number } | null {
+  if (save.freeSpins <= 0) return null
+  save.freeSpins -= 1
+  const prizes = [rollPrize(rng)]
+  save.pendingBoosts.push(...prizes.map(p => p.type))
+  persistSave(save)
+  return { prizes, remaining: save.freeSpins }
 }

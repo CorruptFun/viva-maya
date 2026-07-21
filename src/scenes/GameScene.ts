@@ -20,13 +20,13 @@ import {
   SWAP_MS,
 } from '../config'
 import { Board } from '../core/board'
-import { todayKey } from '../core/daily'
+import { awardFreeSpinsFor, todayKey } from '../core/daily'
 import { ENDLESS_MOVES, endlessBestForWeek, endlessRngForWeek, recordEndless, weekKey } from '../core/endless'
 import { LEVEL_COUNT, levelSpec } from '../core/levels'
 import { devSetLives, formatCountdown, refreshLives, spendLifeFor } from '../core/lives'
 import { maya, pendingOccasion, warmLoseLine, warmWinSubtitle } from '../core/maya'
 import { mulberry32 } from '../core/rng'
-import { addChips, bumpJackpotMeter, loadSave, markFinaleSeen, markOccasionSeen, persistSave, recordResult, recordScore, resetJackpotMeter, spendChips, takePendingBoosts } from '../core/save'
+import { addChips, addFreeSpins, bumpJackpotMeter, loadSave, markFinaleSeen, markOccasionSeen, persistSave, recordResult, recordScore, resetJackpotMeter, spendChips, takePendingBoosts } from '../core/save'
 import { POWER_ITEMS } from '../core/store'
 import type { PowerItem } from '../core/store'
 import { jackpotReady } from '../core/jackpot'
@@ -49,6 +49,7 @@ import {
   addMuteChip,
   addPillButton,
   consumeFocus,
+  goldFace,
   hcBoard,
   openOnboarding,
   startScene,
@@ -248,6 +249,9 @@ export class GameScene extends Phaser.Scene {
   /** True once this win charged the meter to full — the win-card Continue then fires the wheel. */
   private jackpotArmed = false
 
+  /** R4 · lazy "FREE SPINS ×N" corner counter — minted the first time a ticket flies (numbered levels). */
+  private freeSpinBadge?: { root: Phaser.GameObjects.Container; label: Phaser.GameObjects.Text }
+
   /** Set while the win result card is animating in — a tap fast-forwards it to the settled state. */
   private overlaySettle: (() => void) | null = null
 
@@ -367,6 +371,7 @@ export class GameScene extends Phaser.Scene {
     // Combo readout is a scene GameObject — the old one was destroyed on restart, so drop the stale ref.
     this.comboText = undefined
     this.comboTween = null
+    this.freeSpinBadge = undefined // scene GameObject from a prior round — died with that scene
     this.trauma = 0
     this.traumaDirX = 0
     this.traumaDirY = 0
@@ -409,6 +414,18 @@ export class GameScene extends Phaser.Scene {
         this.board.plant({ row: 7, col: 1 }, 'diceBomb')
         this.board.plant({ row: 7, col: 2 }, 'jackpot')
       }
+      // ?wheel — fire the full armed post-win wheel flow (mirrors ?race) so automated checks can
+      // reach the spectacle without grinding five wins. Routes through continueAfterWin, so the
+      // hitstop + chip-fountain hooks are exercised exactly as in production.
+      if (params.has('wheel')) {
+        this.time.delayedCall(600, () => {
+          this.jackpotArmed = true
+          this.continueAfterWin(() => {})
+        })
+      }
+      // ?ticket=N — punch the "+N FREE SPINS" ticket beat on demand (presentation only; no award).
+      const ticket = Number(params.get('ticket'))
+      if (ticket > 0) this.time.delayedCall(700, () => this.freeSpinTicket(ticket))
     }
 
     addCasinoBackdrop(this, 'game')
@@ -802,12 +819,14 @@ export class GameScene extends Phaser.Scene {
 
   /**
    * §R3 LEVEL INTRO — the proper opening moment on a numbered level, replacing the old
-   * pop-hold-fade callout. Choreography (all tween-scheduled, ~1.9s total, tap-to-skip anywhere):
+   * pop-hold-fade callout. Choreography (all tween-scheduled, tap-to-skip anywhere; R4-tightened so
+   * input unlocks ≤1.5s from entry — the get-ready hold is short and the board assembles UNDER the
+   * departing card, never after it):
    *   1. A warm theme scrim settles over the empty tray; the goal card pops in.
    *   2. Goal icons pop in staggered; each ×N counter TICKS UP from ×0 to its total.
    *   3. The "get ready" row fades up; the heart cameo gives one lub-dub double pulse.
    *   4. A light sweep crosses the card; card + scrim exit; and as they go the BOARD BUILDS IN —
-   *      a fast diagonal stagger wave (top-left → bottom-right, < 700ms) with per-column landing
+   *      a fast diagonal stagger wave (top-left → bottom-right, < 600ms) with per-column landing
    *      thunks + floor dust, then input unlocks.
    * A tap at ANY point kills every intro tween, destroys the transients, snaps all 64 pieces to
    * rest and unlocks immediately (the settle-actions discipline: kill → destroy → snap → handoff).
@@ -842,11 +861,11 @@ export class GameScene extends Phaser.Scene {
 
     // The build-in wave: every piece born at its own cell, dropping in a short third-of-a-cell
     // with a gentle Back settle, staggered along the (row+col) diagonal — the whole board
-    // assembles in ≈ 600ms (14 bands × 26ms + 230ms settle), never slow on replay.
+    // assembles in ≈ 560ms (14 bands × 24ms + 220ms settle), never slow on replay.
     const dealWave = (): void => {
       if (done || skipped || waveStarted) return
       waveStarted = true
-      const STEP = 26
+      const STEP = 24
       const total = ROWS * COLS
       let landed = 0
       for (let r = 0; r < ROWS; r++) {
@@ -863,7 +882,7 @@ export class GameScene extends Phaser.Scene {
             scaleX: PIECE_SCALE,
             scaleY: PIECE_SCALE,
             delay: (r + c) * STEP,
-            duration: 230,
+            duration: 220,
             ease: backOut(OVERSHOOT.gentle),
             onComplete: () => {
               // One thunk + dust puff per column as its deepest cell lands — the wave's rhythm.
@@ -943,19 +962,23 @@ export class GameScene extends Phaser.Scene {
       })
     })
 
-    // ---- Beat 3 (700–1470ms): "get ready" rises; the heart gives one lub-dub. ---------------
+    // ---- Beat 3 (520–960ms): "get ready" rises; the heart gives one lub-dub. ----------------
+    // R4-tightened: the row rides in while the counters are still ticking and the hold is one
+    // heartbeat, not two — the intro promises "ready" and then IS ready.
     for (const item of ready) {
       const y0 = item.y
       item.setAlpha(0)
       item.setY(y0 + 10)
-      tw({ targets: item, alpha: 1, y: y0, delay: 700, duration: 240, ease: E.release })
+      tw({ targets: item, alpha: 1, y: y0, delay: 520, duration: 220, ease: E.release })
     }
     if (heart) {
       const hs = heart.scaleX
-      tw({ targets: heart, scaleX: hs * 1.22, scaleY: hs * 1.22, delay: 1000, duration: 130, yoyo: true, repeat: 1, ease: E.hero })
+      tw({ targets: heart, scaleX: hs * 1.22, scaleY: hs * 1.22, delay: 660, duration: 110, yoyo: true, repeat: 1, ease: E.hero })
     }
 
-    // ---- Beat 4 (1150ms+): light sweep → card + scrim exit → the board builds in. -----------
+    // ---- Beat 4 (720ms+): light sweep → card + scrim exit → the board builds in. ------------
+    // R4-tightened (audit: input was gated ≈2.4s): the sweep fires right off the heart's lub-dub and
+    // the build-in wave starts UNDER the card exit at ~860ms, so the full unlock lands ≈1.45s.
     // The sweep's alpha yoyos 0 → 0.55 → 0 across the same window as its travel, so it is only
     // bright mid-card and effectively invisible where it overhangs the rounded corners (no mask).
     const travel = w / 2 + 20
@@ -966,14 +989,14 @@ export class GameScene extends Phaser.Scene {
       .setBlendMode(Phaser.BlendModes.ADD)
       .setAlpha(0)
     layer.add(sweep)
-    tw({ targets: sweep, x: travel, delay: 1150, duration: 220, ease: E.glide })
-    tw({ targets: sweep, alpha: 0.55, delay: 1150, duration: 110, yoyo: true, ease: E.hero })
+    tw({ targets: sweep, x: travel, delay: 720, duration: 200, ease: E.glide })
+    tw({ targets: sweep, alpha: 0.55, delay: 720, duration: 100, yoyo: true, ease: E.hero })
     tw({
       targets: layer,
       alpha: 0,
       y: cy - 26,
       scale: fit * 0.94,
-      delay: 1330,
+      delay: 860,
       duration: 240,
       ease: E.exit,
       onStart: () => {
@@ -987,7 +1010,7 @@ export class GameScene extends Phaser.Scene {
     tw({
       targets: scrim,
       alpha: 0,
-      delay: 1330,
+      delay: 860,
       duration: 260,
       ease: E.exit,
       onComplete: () => {
@@ -2454,6 +2477,7 @@ export class GameScene extends Phaser.Scene {
       wave = this.board.matchWave()
     }
     this.fadeCombo() // E11: the cascade settled — resolve the combo readout (composes with the win peak)
+    this.maybeAwardFreeSpins(cascade) // R4: a MEGA-grade chain banks free spins + flies the golden ticket
     this.dbgStage = 'end-checks'
     this.log('end-checks', 'objectivesDone', this.objectives.every(o => o.remaining <= 0), 'movesLeft', this.movesLeft)
     // Endless never "wins" on objectives (it has none) — it ends when moves run out.
@@ -3601,11 +3625,30 @@ export class GameScene extends Phaser.Scene {
       return
     }
     this.jackpotArmed = false
+    // R4 payoff hooks: the wheel's detent freeze rides THIS scene's single hitstop authority, and the
+    // chip fountain physically lands in the HUD balance pill — lifted above the wheel scrim for the
+    // duration so the chips visibly pour INTO the readout, ticking the displayed balance up per landing.
+    const pill = this.chipHud
+    const before = loadSave().chips // the pre-award balance (openJackpotWheel banks award-first below)
+    pill?.container.setDepth(63)
     openJackpotWheel(this, {
+      hitstop: ms => this.hitstop(ms),
+      chipFlyTo: pill
+        ? {
+            x: pill.container.x,
+            y: pill.container.y,
+            onLand: (landed, total) => {
+              const target = loadSave().chips // already banked (award-first) — climb toward it honestly
+              pill.update(Math.round(before + (target - before) * (landed / total)))
+            },
+          }
+        : undefined,
       onClaim: result => {
         resetJackpotMeter()
         this.jackpotHud?.update(0, false)
+        pill?.container.setDepth(50) // back to the ChipPill's native HUD depth
         this.chipHud?.update(result.newTotal)
+        this.chipBanked = result.newTotal
         go()
       },
     })
@@ -5128,6 +5171,138 @@ export class GameScene extends Phaser.Scene {
     slot.live = true
     slot.born = ++this.medallionSeq
     return slot
+  }
+
+  // ------------------------------------------------- R4 · MEGA WIN → FREE SPINS
+
+  /**
+   * R4 — a MEGA-grade cascade chain on a NUMBERED level banks bonus wheel pulls (core/daily.ts
+   * FREE_SPIN_AWARDS: x4+ → 3, x6+ → 6). Called once per resolve, with the settled chain depth, so a
+   * chain that runs 4→6 deep awards its FINAL tier exactly once. Banking is cap-aware
+   * (save.addFreeSpins clamps to the daily earn cap + the bank cap and reports what stuck), and the
+   * ticket celebration is sized by what was ACTUALLY granted — a capped-out player is never lied to.
+   * Endless is excluded by contract (its loop has no daily-economy hooks).
+   */
+  private maybeAwardFreeSpins(cascade: number): void {
+    if (this.endless) return
+    const spins = awardFreeSpinsFor(cascade)
+    if (spins <= 0) return
+    const granted = addFreeSpins(spins, todayKey())
+    if (granted <= 0) return
+    this.freeSpinTicket(granted)
+  }
+
+  /** A small golden-ticket face (gold slab + inner perforation rule + punched edge notches). */
+  private drawTicketFace(g: Phaser.GameObjects.Graphics, w: number, h: number): void {
+    const T = getTheme()
+    const r = Math.min(14, h * 0.18)
+    g.fillStyle(T.shadow, 0.28)
+    g.fillRoundedRect(-w / 2 + 3, -h / 2 + 5, w, h, r)
+    goldFace(g, -w / 2, -h / 2, w, h, T, r)
+    // Inner perforation rule — the "tear here" dashed frame that makes it read TICKET, not pill.
+    g.lineStyle(2, T.goldDeep, 0.85)
+    g.strokeRoundedRect(-w / 2 + 7, -h / 2 + 7, w - 14, h - 14, r * 0.6)
+    // Punched semicircle notches on the two ends (the classic raffle-ticket silhouette).
+    g.fillStyle(T.goldDarkest, 0.4)
+    g.fillCircle(-w / 2, 0, h * 0.14)
+    g.fillCircle(w / 2, 0, h * 0.14)
+  }
+
+  /**
+   * R4 — the lazy "FREE SPINS ×N" corner counter: a mini golden ticket + count, top-right under the
+   * score, where the flying ticket banks. Minted hidden on first need (the arriving ticket reveals
+   * it); subsequent awards just pop + retally it. Depth 43 — above the win scrim, with the meters.
+   */
+  private ensureFreeSpinBadge(): { root: Phaser.GameObjects.Container; label: Phaser.GameObjects.Text } {
+    if (this.freeSpinBadge) return this.freeSpinBadge
+    const T = getTheme()
+    // y=128 keeps the badge in the empty band under SCORE — at 158 it clipped the third
+    // objective chip's top edge on 3-objective levels.
+    const root = this.add.container(BOARD_X + BOARD_W - 56, 128).setDepth(43).setAlpha(0)
+    const g = this.add.graphics()
+    this.drawTicketFace(g, 74, 34)
+    const label = this.add
+      .text(6, 0, `×${loadSave().freeSpins}`, { fontFamily: FONT, fontSize: '20px', fontStyle: '900', color: css(T.goldDarkest) })
+      .setOrigin(0.5)
+    const spinCap = this.add
+      .text(-40, 0, 'FREE\nSPINS', { fontFamily: FONT, fontSize: '9px', fontStyle: '900', color: css(T.goldDarkest), align: 'right' })
+      .setOrigin(1, 0.5)
+      .setLineSpacing(-2)
+    root.add([g, label, spinCap])
+    this.freeSpinBadge = { root, label }
+    return this.freeSpinBadge
+  }
+
+  /**
+   * R4 — the "+N FREE SPINS" golden ticket: punches OUT of the MEGA marquee flash (the cabinet
+   * re-strikes as it lands), gives one showy twirl, then flies to the corner counter, which pops and
+   * retallies. Deliberately a DIFFERENT object from the §R3 score medallions — bigger, ticket-shaped,
+   * scene-local graphics (no new baked texture) — so the two reward layers never read as one. All
+   * transient, tweens chained tip-to-tail, self-destroying. Reduced motion: the transient's resting
+   * state is nothing — the corner counter simply appears retallied (the durable signal).
+   */
+  private freeSpinTicket(granted: number): void {
+    const badge = this.ensureFreeSpinBadge()
+    const bank = loadSave().freeSpins
+    if (this.reducedMotion) {
+      badge.label.setText(`×${bank}`)
+      badge.root.setAlpha(1)
+      return
+    }
+    const T = getTheme()
+    const tx = DESIGN_W / 2
+    const ty = BOARD_Y + BOARD_W / 2 - 40 // the MEGA marquee readout's seat — the ticket bursts from it
+    const tw = 320
+    const th = 128
+    const ticket = this.add.container(tx, ty).setDepth(45).setScale(0).setAngle(-8)
+    const face = this.add.graphics()
+    this.drawTicketFace(face, tw, th)
+    const plus = this.add
+      .text(0, -24, `+${granted}`, { fontFamily: FONT, fontSize: '52px', fontStyle: '900', color: css(T.goldDarkest) })
+      .setOrigin(0.5)
+    const capT = this.add
+      .text(0, 26, 'FREE SPINS', { fontFamily: FONT, fontSize: '28px', fontStyle: '900', color: css(T.goldDarkest) })
+      .setOrigin(0.5)
+      .setLetterSpacing(4)
+    ticket.add([face, plus, capT])
+    // A soft gold aura behind the ticket so it pops off the (possibly busy) MEGA moment.
+    const aura = this.add
+      .image(tx, ty, 'bgglow')
+      .setTint(T.goldBright)
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setDepth(44)
+      .setDisplaySize(tw * 1.9, th * 3)
+      .setAlpha(0)
+    this.flashCabinet() // the marquee re-strikes — the ticket visibly punches OUT of the MEGA flash
+    sfx.starDing(1)
+    this.vibrate(24)
+    this.tweens.add({ targets: aura, alpha: 0.5, duration: 220, ease: E.press, yoyo: true, hold: 620, onComplete: () => aura.destroy() })
+    this.tweens.chain({
+      targets: ticket,
+      tweens: [
+        { scale: 1.06, angle: 3, duration: 300, ease: backOut(OVERSHOOT.pop) }, // punch out of the flash
+        { angle: 363, duration: 460, ease: 'Cubic.easeInOut' }, // one showy twirl
+        {
+          x: badge.root.x,
+          y: badge.root.y,
+          scale: 0.24,
+          angle: 703,
+          delay: 170,
+          duration: 480,
+          ease: 'Cubic.easeIn',
+          onStart: () => sfx.whoosh(0.4),
+        },
+      ],
+      onComplete: () => {
+        ticket.destroy(true)
+        // Bank: the counter reveals/pops + retallies, with a landing spark pinch.
+        badge.label.setText(`×${bank}`)
+        badge.root.setAlpha(1).setScale(1)
+        this.tweens.add({ targets: badge.root, scale: 1.3, duration: 130, yoyo: true, ease: E.press })
+        this.sparkEmitter.explode(quality.count(8), badge.root.x, badge.root.y)
+        sfx.scoreTick()
+      },
+    })
   }
 
   /** Kill the urgent-moves pulse and settle the number back to rest scale (called when a level ends). */
