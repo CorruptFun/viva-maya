@@ -178,6 +178,19 @@ A fixed 9:16 (720×1280) game letterboxes hard on a ~19.5:9 phone. To make it fe
 
 ---
 
+## 11. ⚠️ Scene lifecycle & object pools (state hygiene — the freeze lesson)
+
+Phaser **reuses the same scene instance** across `scene.restart()` / `scene.start(sameKey)` and re-runs `init()`/`create()` — but **class field initializers run only ONCE, at construction, never on restart.** So every field that holds runtime state must be reset *inside* `create()`. The ones that bite are **pools/caches of GameObjects**: the previous scene's shutdown **destroyed** those objects (canvas/texture/context now null) yet the stale references survive in your field.
+
+**The failure that cost a full debugging session (2026-07-21):** the pooled score-medallion `Text` (`medallionPool`, §"Reward beats") was carried across a level transition. On the next level the first score popup reused a *destroyed* slot and called `label.setText(...)` → Phaser `updateText → drawImage` on a **null canvas** → `TypeError: Cannot read properties of null (reading 'drawImage')`. Because the throw landed inside the **fire-and-forget** cascade resolver (`void this.trySwap()` → `resolveLoop`), nothing caught it and the board stayed locked in `'resolving'` — a **permanent freeze, no error visible on-device.** It was intermittent (fresh page load = empty pool = fine; *arriving from another level* = stale pool = freeze) and **masked by reduced-motion** (the popup early-returns), so it hid in exactly the config most smoke tests run in.
+
+**Rules (reusable across every scene-based game — Turbo Maze, future Phaser builds):**
+- **Reset every pool / cache / GameObject-holding field in `create()`**, never rely on the field initializer. Grep the scene: `private \w+(Pool|Cache|Slots|Seq|s)\s*[:=]` and confirm each is cleared (`pool = []`, `map.clear()`, counters `= 0`). A destroyed object reused is a null-deref waiting to happen — and **`Text.setText` is the sharpest edge because it *throws*;** most transform/scale/tween ops on a dead object merely no-op, which is why this class of bug stays hidden until a `Text` triggers it.
+- **Never let an async game-loop entry throw into the void.** Any `void this.<async>()` (swap / resolve / turn handler) must wrap its body in `try/catch` that **recovers the input state to a safe idle**. A state-machine game has exactly one "the board froze" bug and it is *always* an unresolved-or-rejected promise that left `state` non-idle. The `try/catch` is the difference between "one dropped animation" and "relaunch the app."
+- **Verify with animations ON, and after a real scene transition.** Reduced-motion skips much of the spawn/pool code, and a fresh load starts every pool empty — so a freeze can only reproduce with full motion *and* after navigating level→level. Drive the actual transition, not just a cold start.
+
+---
+
 ## Copy-paste QA checklist (run before shipping any UI change)
 
 - [ ] Viewed at **DPR 2–3** (real device or 2× harness), not just a 1× preview.
@@ -192,6 +205,9 @@ A fixed 9:16 (720×1280) game letterboxes hard on a ~19.5:9 phone. To make it fe
 - [ ] Every new animation has a **reduced-motion** static fallback.
 - [ ] No `graphics.clear()` in any `update()`; loop pauses when backgrounded.
 - [ ] Touch targets ≥ 44pt (hit-rect grown, art unchanged).
+- [ ] Every scene field holding a **pool / cache / GameObject** is reset in `create()` — restart re-runs create() but NOT field initializers, so a carried-over destroyed object throws on reuse (§11).
+- [ ] Every `void this.<async>()` game-loop entry (swap/resolve/turn) has a `try/catch` that recovers input state to idle — one uncaught throw = permanent freeze (§11).
+- [ ] Smoke-tested **with animations ON, after a real level→level transition** (reduced-motion + cold start both hide the pooled-object freeze — §11).
 
 ---
 
@@ -214,7 +230,7 @@ collapsible, reduceFlashing-aware where they flash, governor-scaled where they s
 - **Board feel**: depth stack (softshadow slab float, elevated HUD rail, recessed
   wells), squash-and-settle refill, level-intro card → diagonal build-in wave
   (input gate ≤~1.5s, tap-to-skip snaps to rest).
-- **Reward beats**: escalating score medallions (pooled, cap 4); collect comets with
+- **Reward beats**: escalating score medallions (pooled, cap 4 — **reset the pool in `create()`; a slot carried across a scene restart is a destroyed `Text` and `setText` throws → §11**); collect comets with
   impact tick on the goal readout; cascade edge-glow heat ramp (gold→amber→rose);
   camera breath on big clears (composes with hitstop).
 - **Celebration family** (one language, three sizes): coronation (crown descent +
