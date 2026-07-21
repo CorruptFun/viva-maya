@@ -122,6 +122,14 @@ async function flushPush(): Promise<void> {
     // (core/leaderboard.ts — no-ops unless this week has a score; lazy import keeps the dependency
     // one-directional and out of the boot path). Fire-and-forget: the race must never block a save.
     void import('./leaderboard').then(m => m.maybeSubmitEndless(data))
+    // Referral bookkeeping piggybacks the same beat: register a stashed invite, then (ordered —
+    // a row minted this push must be visible to the qualify check) stamp qualification once the
+    // save is past the qualify level. Both are session-memoized no-ops at steady state and obey
+    // the dormant contract, so this adds zero traffic for the un-referred majority.
+    void import('./referrals').then(async r => {
+      await r.maybeRegisterReferral()
+      await r.maybeQualify(data)
+    })
   } catch {
     pending = data // offline / transient → re-queue for the next persist or the 'online' event
   }
