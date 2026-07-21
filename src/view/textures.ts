@@ -65,21 +65,15 @@ function seatShadow(scene: Phaser.Scene, dt: Phaser.Textures.DynamicTexture): vo
   g.destroy()
 }
 
-function makeEmoji(scene: Phaser.Scene, key: SymbolType, glyph: string): void {
-  const text = scene.make.text(
-    {
-      x: 0,
-      y: 0,
-      text: glyph,
-      style: { fontFamily: 'sans-serif', fontSize: '100px', padding: { x: 10, y: 10 } },
-    },
-    false
-  )
+function makeEmoji(scene: Phaser.Scene, key: SymbolType, _glyph: string): void {
+  const imgKey = `${key}_asset`
+  const img = scene.make.image({ x: 0, y: 0, key: imgKey }, false)
+  img.setScale(104 / 256)
   intoTexture(scene, key, dt => {
     seatShadow(scene, dt)
-    dt.draw(text, (BASE - text.width) / 2, (BASE - text.height) / 2)
+    dt.draw(img, BASE / 2, BASE / 2)
   })
-  text.destroy()
+  img.destroy()
 }
 
 function makeSpark(scene: Phaser.Scene): void {
