@@ -111,6 +111,102 @@ export interface InviteCardOpts {
 }
 
 /**
+ * Draw the referral-code ticket into `g`: a PREMIUM gold-foil raffle ticket — a gold-foil frame band
+ * (goldDeep bed → lit goldBright crown → goldDarkest belly → a glossHi specular, the goldFace idiom
+ * compressed into a ~4px ring) wrapping a deeper recessed rose WELL (pressed belly, a concave top lip so
+ * the code reads engraved, a warm floor light-pool), a fine bright inner keyline + a directional emboss,
+ * four goldBright corner flourishes, and PUNCHED PERFORATION — cardFill dashed tear-lines inset from
+ * each end plus half-circle edge notches, painted LAST so they cut clean through to the cream card. One
+ * consistent top-left light. Footprint unchanged; the caller lays the BIG code Text over the centre.
+ * `signedIn` dims every alpha for the inert signed-out state. Exported for the dev atlas ('ticket' page).
+ */
+export function drawCodeTicket(
+  g: Phaser.GameObjects.Graphics,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  signedIn: boolean
+): void {
+  const T = getTheme()
+  const on = signedIn
+  const r = 14
+  const rgt = x + w
+  const cx = x + w / 2
+  const cy = y + h / 2
+  // Gold-foil frame band (inset 5) + the recessed well carved inside it (inset 9 → leaves a ~4px foil ring).
+  const fx = x + 5
+  const fy = y + 5
+  const fw = w - 10
+  const fh = h - 10
+  const fr = 10
+  const wx = x + 9
+  const wy = y + 9
+  const ww = w - 18
+  const wh = h - 18
+  const wr = 7
+  const tlx1 = x + 30
+  const tlx2 = rgt - 30 // dashed tear-lines (stub boundaries)
+  // Rose ticket BODY base + a crisp rose silhouette keyline (keeps the shipped outline).
+  g.fillStyle(T.rose, on ? 0.18 : 0.09)
+  g.fillRoundedRect(x, y, w, h, r)
+  g.lineStyle(1.5, T.rose, on ? 0.42 : 0.2)
+  g.strokeRoundedRect(x, y, w, h, r)
+  // GOLD-FOIL frame: goldDeep bed → lit goldBright crown (top half) → goldDarkest belly → a glossHi specular.
+  g.fillStyle(T.goldDeep, on ? 0.9 : 0.45)
+  g.fillRoundedRect(fx, fy, fw, fh, fr)
+  g.fillStyle(T.goldBright, on ? 0.55 : 0.3)
+  g.fillRoundedRect(fx, fy, fw, fh * 0.5, fr)
+  g.fillStyle(T.goldDarkest, on ? 0.3 : 0.16)
+  g.fillRoundedRect(fx, fy + fh * 0.62, fw, fh * 0.38, { tl: 0, tr: 0, bl: fr, br: fr })
+  g.fillStyle(T.glossHi, on ? 0.5 : 0.28)
+  g.fillRoundedRect(fx + fr * 0.6, fy + fh * 0.34, fw - fr * 1.2, 2.5, 1.2)
+  // Recessed rose WELL carved into the foil: deep fill → pressed low-right belly → concave top lip →
+  // a warm floor light-pool behind the code → a gloss sweep across the upper floor.
+  g.fillStyle(T.roseDeep, on ? 0.22 : 0.11)
+  g.fillRoundedRect(wx, wy, ww, wh, wr)
+  g.fillStyle(T.roseDeep, on ? 0.16 : 0.08)
+  g.fillEllipse(cx + 8, wy + wh - 4, ww - 24, 12)
+  g.fillStyle(T.roseDeep, on ? 0.18 : 0.09)
+  g.fillRoundedRect(wx + 2, wy + 1, ww - 4, 6, 4)
+  g.fillStyle(T.cardFillWarm, on ? 0.42 : 0.24)
+  g.fillEllipse(cx, cy, ww - 40, 12)
+  g.fillStyle(0xffffff, on ? 0.08 : 0.04)
+  g.fillEllipse(cx, wy + 9, ww - 56, 8)
+  // Fine bright inner keyline (foil edge kissing the well) + a directional emboss (lit rim top+left,
+  // roseDeep shadow bottom+right) + the outer goldBezel keyline crisping the frame.
+  g.lineStyle(1, T.goldBright, on ? 0.7 : 0.4)
+  g.strokeRoundedRect(wx, wy, ww, wh, wr)
+  g.lineStyle(1.5, T.rim, on ? 0.6 : 0.32)
+  g.lineBetween(wx + wr, wy + 1, wx + ww - wr, wy + 1)
+  g.lineBetween(wx + 1, wy + wr, wx + 1, wy + wh - wr)
+  g.lineStyle(1.5, T.roseDeep, on ? 0.55 : 0.28)
+  g.lineBetween(wx + wr, wy + wh - 1, wx + ww - wr, wy + wh - 1)
+  g.lineBetween(wx + ww - 1, wy + wr, wx + ww - 1, wy + wh - wr)
+  g.lineStyle(1, T.goldBezel, on ? 0.8 : 0.45)
+  g.strokeRoundedRect(fx, fy, fw, fh, fr)
+  // Four goldBright corner flourishes (little L-brackets) inset in the well corners.
+  g.lineStyle(1.5, T.goldBright, on ? 0.55 : 0.3)
+  g.lineBetween(wx + 3, wy + 3, wx + 9, wy + 3)
+  g.lineBetween(wx + 3, wy + 3, wx + 3, wy + 9)
+  g.lineBetween(wx + ww - 9, wy + 3, wx + ww - 3, wy + 3)
+  g.lineBetween(wx + ww - 3, wy + 3, wx + ww - 3, wy + 9)
+  g.lineBetween(wx + 3, wy + wh - 3, wx + 9, wy + wh - 3)
+  g.lineBetween(wx + 3, wy + wh - 9, wx + 3, wy + wh - 3)
+  g.lineBetween(wx + ww - 9, wy + wh - 3, wx + ww - 3, wy + wh - 3)
+  g.lineBetween(wx + ww - 3, wy + wh - 9, wx + ww - 3, wy + wh - 3)
+  // PUNCHED PERFORATION — cardFill dashed tear-lines + half-circle edge notches, painted LAST so they
+  // cut clean through the foil + rose to the cream card (torn-from-a-strip).
+  g.fillStyle(T.cardFill, 1)
+  for (let py = wy + 3; py <= wy + wh - 3; py += 4) {
+    g.fillCircle(tlx1, py, 1.3)
+    g.fillCircle(tlx2, py, 1.3)
+  }
+  g.fillCircle(x, cy, 6)
+  g.fillCircle(rgt, cy, 6)
+}
+
+/**
  * The INVITE FRIENDS row — a rose-accent card (ribbon + bezel + rose SHARE pill) that sits ABOVE
  * the purchasables: buying costs chips, inviting EARNS them. Children use absolute coords inside a
  * container resting at (0,0), exactly like StoreScene's boostRow, so the store's entrance stagger
@@ -197,13 +293,10 @@ export function addInviteCard(
       .setOrigin(0, 0)
   )
 
-  // Code ticket — the code displayed BIG in a rose-washed slot (a dashed-ticket feel via the soft
-  // fill + thin rose stroke). Holds the shimmer while minting, or the signed-out invitation.
+  // Code ticket — the code displayed BIG in an embossed raffle ticket (rose well + punched perforation
+  // notches, drawCodeTicket). Holds the shimmer while minting, or the signed-out invitation.
   const ticket = scene.add.graphics()
-  ticket.fillStyle(T.rose, signedIn ? 0.1 : 0.05)
-  ticket.fillRoundedRect(128, y0 + 82, 240, 48, 14)
-  ticket.lineStyle(2, T.rose, signedIn ? 0.45 : 0.22)
-  ticket.strokeRoundedRect(128, y0 + 82, 240, 48, 14)
+  drawCodeTicket(ticket, 128, y0 + 82, 240, 48, signedIn)
   card.add(ticket)
   const codeText = scene.add
     .text(248, y0 + 107, '', { fontFamily: FONT, fontSize: '30px', fontStyle: '900', color: css(T.roseDeep) })
