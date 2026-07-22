@@ -15,8 +15,8 @@
  * Run: `npm run dev` → http://localhost:5173/soundbench.html
  *      (open on the phone via the LAN IP Vite prints, to feel haptics.)
  */
-import { sfx, SWAP_SOUNDS, SWAP_SOUND_LABELS } from '../src/audio/sfx'
-import type { SwapSound } from '../src/audio/sfx'
+import { sfx, SWAP_SOUNDS, SWAP_SOUND_LABELS, legacyBedVoices } from '../src/audio/sfx'
+import type { SwapSound, BedVoices } from '../src/audio/sfx'
 import { setTheme, getTheme, getThemeId, THEME_ORDER, THEME_META, hapticsOff, setHapticsOff } from '../src/view/theme'
 import type { ThemeId } from '../src/view/theme'
 
@@ -135,6 +135,309 @@ function refillRain(): void {
   log('refill rain: 6 lands, jittered, panned by column')
 }
 
+// ═══════════════════════════════════════════════ evolved ambient "rooms" (dev A/B)
+// Injected into the REAL sfx.startBed({ voices }) via the BedVoicesApi seam (src/audio/sfx.ts). Each is
+// palette-derived + level-capped ≤ legacy; drafted by the ambient-bed-rooms workflow, reviewed here. Only
+// the winner gets promoted into sfx.ts as the shipped default — until then the game stays on Legacy.
+
+// DRIFT (Room 1) — the minimal, least-fatiguing room: the legacy pad + room-tone + 0.06 Hz level
+// breath kept intact, with only two whisper-slow movers added — a detune shimmer-beat and a
+// brightness breath. No new sustained layer, no sparkle. Movement comes from modulation, not volume.
+const driftVoices: BedVoices = ({ ctx, t, pal, dest, bedMaster, level, noise, add }) => {
+  // Our OWN lowpass in front of the pad — the shipped warmth LPF behind `dest` is fixed, so brightness
+  // movement needs a filter we can sweep. Q low (0.6, matching the warmth stage) so it can only ever
+  // subtract, never a resonant boost → the pad stays no louder than legacy (its body always passes).
+  const padLp = ctx.createBiquadFilter()
+  padLp.type = 'lowpass'
+  padLp.Q.value = 0.6
+  padLp.frequency.value = pal.filterWarmth * 0.6 // base cutoff, well above the pad fundamentals, below warmth
+  padLp.connect(dest)
+
+  // Slow detune DRIFT LFO (~0.037 Hz) — a few cents, counter-signed per voice so the two same-pitch
+  // root voices spread apart and back together, slowly breathing their beat rate: a shimmer, not a throb.
+  const driftLfo = ctx.createOscillator()
+  driftLfo.type = 'sine'
+  driftLfo.frequency.value = 0.037
+  driftLfo.start(t)
+  add(driftLfo)
+
+  // Detuned pad: root · root · fifth · octave — legacy chord, legacy 0.25 gains (no added level).
+  const voices: Array<[number, number]> = [
+    [pal.bedRoot, -6],
+    [pal.bedRoot, 6],
+    [pal.bedRoot * 1.5, -4], // a perfect fifth
+    [pal.bedRoot * 2, 3], // octave shimmer
+  ]
+  voices.forEach(([freq, detune], i) => {
+    const o = ctx.createOscillator()
+    o.type = pal.waveBias
+    o.frequency.value = freq
+    o.detune.value = detune
+    const vg = ctx.createGain()
+    vg.gain.value = 0.25 // legacy pad gain, unchanged — the only path change is the subtractive LPF
+    o.connect(vg).connect(padLp)
+    // Counter-sign the drift so the two roots move oppositely → their beat rate breathes; ±5 cents, barely there.
+    const dg = ctx.createGain()
+    dg.gain.value = i % 2 === 0 ? 5 : -5
+    driftLfo.connect(dg).connect(o.detune)
+    o.start(t)
+    add(o)
+  })
+
+  // Gentle BRIGHTNESS breath — a second slow LFO (~0.029 Hz) sweeping the pad LPF cutoff. Its rate is a
+  // non-integer ratio to both 0.037 and the 0.06 level breath, so the three never phase-lock into a pulse.
+  // It drives only the filter (no gain), so it colours the pad without adding a shred of loudness. Depth
+  // scales with the room's warmth, and stays above the pad fundamentals — so it opens the harmonics of the
+  // triangle/saw rooms yet never dips onto the fundamental (which would pump the level).
+  const briLfo = ctx.createOscillator()
+  briLfo.type = 'sine'
+  briLfo.frequency.value = 0.029
+  const briDepth = ctx.createGain()
+  briDepth.gain.value = pal.filterWarmth * 0.22
+  briLfo.connect(briDepth).connect(padLp.frequency)
+  briLfo.start(t)
+  add(briLfo)
+
+  // Low room-tone: filtered noise, barely there, grounds the pad — verbatim legacy, untouched.
+  const room = noise()
+  room.loop = true
+  const roomLp = ctx.createBiquadFilter()
+  roomLp.type = 'lowpass'
+  roomLp.frequency.value = 220
+  const roomG = ctx.createGain()
+  roomG.gain.value = 0.12
+  room.connect(roomLp).connect(roomG).connect(dest)
+  room.start(t)
+  add(room)
+
+  // One slow ~0.06 Hz level breath swelling the bed — verbatim legacy, the ONLY node on bedMaster.gain
+  // (its base 0.05 is owned by startBed and stays untouched).
+  const lfo = ctx.createOscillator()
+  lfo.type = 'sine'
+  lfo.frequency.value = 0.06
+  const lfoDepth = ctx.createGain()
+  lfoDepth.gain.value = level * 0.4
+  lfo.connect(lfoDepth).connect(bedMaster.gain)
+  lfo.start(t)
+  add(lfo)
+}
+
+// LAYERED (Room 2) — Drift's pad given a floor + a ceiling: a clean sub an octave below the root for
+// felt body, and a breathing band of "air" tucked just under the warmth cutoff — both palette-scaled.
+const layeredVoices: BedVoices = ({ ctx, t, pal, dest, bedMaster, level, noise, add }) => {
+  // Palette-derived character across the four-room range (§A3): brighter/airier vs lower/darker.
+  const bright = Math.max(0, Math.min(1, (pal.filterWarmth - 640) / 810)) // 0 velvet(rose) .. 1 airy(neon)
+  const low = Math.max(0, Math.min(1, (73.42 - pal.bedRoot) / 18.42)) // 0 high(maya) .. 1 low(rose)
+
+  // Drift pad (root · root · fifth · octave), trimmed from legacy's 0.25 to make room for the sub + air.
+  const voices: Array<[number, number]> = [
+    [pal.bedRoot, -6],
+    [pal.bedRoot, 6],
+    [pal.bedRoot * 1.5, -4], // a perfect fifth
+    [pal.bedRoot * 2, 3], // octave shimmer
+  ]
+  // My OWN low-pass on the pad so a slow LFO can drift its brightness (the fixed warmth filter is untouchable).
+  const padLp = ctx.createBiquadFilter()
+  padLp.type = 'lowpass'
+  padLp.Q.value = 0.6 // gentle, no resonant boost (matches the warmth filter)
+  const padCenter = pal.filterWarmth * 0.55 // stays UNDER the warmth cutoff → its movement is what you hear
+  padLp.frequency.value = padCenter
+  padLp.connect(dest)
+  for (const [freq, detune] of voices) {
+    const o = ctx.createOscillator()
+    o.type = pal.waveBias
+    o.frequency.value = freq
+    o.detune.value = detune
+    const vg = ctx.createGain()
+    vg.gain.value = 0.185 // trimmed from legacy 0.25 to compensate the added sub + air layers
+    o.connect(vg).connect(padLp)
+    o.start(t)
+    add(o)
+  }
+
+  // Sub body: a clean sine one octave BELOW the root — decorrelated from the audible fundamental, so it
+  // adds felt weight without lifting the low-band above legacy. Weightier when the room is low + dark.
+  const sub = ctx.createOscillator()
+  sub.type = 'sine'
+  sub.frequency.value = pal.bedRoot * 0.5
+  const subG = ctx.createGain()
+  subG.gain.value = 0.11 + 0.09 * low + 0.05 * (1 - bright) // rose heaviest (velvet+sub), maya lightest
+  sub.connect(subG).connect(dest)
+  sub.start(t)
+  add(sub)
+
+  // Low room-tone floor (Drift base), a hair below legacy's 0.12 since the sub now grounds the low end.
+  const room = noise()
+  room.loop = true
+  const roomLp = ctx.createBiquadFilter()
+  roomLp.type = 'lowpass'
+  roomLp.frequency.value = 220
+  const roomG = ctx.createGain()
+  roomG.gain.value = 0.1
+  room.connect(roomLp).connect(roomG).connect(dest)
+  room.start(t)
+  add(room)
+
+  // High "air": band-passed noise just under the warmth cutoff, present only on the brighter rooms.
+  const air = noise()
+  air.loop = true
+  const airBp = ctx.createBiquadFilter()
+  airBp.type = 'bandpass'
+  airBp.Q.value = 0.7 // wide + soft → air, never a resonant whistle
+  airBp.frequency.value = pal.filterWarmth * 0.9 // survives the warmth LPF; higher/opener on airy rooms
+  const airG = ctx.createGain()
+  const airPeak = 0.018 + 0.05 * bright // rose ≈ silent (velvet), neon fullest (airy)
+  airG.gain.value = airPeak * 0.55 // the air LFO breathes it above/below this
+  air.connect(airBp).connect(airG).connect(dest)
+  air.start(t)
+  add(air)
+
+  // ── Three SLOW, pairwise-non-integer LFOs (0.06 / 0.037 / 0.023 Hz) so movement never phase-locks. ──
+  // 1) Level breath onto bedMaster (like legacy) — a touch gentler given the extra layers.
+  const lfoLvl = ctx.createOscillator()
+  lfoLvl.type = 'sine'
+  lfoLvl.frequency.value = 0.06
+  const lfoLvlD = ctx.createGain()
+  lfoLvlD.gain.value = level * 0.32 // bed swings ~0.034..0.066, quieter at peak than legacy's 0.07
+  lfoLvl.connect(lfoLvlD).connect(bedMaster.gain)
+  lfoLvl.start(t)
+  add(lfoLvl)
+  // 2) Air breath — fades the shimmer in/out slowly, never to zero (it presents, it never flickers).
+  const lfoAir = ctx.createOscillator()
+  lfoAir.type = 'sine'
+  lfoAir.frequency.value = 0.037
+  const lfoAirD = ctx.createGain()
+  lfoAirD.gain.value = airPeak * 0.45 // gain rides 0.10..1.0 × airPeak → gentle presence, no pulse
+  lfoAir.connect(lfoAirD).connect(airG.gain)
+  lfoAir.start(t)
+  add(lfoAir)
+  // 3) Brightness drift — opens/closes the pad's own low-pass (most audible on triangle/saw rooms).
+  const lfoBr = ctx.createOscillator()
+  lfoBr.type = 'sine'
+  lfoBr.frequency.value = 0.023
+  const lfoBrD = ctx.createGain()
+  lfoBrD.gain.value = padCenter * 0.3 // cutoff rides 0.70..1.30 × center, always below the warmth cutoff
+  lfoBr.connect(lfoBrD).connect(padLp.frequency)
+  lfoBr.start(t)
+  add(lfoBr)
+}
+
+// LIVING (Room 3) — Layered's movement plus a RARE key-locked sparkle bell (every ~20-40s) blooming
+// into the shared reverb tail: "the room settling". The most alive; still level-capped ≤ legacy.
+const livingVoices: BedVoices = ({ ctx, t, pal, dest, bedMaster, level, dryBus, snap, noise, add, onStop, isActive }) => {
+  const warm = pal.filterWarmth // brightness anchor (§A3) — dark themes sweep low/velvet, bright ones airier
+
+  // The pad's OWN low-pass: brightness MOVES by sweeping this (below), never by adding level. Its ceiling
+  // stays under the fixed warmth LPF behind `dest`, so the pad reads no brighter — nor louder — than legacy.
+  const padLp = ctx.createBiquadFilter()
+  padLp.type = 'lowpass'
+  padLp.Q.value = 0.6 // no resonant bump → the sweep is pure timbre, never a level peak
+  padLp.frequency.value = warm * 0.6
+  padLp.connect(dest)
+
+  // Detuned pad: root · root · fifth · octave (as legacy) — trimmed 0.25→0.22 to buy headroom for the
+  // added movement + sparkle, so the summed bed stays no louder than legacy.
+  const voices: Array<[number, number]> = [
+    [pal.bedRoot, -6],
+    [pal.bedRoot, 6],
+    [pal.bedRoot * 1.5, -4], // a perfect fifth
+    [pal.bedRoot * 2, 3], // octave shimmer
+  ]
+  let rootOsc: OscillatorNode | null = null
+  for (const [freq, detune] of voices) {
+    const o = ctx.createOscillator()
+    o.type = pal.waveBias
+    o.frequency.value = freq
+    o.detune.value = detune
+    const vg = ctx.createGain()
+    vg.gain.value = 0.22 // trimmed from legacy's 0.25
+    o.connect(vg).connect(padLp)
+    o.start(t)
+    add(o)
+    rootOsc ??= o // first (root) voice — the detune-drift target below
+  }
+
+  // Low room-tone: filtered noise, barely there (0.12→0.11) — grounds the pad.
+  const room = noise()
+  room.loop = true
+  const roomLp = ctx.createBiquadFilter()
+  roomLp.type = 'lowpass'
+  roomLp.frequency.value = 220
+  const roomG = ctx.createGain()
+  roomG.gain.value = 0.11
+  room.connect(roomLp).connect(roomG).connect(dest)
+  room.start(t)
+  add(room)
+
+  // ── Three slow LFOs at mutually NON-integer rates (0.053 : 0.023 : 0.037) → never phase-lock (§rule) ──
+
+  // 1) Level breath on bedMaster.gain (like legacy) — gentler (0.4→0.35) so peak level stays under legacy.
+  const breath = ctx.createOscillator()
+  breath.type = 'sine'
+  breath.frequency.value = 0.053 // ~19s
+  const breathDepth = ctx.createGain()
+  breathDepth.gain.value = level * 0.35
+  breath.connect(breathDepth).connect(bedMaster.gain)
+  breath.start(t)
+  add(breath)
+
+  // 2) Brightness sweep on the pad's own LPF — a slow "lights" drift; ceiling always below the fixed warmth.
+  const bright = ctx.createOscillator()
+  bright.type = 'sine'
+  bright.frequency.value = 0.023 // ~43s
+  const brightDepth = ctx.createGain()
+  brightDepth.gain.value = warm * 0.3 // padLp sweeps ~warm*0.3 … warm*0.9 — never above the fixed warmth
+  bright.connect(brightDepth).connect(padLp.frequency)
+  bright.start(t)
+  add(bright)
+
+  // 3) Detune drift on the root voice — the chorus beat keeps shifting (alive); far too slow to be vibrato.
+  const drift = ctx.createOscillator()
+  drift.type = 'sine'
+  drift.frequency.value = 0.037 // ~27s
+  const driftDepth = ctx.createGain()
+  driftDepth.gain.value = 5 // ±5 cents around its -6 detune → living, non-pulsing chorus (no added level)
+  if (rootOsc) drift.connect(driftDepth).connect(rootOsc.detune)
+  drift.start(t)
+  add(drift)
+
+  // ── Rare sparkle (room 3): ONE whisper-quiet key-locked bell every ~20-40s → the shared reverb tail ──
+  const partials = [8, 12, 16, 24] // high overtones of bedRoot; snap() locks each into the theme key
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const schedule = () => {
+    timer = setTimeout(() => {
+      if (isActive()) {
+        // "the room settling": one soft sine bell, snapped to key, blooming into the shared reverb.
+        const bt = ctx.currentTime
+        const f = snap(pal.bedRoot * partials[Math.floor(Math.random() * partials.length)])
+        const peak = 0.03 - pal.reverbMix * 0.02 + Math.random() * 0.012 // ~0.02-0.04; wetter rooms sit drier
+        const o = ctx.createOscillator()
+        o.type = 'sine'
+        o.frequency.value = f
+        const g = ctx.createGain()
+        g.gain.setValueAtTime(0.0001, bt)
+        g.gain.exponentialRampToValueAtTime(peak, bt + 0.04) // soft mallet — no click to draw the ear
+        g.gain.exponentialRampToValueAtTime(0.0001, bt + 2.2) // long bloom → rides the reverb, then gone
+        o.connect(g).connect(dryBus) // → master + shared reverb send (the tail)
+        o.start(bt)
+        o.stop(bt + 2.3)
+        add(o) // register so stopBed() stops it even mid-ring
+      }
+      schedule() // reschedule after EVERY fire (even a blur-skipped one) so sparkles resume cleanly
+    }, 20000 + Math.random() * 20000) // 20-40s, jittered → never a metronome
+  }
+  schedule()
+  onStop(() => clearTimeout(timer)) // clear the pending sparkle on teardown (§A2)
+}
+
+/** The bed A/B set — Legacy (shipped) + the three evolved rooms drafted by the workflow. */
+const ROOMS: Array<{ key: string; label: string; build: BedVoices }> = [
+  { key: 'legacy', label: 'Legacy', build: legacyBedVoices },
+  { key: 'drift', label: 'Drift', build: driftVoices },
+  { key: 'layered', label: 'Layered', build: layeredVoices },
+  { key: 'living', label: 'Living', build: livingVoices },
+]
+
 // ═══════════════════════════════════════════════════════════════════ BUILD UI
 
 // ── Globals ─────────────────────────────────────────────────────────────────
@@ -222,6 +525,37 @@ function refillRain(): void {
   })
   stepWrap.appendChild(stepIn)
   row.appendChild(stepWrap)
+}
+
+// ── Ambient rooms (A/B) ───────────────────────────────────────────────────────
+{
+  const row = section(
+    'Ambient rooms — A/B (evolved)',
+    'Swap the LIVE bed between the shipped Legacy room and three evolved rooms — all palette-derived + level-capped ≤ legacy. Pick a room, then use the Theme row above to hear it across all 4 palettes. Give Living ~20–40s to catch a sparkle. (Needs Sound on.)'
+  )
+  const roomBtns: HTMLButtonElement[] = []
+  const playRoom = (label: string, build: BedVoices, btn: HTMLButtonElement): void => {
+    if (sfx.muted) {
+      log(`unmute (Sound on) to hear the "${label}" room`)
+      return
+    }
+    if (!sfx.ambience) sfx.toggleAmbience() // enable the opt-in bed if it's off
+    sfx.stopBed()
+    sfx.startBed({ voices: build }) // sfx remembers this builder, so the Theme row rebuilds THIS room per palette
+    for (const b of roomBtns) b.dataset.on = b === btn ? '1' : '0'
+    refreshStatus()
+    log(`ambient room → ${label} @ ${getThemeId()} — switch themes above to hear it in each palette`)
+  }
+  for (const r of ROOMS) {
+    const b = button(row, r.label, () => playRoom(r.label, r.build, b), 'toggle big')
+    b.dataset.on = '0'
+    roomBtns.push(b)
+  }
+  button(row, '■ stop bed', () => {
+    sfx.stopBed()
+    for (const b of roomBtns) b.dataset.on = '0'
+    log('bed stopped')
+  })
 }
 
 // ── Cascade & clears ─────────────────────────────────────────────────────────
