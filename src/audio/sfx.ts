@@ -8,7 +8,6 @@
  */
 
 import { getTheme } from '../view/theme'
-import type { AudioPalette } from '../view/theme'
 
 const MUTE_KEY = 'viva-maya:muted'
 const SWAP_KEY = 'viva-maya:swapSound'
@@ -92,89 +91,6 @@ interface ToneOpts {
   delay?: number
 }
 
-// ───────────────────────────────────────────────── ambient bed voices (§A2 / injection point)
-/**
- * Hookpoints a bed-voices builder receives. The shipped chain (warmth → bedMaster → duck → mute →
- * master), the gentle fade-in, and all teardown live in `startBed`; a builder only adds the SUSTAINED
- * voices + any movement onto `dest`, registering its sources via `add` and any timers via `onStop`.
- * This lets the dev bench A/B alternative ambient "rooms" without touching the shipped teardown. The
- * default (`legacyBedVoices`) reproduces the classic bed exactly, so the game never changes unaudited.
- */
-export interface BedVoicesApi {
-  ctx: AudioContext
-  /** Bed start time (ctx.currentTime). */
-  t: number
-  /** Active theme's audio palette — derive all character from these so the four rooms stay coherent (§A3). */
-  pal: AudioPalette
-  /** Connect SUSTAINED bed voices here (→ warmth LPF → bedMaster → duck → mute → master). */
-  dest: AudioNode
-  /** The bed level node; connect any level-modulating LFO to `bedMaster.gain`. */
-  bedMaster: GainNode
-  /** Target bed level (0.05). Keep the summed voice energy no louder than the legacy bed — movement, not volume. */
-  level: number
-  /** Shared dry bus (→ master + the reverb send). Route an occasional sparkle voice here for the room tail. */
-  dryBus: AudioNode
-  /** Key-lock a frequency to the active theme's pentatonic scale (§A10). */
-  snap: (freq: number) => number
-  /** A fresh looping-capable noise source sharing the singleton buffer (room-tone / air). */
-  noise: () => AudioBufferSourceNode
-  /** Register a source node so `stopBed()` stops it. */
-  add: (node: AudioScheduledSourceNode) => void
-  /** Register a cleanup (e.g. clearTimeout for a sparkle scheduler); run first thing on `stopBed()`. */
-  onStop: (fn: () => void) => void
-  /** True while the bed should sound (running · unmuted · tab visible) — gate SCHEDULED sparkles on this. */
-  isActive: () => boolean
-}
-
-/** A bed-voices builder — populates the sustained ambient voices (+ movement) onto `api.dest`. */
-export type BedVoices = (api: BedVoicesApi) => void
-
-/**
- * The classic ambient bed (§E3-A2), extracted verbatim as the default builder: a warm detuned pad
- * (root · root · fifth · octave) + a low filtered room-tone, under one slow ~0.06 Hz level breath.
- * Reproduces the shipped bed exactly — `startBed()` uses this unless the dev bench injects another.
- */
-export const legacyBedVoices: BedVoices = ({ ctx, t, pal, dest, bedMaster, level, noise, add }) => {
-  // Detuned pad: root + fifth + octave, softly spread for a warm chord.
-  const voices: Array<[number, number]> = [
-    [pal.bedRoot, -6],
-    [pal.bedRoot, 6],
-    [pal.bedRoot * 1.5, -4], // a perfect fifth
-    [pal.bedRoot * 2, 3], // octave shimmer
-  ]
-  for (const [freq, detune] of voices) {
-    const o = ctx.createOscillator()
-    o.type = pal.waveBias
-    o.frequency.value = freq
-    o.detune.value = detune
-    const vg = ctx.createGain()
-    vg.gain.value = 0.25
-    o.connect(vg).connect(dest)
-    o.start(t)
-    add(o)
-  }
-  // Low room-tone: filtered noise, barely there, grounds the pad.
-  const room = noise()
-  room.loop = true
-  const roomLp = ctx.createBiquadFilter()
-  roomLp.type = 'lowpass'
-  roomLp.frequency.value = 220
-  const roomG = ctx.createGain()
-  roomG.gain.value = 0.12
-  room.connect(roomLp).connect(roomG).connect(dest)
-  room.start(t)
-  add(room)
-  // One slow LFO breath (~16s) swelling the level.
-  const lfo = ctx.createOscillator()
-  lfo.type = 'sine'
-  lfo.frequency.value = 0.06
-  const lfoDepth = ctx.createGain()
-  lfoDepth.gain.value = level * 0.4
-  lfo.connect(lfoDepth).connect(bedMaster.gain)
-  lfo.start(t)
-  add(lfo)
-}
-
 class Sfx {
   private ctx: AudioContext | null = null
   private master: GainNode | null = null
@@ -201,8 +117,6 @@ class Sfx {
   private bedMaster: GainNode | null = null // overall bed level (LFO rides on top)
   private bedDuck: GainNode | null = null // 1 → dips under wins (§A4) → 1
   private bedMute: GainNode | null = null // 1 → 0 on tab-blur (§A2 suspend)
-  private bedCleanups: Array<() => void> = [] // builder teardown callbacks (e.g. sparkle-scheduler timers)
-  private bedVoices: BedVoices = legacyBedVoices // active voices builder; the dev bench swaps this to A/B rooms
 
   get muted(): boolean {
     return this._muted
@@ -1135,16 +1049,15 @@ class Sfx {
    * and the tab is visible. Intended for MENUS — scenes call `stopBed()` when gameplay begins.
    * Idempotent. Reads `getTheme().audio`, so a P8 `scene.restart()` rebuilds it in the new room.
    */
-  startBed(opts?: { voices?: BedVoices }): void {
+  startBed(): void {
     if (this.bedRunning || !this._ambience || this._muted) return
     const ctx = this.ensureContext()
-    if (!ctx || !this.master || !this.dryBus) return
+    if (!ctx || !this.master) return
     if (ctx.state === 'suspended') void ctx.resume()
-    if (opts?.voices) this.bedVoices = opts.voices // remember the chosen room so refreshTheme rebuilds it
     try {
       const pal = getTheme().audio
       const t = ctx.currentTime
-      // Fixed chain: [voices] → warmth LPF → bedMaster(level+LFO) → bedDuck(§A4) → bedMute(blur) → master
+      // Chain: [pad + room-tone] → warmth LPF → bedMaster(LFO) → bedDuck(§A4) → bedMute(blur) → master
       const bedMute = ctx.createGain()
       bedMute.gain.value = typeof document !== 'undefined' && document.hidden ? 0 : 1
       bedMute.connect(this.master)
@@ -1161,26 +1074,46 @@ class Sfx {
       warmth.Q.value = 0.6
       warmth.connect(bedMaster)
 
-      // Build the sustained voices via the active builder (default = the classic bed). The builder adds
-      // its sources onto `warmth` and registers them (+ any timers) for teardown; the chain/fade/duck/
-      // suspend logic below stays fixed, so a swapped room can never leak the shipped teardown (§A2).
       const nodes: AudioScheduledSourceNode[] = []
-      const cleanups: Array<() => void> = []
-      const api: BedVoicesApi = {
-        ctx,
-        t,
-        pal,
-        dest: warmth,
-        bedMaster,
-        level,
-        dryBus: this.dryBus,
-        snap: f => this.snap(f),
-        noise: () => this.noiseSource(ctx),
-        add: n => nodes.push(n),
-        onStop: fn => cleanups.push(fn),
-        isActive: () => this.bedRunning && !this._muted && !(typeof document !== 'undefined' && document.hidden),
+      // Detuned pad: root + fifth + octave, softly spread for a warm chord.
+      const voices: Array<[number, number]> = [
+        [pal.bedRoot, -6],
+        [pal.bedRoot, 6],
+        [pal.bedRoot * 1.5, -4], // a perfect fifth
+        [pal.bedRoot * 2, 3], // octave shimmer
+      ]
+      for (const [freq, detune] of voices) {
+        const o = ctx.createOscillator()
+        o.type = pal.waveBias
+        o.frequency.value = freq
+        o.detune.value = detune
+        const vg = ctx.createGain()
+        vg.gain.value = 0.25
+        o.connect(vg).connect(warmth)
+        o.start(t)
+        nodes.push(o)
       }
-      this.bedVoices(api)
+      // Low room-tone: filtered noise, barely there, grounds the pad.
+      const room = this.noiseSource(ctx)
+      room.loop = true
+      const roomLp = ctx.createBiquadFilter()
+      roomLp.type = 'lowpass'
+      roomLp.frequency.value = 220
+      const roomG = ctx.createGain()
+      roomG.gain.value = 0.12
+      room.connect(roomLp).connect(roomG).connect(warmth)
+      room.start(t)
+      nodes.push(room)
+
+      // One slow LFO breath (~16s period, matching the backdrop's slow breath) swelling the level.
+      const lfo = ctx.createOscillator()
+      lfo.type = 'sine'
+      lfo.frequency.value = 0.06
+      const lfoDepth = ctx.createGain()
+      lfoDepth.gain.value = level * 0.4
+      lfo.connect(lfoDepth).connect(bedMaster.gain)
+      lfo.start(t)
+      nodes.push(lfo)
 
       // Fade the bed in gently so opting in never pops.
       bedMaster.gain.cancelScheduledValues(t)
@@ -1188,7 +1121,6 @@ class Sfx {
       bedMaster.gain.linearRampToValueAtTime(level, t + 1.2)
 
       this.bedNodes = nodes
-      this.bedCleanups = cleanups
       this.bedMaster = bedMaster
       this.bedDuck = bedDuck
       this.bedMute = bedMute
@@ -1202,15 +1134,6 @@ class Sfx {
   stopBed(): void {
     if (!this.bedRunning) return
     this.bedRunning = false
-    // Run builder cleanups first (clear any sparkle-scheduler timers) so nothing fires mid-teardown.
-    for (const fn of this.bedCleanups) {
-      try {
-        fn()
-      } catch {
-        // a cleanup must never break teardown
-      }
-    }
-    this.bedCleanups = []
     const ctx = this.ctx
     try {
       if (ctx && this.bedMaster) {
