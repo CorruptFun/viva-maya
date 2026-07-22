@@ -233,6 +233,9 @@ export class GameScene extends Phaser.Scene {
    */
   private comboText?: Phaser.GameObjects.Text
   private comboTween: Phaser.Tweens.Tween | null = null
+  /** Deepest MEGA tier (1 MEGA / 2 SUPER / 3 UNREAL) reached this resolve — so the strike PUNCTUATES
+   *  each new tier instead of firing every wave. Reset per resolve (resolveLoop) + on restart. */
+  private comboPeakTier = 0
 
   /** §R3 score-medallion pool (≤MEDALLION_CAP slots, built lazily, reused for the whole round). */
   private medallionPool: MedallionSlot[] = []
@@ -371,6 +374,7 @@ export class GameScene extends Phaser.Scene {
     // Combo readout is a scene GameObject — the old one was destroyed on restart, so drop the stale ref.
     this.comboText = undefined
     this.comboTween = null
+    this.comboPeakTier = 0
     this.freeSpinBadge = undefined // scene GameObject from a prior round — died with that scene
     // §R3 score-medallion pool: its slots' GameObjects (Text/Image/Container) were destroyed with the
     // prior scene, so drop the stale refs and let takeMedallion rebuild. A restart re-runs create() but
@@ -1490,21 +1494,27 @@ export class GameScene extends Phaser.Scene {
     })
   }
 
-  /** Quick light flash on the cabinet — bulbs pop + reddish glow surges. For mega-wins / wins. */
-  private flashCabinet(): void {
+  /**
+   * Quick light flash on the cabinet — bulbs pop + reddish glow surges. For mega-wins / wins.
+   * `strength` (0..3) intensifies it: a deeper MEGA tier / finish pops the bulbs wider, drives the
+   * glow brighter, and adds an extra surge cycle. strength 0 is the original win/flash, untouched.
+   */
+  private flashCabinet(strength = 0): void {
+    const s = Math.max(0, Math.min(3, strength))
+    const bulbScale = 1.7 + s * 0.16 // 1.7 / 1.86 / 2.02 / 2.18
     for (const bulb of this.cabinetBulbs) {
       const base = bulb.scaleX
-      this.tweens.add({ targets: bulb, scaleX: base * 1.7, scaleY: base * 1.7, duration: 140, yoyo: true, ease: 'Quad.easeOut' })
+      this.tweens.add({ targets: bulb, scaleX: base * bulbScale, scaleY: base * bulbScale, duration: 140, yoyo: true, ease: 'Quad.easeOut' })
     }
     if (this.cabinetGlow) {
       // The surge briefly OWNS the glow's alpha; the heartbeat drive in update() yields until it ends.
       this.cabinetSurge = true
       this.tweens.add({
         targets: this.cabinetGlow,
-        alpha: 0.42,
+        alpha: Math.min(0.6, 0.42 + s * 0.06),
         duration: 160,
         yoyo: true,
-        repeat: 1,
+        repeat: s >= 2 ? 2 : 1,
         ease: 'Quad.easeOut',
         onComplete: () => {
           this.cabinetSurge = false
@@ -2481,6 +2491,7 @@ export class GameScene extends Phaser.Scene {
     try {
       let cascade = 0
       let wave = first
+      this.comboPeakTier = 0 // fresh chain — the MEGA strike re-punctuates each new tier this resolve
       while (wave) {
         cascade++
         this.dbgStage = `playWave c${cascade} cl=${wave.cleared.length} tr=${wave.transformed.length} ev=${wave.events.length}`
@@ -2495,6 +2506,7 @@ export class GameScene extends Phaser.Scene {
         this.log(this.dbgStage)
         wave = this.board.matchWave()
       }
+      this.megaFinish(cascade) // the "in awe" release — a deep chain erupts once more as it settles
       this.fadeCombo() // E11: the cascade settled — resolve the combo readout (composes with the win peak)
       this.maybeAwardFreeSpins(cascade) // R4: a MEGA-grade chain banks free spins + flies the golden ticket
       this.dbgStage = 'end-checks'
@@ -2858,13 +2870,15 @@ export class GameScene extends Phaser.Scene {
   private cascadeEdgeTick(cascade: number): void {
     if (this.reducedMotion || quality.tier() === 'low') return
     const T = getTheme()
-    // Same heat ramp as showCombo, in fill-colour form: x2 warm gold → x3 bright amber → x4+ rose.
-    const tint = cascade <= 2 ? T.gold : cascade === 3 ? T.goldBright : T.rose
+    // Same heat ramp as showCombo, in fill-colour form: x2 warm gold → x3 bright amber → x4 rose →
+    // x6+ hot rose. Peak alpha + band thickness keep climbing (higher caps) so a deep chain floods
+    // the room harder than the old x4 plateau did — the room "blowing up" scales with the chain.
+    const tint = cascade <= 2 ? T.gold : cascade === 3 ? T.goldBright : cascade >= 6 ? T.roseLight : T.rose
     const soft = this.reduceFlashing
-    const peak = Math.min(0.34, 0.1 + cascade * 0.045) * (soft ? 0.55 : 1) * quality.scale()
+    const peak = Math.min(0.44, 0.1 + cascade * 0.045) * (soft ? 0.55 : 1) * quality.scale()
     const H = worldH()
     const cy = 640 // DESIGN_H/2 — the overlay scrim's world-centring idiom
-    const th = Math.min(120, 54 + cascade * 12)
+    const th = Math.min(160, 54 + cascade * 12)
     // Centre-x/y · display-w/h for the four edge bands: left, right, top, bottom. Each band's
     // radial core sits ON its screen edge, so the bright inner half bleeds inward and the outer
     // half falls off-screen — a rim of light, not a floating bar.
@@ -5056,11 +5070,15 @@ export class GameScene extends Phaser.Scene {
    * Reduced motion keeps the counter + number but drops the punch + colour-pulse (static set).
    */
   private showCombo(cascade: number): void {
-    const big = cascade >= 4
-    if (big) {
+    const tier = this.megaTier(cascade)
+    const big = tier.t > 0
+    // MEGA peak fires on each new TIER reached (x4 MEGA / x6 SUPER / x8 UNREAL), not every wave — a
+    // strike that PUNCTUATES the escalation reads far bigger than the same wail becoming wallpaper.
+    if (big && tier.t > this.comboPeakTier) {
+      this.comboPeakTier = tier.t
       sfx.jackpotStrike()
-      this.vibrate([60, 40, 120])
-      this.flashCabinet() // mega peak: pop the marquee lights
+      this.vibrate(tier.t >= 3 ? [70, 40, 90, 40, 160] : tier.t >= 2 ? [60, 40, 140] : [60, 40, 120])
+      this.flashCabinet(tier.t) // pop the marquee harder the deeper the tier
     }
     // §E3/E11/B14: a low bass bed ratchets UP a step per cascade wave and resolves into winFanfare —
     // the audio arc mirrors the visual combo arc. ONE voice, retriggered per wave (never accumulates).
@@ -5069,9 +5087,20 @@ export class GameScene extends Phaser.Scene {
     // Screen-edge heat tick — the room registers each wave of the chain (self-gated: reduced
     // motion / LOW tier skip it; reduce-flashing softens the pulse into a swell).
     this.cascadeEdgeTick(cascade)
-    const label = big ? 'MEGA WIN!' : `COMBO x${cascade}`
-    // Heat ramp: x2 warm gold → x3 hot amber → x4+ hot rose/red.
-    const heat = cascade <= 2 ? getTheme().goldText : cascade === 3 ? css(getTheme().gold) : css(getTheme().rose)
+    // The readout keeps CLIMBING every wave — the ×N is the compounding number, the tier renames it
+    // MEGA WIN → SUPER MEGA → UNREAL, and the heat + scale keep growing past the old x4 plateau.
+    const label = big ? (cascade > 4 ? `${tier.name} ×${cascade}` : tier.name) : `COMBO ×${cascade}`
+    // Heat ramp: x2 gold → x3 amber → x4 rose → x6 hot rose → x8 near-white.
+    const heat =
+      cascade <= 2
+        ? getTheme().goldText
+        : cascade === 3
+          ? css(getTheme().gold)
+          : tier.t >= 3
+            ? '#fff0f4'
+            : tier.t >= 2
+              ? css(getTheme().roseLight)
+              : css(getTheme().rose)
     const cy = BOARD_Y + BOARD_W / 2 - 40
     if (!this.comboText || !this.comboText.active) {
       this.comboText = this.add
@@ -5085,8 +5114,12 @@ export class GameScene extends Phaser.Scene {
     this.comboTween?.stop() // cancel a live punch/fade so waves never stack scale/alpha
     this.comboTween = null
     t.setText(label).setColor(heat).setPosition(DESIGN_W / 2, cy).setAlpha(1)
-    // Subtle scale ramp — the resting size grows as the chain deepens (capped), the visual crescendo.
-    const base = Math.min(1.5, 0.9 + cascade * 0.1)
+    // Resting size grows with the chain — the visual crescendo — mega tiers pushing past the old 1.5
+    // cap up to ~1.85. Then CLAMP so even the punch peak of a long label ("SUPER MEGA! ×6") never
+    // overruns the screen: the medallion's fit trick — cap scale to the width the punch can afford.
+    const PUNCH = 1.28
+    const want = big ? Math.min(1.85, 1.24 + tier.t * 0.2) : Math.min(1.5, 0.9 + cascade * 0.1)
+    const base = Math.min(want, (DESIGN_W - 44) / (PUNCH * Math.max(1, t.width)))
     if (this.reducedMotion) {
       t.setScale(base) // static: number + heat colour, no punch/pulse
       return
@@ -5095,7 +5128,7 @@ export class GameScene extends Phaser.Scene {
     t.setScale(base)
     this.comboTween = this.tweens.add({
       targets: t,
-      scale: base * 1.28,
+      scale: base * PUNCH,
       duration: 150,
       yoyo: true,
       ease: 'Quad.easeOut',
@@ -5124,6 +5157,118 @@ export class GameScene extends Phaser.Scene {
       delay: 200,
       duration: 420,
       ease: 'Sine.easeIn',
+    })
+  }
+
+  /**
+   * MEGA tiers past the x4 threshold — the escalation the eye reads as "it keeps going". Each deeper
+   * band renames the readout (MEGA WIN → SUPER MEGA → UNREAL), and its `t` (1..3) drives the heat
+   * colour, scale, strike intensity, and finish size everywhere, so every layer speaks one tier.
+   * `t` is 0 below x4 (an ordinary combo, not a mega).
+   */
+  private megaTier(cascade: number): { t: number; name: string } {
+    if (cascade >= 8) return { t: 3, name: 'UNREAL!' }
+    if (cascade >= 6) return { t: 2, name: 'SUPER MEGA!' }
+    if (cascade >= 4) return { t: 1, name: 'MEGA WIN!' }
+    return { t: 0, name: '' }
+  }
+
+  /**
+   * MEGA FINISH — the "leave you in awe" release. Where the per-wave combo beats BUILD, this one beat
+   * fires once as a deep chain SETTLES (called from resolveLoop): the screen erupts a final time —
+   * a low boom, a gold shockwave ring blowing out from board centre, a punchy zoom-kiss, a trauma
+   * thump, and the biggest marquee re-strike — all sized by the settled depth (tier 1..3). Below x4
+   * it no-ops. Fully a11y-gated: reduced motion keeps only the boom + a single static gold bloom
+   * (a transient's resting state is nothing); reduce-flashing softens the bright pop into a swell;
+   * LOW tier drops the fill-rate shockwave. Every object is transient and self-destroys.
+   */
+  private megaFinish(cascade: number): void {
+    const tier = this.megaTier(cascade).t
+    if (tier <= 0) return
+    const T = getTheme()
+    const cx = BOARD_X + BOARD_W / 2
+    const cy = BOARD_Y + BOARD_W / 2
+    sfx.megaBoom(tier) // the visceral low thump — audio is never motion-gated (§E8)
+    this.flashCabinet(1 + tier) // one more, biggest re-strike as the chain lands
+    if (this.reducedMotion) {
+      // Keep only a single soft gold bloom that fades (mirrors the reduced-motion heartbloom) — no
+      // expand / zoom / shake. The rolling score + settled board already carry the information.
+      const bloom = this.add
+        .image(cx, cy, 'bgglow')
+        .setBlendMode(Phaser.BlendModes.ADD)
+        .setTint(T.goldBright)
+        .setDepth(28)
+        .setDisplaySize(CELL * 3, CELL * 3)
+        .setAlpha(0)
+      this.tweens.add({ targets: bloom, alpha: 0.4, duration: 200, yoyo: true, hold: 120, onComplete: () => bloom.destroy() })
+      return
+    }
+    // Trauma thump routed through the single authority (composes with the last wave's decay, never
+    // a second shake system) + a punchier zoom-kiss than a per-wave breath.
+    this.addTrauma(Math.min(0.75, 0.34 + tier * 0.13))
+    this.megaZoom(0.02 + tier * 0.012)
+    if (quality.tier() === 'low') return // the ring/bloom are an optional fill-rate layer
+    const soft = this.reduceFlashing
+    // A gold shockwave ring blowing outward from board centre — the awe layer.
+    const ring = this.add
+      .image(cx, cy, 'shockwave')
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setTint(T.goldBright)
+      .setDepth(28)
+      .setDisplaySize(CELL, CELL)
+      .setAlpha(soft ? 0.4 : 0.85)
+    const span = CELL * (9 + tier * 2)
+    this.tweens.add({
+      targets: ring,
+      displayWidth: span,
+      displayHeight: span,
+      alpha: 0,
+      duration: soft ? 640 : 480,
+      ease: 'Cubic.easeOut',
+      onComplete: () => ring.destroy(),
+    })
+    // A hot central bloom pulsing under the ring.
+    const bloom = this.add
+      .image(cx, cy, 'bgglow')
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setTint(T.gold)
+      .setDepth(27)
+      .setDisplaySize(CELL * 2.4, CELL * 2.4)
+      .setAlpha(0)
+    this.tweens.add({
+      targets: bloom,
+      alpha: (soft ? 0.4 : 0.7) * quality.scale(),
+      scale: bloom.scale * 1.8,
+      duration: soft ? 560 : 360,
+      yoyo: true,
+      ease: E.press,
+      onComplete: () => bloom.destroy(),
+    })
+    // A gold spark bloom from the centre (budgeted per device; skipped when flashing is reduced).
+    if (!soft && quality.count(1) > 0) this.sparkEmitter.explode(quality.count(10 + tier * 6), cx, cy)
+  }
+
+  /**
+   * The MEGA-finish zoom-kiss: a punchier one-beat inhale than the per-wave cameraBreath. Reuses the
+   * SAME cameraBreathTween slot (stopping any live breath first) so zoom is never driven by two
+   * tweens at once, and rests back at 1. Reduced motion / LOW tier → no-op.
+   */
+  private megaZoom(amount: number): void {
+    if (this.reducedMotion || quality.tier() === 'low') return
+    this.cameraBreathTween?.stop()
+    const cam = this.cameras.main
+    cam.setZoom(1)
+    this.cameraBreathTween = this.tweens.add({
+      targets: cam,
+      zoom: 1 + amount,
+      duration: D.base,
+      ease: E.press,
+      yoyo: true,
+      hold: 70,
+      onComplete: () => {
+        cam.setZoom(1)
+        this.cameraBreathTween = null
+      },
     })
   }
 

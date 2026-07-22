@@ -580,6 +580,38 @@ class Sfx {
     })
   }
 
+  /**
+   * MEGA FINISH boom — the low, visceral thump that punctuates a deep cascade chain as it SETTLES
+   * (see GameScene.megaFinish). Bigger and deeper than bombBoom: a long sub-drop + a fifth-up body
+   * tone + a bright noise transient, all sized by `tier` (1..3) so a x8 chain lands heavier than a
+   * x4. Ducks the bed harder the deeper the chain (§A4) and rides the shared reverb room. Mute-gated
+   * via voice(); every node self-stops. NOT motion-gated — audio is never "motion" (§E8).
+   */
+  megaBoom(tier = 1): void {
+    const k = Math.max(1, Math.min(3, Math.floor(tier)))
+    this.duckBed(0.4 + k * 0.08, 1.0 + k * 0.2) // the room inhales harder for a deeper chain
+    this.voice((ctx, t, out) => {
+      // Deep sub-drop — lower + longer than bombBoom's, heavier per tier.
+      this.tone(ctx, out, t, { type: 'sine', freq: 120, endFreq: 34 - k * 2, peak: 0.5 + k * 0.08, dur: 0.5 + k * 0.08, attack: 0.006 })
+      // A key-locked body tone dropping a register under it, so the boom has PITCH, not just rumble.
+      this.tone(ctx, out, t, { type: 'triangle', freq: this.snap(180), endFreq: this.snap(72), peak: 0.18, dur: 0.4, attack: 0.008 })
+      // Bright noise transient — the blast "crack", brighter per tier, decaying into the sub.
+      const src = this.noiseSource(ctx)
+      const lp = ctx.createBiquadFilter()
+      lp.type = 'lowpass'
+      lp.frequency.setValueAtTime(2400 + k * 700, t)
+      lp.frequency.exponentialRampToValueAtTime(180, t + 0.34)
+      const g = ctx.createGain()
+      g.gain.setValueAtTime(0.4 + k * 0.06, t)
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.36)
+      src.connect(lp).connect(g).connect(out)
+      src.start(t)
+      src.stop(t + 0.4)
+      // A rising shimmer over the top tiers — the "wow" glint riding the thump (key-locked).
+      if (k >= 2) this.tone(ctx, out, t, { type: 'sine', freq: this.snap(784), endFreq: this.snap(1568), peak: 0.12, dur: 0.5, attack: 0.02, delay: 0.04 })
+    })
+  }
+
   /** Dramatic two-tone siren wail with a bell on top — the jackpot strike (~900ms). */
   jackpotStrike(): void {
     this.duckBed(0.4, 1.0) // bed inhales under the jackpot (§A4)
