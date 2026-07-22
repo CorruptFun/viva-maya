@@ -28,7 +28,7 @@
  * audits); `opts.simulate` freezes the loading shimmer or forces the error card (DEV harness).
  */
 import Phaser from 'phaser'
-import { DESIGN_W, worldH } from '../config'
+import { DESIGN_W, viewportCenterY, worldH } from '../config'
 import { sfx } from '../audio/sfx'
 import { cloudSession } from '../core/cloud'
 import { endlessBestThisWeek, weekKey } from '../core/endless'
@@ -301,7 +301,7 @@ export function openWeeklyRacePanel(scene: Phaser.Scene, opts: WeeklyRacePanelOp
   const layer = scene.add.container(0, 0).setDepth(60)
 
   // ── Shell: scrim + cream card + title + CLOSE (shared by every state) ──────────────────────
-  const scrim = scene.add.rectangle(W / 2, H / 2, W, worldH(), T.scrim, 0.6).setInteractive()
+  const scrim = scene.add.rectangle(W / 2, viewportCenterY(), W, worldH(), T.scrim, 0.6).setInteractive()
   let alive = true
   const close = (): void => {
     if (!alive) return

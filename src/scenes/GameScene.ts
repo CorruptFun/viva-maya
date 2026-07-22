@@ -9,6 +9,7 @@ import {
   COLS,
   DESIGN_W,
   restScrollY,
+  viewportCenterY,
   worldH,
   FALL_BASE_MS,
   FALL_PER_CELL_MS,
@@ -859,7 +860,7 @@ export class GameScene extends Phaser.Scene {
     const cy = layer.y
     // Warm scrim between board and card — same idiom as the win overlay's (depth 40 < card 44).
     // Full fillAlpha baked into the fill, object alpha drives the fade (fill × object multiply).
-    const scrim = this.add.rectangle(DESIGN_W / 2, 640, DESIGN_W, worldH(), T.scrim, 0.32).setDepth(40)
+    const scrim = this.add.rectangle(DESIGN_W / 2, viewportCenterY(), DESIGN_W, worldH(), T.scrim, 0.32).setDepth(40)
     scrim.setAlpha(0)
     const introTweens: Phaser.Tweens.Tween[] = []
     const tw = (cfg: Record<string, unknown>): void => {
@@ -1371,7 +1372,7 @@ export class GameScene extends Phaser.Scene {
     // touch darker and duller while playing, so the elevated cabinet + HUD rail pop forward.
     // Warm ink from the theme's own `scrim` token (never black) at whisper alpha — all four themes
     // stay warm, not muddy. Static, zero motion → no reduced-motion path needed.
-    this.add.rectangle(DESIGN_W / 2, 640, DESIGN_W, worldH(), getTheme().scrim, 0.07).setDepth(-24)
+    this.add.rectangle(DESIGN_W / 2, viewportCenterY(), DESIGN_W, worldH(), getTheme().scrim, 0.07).setDepth(-24)
 
     // Reddish "screen is on" glow behind the board — the opaque card covers its center, so only
     // a soft rose halo bleeds past the frame. Surges on a win (see celebrateBoard).
@@ -2958,7 +2959,7 @@ export class GameScene extends Phaser.Scene {
     const soft = this.reduceFlashing
     const peak = Math.min(0.44, 0.1 + cascade * 0.045) * (soft ? 0.55 : 1) * quality.scale()
     const H = worldH()
-    const cy = 640 // DESIGN_H/2 — the overlay scrim's world-centring idiom
+    const cy = viewportCenterY() // visible-viewport centre — keeps the edge rim on the true screen edges after the top-anchor shift (reduces to 640 when centred)
     const th = Math.min(160, 54 + cascade * 12)
     // Centre-x/y · display-w/h for the four edge bands: left, right, top, bottom. Each band's
     // radial core sits ON its screen edge, so the bright inner half bleeds inward and the outer
@@ -4367,7 +4368,7 @@ export class GameScene extends Phaser.Scene {
   /** Dim scrim behind an end-of-round overlay (also swallows taps meant for the board). */
   private overlayScrim(): void {
     this.clearSelection()
-    this.add.rectangle(DESIGN_W / 2, 640, DESIGN_W, worldH(), getTheme().scrim, 0.5).setDepth(40).setInteractive()
+    this.add.rectangle(DESIGN_W / 2, viewportCenterY(), DESIGN_W, worldH(), getTheme().scrim, 0.5).setDepth(40).setInteractive()
   }
 
   /** Shared rounded result card, centered at (cx, cy) with half-height halfH. */

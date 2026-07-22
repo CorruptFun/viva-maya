@@ -1,6 +1,6 @@
 import Phaser from 'phaser'
 import { registerSW } from 'virtual:pwa-register'
-import { DESIGN_W, restScrollY, updateWorldH, worldH } from './config'
+import { DESIGN_W, restScrollY, setSafeTopInset, updateWorldH, worldH } from './config'
 import { bootstrapCloud, pushCloudSave } from './core/cloud'
 import { captureRefFromUrl } from './core/referrals'
 import { setPersistListener } from './core/save'
@@ -65,6 +65,9 @@ if (import.meta.env.DEV) {
 // Seed the world height from the device aspect BEFORE boot so the very first layout fills the screen
 // (width stays 720; the height grows to kill the FIT letterbox on tall phones). See config.worldH.
 updateWorldH(window.innerWidth, window.innerHeight)
+// Seed the top safe-area inset too, so the very first scene anchors its content the right distance below
+// the notch / Dynamic Island instead of flashing centred then jumping. See config.contentOffsetY.
+pushSafeTop(window.innerWidth)
 
 // Reconcile with the cloud BEFORE the first scene reads the save (bounded so a slow/offline network
 // can never stall boot), THEN start Phaser. Resolves instantly when cloud is unconfigured / signed out.
@@ -102,8 +105,12 @@ function startGame(): void {
   // correct through this automatically.
   game.scale.on(Phaser.Scale.Events.RESIZE, () => {
     const parent = game.scale.parentSize
-    if (!updateWorldH(parent.width, parent.height)) return
-    game.scale.setGameSize(DESIGN_W, worldH())
+    // Re-read both the world height AND the top safe-area inset (either can shift on an orientation
+    // change / URL-bar resize). Re-centre every live scene's camera if EITHER changed.
+    const insetChanged = pushSafeTop(parent.width)
+    const sizeChanged = updateWorldH(parent.width, parent.height)
+    if (!insetChanged && !sizeChanged) return
+    if (sizeChanged) game.scale.setGameSize(DESIGN_W, worldH())
     for (const scene of game.scene.getScenes(true)) {
       scene.cameras?.main?.setScroll(scene.cameras.main.scrollX, restScrollY())
     }
@@ -128,6 +135,23 @@ function startGame(): void {
   // DEV-only game handle: expose the Phaser game on `window.__vm` so an in-browser UI audit can pump
   // frames manually (`game.step(t, dt)`) when the preview pane throttles requestAnimationFrame. Stripped from prod.
   if (import.meta.env.DEV) (window as unknown as { __vm: Phaser.Game }).__vm = game
+}
+
+/**
+ * Read the top safe-area inset (env(safe-area-inset-top)) in CSS px from #safeprobe and feed it to the
+ * layout (config.setSafeTopInset), so a tall phone anchors content a comfortable gap below the notch /
+ * Dynamic Island. `appWidthPx` is the CSS width the 720-wide design maps onto (portrait insets are 0, so
+ * innerWidth / parentSize.width are exact). DEV `?sat=<px>` forces a value so headless checks can drive
+ * the notch / Dynamic Island / no-notch cases (desktop Chromium always reports a 0 inset). Returns true
+ * when the world-space inset changed.
+ */
+function pushSafeTop(appWidthPx: number): boolean {
+  const dev = import.meta.env.DEV ? new URLSearchParams(location.search).get('sat') : null
+  const px =
+    dev != null && Number.isFinite(Number(dev))
+      ? Math.max(0, Number(dev))
+      : (document.getElementById('safeprobe')?.getBoundingClientRect().height ?? 0)
+  return setSafeTopInset(px, appWidthPx)
 }
 
 /**

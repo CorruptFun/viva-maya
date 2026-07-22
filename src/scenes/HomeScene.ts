@@ -1,6 +1,6 @@
 import Phaser from 'phaser'
 import { sfx } from '../audio/sfx'
-import { DESIGN_W, restScrollY, worldH } from '../config'
+import { DESIGN_W, restScrollY, viewportCenterY, worldH } from '../config'
 import { spinAvailable, todayKey } from '../core/daily'
 import { endlessUnlocked } from '../core/endless'
 import { PRIZE_TIERS, checkWeeklyPrize, previousWeekKey } from '../core/leaderboard'
@@ -699,7 +699,7 @@ export class HomeScene extends Phaser.Scene {
       }
 
       // ── Build the finished scene first (rest pose), then wind it back for the entrance ──
-      const scrim = this.add.rectangle(cx, 640, DESIGN_W, worldH(), T.scrim, 0.68).setInteractive()
+      const scrim = this.add.rectangle(cx, viewportCenterY(), DESIGN_W, worldH(), T.scrim, 0.68).setInteractive()
       layer.add(scrim)
 
       const cardRoot = this.add.container(cx, cy)
@@ -1009,7 +1009,7 @@ export class HomeScene extends Phaser.Scene {
         resolve()
       })
 
-      const scrim = this.add.rectangle(cx, 640, DESIGN_W, worldH(), T.scrim, 0.42).setInteractive()
+      const scrim = this.add.rectangle(cx, viewportCenterY(), DESIGN_W, worldH(), T.scrim, 0.42).setInteractive()
       layer.add(scrim)
 
       const cardRoot = this.add.container(cx, cy)
@@ -1224,12 +1224,11 @@ export class HomeScene extends Phaser.Scene {
     const reduced = this.prefersReducedMotion()
     const T = getTheme()
     const W = DESIGN_W
-    const H = 1280
     const cx = W / 2
     const cy = 640
     const layer = this.add.container(0, 0).setDepth(70)
 
-    const scrim = this.add.rectangle(cx, H / 2, W, H, T.scrim, 0.62).setInteractive()
+    const scrim = this.add.rectangle(cx, viewportCenterY(), W, worldH(), T.scrim, 0.62).setInteractive()
     const close = (): void => {
       this.noteOpen = false
       layer.destroy()

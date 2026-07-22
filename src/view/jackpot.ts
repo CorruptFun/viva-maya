@@ -1,6 +1,6 @@
 import Phaser from 'phaser'
 import { sfx } from '../audio/sfx'
-import { DESIGN_W, worldH } from '../config'
+import { DESIGN_W, viewportCenterY, worldH } from '../config'
 import { JACKPOT_GOAL, WHEEL_PRIZES, rollWheelIndex } from '../core/jackpot'
 import { mulberry32 } from '../core/rng'
 import { addChips, addPendingBoost, loadSave } from '../core/save'
@@ -522,7 +522,7 @@ export function openJackpotWheel(scene: Phaser.Scene, opts: WheelOpenOpts): void
   // 2) Scrim — firmly dim the board + HUD (so the wheel + title read as the sole focus) and swallow
   // taps meant for the board underneath.
   const scrim = track(
-    scene.add.rectangle(cx, 640, DESIGN_W, worldH() + 400, T.scrim, reduced ? 0.82 : 0.001).setDepth(60).setInteractive()
+    scene.add.rectangle(cx, viewportCenterY(), DESIGN_W, worldH() + 400, T.scrim, reduced ? 0.82 : 0.001).setDepth(60).setInteractive()
   )
   if (!reduced) scene.tweens.add({ targets: scrim, fillAlpha: 0.82, duration: 200, ease: 'Quad.easeOut' })
 
