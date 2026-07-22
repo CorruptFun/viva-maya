@@ -107,6 +107,21 @@ celebration moments (Home toast queue / store welcome toast). Abuse fences: one
 referral per account EVER (PK), self-referral blocked in the schema, timestamps
 set-once and server-clocked, claim only after qualify, caps client-side.
 
+## Promo / reward codes
+
+Referrals bring NEW users in via a link; **promo codes** reward EXISTING users who type a code you
+handed out (a returning-player gift, a creator code, a holiday drop). A signed-in player opens the
+Gift Store → **ENTER CODE** → types the code; the reward (chips / full hearts / a boost) lands in the
+save. You mint codes from the Supabase SQL editor (`insert into promo_codes …`, see
+`supabase/migrations/0005_promo_codes.sql`) and can cap, expire, or retire each one.
+
+Codes are **server-validated and secret**: redemption goes through the `redeem_promo(code)` SECURITY
+DEFINER function, which alone can read the (deny-by-default RLS) `promo_codes` table — so a client can
+never enumerate codes — and the `(code, user_id)` PK on `promo_redemptions` enforces **once per
+account**. `max_redemptions` gives an optional global lifetime cap. This keeps codes an
+**owner-controlled, inflation-safe faucet** (they're granted, never purchased — iron rule #1 holds),
+and dormant-safe: cloud-off / signed-out / offline all degrade to a friendly message, never a throw.
+
 ## Trust model (v1) and the hardening path
 
 All submissions (scores, qualifications, claims) are self-reported by signed-in
@@ -139,6 +154,7 @@ that re-grants after having been overwritten — self-healing, never a permanent
 | `QUALIFY_LEVEL` | 5 | `src/core/referrals.ts` |
 | `REFERRER_CHIPS` / `REFEREE_CHIPS` | 300 / 150 | `src/core/referrals.ts` |
 | `REFERRAL_CAP` | 20 lifetime | `src/core/referrals.ts` |
+| Promo codes | owner-minted (chips/hearts/boost) | `supabase/…/0005_promo_codes.sql` · `src/core/promo.ts` |
 | Win payout | stars×8 + leftover×2 | `src/scenes/GameScene.ts` |
 | Boost prices | 40–120 / helpers 8–35 | `src/core/store.ts` |
 | `ENDLESS_MOVES` / unlock | 30 / level 30 | `src/core/endless.ts` |
