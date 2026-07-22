@@ -168,6 +168,15 @@ export class GameScene extends Phaser.Scene {
   private hitstopUntil = 0
   /** The one live camera-breath zoom tween (big clears) — guards "one breath at a time". */
   private cameraBreathTween: Phaser.Tweens.Tween | null = null
+  /** Deliberate vertical camera offset for the BOARD SLAM — a heavy detonation punches the view down
+   *  then springs back. Added to the camera scroll in update() ON TOP of the random trauma rattle, so
+   *  the slam is the clean directional dip and trauma is the grit on it. `.y` is tweened by boardSlam. */
+  private boardKick = { y: 0 }
+  private boardKickTween: Phaser.Tweens.Tween | Phaser.Tweens.TweenChain | null = null
+  /** The board's tight CONTACT shadow (baked in buildBackdrop) + its resting scale — pulsed darker/
+   *  tighter on a slam so the slab reads as pressing toward its housing (depth). */
+  private contactShadow?: Phaser.GameObjects.Image
+  private contactShadowBase = 1
   /** Tween/timer timescale to restore after a hitstop (1, or ?turbo=N in DEV). */
   private baseTimeScale = 1
   /** A11y "reduce flashing" switch (photosensitivity ≠ vestibular) — read from the real toggle in create(). */
@@ -389,6 +398,8 @@ export class GameScene extends Phaser.Scene {
     this.baseTimeScale = 1
     this.impactFlash = undefined
     this.cameraBreathTween = null // stale tween ref from a prior create (restart re-runs create, not field inits)
+    this.boardKickTween = null
+    this.boardKick = { y: 0 } // fresh holder — a prior scene's slam tween died with it
     this.cameras.main.setScroll(0, restScrollY())
     this.cameras.main.setZoom(1) // in case a prior round ended mid camera-breath
     this.activeBoosts = []
@@ -1389,7 +1400,11 @@ export class GameScene extends Phaser.Scene {
     // (zero per-frame cost, one key light from above per E7 → offsets straight DOWN). Neutral
     // black at low alpha reads as depth on all four theme washes.
     this.add.image(x + size / 2, y + size / 2 + 26, 'softshadow').setDisplaySize(size + 96, size + 96).setAlpha(0.32)
-    this.add.image(x + size / 2, y + size / 2 + 11, 'softshadow').setDisplaySize(size + 38, size + 38).setAlpha(0.3)
+    // The tight contact shadow is kept so a board SLAM can briefly deepen + tighten it (the slab
+    // pressing toward its housing — a real depth cue synced to the dip). Base scale captured for a
+    // clean return, since it's tweened from either theme.
+    this.contactShadow = this.add.image(x + size / 2, y + size / 2 + 11, 'softshadow').setDisplaySize(size + 38, size + 38).setAlpha(0.3)
+    this.contactShadowBase = this.contactShadow.scaleX
 
     const g = this.add.graphics()
     // §R3 chunky under-bezel: a darker gold SIDE WALL peeking a few px below the face, so the slab
@@ -2152,6 +2167,9 @@ export class GameScene extends Phaser.Scene {
     // blast latched a vector; omnidirectional otherwise. Camera scroll shakes ALL scene content
     // (incl. the masked board) as one unit and is free. No-op under reduced motion (trauma never
     // accumulates — addTrauma is gated), so the board sits perfectly still.
+    // The BOARD SLAM kick (a deliberate vertical dip) rides ON TOP of the trauma rattle: trauma is the
+    // gritty crisp part of the hit, the kick is the clean directional slam-and-spring.
+    const kick = this.boardKick.y
     if (this.trauma > 0) {
       this.trauma = Math.max(0, this.trauma - (delta / 1000) * 2.6)
       const amp = 14 * this.trauma * this.trauma
@@ -2166,12 +2184,15 @@ export class GameScene extends Phaser.Scene {
         ox = amp * (Math.random() * 2 - 1)
         oy = amp * (Math.random() * 2 - 1)
       }
-      this.cameras.main.setScroll(ox, restScrollY() + oy)
       if (this.trauma === 0) {
         this.traumaDirX = 0
         this.traumaDirY = 0
-        this.cameras.main.setScroll(0, restScrollY())
+        ox = 0
+        oy = 0
       }
+      this.cameras.main.setScroll(ox, restScrollY() + oy + kick)
+    } else if (kick !== 0) {
+      this.cameras.main.setScroll(0, restScrollY() + kick) // slam still springing after the rattle died
     } else if (this.cameras.main.scrollX !== 0 || this.cameras.main.scrollY !== restScrollY()) {
       this.cameras.main.setScroll(0, restScrollY())
     }
@@ -2571,7 +2592,7 @@ export class GameScene extends Phaser.Scene {
       // The deepest event this wave owns the single freeze: reel 0 / bomb ~45 / jackpot·mega ~70ms.
       let hitstopMs = 0
       for (const e of wave.events) {
-        if (e.type === 'bomb') hitstopMs = Math.max(hitstopMs, 45)
+        if (e.type === 'bomb') hitstopMs = Math.max(hitstopMs, 60) // a heftier freeze so the slam lands
         else if (e.type === 'jackpot') hitstopMs = Math.max(hitstopMs, 70)
       }
       if (cascade >= 4) hitstopMs = Math.max(hitstopMs, 70)
@@ -2596,8 +2617,13 @@ export class GameScene extends Phaser.Scene {
           else if (e.type === 'bomb') this.detonateBomb(e.at, e.radius, cascade)
           else this.detonateJackpot()
         }
-        // The board reacts: surviving neighbors of the primary blast flinch outward + settle.
-        if (wave.events[0]) this.secondaryMotion(wave.events[0].at, clearedIds)
+        // The board reacts: surviving neighbors of the primary blast flinch outward + settle — a heavy
+        // bomb/jackpot shoves them harder and DOWNWARD, rippling with the board slam (depth).
+        if (wave.events[0]) {
+          const ev0 = wave.events[0]
+          const heavy = ev0.type === 'bomb' || ev0.type === 'jackpot'
+          this.secondaryMotion(ev0.at, clearedIds, heavy ? 1.7 : 1, heavy ? 0.55 : 0)
+        }
       })
       effectMs = chargeMs + 340
     } else if (pops.length >= 5) {
@@ -2856,6 +2882,54 @@ export class GameScene extends Phaser.Scene {
         this.cameraBreathTween = null
       },
     })
+  }
+
+  /**
+   * BOARD SLAM (E6 impact / depth) — the deliberate vertical PUNCH of the whole board as a heavy
+   * special goes off: the view jolts DOWN hard, then springs back up through rest and settles, while
+   * the board's contact shadow deepens + tightens for the beat (the slab pressed toward its housing →
+   * depth). Separate from the random trauma rattle (that's the crisp grit layered ON the slam); this
+   * is the clean directional dip. `strength` (~0.6 bomb → 1.3 jackpot) scales the drop + shadow press.
+   * Motion-gated like trauma — reduced motion leaves the board perfectly still (audio + flash still land).
+   */
+  private boardSlam(strength: number): void {
+    if (this.reducedMotion) return
+    const s = Math.max(0, strength)
+    // NEGATIVE scrollY = the board appears to lurch DOWN, then Back-eases up through rest and settles.
+    const dip = -(9 + s * 9)
+    this.boardKickTween?.stop()
+    this.boardKick.y = 0
+    this.boardKickTween = this.tweens.chain({
+      targets: this.boardKick,
+      tweens: [
+        { y: dip, duration: 60, ease: 'Quad.easeOut' }, // SLAM — a fast, hard drop
+        { y: 0, duration: 300, ease: 'Back.easeOut' }, // spring back up through rest + settle
+      ],
+      onComplete: () => {
+        this.boardKick.y = 0
+        this.boardKickTween = null
+      },
+    })
+    // Shadow PRESS — the contact shadow briefly darkens + tightens under the slab, then releases. Reset
+    // to base first so an overlapping slam can't compound the transform; the yoyo returns it to rest.
+    const sh = this.contactShadow
+    if (sh && sh.active) {
+      this.tweens.killTweensOf(sh)
+      sh.setAlpha(0.3).setScale(this.contactShadowBase)
+      this.tweens.add({
+        targets: sh,
+        alpha: Math.min(0.55, 0.3 + s * 0.16),
+        scaleX: this.contactShadowBase * 0.93,
+        scaleY: this.contactShadowBase * 0.93,
+        duration: 70,
+        yoyo: true,
+        hold: 30,
+        ease: 'Quad.easeOut',
+        onComplete: () => {
+          if (sh.active) sh.setAlpha(0.3).setScale(this.contactShadowBase)
+        },
+      })
+    }
   }
 
   /**
@@ -3232,7 +3306,7 @@ export class GameScene extends Phaser.Scene {
    * (falloff by distance) then Back-settles home, so the board reads as physical. Cap ~10 pieces.
    * Reduced motion / weakest governor tier → none.
    */
-  private secondaryMotion(epicenter: Coord, clearedIds: Set<number>): void {
+  private secondaryMotion(epicenter: Coord, clearedIds: Set<number>, force = 1, downBias = 0): void {
     if (this.reducedMotion || quality.count(1) === 0) return
     const ep = this.cellToXY(epicenter)
     const CAP = 10
@@ -3252,11 +3326,13 @@ export class GameScene extends Phaser.Scene {
         const dy = pos.y - ep.y
         const dist = Math.hypot(dx, dy) || 1
         if (dist > RADIUS) continue
-        const push = 4 + 4 * (1 - dist / RADIUS)
+        // Heavy blasts (bomb/jackpot) shove harder (`force`) and add a DOWNWARD component (`downBias`),
+        // so the surrounding tiles visibly get driven down into the tray as the board slams — depth.
+        const push = (4 + 4 * (1 - dist / RADIUS)) * force
         this.tweens.add({
           targets: sprite,
           x: pos.x + (dx / dist) * push,
-          y: pos.y + (dy / dist) * push,
+          y: pos.y + (dy / dist) * push + downBias * push,
           duration: 60,
           ease: 'Quad.easeOut',
           onComplete: () => {
@@ -3276,6 +3352,7 @@ export class GameScene extends Phaser.Scene {
     // reduce-flashing hook — plus a heavy omnidirectional trauma kick.
     if (!this.reduceFlashing) this.cameras.main.flash(280, 255, 214, 90)
     this.punch({ trauma: 0.95 })
+    this.boardSlam(1.3) // the board-wipe strike hits hardest — the deepest slam of the three
   }
 
   /**
@@ -3296,6 +3373,7 @@ export class GameScene extends Phaser.Scene {
       dirY: horizontal ? 0 : 1,
       flash: { x: at.x, y: at.y, size: CELL * 1.2 },
     })
+    this.boardSlam(0.7 + boost * 0.06) // the line-blast slams the board down as it rips across
 
     // The line ignites — a warm fire streak flashing across the whole row/col.
     const sweep = this.add
@@ -3416,6 +3494,8 @@ export class GameScene extends Phaser.Scene {
       trauma: Math.min(1, 0.45 + radius * 0.12 + boost * 0.04),
       flash: { x: at.x, y: at.y, size: CELL * 1.3 },
     })
+    // The board SLAMS down as the bomb goes off — the dip + shadow press give the blast real weight.
+    this.boardSlam(0.6 + Math.min(radius, 3) * 0.12 + boost * 0.05)
 
     // White-hot flash core.
     const flash = this.add
