@@ -63,8 +63,10 @@ function inviteUrl(code: string): string {
   return `${location.origin}${location.pathname}?ref=${code}`
 }
 
-function inviteMessage(code: string): string {
-  return `Come play Viva Maya with me! Use my code ${code} and we both win chips 💛`
+// Link-first: the invite is a tracking LINK (the ?ref=CODE url carries the referral), so the message
+// points at the link, not a code to type — there is no code-entry field, only the link does the work.
+function inviteMessage(): string {
+  return `Come play Viva Maya with me — tap my link and we both win chips 💛`
 }
 
 /**
@@ -72,7 +74,7 @@ function inviteMessage(code: string): string {
  * elsewhere, and a plain code read-back toast when even the clipboard is blocked. Never throws.
  */
 function shareInvite(code: string, toast: (msg: string) => void): void {
-  const text = inviteMessage(code)
+  const text = inviteMessage()
   const url = inviteUrl(code)
   const copyFallback = (): void => {
     const payload = `${text}\n${url}`
@@ -80,7 +82,7 @@ function shareInvite(code: string, toast: (msg: string) => void): void {
       const clip = navigator.clipboard
       if (clip && typeof clip.writeText === 'function') {
         clip.writeText(payload).then(
-          () => toast('invite copied — send it to a friend!'),
+          () => toast('invite link copied — send it to a friend!'),
           () => toast(`your code: ${code}`)
         )
       } else {
