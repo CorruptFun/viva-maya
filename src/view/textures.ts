@@ -109,35 +109,25 @@ function makeSeven(scene: Phaser.Scene): void {
     t.setAlpha(alpha)
     return t
   }
-  // Deeper 6-layer stack for a fuller cast read: a maroon DEPTH cast (down-right), a lit rose BEVEL
-  // rim (up-left), a dark-red SHADE copy peeking below the body (fakes a top-lit vertical gradient
-  // the flat glyph couldn't have), the red BODY with a crisp minted keyline + a stronger lift shadow,
-  // a broad cream GLOSS sheen, and a tight white GLINT — the hot specular that makes it read polished.
-  const cast = mk('#6e0f22', 0.58) // deep maroon cast — the emboss's shadow base, offset down-right
-  const edge = mk('#ff8a94', 0.95) // lit rose bevel edge, up-left (a touch brighter than roseLight)
-  const shade = mk('#a81b21', 1) // dark-red shaded underside, peeks below the body → top-lit gradient
-  const body = mk('#e0312e', 1, '#7c1820', 5) // red body + crisper dark minted keyline
-  body.setShadow(0, 6, 'rgba(80,16,10,0.32)', 10, false, true) // a stronger ground shadow → more lift
-  const gloss = mk('#fff3d6', 0.34) // broad cream specular sheen (soft high-left)
-  const glint = mk('#ffffff', 0.32) // tight hot specular glint riding the upper-left edge
+  const cast = mk('#7a1329', 0.5) // solid dark maroon cast — the emboss's deep base
+  const edge = mk('#ff7a85', 0.9) // lit rose bevel edge (roseLight), peeks behind the body
+  const body = mk('#e0312e', 1, '#8f1a20', 4) // red body + dark minted outline
+  body.setShadow(0, 5, 'rgba(90,20,10,0.28)', 8, false, true)
+  const gloss = mk('#fff3d6', 0.22) // cream specular sheen (soft high-left highlight)
   intoTexture(scene, 'seven', dt => {
     seatShadow(scene, dt)
     const place = (t: Phaser.GameObjects.Text, dx: number, dy: number): void => {
       dt.draw(t, (BASE - t.width) / 2 + dx, (BASE - t.height) / 2 + dy)
     }
-    place(cast, 3, 6) // depth cast, down-right
-    place(edge, -2, -4) // lit bevel rim, up-left (behind body)
-    place(shade, 0, 3) // dark base copy, down — the shaded underside the body leaves showing
+    place(cast, 3, 5) // depth cast, down-right
+    place(edge, -1.5, -3) // lit bevel rim, up-left (behind body)
     place(body, 0, 0) // bold red body on top
-    place(gloss, -2.5, -4) // broad cream gloss sheen, up-left
-    place(glint, -4, -5) // tight white specular glint, hard up-left edge
+    place(gloss, -2, -3) // cream gloss sheen, up-left
   })
   cast.destroy()
   edge.destroy()
-  shade.destroy()
   body.destroy()
   gloss.destroy()
-  glint.destroy()
 }
 
 function makeBar(scene: Phaser.Scene): void {
