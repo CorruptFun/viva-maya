@@ -109,25 +109,35 @@ function makeSeven(scene: Phaser.Scene): void {
     t.setAlpha(alpha)
     return t
   }
-  const cast = mk('#7a1329', 0.5) // solid dark maroon cast — the emboss's deep base
-  const edge = mk('#ff7a85', 0.9) // lit rose bevel edge (roseLight), peeks behind the body
-  const body = mk('#e0312e', 1, '#8f1a20', 4) // red body + dark minted outline
-  body.setShadow(0, 5, 'rgba(90,20,10,0.28)', 8, false, true)
-  const gloss = mk('#fff3d6', 0.22) // cream specular sheen (soft high-left highlight)
+  // Deeper 6-layer stack for a fuller cast read: a maroon DEPTH cast (down-right), a lit rose BEVEL
+  // rim (up-left), a dark-red SHADE copy peeking below the body (fakes a top-lit vertical gradient
+  // the flat glyph couldn't have), the red BODY with a crisp minted keyline + a stronger lift shadow,
+  // a broad cream GLOSS sheen, and a tight white GLINT — the hot specular that makes it read polished.
+  const cast = mk('#6e0f22', 0.58) // deep maroon cast — the emboss's shadow base, offset down-right
+  const edge = mk('#ff8a94', 0.95) // lit rose bevel edge, up-left (a touch brighter than roseLight)
+  const shade = mk('#a81b21', 1) // dark-red shaded underside, peeks below the body → top-lit gradient
+  const body = mk('#e0312e', 1, '#7c1820', 5) // red body + crisper dark minted keyline
+  body.setShadow(0, 6, 'rgba(80,16,10,0.32)', 10, false, true) // a stronger ground shadow → more lift
+  const gloss = mk('#fff3d6', 0.34) // broad cream specular sheen (soft high-left)
+  const glint = mk('#ffffff', 0.32) // tight hot specular glint riding the upper-left edge
   intoTexture(scene, 'seven', dt => {
     seatShadow(scene, dt)
     const place = (t: Phaser.GameObjects.Text, dx: number, dy: number): void => {
       dt.draw(t, (BASE - t.width) / 2 + dx, (BASE - t.height) / 2 + dy)
     }
-    place(cast, 3, 5) // depth cast, down-right
-    place(edge, -1.5, -3) // lit bevel rim, up-left (behind body)
+    place(cast, 3, 6) // depth cast, down-right
+    place(edge, -2, -4) // lit bevel rim, up-left (behind body)
+    place(shade, 0, 3) // dark base copy, down — the shaded underside the body leaves showing
     place(body, 0, 0) // bold red body on top
-    place(gloss, -2, -3) // cream gloss sheen, up-left
+    place(gloss, -2.5, -4) // broad cream gloss sheen, up-left
+    place(glint, -4, -5) // tight white specular glint, hard up-left edge
   })
   cast.destroy()
   edge.destroy()
+  shade.destroy()
   body.destroy()
   gloss.destroy()
+  glint.destroy()
 }
 
 function makeBar(scene: Phaser.Scene): void {
@@ -534,17 +544,61 @@ function makeTile(scene: Phaser.Scene): void {
   // Pure-white cushion body — the ONLY thing a per-cell setTint() colours.
   g.fillStyle(0xffffff, 1)
   g.fillRoundedRect(m, m, bw, bw, r)
-  // Glossy dome: top ~42% stays white (lit), shaded downward with stacked flat bands (rounded
-  // bottom corners match the body; square top corners sit hidden mid-body).
-  for (const [f, a] of [[0.42, 0.05], [0.6, 0.05], [0.78, 0.06]] as Array<[number, number]>) {
+  // Glossy dome (light, not geometry): the top ~40% stays lit (pure white → full tint), then a
+  // SMOOTH 5-stop black-alpha falloff rounds the pillow off toward a deeper seated base — a richer,
+  // glossier curve than the old 3-band ramp. Bands stack (each covers f→bottom), so cumulative alpha
+  // deepens downward; tint-safe throughout (0×tint = neutral dark on every checkerboard tint).
+  for (const [f, a] of [[0.4, 0.03], [0.55, 0.035], [0.7, 0.045], [0.83, 0.05], [0.92, 0.05]] as Array<[number, number]>) {
     g.fillStyle(0x000000, a)
     g.fillRoundedRect(m, m + bw * f, bw, bw * (1 - f), { tl: 0, tr: 0, bl: r, br: r })
   }
+  // Pillow roundness: a whisper of shade curving down each SIDE so the cushion reads domed, not a
+  // flat-topped slab — the sides fall away from the light like a real lozenge.
+  g.fillStyle(0x000000, 0.03)
+  g.fillRoundedRect(m, m, bw * 0.15, bw, { tl: r, tr: 0, bl: r, br: 0 })
+  g.fillStyle(0x000000, 0.03)
+  g.fillRoundedRect(m + bw * 0.85, m, bw * 0.15, bw, { tl: 0, tr: r, bl: 0, br: r })
+  // A crisp seated-base ambient occlusion hugging the bottom edge — the contact darkening where the
+  // cushion meets the well floor, so it reads pressed IN, not floating on a sheet.
+  g.fillStyle(0x000000, 0.05)
+  g.fillRoundedRect(m + 3, m + bw - 10, bw - 6, 8, { tl: 0, tr: 0, bl: r - 3, br: r - 3 })
   // Faint seated-edge bevel (dark → survives tint) for tile-to-tile separation. (§R3: a hair
   // stronger than the original 0.09 so pieces read as seated IN a well, not floating on a sheet.)
   g.lineStyle(2.5, 0x000000, 0.11)
   g.strokeRoundedRect(m, m, bw, bw, r)
   g.generateTexture('tile', S, S)
+  g.destroy()
+}
+
+/**
+ * Board-tile GLOSS SHEEN — a soft additive highlight overlaid on each cushion (a second batched
+ * Image per cell, ADD blend). The baked `tile` is pure-white-then-per-cell-tinted, so a highlight
+ * inside it can never exceed the tint; this reflection lives OUTSIDE the tint. ADD white brightens
+ * toward white on every checkerboard tint, so each cushion gains a glossy crown reflection — the
+ * single biggest "premium glass" detail the tint-locked tile couldn't carry. Pure white, feathered
+ * (stacked falling-alpha ellipses seated high on the cushion), so it reads as one soft glassy
+ * catch-light, never a hard rim — "light, not geometry". Alpha is dialled at the use site.
+ */
+function makeTileGloss(scene: Phaser.Scene): void {
+  const S = BASE
+  const g = scene.make.graphics({ x: 0, y: 0 }, false)
+  const cx = S / 2
+  const cy = S * 0.36 // seated high on the cushion — the crown catch-light
+  // Broad soft pool → tight hot core (feathered), plus a slim upper crescent for a crisper glass edge.
+  const pools: Array<[number, number, number]> = [
+    [S * 0.40, S * 0.26, 0.045],
+    [S * 0.32, S * 0.2, 0.05],
+    [S * 0.24, S * 0.145, 0.06],
+    [S * 0.15, S * 0.09, 0.07],
+  ]
+  for (const [hw, hh, a] of pools) {
+    g.fillStyle(0xffffff, a)
+    g.fillEllipse(cx, cy, hw * 2, hh * 2)
+  }
+  // A slim brighter crescent right at the crown — the sharp top glint of a glossy dome.
+  g.fillStyle(0xffffff, 0.07)
+  g.fillEllipse(cx, S * 0.24, S * 0.34, S * 0.05)
+  g.generateTexture('tilegloss', S, S)
   g.destroy()
 }
 
@@ -995,6 +1049,7 @@ export function createAllTextures(scene: Phaser.Scene): void {
   makeCard(scene)
   makeBulb(scene)
   makeTile(scene)
+  makeTileGloss(scene) // additive glossy sheen overlaid on each cushion (crown catch-light)
   makeRaybeam(scene)
   makeHeartglow(scene)
   makeSoftShadow(scene) // §R3 — shared elevation shadow for the board slab + HUD rail
