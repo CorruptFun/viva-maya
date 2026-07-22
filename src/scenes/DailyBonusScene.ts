@@ -414,12 +414,16 @@ export class DailyBonusScene extends Phaser.Scene {
       const useDaily = spinAvailable(save) || (this.devForce && this.chainCount === 0)
       let prizes: { type: string; label: string; blurb: string }[]
       let streakForCeleb: number | null
+      // Daily check-in chips ride the DAILY pull only; a banked free spin never pays them (it bypasses
+      // the latch/streak by contract), so it leaves this at 0 and the celebration shows no chip beat.
+      let chipsForCeleb = 0
       if (useDaily) {
         const result = performSpin(save, rng)
         this.streakLine?.setText(`🔥 day ${result.streak}`)
         this.streakPaint(result.streak) // §D3 — advance the week strip in step with the streak line
         prizes = result.prizes
         streakForCeleb = result.streak
+        chipsForCeleb = result.chips
       } else {
         const result = performFreeSpin(save, rng)
         if (!result) {
@@ -436,7 +440,7 @@ export class DailyBonusScene extends Phaser.Scene {
       const launch = (): void => {
         idle.forEach(img => img.destroy())
         this.runReels(windows, prizes.map(p => p.type), () =>
-          this.celebrate(prizes.map(p => p.label), prizes.map(p => p.blurb), streakForCeleb)
+          this.celebrate(prizes.map(p => p.label), prizes.map(p => p.blurb), streakForCeleb, chipsForCeleb)
         )
       }
       // §D2 wind-up (E6 charge language): the idle symbols CROUCH — dip down + squash (anticipation,
@@ -686,7 +690,7 @@ export class DailyBonusScene extends Phaser.Scene {
    * unless today's daily really was claimed). R4 chaining: while the bank still holds spins the
    * machine stays hot — SPIN AGAIN re-arms in place instead of exiting home.
    */
-  private celebrate(labels: string[], blurbs: string[], streak: number | null): void {
+  private celebrate(labels: string[], blurbs: string[], streak: number | null, chips = 0): void {
     this.chainCount++
     // §E4 — the daily prize claim is one of the three Heartbloom beats. Layered UNDER the existing
     // fanfare/jackpot/hearts/sparks/confetti celebration; the Maya leitmotif rings only here + PERFECT/jackpot.
@@ -766,6 +770,30 @@ export class DailyBonusScene extends Phaser.Scene {
         .setOrigin(0.5)
     )
 
+    // Daily check-in chip beat — the streak-scaled reward banked by performSpin (rose to read as chips,
+    // matching the jackpot wheel's payout line). Free spins pass chips=0, so this whole beat is skipped
+    // and the layout below rests exactly as before. When it DOES show, the lower cluster shifts down by
+    // `chipShift` so the "+N CHIPS" line can never crowd the bank line / buttons.
+    const chipShift = chips > 0 ? 56 : 0
+    if (chips > 0) {
+      const chipLine = this.add
+        .text(DESIGN_W / 2, 806, `+${chips.toLocaleString()} CHIPS`, {
+          fontFamily: FONT,
+          fontSize: '34px',
+          fontStyle: '900',
+          color: css(getTheme().roseLight),
+        })
+        .setOrigin(0.5)
+        .setShadow(0, 2, 'rgba(0,0,0,0.15)', 5, false, true)
+      cel.add(chipLine)
+      if (this.prefersReducedMotion()) {
+        chipLine.setScale(1)
+      } else {
+        chipLine.setScale(0)
+        this.tweens.add({ targets: chipLine, scale: 1, duration: 300, delay: 120, ease: 'Back.easeOut' })
+      }
+    }
+
     const bankLeft = loadSave().freeSpins
     if (bankLeft > 0) {
       // R4 · THE CHAIN — the bank still holds spins: the cabinet stays lit, the bulbs quicken, and
@@ -773,7 +801,7 @@ export class DailyBonusScene extends Phaser.Scene {
       this.ensureFreeChip(bankLeft)
       cel.add(
         this.add
-          .text(DESIGN_W / 2, 812, `${bankLeft} free spin${bankLeft === 1 ? '' : 's'} still banked`, {
+          .text(DESIGN_W / 2, 812 + chipShift, `${bankLeft} free spin${bankLeft === 1 ? '' : 's'} still banked`, {
             fontFamily: FONT,
             fontSize: '20px',
             fontStyle: '700',
@@ -781,16 +809,16 @@ export class DailyBonusScene extends Phaser.Scene {
           })
           .setOrigin(0.5)
       )
-      const again = addPillButton(this, DESIGN_W / 2, 880, 300, 80, 'SPIN AGAIN', GOLD_PILL, () => this.rearm(), { juice: true })
+      const again = addPillButton(this, DESIGN_W / 2, 880 + chipShift, 300, 80, 'SPIN AGAIN', GOLD_PILL, () => this.rearm(), { juice: true })
       cel.add(again)
       popIn(this, again, { from: 0.7, delay: 200 })
     } else {
       this.retireFreeChip() // the run is over — the ticket chip bows out with the last spin
-      cel.add(addPillButton(this, DESIGN_W / 2, 880, 300, 80, 'CLAIM', GOLD_PILL, () => startScene(this,'home')))
+      cel.add(addPillButton(this, DESIGN_W / 2, 880 + chipShift, 300, 80, 'CLAIM', GOLD_PILL, () => startScene(this,'home')))
       if (loadSave().lastSpinDate === todayKey()) {
         cel.add(
           this.add
-            .text(DESIGN_W / 2, 960, `come back tomorrow — ${todayKey()} claimed`, { fontFamily: FONT, fontSize: '18px', color: getTheme().inkFaint })
+            .text(DESIGN_W / 2, 960 + chipShift, `come back tomorrow — ${todayKey()} claimed`, { fontFamily: FONT, fontSize: '18px', color: getTheme().inkFaint })
             .setOrigin(0.5)
         )
       }

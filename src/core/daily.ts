@@ -84,20 +84,52 @@ export function rollPrize(rng: Rng): Prize {
   return PRIZES[0]
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// DAILY CHECK-IN CHIPS — the "occasionally chips" faucet the economy diagram
+// promises (docs/SOCIAL_AND_ECONOMY.md), made a dependable part of every daily
+// pull. A 7-day ladder ramps the reward small→big across a streak week and RESETS
+// with the week, indexed by ((streak - 1) % 7) — the exact model the D3 week strip
+// already draws (weekDots), so the "payday" lands the day the 7th dot lights and
+// starts over with a fresh week. Because the payout is a FIXED amount per day it is
+// inflation-safe by construction regardless of player count (iron rule #1's spirit:
+// every faucet is a fixed-size gift). Steady-state ≈ 56 chips/day — a meaningful
+// supplement to level-win income (~33/day) that never eclipses the Gift Store sinks
+// (boosts 40–120) or the weekly champion purse (1,000). This table IS the knob: raise
+// the day-7 cap or flatten the curve here and nothing else needs to move.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Chips a daily check-in pays on each day of a streak week (day 1 → day 7); repeats every 7 days. */
+export const CHECKIN_CHIPS = [10, 15, 25, 40, 60, 90, 150] as const
+
 /**
- * Perform today's spin: updates streak, awards prize(s) into pendingBoosts,
- * stamps the date, and persists — all BEFORE any animation, so closing the
- * app mid-celebration can't lose the prize.
+ * Chips today's daily check-in awards for a 1-based streak day. Indexes CHECKIN_CHIPS by
+ * ((streak - 1) % 7) so the reward ramps across the week and the day-7 payday recurs weekly in
+ * lockstep with the streak strip; returns 0 for a non-positive streak (never-spun / defensive).
  */
-export function performSpin(save: SaveData, rng: Rng, now = new Date()): { prizes: Prize[]; streak: number } {
+export function checkinChipsFor(streak: number): number {
+  if (streak < 1) return 0
+  return CHECKIN_CHIPS[(streak - 1) % CHECKIN_CHIPS.length]
+}
+
+/**
+ * Perform today's spin: updates streak, awards prize(s) into pendingBoosts, banks the streak-scaled
+ * daily check-in chips, stamps the date, and persists — all BEFORE any animation, so closing the app
+ * mid-celebration can't lose the prize. Returns the chips awarded so the caller can size the "+N CHIPS"
+ * beat honestly.
+ */
+export function performSpin(save: SaveData, rng: Rng, now = new Date()): { prizes: Prize[]; streak: number; chips: number } {
   const today = todayKey(now)
   save.streak = save.lastSpinDate && daysBetween(save.lastSpinDate, today) === 1 ? save.streak + 1 : 1
   save.lastSpinDate = today
   const prizes = [rollPrize(rng)]
   if (save.streak > 0 && save.streak % 5 === 0) prizes.push(rollPrize(rng))
   save.pendingBoosts.push(...prizes.map(p => p.type))
+  // Bank the check-in chips onto the SAME save object this persists below — never via addChips(), whose
+  // fresh loadSave()→persist would be clobbered by the persistSave() here (and lose the boosts/streak).
+  const chips = checkinChipsFor(save.streak)
+  save.chips += chips
   persistSave(save)
-  return { prizes, streak: save.streak }
+  return { prizes, streak: save.streak, chips }
 }
 
 /**
