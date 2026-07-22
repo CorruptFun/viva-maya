@@ -9,6 +9,9 @@ import { SYMBOLS } from '../core/types'
 import type { Piece, PieceKind } from '../core/types'
 import { addCasinoBackdrop } from '../view/background'
 import { INVITE_CARD_H, addInviteCard, maybeShowWelcome } from '../view/invite'
+import { isCloudConfigured } from '../core/cloud'
+import { rewardLabel } from '../core/promo'
+import { openPromoModal } from '../view/promomodal'
 import { D, E, OVERSHOOT, backOut, fadeRise, popIn, stagger } from '../view/motion'
 import { quality } from '../view/quality'
 import { getTheme, prefersReducedMotion, reduceFlashing } from '../view/theme'
@@ -53,6 +56,15 @@ export class StoreScene extends Phaser.Scene {
     const T = getTheme()
 
     addPillButton(this, 64, 84, 84, 56, '‹', GHOST_PILL, () => startScene(this, 'home'))
+
+    // ENTER CODE — redeem a promo/reward code you were handed (existing-user rewards; new users use
+    // the invite LINK). Cloud-gated: hidden on dormant/local-only builds where redemption can't work.
+    // DEV ?code force-shows it + auto-opens the modal for preview.
+    const codeFixture = import.meta.env.DEV && new URLSearchParams(location.search).has('code')
+    if (isCloudConfigured() || codeFixture) {
+      addPillButton(this, 596, 84, 190, 56, 'ENTER CODE', GHOST_PILL, () => this.openCodeEntry())
+    }
+    if (codeFixture) this.time.delayedCall(400, () => this.openCodeEntry())
 
     this.add
       .text(DESIGN_W / 2, 130, 'GIFT STORE', { fontFamily: FONT, fontSize: '54px', fontStyle: '900', color: '#ffffff' })
@@ -102,6 +114,18 @@ export class StoreScene extends Phaser.Scene {
         color: T.onBackdropMuted,
       })
       .setOrigin(0.5)
+  }
+
+  /** Open the "enter a code" modal; on a successful redeem, pop the balance + toast + refresh rows. */
+  private openCodeEntry(): void {
+    openPromoModal({
+      onRedeemed: (reward, balance) => {
+        if (!this.scene.isActive()) return // player left the Store while the modal was up
+        this.balance.update(balance) // chip rewards move the balance; hearts/boost leave it as-is
+        this.toast(`${rewardLabel(reward)} added!`, 'good')
+        this.renderList() // a chip reward may wake ghosted rows — affordability refresh
+      },
+    })
   }
 
   // ------------------------------------------------------------------- list

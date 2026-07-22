@@ -44,6 +44,15 @@ export const key = (c: Coord): string => `${c.row},${c.col}`
 /** Daily-spin prizes; applied as head-start boosts to the next level played. */
 export type BoostType = 'wildReel' | 'diceBomb' | 'jackpot' | 'extraMoves' | 'doubleScore'
 
+/** Promo/reward-code payload (core/promo.ts). 'chips' → amount chips · 'hearts' → full lives refill
+ *  · 'boost' → `amount` copies of `boostType` queued for the next level. Mirrors 0005_promo_codes.sql. */
+export type PromoKind = 'chips' | 'hearts' | 'boost'
+export interface PromoReward {
+  kind: PromoKind
+  amount: number
+  boostType?: BoostType
+}
+
 /** One "collect N of symbol X" goal inside a level. */
 export interface LevelObjective {
   symbol: SymbolType
