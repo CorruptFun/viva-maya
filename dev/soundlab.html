@@ -1,0 +1,555 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Sound Lab · Viva Maya (dev)</title>
+</head>
+<body>
+<!--
+  DEV-ONLY Sound Lab — a self-contained procedural Web Audio auditioner. Reusable across projects.
+
+  Zero dependencies, zero build, zero assets: open this single file in any browser (double-click / file://,
+  or serve it anywhere) and it runs. It was built to audition Viva Maya's ambient-bed candidates
+  (Legacy / Drift / Layered / Living) across the four themes, but the pattern is general.
+
+  To reuse for another sound task: edit three things in the <script> — THEMES (your palettes),
+  BUILDERS (your synthesis, keyed by name), and ROOMS (the picker labels). Everything else — the
+  master + monitor gain, the shared FDN reverb, the key-lock (snap), the noise source, the test tone,
+  the audio-status readout, the level meter, and the theme-tinting UI — is reusable as-is.
+
+  See docs/SOUND_TESTING.md. Not part of the production build (index.html is the only real entry).
+-->
+<style>
+  :root {
+    --bg-top: #faf3ec; --bg-bot: #efe7d6;
+    --ink: #2a2732; --ink-soft: #6a6459; --muted: #857e6b;
+    --panel: #fffdf8; --panel-2: #fff3d6; --line: #e8dfc9;
+    --accent: #b3860a; --accent-bright: #f2b234; --accent2: #d3304f;
+    --glow: 242,178,52; --shadow: rgba(138,122,82,.28);
+    --ring: rgba(179,134,10,.5);
+  }
+  .app[data-theme="golden"] {
+    --bg-top:#faf3ec; --bg-bot:#efe7d6; --ink:#2a2732; --ink-soft:#6a6459; --muted:#857e6b;
+    --panel:#fffdf8; --panel-2:#fff3d6; --line:#e8dfc9; --accent:#b3860a; --accent-bright:#f2b234;
+    --accent2:#d3304f; --glow:242,178,52; --shadow:rgba(138,122,82,.28); --ring:rgba(179,134,10,.55);
+  }
+  .app[data-theme="mayaHeart"] {
+    --bg-top:#fdf1f0; --bg-bot:#f7e6e6; --ink:#5e3540; --ink-soft:#875660; --muted:#a67e86;
+    --panel:#fffcfb; --panel-2:#ffe9ec; --line:#f0d8dc; --accent:#b83a52; --accent-bright:#f07a8c;
+    --accent2:#d3304f; --glow:240,122,140; --shadow:rgba(154,106,114,.26); --ring:rgba(184,58,82,.5);
+  }
+  .app[data-theme="roseMidnight"] {
+    --bg-top:#241a2e; --bg-bot:#120e1b; --ink:#f3e8f0; --ink-soft:#cbb8d0; --muted:#9a86a4;
+    --panel:#2a2036; --panel-2:#342842; --line:#40314f; --accent:#ffd75e; --accent-bright:#f2b234;
+    --accent2:#ff7a85; --glow:242,178,52; --shadow:rgba(0,0,0,.45); --ring:rgba(255,215,94,.5);
+  }
+  .app[data-theme="neonVegas"] {
+    --bg-top:#14203a; --bg-bot:#080f22; --ink:#eaf6ff; --ink-soft:#b8cfe0; --muted:#8fa8c8;
+    --panel:#101d33; --panel-2:#16243f; --line:#25374f; --accent:#35d0e0; --accent-bright:#35d0e0;
+    --accent2:#ff3d81; --glow:53,208,224; --shadow:rgba(0,0,0,.5); --ring:rgba(53,208,224,.5);
+  }
+
+  * { box-sizing: border-box; }
+  .app {
+    min-height: 100dvh;
+    margin: 0;
+    background:
+      radial-gradient(120% 80% at 50% -10%, color-mix(in srgb, var(--accent-bright) 14%, transparent), transparent 60%),
+      linear-gradient(178deg, var(--bg-top), var(--bg-bot));
+    color: var(--ink);
+    font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    -webkit-tap-highlight-color: transparent;
+    transition: background .7s ease, color .5s ease;
+    padding: clamp(16px, 4vw, 40px) clamp(14px, 4vw, 28px) 48px;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; }
+
+  /* ── header ── */
+  header { text-align: center; margin-bottom: clamp(20px, 4vw, 34px); }
+  .kicker {
+    font: 600 12px/1 ui-monospace, "SF Mono", Menlo, monospace;
+    letter-spacing: .26em; text-transform: uppercase; color: var(--accent);
+    margin-bottom: 12px;
+  }
+  h1 {
+    font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+    font-size: clamp(34px, 8vw, 58px); font-weight: 700; line-height: .98;
+    letter-spacing: .01em; margin: 0; text-wrap: balance;
+    background: linear-gradient(180deg, var(--accent-bright), var(--accent));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .sub { color: var(--ink-soft); font-size: 15px; margin: 12px auto 0; max-width: 46ch; text-wrap: balance; }
+  .sub b { color: var(--ink); font-weight: 600; }
+
+  /* ── theme (rooms you can hear) ── */
+  .themes { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin: 26px 0 22px; }
+  .theme-pill {
+    appearance: none; cursor: pointer; border: 1px solid var(--line);
+    background: color-mix(in srgb, var(--panel) 70%, transparent); color: var(--ink-soft);
+    font: 600 14px/1 inherit; padding: 11px 16px; border-radius: 999px;
+    transition: all .2s ease; backdrop-filter: blur(4px);
+  }
+  .theme-pill:hover { color: var(--ink); border-color: var(--accent); }
+  .theme-pill[aria-pressed="true"] {
+    color: var(--ink); border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent-bright) 20%, var(--panel));
+    box-shadow: 0 0 0 1px var(--accent) inset, 0 6px 18px -8px rgba(var(--glow), .6);
+  }
+
+  /* ── now playing ── */
+  .stage {
+    position: relative; border-radius: 22px; overflow: hidden;
+    border: 1px solid var(--line); background: var(--panel);
+    box-shadow: 0 24px 60px -30px var(--shadow); margin-bottom: 22px;
+  }
+  .stage-glow {
+    position: absolute; inset: 0; pointer-events: none;
+    background: radial-gradient(70% 120% at 50% 0%, rgba(var(--glow), calc(.10 + var(--breath, 0) * .22)), transparent 70%);
+    transition: background .12s linear; opacity: var(--playing, 0);
+  }
+  .stage-inner { position: relative; padding: clamp(20px, 4vw, 30px); }
+  .np-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .np-label { font: 600 11px/1 ui-monospace, Menlo, monospace; letter-spacing: .22em; text-transform: uppercase; color: var(--muted); }
+  .np-room { font-family: "Iowan Old Style", Palatino, Georgia, serif; font-size: clamp(24px, 5vw, 32px); font-weight: 700; margin: 4px 0 0; }
+  .np-room .dim { color: var(--muted); font-weight: 400; }
+  .np-mood { color: var(--ink-soft); font-size: 14px; margin-top: 2px; }
+  .np-state {
+    font: 600 12px/1 ui-monospace, Menlo, monospace; letter-spacing: .04em;
+    padding: 7px 12px; border-radius: 999px; border: 1px solid var(--line);
+    color: var(--muted); white-space: nowrap; display: inline-flex; align-items: center; gap: 7px;
+  }
+  .np-state .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .np-state[data-on="1"] { color: var(--accent); border-color: var(--accent); }
+  .np-state[data-on="1"] .dot { background: var(--accent-bright); box-shadow: 0 0 8px rgba(var(--glow), .9); animation: pulse 2.2s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .4; } }
+
+  /* ── room cards ── */
+  .rooms { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-top: 22px; }
+  @media (max-width: 460px) { .rooms { grid-template-columns: 1fr; } }
+  .room {
+    appearance: none; cursor: pointer; text-align: left; color: var(--ink);
+    border: 1px solid var(--line); background: color-mix(in srgb, var(--panel-2) 55%, var(--panel));
+    border-radius: 16px; padding: 15px 16px; transition: all .18s ease;
+    display: flex; flex-direction: column; gap: 5px;
+  }
+  .room:hover { border-color: var(--accent); transform: translateY(-1px); }
+  .room:active { transform: translateY(0) scale(.995); }
+  .room[aria-pressed="true"] {
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent-bright) 16%, var(--panel));
+    box-shadow: 0 0 0 1px var(--accent) inset, 0 12px 26px -14px rgba(var(--glow), .55);
+  }
+  .room-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .room-name { font-weight: 700; font-size: 17px; letter-spacing: .01em; }
+  .room-tag { font: 600 10px/1 ui-monospace, Menlo, monospace; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; }
+  .room[aria-pressed="true"] .room-tag { color: var(--accent); border-color: var(--accent); }
+  .room-desc { font-size: 13px; color: var(--ink-soft); line-height: 1.45; }
+
+  /* ── transport ── */
+  .transport { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-top: 22px; padding-top: 20px; border-top: 1px solid var(--line); }
+  .stop {
+    appearance: none; cursor: pointer; font: 600 14px/1 inherit; color: var(--ink);
+    border: 1px solid var(--line); background: var(--panel); border-radius: 11px;
+    padding: 12px 18px; transition: all .18s ease; display: inline-flex; align-items: center; gap: 8px;
+  }
+  .stop:hover { border-color: var(--accent2); color: var(--accent2); }
+  .stop:disabled { opacity: .4; cursor: default; }
+  .audio-status { font: 600 12px/1 ui-monospace, Menlo, monospace; color: var(--muted); padding: 7px 11px; border: 1px solid var(--line); border-radius: 999px; white-space: nowrap; }
+  .audio-status[data-s="running"] { color: var(--accent); border-color: var(--accent); }
+  .audio-status[data-s="suspended"] { color: var(--accent2); border-color: var(--accent2); }
+  .vol { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 13px; margin-left: auto; }
+  .vol input { width: 130px; accent-color: var(--accent); }
+  .tech {
+    display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 16px;
+    font: 12px/1.4 ui-monospace, "SF Mono", Menlo, monospace; color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .tech b { color: var(--ink-soft); font-weight: 600; }
+
+  /* ── footer ── */
+  footer { margin-top: 26px; color: var(--muted); font-size: 13px; line-height: 1.6; text-align: center; }
+  footer .note { border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; background: color-mix(in srgb, var(--panel) 55%, transparent); }
+  footer b { color: var(--ink-soft); }
+  kbd { font: 600 12px ui-monospace, Menlo, monospace; background: color-mix(in srgb, var(--accent-bright) 18%, var(--panel)); border: 1px solid var(--line); border-radius: 5px; padding: 1px 6px; color: var(--ink); }
+
+  :focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+</style>
+
+<div class="app" data-theme="golden" id="app">
+  <div class="wrap">
+    <header>
+      <div class="kicker">Viva Maya · dev sound test</div>
+      <h1>Ambient Rooms</h1>
+      <p class="sub">The quiet background bed that hums under the menus — <b>four candidate versions</b> to pick from by ear. It's a very subtle, low drone (<b>amplified here</b> so you can hear it in isolation), so <b>headphones are strongly recommended</b>. A private test tool, <b>not the game</b>.</p>
+    </header>
+
+    <nav class="themes" id="themes" aria-label="Room (theme)"></nav>
+
+    <section class="stage">
+      <div class="stage-glow" id="glow"></div>
+      <div class="stage-inner">
+        <div class="np-row">
+          <div>
+            <div class="np-label">Now playing</div>
+            <div class="np-room" id="npRoom"><span class="dim">tap a version below</span></div>
+            <div class="np-mood" id="npMood">Golden Hour — a warm golden-hour lounge</div>
+          </div>
+          <div class="np-state" id="npState" data-on="0"><span class="dot"></span><span id="npStateTxt">silent</span></div>
+        </div>
+
+        <div class="rooms" id="rooms"></div>
+
+        <div class="transport">
+          <button class="stop" id="stopBtn" disabled>■ Stop</button>
+          <button class="stop" id="testBtn">🔊 Test tone</button>
+          <span class="audio-status" id="audioStatus" data-s="idle">audio: idle</span>
+          <label class="vol">listening level <input type="range" id="vol" min="0" max="10" step="0.1" value="5" /></label>
+        </div>
+        <div class="tech" id="tech"></div>
+      </div>
+    </section>
+
+    <footer>
+      <div class="note">
+        <b>Hearing nothing?</b> First tap <b>🔊 Test tone</b> — if there's no beep, your device or this tab is muted (check the tab's mute, and system volume). If the beep plays but the bed seems silent, it's just <b>that subtle + low</b>: turn <b>listening level</b> up and use <b>headphones</b> — most laptop/phone speakers can't reproduce the low body.<br><br><b>How to listen:</b> pick a <b>Room</b> at the top for the mood, then tap a <b>version</b>. Switch rooms while it plays to compare the same bed in each palette. Give <b>Living</b> ~30s for a stray sparkle.
+      </div>
+    </footer>
+  </div>
+</div>
+
+<script>
+(() => {
+  'use strict';
+  const PENTA = [0, 2, 4, 7, 9];
+  const THEMES = [
+    { key: 'golden',       name: "Golden Hour",   mood: "a warm golden-hour lounge", bedRoot: 65.41, wave: 'sine',     warmth: 900,  reverb: 0.18 },
+    { key: 'mayaHeart',    name: "Maya's Heart",  mood: "a tender valentine",         bedRoot: 73.42, wave: 'sine',     warmth: 1150, reverb: 0.28 },
+    { key: 'roseMidnight', name: "Rose Midnight", mood: "after-hours velvet",         bedRoot: 55.0,  wave: 'triangle', warmth: 640,  reverb: 0.34 },
+    { key: 'neonVegas',    name: "Neon Vegas",    mood: "the electric strip",         bedRoot: 61.74, wave: 'sawtooth', warmth: 1450, reverb: 0.24 },
+  ];
+  const THEME = Object.fromEntries(THEMES.map(t => [t.key, t]));
+  const ROOMS = [
+    { key: 'legacy',  name: 'Legacy',  tag: 'current', desc: 'The bed that ships today — a warm detuned pad + soft room-tone under one slow breath.' },
+    { key: 'drift',   name: 'Drift',   tag: 'minimal', desc: 'Legacy, just breathing: a slow shimmer-beat and a brightness sweep. Barely-there, never tiring.' },
+    { key: 'layered', name: 'Layered', tag: 'fuller',  desc: 'Drift plus felt body — a sub-octave below the root and a soft "air" band up top, tuned per room.' },
+    { key: 'living',  name: 'Living',  tag: 'alive',   desc: 'Layered plus a rare key-locked sparkle every ~20–40s, blooming into the reverb — the room settling.' },
+  ];
+
+  function snap(root, freq) {
+    if (!(freq > 0) || !(root > 0)) return freq;
+    const n = 12 * Math.log2(freq / root), oct = Math.floor(n / 12), within = n - oct * 12;
+    let best = 0, bestErr = Infinity;
+    for (const wrap of [-12, 0, 12]) for (const pc of PENTA) { const err = Math.abs(within - (pc + wrap)); if (err < bestErr) { bestErr = err; best = pc + wrap; } }
+    return root * Math.pow(2, (oct * 12 + best) / 12);
+  }
+
+  let ctx = null, master = null, dryBus = null, reverbWet = null, reverbFb = [], reverbDamp = [], analyser = null, noiseBuf = null;
+  let bed = null, curTheme = 'golden', curRoom = null, monVol = 5, monitorNode = null;
+
+  function ensure() {
+    if (ctx) return ctx;
+    const AC = window.AudioContext || window.webkitAudioContext;
+    ctx = new AC();
+    master = ctx.createGain(); master.gain.value = 0.5; // faithful in-game master
+    // The in-game bed is deliberately subliminal (~ -37 dB) so it sits UNDER gameplay; in isolation that's
+    // inaudible, especially its low body on small speakers. A listening-only monitor gain lifts it here.
+    monitorNode = ctx.createGain(); monitorNode.gain.value = monVol;
+    const comp = ctx.createDynamicsCompressor();
+    master.connect(monitorNode); monitorNode.connect(comp); comp.connect(ctx.destination);
+    analyser = ctx.createAnalyser(); analyser.fftSize = 512; master.connect(analyser);
+    dryBus = ctx.createGain(); dryBus.gain.value = 1; dryBus.connect(master);
+    buildReverb();
+    ctx.onstatechange = () => updateAudioStatus();
+    return ctx;
+  }
+  function buildReverb() {
+    const send = ctx.createGain(); send.gain.value = 0.12; dryBus.connect(send);
+    const wet = ctx.createGain(); wet.connect(master);
+    const times = [0.0297, 0.0371, 0.0411, 0.0437]; reverbFb = []; reverbDamp = [];
+    for (const dt of times) {
+      const d = ctx.createDelay(0.5); d.delayTime.value = dt;
+      const damp = ctx.createBiquadFilter(); damp.type = 'lowpass';
+      const fb = ctx.createGain();
+      send.connect(d); d.connect(damp); damp.connect(fb); fb.connect(d); d.connect(wet);
+      reverbFb.push(fb); reverbDamp.push(damp);
+    }
+    reverbWet = wet; tuneReverb();
+  }
+  function tuneReverb() {
+    const p = THEME[curTheme];
+    reverbWet.gain.value = p.reverb;
+    const fb = Math.min(0.78, 0.6 + p.reverb * 0.4); for (const g of reverbFb) g.gain.value = fb;
+    const damp = Math.max(1500, Math.min(6000, 1800 + p.warmth * 1.5)); for (const f of reverbDamp) f.frequency.value = damp;
+  }
+  function noise() {
+    if (!noiseBuf) { const len = Math.floor(ctx.sampleRate * 0.8); noiseBuf = ctx.createBuffer(1, len, ctx.sampleRate); const d = noiseBuf.getChannelData(0); for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1; }
+    const s = ctx.createBufferSource(); s.buffer = noiseBuf; return s;
+  }
+
+  // ── the four room builders (ported verbatim from the bench; see src/audio/sfx.ts BedVoicesApi) ──
+  const BUILDERS = {
+    legacy: ({ ctx, t, pal, dest, bedMaster, level, noise, add }) => {
+      const voices = [[pal.bedRoot, -6], [pal.bedRoot, 6], [pal.bedRoot * 1.5, -4], [pal.bedRoot * 2, 3]];
+      for (const [freq, detune] of voices) {
+        const o = ctx.createOscillator(); o.type = pal.waveBias; o.frequency.value = freq; o.detune.value = detune;
+        const vg = ctx.createGain(); vg.gain.value = 0.25;
+        o.connect(vg).connect(dest); o.start(t); add(o);
+      }
+      const room = noise(); room.loop = true;
+      const roomLp = ctx.createBiquadFilter(); roomLp.type = 'lowpass'; roomLp.frequency.value = 220;
+      const roomG = ctx.createGain(); roomG.gain.value = 0.12;
+      room.connect(roomLp).connect(roomG).connect(dest); room.start(t); add(room);
+      const lfo = ctx.createOscillator(); lfo.type = 'sine'; lfo.frequency.value = 0.06;
+      const lfoDepth = ctx.createGain(); lfoDepth.gain.value = level * 0.4;
+      lfo.connect(lfoDepth).connect(bedMaster.gain); lfo.start(t); add(lfo);
+    },
+    drift: ({ ctx, t, pal, dest, bedMaster, level, noise, add }) => {
+      const padLp = ctx.createBiquadFilter(); padLp.type = 'lowpass'; padLp.Q.value = 0.6; padLp.frequency.value = pal.filterWarmth * 0.6; padLp.connect(dest);
+      const driftLfo = ctx.createOscillator(); driftLfo.type = 'sine'; driftLfo.frequency.value = 0.037; driftLfo.start(t); add(driftLfo);
+      const voices = [[pal.bedRoot, -6], [pal.bedRoot, 6], [pal.bedRoot * 1.5, -4], [pal.bedRoot * 2, 3]];
+      voices.forEach(([freq, detune], i) => {
+        const o = ctx.createOscillator(); o.type = pal.waveBias; o.frequency.value = freq; o.detune.value = detune;
+        const vg = ctx.createGain(); vg.gain.value = 0.25;
+        o.connect(vg).connect(padLp);
+        const dg = ctx.createGain(); dg.gain.value = i % 2 === 0 ? 5 : -5;
+        driftLfo.connect(dg).connect(o.detune); o.start(t); add(o);
+      });
+      const briLfo = ctx.createOscillator(); briLfo.type = 'sine'; briLfo.frequency.value = 0.029;
+      const briDepth = ctx.createGain(); briDepth.gain.value = pal.filterWarmth * 0.22;
+      briLfo.connect(briDepth).connect(padLp.frequency); briLfo.start(t); add(briLfo);
+      const room = noise(); room.loop = true;
+      const roomLp = ctx.createBiquadFilter(); roomLp.type = 'lowpass'; roomLp.frequency.value = 220;
+      const roomG = ctx.createGain(); roomG.gain.value = 0.12;
+      room.connect(roomLp).connect(roomG).connect(dest); room.start(t); add(room);
+      const lfo = ctx.createOscillator(); lfo.type = 'sine'; lfo.frequency.value = 0.06;
+      const lfoDepth = ctx.createGain(); lfoDepth.gain.value = level * 0.4;
+      lfo.connect(lfoDepth).connect(bedMaster.gain); lfo.start(t); add(lfo);
+    },
+    layered: ({ ctx, t, pal, dest, bedMaster, level, noise, add }) => {
+      const bright = Math.max(0, Math.min(1, (pal.filterWarmth - 640) / 810));
+      const low = Math.max(0, Math.min(1, (73.42 - pal.bedRoot) / 18.42));
+      const voices = [[pal.bedRoot, -6], [pal.bedRoot, 6], [pal.bedRoot * 1.5, -4], [pal.bedRoot * 2, 3]];
+      const padLp = ctx.createBiquadFilter(); padLp.type = 'lowpass'; padLp.Q.value = 0.6;
+      const padCenter = pal.filterWarmth * 0.55; padLp.frequency.value = padCenter; padLp.connect(dest);
+      for (const [freq, detune] of voices) {
+        const o = ctx.createOscillator(); o.type = pal.waveBias; o.frequency.value = freq; o.detune.value = detune;
+        const vg = ctx.createGain(); vg.gain.value = 0.185;
+        o.connect(vg).connect(padLp); o.start(t); add(o);
+      }
+      const sub = ctx.createOscillator(); sub.type = 'sine'; sub.frequency.value = pal.bedRoot * 0.5;
+      const subG = ctx.createGain(); subG.gain.value = 0.11 + 0.09 * low + 0.05 * (1 - bright);
+      sub.connect(subG).connect(dest); sub.start(t); add(sub);
+      const room = noise(); room.loop = true;
+      const roomLp = ctx.createBiquadFilter(); roomLp.type = 'lowpass'; roomLp.frequency.value = 220;
+      const roomG = ctx.createGain(); roomG.gain.value = 0.1;
+      room.connect(roomLp).connect(roomG).connect(dest); room.start(t); add(room);
+      const air = noise(); air.loop = true;
+      const airBp = ctx.createBiquadFilter(); airBp.type = 'bandpass'; airBp.Q.value = 0.7; airBp.frequency.value = pal.filterWarmth * 0.9;
+      const airG = ctx.createGain(); const airPeak = 0.018 + 0.05 * bright; airG.gain.value = airPeak * 0.55;
+      air.connect(airBp).connect(airG).connect(dest); air.start(t); add(air);
+      const lfoLvl = ctx.createOscillator(); lfoLvl.type = 'sine'; lfoLvl.frequency.value = 0.06;
+      const lfoLvlD = ctx.createGain(); lfoLvlD.gain.value = level * 0.32;
+      lfoLvl.connect(lfoLvlD).connect(bedMaster.gain); lfoLvl.start(t); add(lfoLvl);
+      const lfoAir = ctx.createOscillator(); lfoAir.type = 'sine'; lfoAir.frequency.value = 0.037;
+      const lfoAirD = ctx.createGain(); lfoAirD.gain.value = airPeak * 0.45;
+      lfoAir.connect(lfoAirD).connect(airG.gain); lfoAir.start(t); add(lfoAir);
+      const lfoBr = ctx.createOscillator(); lfoBr.type = 'sine'; lfoBr.frequency.value = 0.023;
+      const lfoBrD = ctx.createGain(); lfoBrD.gain.value = padCenter * 0.3;
+      lfoBr.connect(lfoBrD).connect(padLp.frequency); lfoBr.start(t); add(lfoBr);
+    },
+    living: ({ ctx, t, pal, dest, bedMaster, level, dryBus, snap, noise, add, onStop, isActive }) => {
+      const warm = pal.filterWarmth;
+      const padLp = ctx.createBiquadFilter(); padLp.type = 'lowpass'; padLp.Q.value = 0.6; padLp.frequency.value = warm * 0.6; padLp.connect(dest);
+      const voices = [[pal.bedRoot, -6], [pal.bedRoot, 6], [pal.bedRoot * 1.5, -4], [pal.bedRoot * 2, 3]];
+      let rootOsc = null;
+      for (const [freq, detune] of voices) {
+        const o = ctx.createOscillator(); o.type = pal.waveBias; o.frequency.value = freq; o.detune.value = detune;
+        const vg = ctx.createGain(); vg.gain.value = 0.22;
+        o.connect(vg).connect(padLp); o.start(t); add(o); rootOsc ??= o;
+      }
+      const room = noise(); room.loop = true;
+      const roomLp = ctx.createBiquadFilter(); roomLp.type = 'lowpass'; roomLp.frequency.value = 220;
+      const roomG = ctx.createGain(); roomG.gain.value = 0.11;
+      room.connect(roomLp).connect(roomG).connect(dest); room.start(t); add(room);
+      const breath = ctx.createOscillator(); breath.type = 'sine'; breath.frequency.value = 0.053;
+      const breathDepth = ctx.createGain(); breathDepth.gain.value = level * 0.35;
+      breath.connect(breathDepth).connect(bedMaster.gain); breath.start(t); add(breath);
+      const bright = ctx.createOscillator(); bright.type = 'sine'; bright.frequency.value = 0.023;
+      const brightDepth = ctx.createGain(); brightDepth.gain.value = warm * 0.3;
+      bright.connect(brightDepth).connect(padLp.frequency); bright.start(t); add(bright);
+      const drift = ctx.createOscillator(); drift.type = 'sine'; drift.frequency.value = 0.037;
+      const driftDepth = ctx.createGain(); driftDepth.gain.value = 5;
+      if (rootOsc) drift.connect(driftDepth).connect(rootOsc.detune); drift.start(t); add(drift);
+      const partials = [8, 12, 16, 24];
+      let timer;
+      const schedule = () => {
+        timer = setTimeout(() => {
+          if (isActive()) {
+            const bt = ctx.currentTime;
+            const f = snap(pal.bedRoot * partials[Math.floor(Math.random() * partials.length)]);
+            const peak = 0.03 - pal.reverbMix * 0.02 + Math.random() * 0.012;
+            const o = ctx.createOscillator(); o.type = 'sine'; o.frequency.value = f;
+            const g = ctx.createGain();
+            g.gain.setValueAtTime(0.0001, bt);
+            g.gain.exponentialRampToValueAtTime(peak, bt + 0.04);
+            g.gain.exponentialRampToValueAtTime(0.0001, bt + 2.2);
+            o.connect(g).connect(dryBus); o.start(bt); o.stop(bt + 2.3); add(o);
+          }
+          schedule();
+        }, 20000 + Math.random() * 20000);
+      };
+      schedule();
+      onStop(() => clearTimeout(timer));
+    },
+  };
+
+  function stopBed() {
+    if (!bed) return; const b = bed; bed = null;
+    for (const fn of b.cleanups) { try { fn(); } catch (e) {} }
+    try {
+      const t = ctx.currentTime;
+      b.master.gain.cancelScheduledValues(t);
+      b.master.gain.setValueAtTime(Math.max(0.0001, b.master.gain.value), t);
+      b.master.gain.exponentialRampToValueAtTime(0.0001, t + 0.4);
+      for (const n of b.nodes) { try { n.stop(t + 0.45); } catch (e) {} }
+    } catch (e) {}
+  }
+  function startBed(roomKey) {
+    ensure(); if (ctx.state === 'suspended') ctx.resume();
+    stopBed();
+    const p = THEME[curTheme], t = ctx.currentTime, level = 0.05;
+    const bedMaster = ctx.createGain(); bedMaster.gain.value = level; bedMaster.connect(master);
+    const warmth = ctx.createBiquadFilter(); warmth.type = 'lowpass'; warmth.frequency.value = p.warmth; warmth.Q.value = 0.6; warmth.connect(bedMaster);
+    const nodes = [], cleanups = [];
+    const b = { nodes, cleanups, master: bedMaster };
+    bed = b;
+    const api = {
+      ctx, t, pal: { bedRoot: p.bedRoot, waveBias: p.wave, filterWarmth: p.warmth, reverbMix: p.reverb },
+      dest: warmth, bedMaster, level, dryBus,
+      snap: (f) => snap(p.bedRoot, f), noise,
+      add: (n) => nodes.push(n), onStop: (fn) => cleanups.push(fn),
+      isActive: () => bed === b && !document.hidden,
+    };
+    BUILDERS[roomKey](api);
+    bedMaster.gain.cancelScheduledValues(t);
+    bedMaster.gain.setValueAtTime(0.0001, t);
+    bedMaster.gain.linearRampToValueAtTime(level, t + 1.2);
+  }
+
+  // ── UI ──
+  const app = document.getElementById('app');
+  const themesEl = document.getElementById('themes');
+  const roomsEl = document.getElementById('rooms');
+  const npRoom = document.getElementById('npRoom');
+  const npMood = document.getElementById('npMood');
+  const npState = document.getElementById('npState');
+  const npStateTxt = document.getElementById('npStateTxt');
+  const stopBtn = document.getElementById('stopBtn');
+  const glow = document.getElementById('glow');
+  const techEl = document.getElementById('tech');
+
+  const themeBtns = THEMES.map(th => {
+    const b = document.createElement('button');
+    b.className = 'theme-pill'; b.textContent = th.name; b.setAttribute('aria-pressed', th.key === curTheme ? 'true' : 'false');
+    b.addEventListener('click', () => selectTheme(th.key));
+    themesEl.appendChild(b); return b;
+  });
+  const roomBtns = ROOMS.map(r => {
+    const b = document.createElement('button');
+    b.className = 'room'; b.setAttribute('aria-pressed', 'false');
+    b.innerHTML = `<div class="room-top"><span class="room-name">${r.name}</span><span class="room-tag">${r.tag}</span></div><div class="room-desc">${r.desc}</div>`;
+    b.addEventListener('click', () => selectRoom(r.key));
+    roomsEl.appendChild(b); return b;
+  });
+
+  function selectTheme(key) {
+    curTheme = key; app.setAttribute('data-theme', key);
+    themeBtns.forEach((b, i) => b.setAttribute('aria-pressed', THEMES[i].key === key ? 'true' : 'false'));
+    if (ctx) tuneReverb();
+    if (bed && curRoom) startBed(curRoom); // rebuild the current version in the new room
+    paintState();
+  }
+  function selectRoom(key) {
+    curRoom = key;
+    roomBtns.forEach((b, i) => b.setAttribute('aria-pressed', ROOMS[i].key === key ? 'true' : 'false'));
+    startBed(key);
+    if (ctx && ctx.state === 'suspended') ctx.resume().then(updateAudioStatus);
+    stopBtn.disabled = false;
+    updateAudioStatus();
+    paintState();
+  }
+  function stopAll() {
+    stopBed(); curRoom = null;
+    roomBtns.forEach(b => b.setAttribute('aria-pressed', 'false'));
+    stopBtn.disabled = true;
+    paintState();
+  }
+  stopBtn.addEventListener('click', stopAll);
+
+  function updateAudioStatus() {
+    const el = document.getElementById('audioStatus');
+    if (!el) return;
+    if (!ctx) { el.textContent = 'audio: idle'; el.dataset.s = 'idle'; return; }
+    const s = ctx.state;
+    el.textContent = s === 'running' ? 'audio: running ✓' : s === 'suspended' ? 'audio: suspended — tap again' : 'audio: ' + s;
+    el.dataset.s = s;
+  }
+  function testTone() {
+    ensure(); if (ctx.state === 'suspended') ctx.resume().then(updateAudioStatus);
+    const t = ctx.currentTime;
+    const o = ctx.createOscillator(); o.type = 'sine'; o.frequency.value = 528;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.15, t + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.5);
+    o.connect(g).connect(ctx.destination); // direct, fixed level — a reliable "is any audio getting out?" test
+    o.start(t); o.stop(t + 0.55);
+    updateAudioStatus();
+  }
+  document.getElementById('testBtn').addEventListener('click', testTone);
+
+  document.getElementById('vol').addEventListener('input', e => {
+    monVol = parseFloat(e.target.value);
+    if (monitorNode && ctx) monitorNode.gain.setTargetAtTime(monVol, ctx.currentTime, 0.02);
+  });
+
+  function paintState() {
+    const th = THEME[curTheme];
+    const room = curRoom ? ROOMS.find(r => r.key === curRoom) : null;
+    npMood.textContent = `${th.name} — ${th.mood}`;
+    if (room) {
+      npRoom.innerHTML = `${room.name} <span class="dim">· ${th.name}</span>`;
+      npState.setAttribute('data-on', '1'); npStateTxt.textContent = 'playing';
+      glow.style.setProperty('--playing', '1');
+    } else {
+      npRoom.innerHTML = `<span class="dim">tap a version below</span>`;
+      npState.setAttribute('data-on', '0'); npStateTxt.textContent = 'silent';
+      glow.style.setProperty('--playing', '0');
+    }
+    techEl.innerHTML = `<span><b>root</b> ${th.bedRoot} Hz</span><span><b>wave</b> ${th.wave}</span><span><b>warmth</b> ${th.warmth} Hz</span><span><b>reverb</b> ${th.reverb.toFixed(2)}</span><span><b>level</b> −26 dB (bed)</span>`;
+  }
+
+  // ── live "breath": drive the stage glow from the actual bed level ──
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const buf = new Uint8Array(256);
+  function frame() {
+    if (analyser && bed) {
+      analyser.getByteTimeDomainData(buf);
+      let sum = 0; for (let i = 0; i < buf.length; i++) { const v = (buf[i] - 128) / 128; sum += v * v; }
+      const rms = Math.sqrt(sum / buf.length);
+      glow.style.setProperty('--breath', Math.min(1, rms * 26).toFixed(3));
+    } else {
+      glow.style.setProperty('--breath', '0');
+    }
+    requestAnimationFrame(frame);
+  }
+  if (!reduce) requestAnimationFrame(frame);
+
+  document.addEventListener('visibilitychange', () => { if (document.hidden && bed) stopAll(); });
+  paintState();
+})();
+</script>
+</body>
+</html>
