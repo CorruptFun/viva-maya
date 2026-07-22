@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>Jackson's LEGO Brick Dodge! 🧱🟡</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background-color: #f0f0f0;
+      touch-action: none; /* Prevents iOS overscroll/rubber-band and gestures */
+      user-select: none; /* Prevents text selection while dragging */
+      -webkit-user-select: none;
+      font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+    }
+    #canvas-container {
+      width: 100vw;
+      height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+  </style>
+  <!-- Load p5.js CDN -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.11.0/p5.min.js"></script>
+</head>
+<body>
+  <div id="canvas-container"></div>
+  <script>
+    // LEGO Survival: POWER-UP EDITION (Super Polished for iPad!) 🧱🟡🏃‍♂️💨
+    let bricks = [];
+    let powerUps = [];
+    let hero;
+    let score = 0;
+    let gameState = "START";
+    let speedMultiplier = 1.0; 
+    let lastTime = 0;
+    let slowMoTimer = 0; 
+
+    function setup() {
+      let canvas = createCanvas(windowWidth, windowHeight);
+      canvas.parent('canvas-container');
+      hero = new Hero();
+      resetGame();
+    }
+
+    function windowResized() {
+      resizeCanvas(windowWidth, windowHeight);
+    }
+
+    function draw() {
+      if (gameState === "START") {
+        drawStartScreen();
+      } else if (gameState === "PLAY") {
+        drawGame();
+      } else if (gameState === "GAMEOVER") {
+        drawGameOverScreen();
+      }
+    }
+
+    function drawStartScreen() {
+      background(245);
+      drawBaseplateGrid();
+
+      rectMode(CENTER);
+      fill(255);
+      stroke(0);
+      strokeWeight(4);
+      let boxW = min(width * 0.85, 480);
+      let boxH = 340;
+      rect(width / 2, height / 2, boxW, boxH, 15);
+
+      textAlign(CENTER, CENTER);
+      fill('#FF0000'); 
+      textSize(28);
+      textStyle(BOLD);
+      text("LEGO BRICK DODGE! 🧱", width / 2, height / 2 - 100);
+
+      fill(0);
+      textSize(15);
+      text("Dodge the flying Red, White & Blue bricks!", width / 2, height / 2 - 45);
+      
+      textStyle(NORMAL);
+      textSize(13);
+      text("🟡 Drag your smiley face to move!\n\n🟡 Grab Golden Circles for 5s of Slow-Mo!\n\n🟡 Tap screen to add bricks for extra score!", width / 2, height / 2 + 20);
+
+      fill('#0000FF'); 
+      textSize(16);
+      textStyle(BOLD);
+      text("👉 TAP OR TOUCH TO START! 👈", width / 2, height / 2 + 110);
+      textStyle(NORMAL);
+    }
+
+    function drawBaseplateGrid() {
+      stroke(225);
+      strokeWeight(1);
+      for (let x = 0; x < width; x += 30) {
+        line(x, 0, x, height);
+      }
+      for (let y = 0; y < height; y += 30) {
+        line(0, y, width, y);
+      }
+    }
+
+    function drawGame() {
+      if (slowMoTimer > 0) {
+        background(200, 235, 255); 
+        slowMoTimer -= deltaTime; 
+      } else {
+        background(242);
+      }
+      
+      drawBaseplateGrid();
+
+      // SPEED RAMP (No ramp up during slow motion)
+      if (slowMoTimer <= 0) {
+        speedMultiplier += 0.0006; 
+      }
+
+      // SCORE: 1 point per second of survival
+      if (millis() - lastTime > 1000) {
+        score++;
+        lastTime = millis();
+      }
+
+      // Draw LEGO floor
+      fill('#008000'); // Green baseplate
+      stroke(0);
+      strokeWeight(3);
+      rectMode(CORNER);
+      rect(0, height - 50, width, 50);
+
+      // Update and show Hero
+      hero.update();
+      hero.display();
+
+      // Update and show standard bricks
+      for (let b of bricks) {
+        b.update(slowMoTimer > 0 ? 0.45 : speedMultiplier); 
+        b.display();
+
+        if (hero.hits(b)) {
+          gameState = "GAMEOVER";
+        }
+      }
+
+      // Update and show power-ups
+      for (let i = powerUps.length - 1; i >= 0; i--) {
+        let p = powerUps[i];
+        p.display();
+
+        if (hero.hits(p)) {
+          slowMoTimer = 5000; // 5 seconds of slow motion
+          powerUps.splice(i, 1);
+          score += 5; // Bonus score for grabbing the power-up!
+        }
+      }
+
+      // Randomly spawn a golden power-up (approx. every 12 seconds)
+      if (random(1) < 0.003 && powerUps.length < 3) {
+        powerUps.push(new GoldenPowerUp());
+      }
+
+      // Draw the HUD
+      rectMode(CORNER);
+      fill(255, 230);
+      stroke(0);
+      strokeWeight(2.5);
+      rect(15, 15, 250, 80, 8);
+
+      textAlign(LEFT, TOP);
+      fill(0);
+      textSize(20);
+      textStyle(BOLD);
+      text("SCORE: " + score, 30, 25);
+      
+      textSize(14);
+      textStyle(NORMAL);
+      let speedText = nf(slowMoTimer > 0 ? 0.45 : speedMultiplier, 1, 2) + "x";
+      if (slowMoTimer > 0) {
+        fill('#0055ff');
+        text("SPEED: " + speedText + " (SLOW-MO! 🐢)", 30, 50);
+        let barW = map(slowMoTimer, 0, 5000, 0, 200);
+        rect(30, 72, barW, 8, 4);
+      } else {
+        fill(80);
+        text("SPEED: " + speedText, 30, 50);
+      }
+    }
+
+    function drawGameOverScreen() {
+      background(240);
+      drawBaseplateGrid();
+
+      rectMode(CENTER);
+      fill(255);
+      stroke('#FF0000');
+      strokeWeight(4);
+      rect(width / 2, height / 2, min(width * 0.85, 450), 280, 15);
+
+      textAlign(CENTER, CENTER);
+      fill('#FF0000');
+      textSize(42);
+      textStyle(BOLD);
+      text("BUMPED! 💥", width / 2, height / 2 - 70);
+
+      fill(0);
+      textStyle(NORMAL);
+      textSize(24);
+      text("Final Score: " + score + " points", width / 2, height / 2 + 5);
+      
+      textSize(16);
+      let topSpeed = nf(speedMultiplier, 1, 2) + "x";
+      text("Top Speed Reached: " + topSpeed, width / 2, height / 2 + 45);
+
+      fill('#008000');
+      textSize(18);
+      textStyle(BOLD);
+      text("👉 TAP ANYWHERE TO TRY AGAIN! 👈", width / 2, height / 2 + 95);
+      textStyle(NORMAL);
+    }
+
+    class Hero {
+      constructor() {
+        this.x = width / 2;
+        this.y = height / 2;
+        this.size = 35; // Touch-friendly size
+      }
+
+      update() {
+        // Only move the Hero if the user is interacting
+        if (mouseX !== 0 || mouseY !== 0) {
+          this.x = lerp(this.x, mouseX, 0.35); // Smooth lag-free tracking
+          this.y = lerp(this.y, mouseY, 0.35);
+        }
+      }
+
+      display() {
+        fill(255, 230, 0); 
+        stroke(0);
+        strokeWeight(3);
+        ellipse(this.x, this.y, this.size);
+        
+        // Eyes
+        fill(0);
+        noStroke();
+        ellipse(this.x - 8, this.y - 6, 5);
+        ellipse(this.x + 8, this.y - 6, 5);
+        
+        // Rosie cheeks
+        fill(255, 100, 100, 150);
+        ellipse(this.x - 12, this.y + 1, 6);
+        ellipse(this.x + 12, this.y + 1, 6);
+        
+        // Cute smile
+        noFill();
+        stroke(0);
+        strokeWeight(2.5);
+        arc(this.x, this.y + 3, 16, 12, 0, PI);
+      }
+
+      hits(obj) {
+        let d = dist(this.x, this.y, obj.x, obj.y);
+        return d < (this.size / 2 + obj.size / 2 - 2); 
+      }
+    }
+
+    class LegoBrick {
+      constructor() {
+        this.size = random(35, 55);
+        // Spawn them away from the middle center safe zone
+        if (random(1) < 0.5) {
+          this.x = random(this.size, width * 0.35);
+        } else {
+          this.x = random(width * 0.65, width - this.size);
+        }
+        this.y = random(this.size, height - 100);
+        this.color = random(['#FF0000', '#FFFFFF', '#0000FF']);
+        this.baseSpeedX = random(-3.5, 3.5);
+        this.baseSpeedY = random(-3.5, 3.5);
+
+        // Ensure bricks aren't completely still
+        if (abs(this.baseSpeedX) < 1) this.baseSpeedX += (this.baseSpeedX < 0 ? -1.5 : 1.5);
+        if (abs(this.baseSpeedY) < 1) this.baseSpeedY += (this.baseSpeedY < 0 ? -1.5 : 1.5);
+      }
+
+      update(multiplier) {
+        this.x += this.baseSpeedX * multiplier;
+        this.y += this.baseSpeedY * multiplier;
+
+        let half = this.size / 2;
+        if (this.x < half || this.x > width - half) {
+          this.baseSpeedX *= -1;
+          this.x = constrain(this.x, half, width - half);
+        }
+        if (this.y < half || this.y > height - 50 - half) {
+          this.baseSpeedY *= -1;
+          this.y = constrain(this.y, half, height - 50 - half);
+        }
+      }
+
+      display() {
+        push();
+        translate(this.x, this.y);
+        stroke(0);
+        strokeWeight(2.5);
+        fill(this.color);
+        rectMode(CENTER);
+        rect(0, 0, this.size, this.size, 4); // Lego rounded look
+
+        // Dark studs
+        fill(0, 35);
+        noStroke();
+        ellipse(-this.size/4, -this.size/4, this.size/3.5);
+        ellipse(this.size/4, -this.size/4, this.size/3.5);
+        ellipse(-this.size/4, this.size/4, this.size/3.5);
+        ellipse(this.size/4, this.size/4, this.size/3.5);
+        pop();
+      }
+    }
+
+    class GoldenPowerUp {
+      constructor() {
+        this.size = 35;
+        this.x = random(40, width - 40);
+        this.y = random(40, height - 100);
+        this.angle = 0;
+      }
+
+      display() {
+        push();
+        translate(this.x, this.y);
+        this.angle += 0.05;
+        rotate(this.angle);
+        
+        // Aura glow
+        noStroke();
+        fill(255, 215, 0, 50);
+        ellipse(0, 0, this.size * 1.5);
+
+        // Main gold coin
+        fill(255, 215, 0); 
+        stroke(184, 134, 11); 
+        strokeWeight(3);
+        ellipse(0, 0, this.size);
+        
+        // Beautiful sparkle design
+        fill(255);
+        noStroke();
+        beginShape();
+        vertex(0, -this.size/4);
+        vertex(this.size/10, -this.size/10);
+        vertex(this.size/4, 0);
+        vertex(this.size/10, this.size/10);
+        vertex(0, this.size/4);
+        vertex(-this.size/10, this.size/10);
+        vertex(-this.size/4, 0);
+        vertex(-this.size/10, -this.size/10);
+        endShape(CLOSE);
+        pop();
+      }
+    }
+
+    function mousePressed() {
+      handleInteract();
+    }
+
+    function touchStarted() {
+      handleInteract();
+      return false; // Prevents iOS page scrolling while dragging
+    }
+
+    function handleInteract() {
+      if (gameState === "START") {
+        gameState = "PLAY";
+        resetGame();
+        hero.x = mouseX;
+        hero.y = mouseY;
+      } else if (gameState === "GAMEOVER") {
+        gameState = "PLAY";
+        resetGame();
+        hero.x = mouseX;
+        hero.y = mouseY;
+      } else if (gameState === "PLAY") {
+        // Tapping adds a block!
+        bricks.push(new LegoBrick());
+      }
+    }
+
+    function resetGame() {
+      bricks = [];
+      powerUps = [];
+      for (let i = 0; i < 15; i++) {
+        bricks.push(new LegoBrick());
+      }
+      score = 0;
+      speedMultiplier = 1.0;
+      slowMoTimer = 0;
+      lastTime = millis();
+    }
+  </script>
+</body>
+</html>
