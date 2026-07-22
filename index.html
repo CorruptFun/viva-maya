@@ -67,11 +67,15 @@
         background-attachment: fixed;
       }
       /* The safe region. #frame keeps only the LEFT/RIGHT device insets (landscape
-         notch protection). Top/bottom insets are dropped so the canvas extends to
-         the true screen edges and fills a tall phone far better — safe because the
-         720×1280 design's top (0–300) and bottom (940–1280) are empty margin, and
-         the FIT letterbox adds further buffer, so the board (40–680 × 300–940) and
-         HUD never reach the notch / Dynamic Island / home indicator.
+         notch protection). Top/bottom insets are dropped so the canvas extends to the
+         true screen edges and fills a tall phone edge-to-edge. Vertical notch / Dynamic
+         Island clearance is handled in the GAME instead: #safeprobe (below) exposes
+         env(safe-area-inset-top) to JS (main.ts → config.setSafeTopInset), and
+         config.contentOffsetY anchors the 720×1280 design box a comfortable gap below
+         that inset on tall phones — so the HUD sits clear of the notch with no wasted
+         band, and the reclaimed height pools toward the bottom (the home-indicator side
+         keeps a comfortable margin). On a no-notch / non-tall screen the box stays
+         centred, exactly as before.
          Phaser owns #app — on boot it forces `width/height:100%` inline on its
          parent, so the insets MUST live on this outer wrapper: a fixed element's
          `height:100%` resolves against the viewport (ignoring its own top/bottom),
@@ -90,6 +94,19 @@
         width: 100%;
         height: 100%;
       }
+      /* Zero-footprint probe whose height resolves env(safe-area-inset-top), so main.ts
+         can read the top inset in CSS px (getBoundingClientRect) and anchor game content
+         a comfortable gap below the notch / Dynamic Island. visibility:hidden still lays
+         out (it reports a rect); display:none would not. */
+      #safeprobe {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 0;
+        height: env(safe-area-inset-top, 0px);
+        visibility: hidden;
+        pointer-events: none;
+      }
       canvas {
         touch-action: none;
         user-select: none;
@@ -105,6 +122,7 @@
     </style>
   </head>
   <body>
+    <div id="safeprobe" aria-hidden="true"></div>
     <div id="frame">
       <div id="app"></div>
     </div>

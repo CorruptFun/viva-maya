@@ -1,5 +1,5 @@
 import Phaser from 'phaser'
-import { BOARD_W, BOARD_Y, contentOffsetY, DESIGN_H, DESIGN_W } from '../config'
+import { BOARD_W, BOARD_Y, contentOffsetY, DESIGN_H, DESIGN_W, worldH } from '../config'
 import { D, E } from './motion'
 import { quality } from './quality'
 import { css, getTheme, getThemeId, prefersReducedMotion } from './theme'
@@ -182,8 +182,9 @@ function washBase(scene: Phaser.Scene): void {
   const wash = scene.add.graphics().setDepth(Z.wash)
   wash.fillGradientStyle(T.washTop, T.washTop, T.washBottom, T.washBottom, 1)
   // Fill the full letterbox-free visible world (design box + reclaimed top/bottom margins), so the
-  // margins read as warm wash instead of cream void. Extra pad absorbs minor live-resize growth.
-  wash.fillRect(0, -OFF - 60, DESIGN_W, DESIGN_H + 2 * OFF + 120)
+  // margins read as warm wash instead of cream void. Height is the WHOLE world (not DESIGN_H + 2·OFF —
+  // the box is anchored, not centred, so the margins are asymmetric). Extra pad absorbs live-resize growth.
+  wash.fillRect(0, -OFF - 60, DESIGN_W, worldH() + 120)
 }
 
 /**
@@ -433,8 +434,8 @@ function vignette(scene: Phaser.Scene): void {
   // Anchor the vignette to the VISIBLE world edges (design box + reclaimed margins), so the inward
   // focus still lands at the true screen edges on flexible-height screens.
   const OFF = contentOffsetY()
-  const VT = -OFF
-  const VH = DESIGN_H + 2 * OFF
+  const VT = -OFF // top visible edge
+  const VH = worldH() // full visible height (asymmetric margins → NOT DESIGN_H + 2·OFF)
   const Vt = 0.1
   const Vb = 0.16
   const Vs = 0.12
@@ -482,8 +483,8 @@ function marquee(scene: Phaser.Scene, variant: BackdropVariant): AmbientLoop | u
   }
   // Run the marquee along the VISIBLE world edges so the chasing frame reaches the true screen edges.
   const OFF = contentOffsetY()
-  const VT = -OFF
-  const VB = DESIGN_H + OFF
+  const VT = -OFF // top visible edge
+  const VB = worldH() - OFF // bottom visible edge (asymmetric margins → NOT DESIGN_H + OFF)
   line(24, DESIGN_W - 24, VT + 26, true, 15)
   line(24, DESIGN_W - 24, VB - 26, true, 15)
   if (variant === 'home') {
@@ -736,7 +737,7 @@ export function addProscenium(scene: Phaser.Scene): void {
   g.strokePoints(heartPolygon(cx, keyY, keyR), true)
 
   // ---- Console lip: a thin matched molding mirroring the crown, at the very bottom edge ----
-  const lipY = 1250 + OFF
+  const lipY = worldH() - OFF - 30 // 30 above the bottom visible edge (asymmetric → NOT 1250 + OFF)
   g.lineStyle(2.5, T.gold, 0.45)
   g.lineBetween(cx - halfW, lipY, cx + halfW, lipY)
   g.lineStyle(1.5, T.goldBezel, 0.28)

@@ -1,6 +1,6 @@
 import Phaser from 'phaser'
 import { SWAP_SOUNDS, SWAP_SOUND_LABELS, sfx } from '../audio/sfx'
-import { DESIGN_W, LIVES_MAX, restScrollY, worldH } from '../config'
+import { DESIGN_W, LIVES_MAX, restScrollY, viewportCenterY, worldH } from '../config'
 import { formatCountdown } from '../core/lives'
 import type { LivesState } from '../core/lives'
 import { loadSave } from '../core/save'
@@ -1290,10 +1290,9 @@ const HELP_SECTIONS: HelpSection[] = [
  */
 export function openHelpPanel(scene: Phaser.Scene): void {
   const W = 720
-  const H = 1280
   const layer = scene.add.container(0, 0).setDepth(60)
 
-  const scrim = scene.add.rectangle(W / 2, H / 2, W, worldH(), 0x2a2417, 0.6).setInteractive()
+  const scrim = scene.add.rectangle(W / 2, viewportCenterY(), W, worldH(), 0x2a2417, 0.6).setInteractive()
   scrim.on('pointerup', () => { sfx.whoosh(); layer.destroy() }) // §E3 B14: tap-outside close partner
 
   const px = 40
@@ -1387,7 +1386,7 @@ export function openSoundPanel(scene: Phaser.Scene): void {
   const H = 1280
   const layer = scene.add.container(0, 0).setDepth(60)
 
-  const scrim = scene.add.rectangle(W / 2, H / 2, W, worldH(), 0x2a2417, 0.6).setInteractive()
+  const scrim = scene.add.rectangle(W / 2, viewportCenterY(), W, worldH(), 0x2a2417, 0.6).setInteractive()
   scrim.on('pointerup', () => { sfx.whoosh(); layer.destroy() }) // §E3 B14: tap-outside close partner
 
   const px = 40
@@ -1593,7 +1592,7 @@ export function openThemePanel(scene: Phaser.Scene, openingThemeId: ThemeId = ge
   const ph = 792
   const pyTop = (H - ph) / 2
 
-  const scrim = scene.add.rectangle(W / 2, H / 2, W, worldH(), 0x2a2417, 0.6).setInteractive()
+  const scrim = scene.add.rectangle(W / 2, viewportCenterY(), W, worldH(), 0x2a2417, 0.6).setInteractive()
   const close = (): void => {
     sfx.whoosh() // §E3 B14: airy sweep partners the panel closing
     const changed = getThemeId() !== openingThemeId
@@ -1783,7 +1782,7 @@ export function openSettingsPanel(scene: Phaser.Scene): void {
   const startedRM = rawReduceMotionPref()
   const startedHC = hcBoard()
 
-  const scrim = scene.add.rectangle(W / 2, H / 2, W, worldH(), 0x2a2417, 0.6).setInteractive()
+  const scrim = scene.add.rectangle(W / 2, viewportCenterY(), W, worldH(), 0x2a2417, 0.6).setInteractive()
   const close = (): void => {
     sfx.whoosh() // §E3 B14: airy sweep partners the panel closing
     const changed = rawReduceMotionPref() !== startedRM || hcBoard() !== startedHC
@@ -1855,7 +1854,6 @@ export function openSettingsPanel(scene: Phaser.Scene): void {
  */
 export function openOnboarding(scene: Phaser.Scene, onClose?: () => void): void {
   const W = 720
-  const H = 1280
   const reduced = prefersReducedMotion()
   const layer = scene.add.container(0, 0).setDepth(65)
 
@@ -1864,7 +1862,7 @@ export function openOnboarding(scene: Phaser.Scene, onClose?: () => void): void 
   const cardW = 600
   const cardH = 520
 
-  const scrim = scene.add.rectangle(W / 2, H / 2, W, worldH(), 0x2a2417, 0.6).setInteractive()
+  const scrim = scene.add.rectangle(W / 2, viewportCenterY(), W, worldH(), 0x2a2417, 0.6).setInteractive()
   const close = (): void => {
     layer.destroy()
     onClose?.()
