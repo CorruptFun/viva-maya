@@ -1,5 +1,5 @@
 import { LIVES_MAX } from '../config'
-import type { BoostType } from './types'
+import type { BoostType, PromoReward } from './types'
 
 export interface SaveData {
   v: 8
@@ -372,6 +372,26 @@ export function grantReferralRewards(count: number, chipsEach: number): number {
   save.chips += Math.max(0, Math.floor(count)) * Math.max(0, Math.floor(chipsEach))
   save.lives = LIVES_MAX
   save.livesAnchor = 0
+  persistSave(save)
+  return save.chips
+}
+
+/**
+ * Grant a redeemed promo/reward-code payload (core/promo.ts) in ONE atomic load→grant→persist so a
+ * crash can never award half: chips → add · hearts → full lives refill · boost → queue N copies for
+ * the next level (capped). Returns the resulting chip balance (unchanged for non-chip rewards).
+ */
+export function grantPromoReward(reward: PromoReward): number {
+  const save = loadSave()
+  if (reward.kind === 'chips') {
+    save.chips += Math.max(0, Math.floor(reward.amount))
+  } else if (reward.kind === 'hearts') {
+    save.lives = LIVES_MAX
+    save.livesAnchor = 0
+  } else if (reward.kind === 'boost' && reward.boostType) {
+    const n = Math.max(1, Math.min(20, Math.floor(reward.amount || 1)))
+    for (let i = 0; i < n; i++) save.pendingBoosts.push(reward.boostType)
+  }
   persistSave(save)
   return save.chips
 }
