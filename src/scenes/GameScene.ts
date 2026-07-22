@@ -1462,6 +1462,13 @@ export class GameScene extends Phaser.Scene {
           .image(p.x, p.y, 'tile')
           .setDisplaySize(tileSize, tileSize)
           .setTint((r + c) % 2 === 0 ? TILE_A : TILE_B)
+        // §detail: a soft ADD-blend glossy crown sheen per cushion — the catch-light the tint-locked
+        // tile can't bake in. All 64 batch to one extra draw call (same texture); zero per-frame cost.
+        this.add
+          .image(p.x, p.y, 'tilegloss')
+          .setDisplaySize(tileSize, tileSize)
+          .setBlendMode(Phaser.BlendModes.ADD)
+          .setAlpha(0.55)
       }
     }
   }
