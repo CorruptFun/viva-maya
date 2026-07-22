@@ -13,7 +13,7 @@ level wins ──► chips ──► boosts/helpers (Gift Store, in-level power 
      │            ├── jackpot wheel payouts (meter fills 1 notch/win)
      │            ├── weekly champion purse (1,000, one player/week)
      │            ├── referral rewards (300/friend · 150 welcome)
-     │            └── daily bonus / free-spin prizes (boosts, occasionally chips)
+     │            └── daily check-in (streak-scaled chips 10→150 + a boost / free-spin prize)
      │
      ├──► jackpot meter ──► wheel fires after the win that fills it
      └──► MEGA WIN (cascade ≥4) ──► free spins (3 or 6) ──► daily-cabinet prizes
@@ -39,6 +39,24 @@ cascade line would be an infinite-spin printer. Caps: 6 earned/day, 12 banked. F
 spins bypass the daily latch and never touch the streak or `lastSpinDate`; the cabinet
 chains spins while the bank lasts (accelerating bulb chase per consecutive spin) and
 the Home DAILY BONUS button wears a "×N FREE SPINS" badge while any are banked.
+
+## Daily check-in chips
+
+Every daily bonus pull also banks **chips**, scaled by the spin streak — the diagram's "chips" faucet,
+made dependable. The reward climbs across a 7-day week and **resets with the week**, indexed by
+`((streak − 1) % 7)` — the same wrap the §D3 week strip draws, so the day-7 payday lands exactly as the
+7th dot lights and starts fresh on day 8. Default ladder (`CHECKIN_CHIPS`, `src/core/daily.ts`):
+`10 · 15 · 25 · 40 · 60 · 90 · 150`. Chips bank onto the same save `performSpin` persists
+(award-before-animation, like the boost), so a mid-celebration close can't lose them; the
+DailyBonusScene celebration shows the rose "+N CHIPS" beat.
+
+Why a repeating week rather than an ever-climbing flat cap: the ladder's **steady state** is what a
+committed daily player earns forever (~56 chips/day, ~390/week). A permanent 150/day cap (~1,050/week)
+would rival the one-per-week champion purse (1,000) and trivialize the Gift Store sinks (boosts 40–120);
+the weekly reset keeps the exciting 150 "payday" while holding the average to a *supplement* of level-win
+income (~33/day) — real pull, inflation-safe by construction (a fixed per-day faucet). The whole curve
+is that one array. A banked **free spin never pays check-in chips** (it bypasses the daily latch/streak,
+so a hoard of free spins can't farm them).
 
 ## Jackpot meter & wheel
 
@@ -116,6 +134,7 @@ that re-grants after having been overwritten — self-healing, never a permanent
 | `CHAMPION_PURSE` | 1000 | `src/core/leaderboard.ts` |
 | `PRIZE_TIERS` | [rank 1 → 1000] | `src/core/leaderboard.ts` |
 | `FREE_SPIN_AWARDS` | ×4→3 · ×6+→6 | `src/core/daily.ts` |
+| `CHECKIN_CHIPS` | 10·15·25·40·60·90·150 (7-day, repeats) | `src/core/daily.ts` |
 | `FREE_SPIN_DAILY_CAP` / `FREE_SPIN_BANK_CAP` | 6 / 12 | `src/core/save.ts` |
 | `QUALIFY_LEVEL` | 5 | `src/core/referrals.ts` |
 | `REFERRER_CHIPS` / `REFEREE_CHIPS` | 300 / 150 | `src/core/referrals.ts` |
