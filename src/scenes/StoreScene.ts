@@ -63,7 +63,8 @@ export class StoreScene extends Phaser.Scene {
     const codeFixture = import.meta.env.DEV && new URLSearchParams(location.search).has('code')
     if (isCloudConfigured() || codeFixture) {
       // On the balance row (right of the centred chip pill), NOT the title row — at y=84 it collided
-      // with the wide "GIFT STORE" title. (A fuller top-band rework is docs/TOP_LAYOUT_PLAN.md.)
+      // with the wide "GIFT STORE" title. The systemic top-band rework this used to defer to has
+      // since shipped (safe-area anchoring, c375633) — the balance row is simply the clean home.
       addPillButton(this, 600, this.balanceY, 176, 52, 'ENTER CODE', GHOST_PILL, () => this.openCodeEntry())
     }
     if (codeFixture) this.time.delayedCall(400, () => this.openCodeEntry())

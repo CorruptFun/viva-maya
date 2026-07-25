@@ -211,7 +211,7 @@ Phaser **reuses the same scene instance** across `scene.restart()` / `scene.star
 
 ---
 
-*Reference implementation: Viva Maya (`src/view/ui.ts`, `textures.ts`, `theme.ts`, `motion.ts`, `quality.ts`, `background.ts`, `src/main.ts`, `index.html`). See also `docs/VISUAL_OVERHAUL.md` and `docs/ULTIMATE_UIUX.md` for the full design system this cookbook distills.*
+*Reference implementation: Viva Maya (`src/view/ui.ts`, `textures.ts`, `theme.ts`, `motion.ts`, `quality.ts`, `background.ts`, `src/main.ts`, `index.html`). This cookbook distils the design system those files implement — it is the surviving reference. The write-once plans it was distilled from (`VISUAL_OVERHAUL.md`, `ULTIMATE_UIUX.md`, `UI_FACELIFT_PLAN.md`, `TOP_LAYOUT_PLAN.md`) were retired once fully shipped; recover them from git history if the original rationale is ever needed.*
 
 
 ## Rounds 1–4 interaction vocabulary (2026-07)
