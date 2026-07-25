@@ -26,14 +26,21 @@ This file is the canonical mechanics reference — keep it updated when rules ch
 - Swap adjacent pieces via swipe (drag ≥ 0.3·CELL) or tap-select→tap-adjacent. Invalid swaps
   snap back (no move consumed). A swap is valid if it creates a run ≥3 OR activates specials.
 - Board generation: never spawns pre-existing matches; guarantees ≥1 valid move; reshuffles
-  (regenerate) when no valid move remains. findFirstValidMove doubles as the autoplay/hint engine.
+  (regenerate) when no valid move remains — carrying any SPECIALS on the board onto the new layout
+  (kind only; each cell keeps the fresh fill's symbol, so it stays match-free and a reshuffle can
+  never confiscate a Wild Reel/Dice Bomb/Jackpot Chip). findFirstValidMove doubles as the
+  autoplay/hint engine.
 - Resolve loop (GameScene state machine): idle → swapping → resolving (wave→gravity→refill,
   repeat while matches exist) → idle | ended. Cascade counter increments per wave.
 
 ## Special pieces
 Created at the swapped cell when possible, else run intersection, else run middle.
 Specials keep their symbol (still match by color); Jackpot is colorless (never in runs).
-Match-created specials are blast-protected during their birth wave.
+Match-created specials are blast-protected during their birth wave — BUT if a live special is
+already standing on that birth cell, it detonates first and its blast rides along in the same wave
+(blastOf, computed before the overwrite; carried events lead ClearWave.events). So swiping a Wild
+Reel into a match-4 gives you both the line blast and the upgrade. Fixed 2026-07-25 (6ab80b5) —
+before that the old special was overwritten in silence and never fired.
 
 | Shape | Piece | Effect |
 |---|---|---|
@@ -59,7 +66,7 @@ clears a RANDOM present color. Swap-combos (both consumed, epicenter = drag dest
 
 ## Levels (src/core/levels.ts)
 - levelSpec(n) is deterministic per level (seed 0xC0FFEE ^ n·2654435761): same goals every
-  attempt; boards are random per attempt. LEVEL_COUNT = 100 (UI; procedural spec works for any n —
+  attempt; boards are random per attempt. LEVEL_COUNT = 300 (UI; procedural spec works for any n —
   difficulty naturally plateaus by ~L24, so L24+ are a steady hard challenge until curve tuning).
   LevelSelect is a masked, drag-scrollable grid that auto-scrolls to the current level.
 - Objectives: collect N of 1 symbol (L1–2), 2 symbols (L3–7), 3 (L8+); per-objective
@@ -83,12 +90,15 @@ clears a RANDOM present color. Swap-combos (both consumed, epicenter = drag dest
   all-time save.best. HUD shows a "WEEK'S BEST" card; end card shows NEW BEST! / TIME'S UP.
 
 ## Lives / energy (src/core/lives.ts + GameScene gate)
-- Generous pool: LIVES_MAX=10, LIFE_REGEN_MS=8 min (config.ts) — tuned way up from the original
-  3/30min after Maya burned through a stingy pool while learning (2026-07-17). Only a LOSS drains
-  a life; a mid-level QUIT after ≥1 move also drains one (closes the quit-to-dodge-loss exploit).
-  WINS ARE FREE — so a steady/skilled player never hits the wall.
-- Regen is wall-clock (device clock trusted, like the daily spin): +1 life every 8 min, so a
-  single life returns after a short break and an empty pool refills in ~80 min. save v5→v6 does a
+- Pool: LIVES_MAX=5, LIFE_REGEN_MS=20 min, LIVES_GRACE_LEVELS=10 (config.ts). Originally 3/30min,
+  widened to 10/8min after Maya burned through a stingy pool while learning (2026-07-17), then
+  retuned 2026-07-21 to 5/20min because 10/8 was effectively infinite — beginners are protected by
+  the GRACE LEVELS instead of pool size (losses below L10 never cost a heart), so scarcity only
+  exists once a player is invested. Only a LOSS drains a life; a mid-level QUIT after ≥1 move also
+  drains one (closes the quit-to-dodge-loss exploit). WINS ARE FREE — so a steady/skilled player
+  never hits the wall.
+- Regen is wall-clock (device clock trusted, like the daily spin): +1 life every 20 min, so a
+  single life returns after a short break and an empty pool refills in ~100 min. save v5→v6 does a
   one-time GRACE REFILL to full on upgrade so nobody is stranded at the old count. Storage: save.lives +
   save.livesAnchor (epoch ms the current regen cycle started; 0 when full). refreshLives() banks
   regen + persists on every read; spendLife/grantLife mutate; devSetLives for ?lives=N.
@@ -129,11 +139,13 @@ clears a RANDOM present color. Swap-combos (both consumed, epicenter = drag dest
 - Buys are idle-only (the bar dims mid-resolve, hides on level end); reduced-motion / haptics / mute aware.
 
 ## Save (src/core/save.ts — localStorage key 'viva-maya:v1', all access try/catch)
-v6: { v:6, best, unlocked, stars{level:1..3}, lastSpinDate|null, streak, pendingBoosts[],
-      endlessWeek|null, endlessBest, lives, livesAnchor }
+v8: { v:8, best, unlocked, stars{level:1..3}, lastSpinDate|null, streak, pendingBoosts[],
+      endlessWeek|null, endlessBest, lives, livesAnchor, chips, + v7 personal-warmth fields,
+      + v8 jackpot-wheel meter, champion claims, referral/free-spin fields }
 Migrations: v1 {best} → v2 (+unlocked/stars) → v3 (+daily) → v4 (+endless: endlessWeek
 "YYYY-Www", endlessBest) → v5 (+lives/energy: lives, livesAnchor — pre-v5 saves start full)
-→ v6 (grace refill: tops every save to full — lives=LIVES_MAX, livesAnchor=0 — on upgrade).
+→ v6 (grace refill: tops every save to full — lives=LIVES_MAX, livesAnchor=0 — on upgrade)
+→ v7 (+personal-warmth fields, §E9) → v8 (+jackpot-wheel meter; absent in older saves → 0).
 Loader is shape-tolerant (old saves default new fields). Mute flag is separate: 'viva-maya:muted'.
 
 ## Audio (src/audio/sfx.ts — procedural WebAudio, zero assets)
@@ -160,8 +172,12 @@ addDynamicTexture instead.
 ## Mobile/PWA
 Portrait design 720×1280, Scale.FIT + CENTER_BOTH (no CSS flex on #app — double-centering).
 touch-action:none, no pinch zoom, viewport-fit=cover, apple-touch meta, standalone display.
-vite-plugin-pwa autoUpdate SW precaches everything except og-image.png. Install: Safari →
-Share → Add to Home Screen. base:'./' keeps builds host-agnostic.
+vite-plugin-pwa registerType:'prompt' (NOT autoUpdate — a new deploy raises a visible
+"new version — refresh" toast the player taps, so an update can't land a launch late;
+see main.ts onNeedRefresh). SW precaches everything except og-image.png and supabase-*.js
+(lazy + optional cloud client), with about/privacy/terms.html denylisted from the SPA
+navigate-fallback. Install: Safari → Share → Add to Home Screen. base:'./' keeps builds
+host-agnostic.
 
 ## Icons & social (scripts/gen-icons.mjs — macOS: headless Chrome + sips)
 icon.html → 5×5 emoji board + VIVA MAYA banner (checkerboard = (row+col)%2). Banner on
@@ -172,21 +188,23 @@ icon.html → 5×5 emoji board + VIVA MAYA banner (checkerboard = (row+col)%2). 
 ?level=N jump · ?endless=1 boot the weekly race · ?lives=N set the life pool (test the gate) ·
 ?scene=daily|home|levelselect · ?auto=MS autoplay hinted moves · ?turbo=N scale tween/timer
 clocks · ?goal=N ?moves=N override level · ?plant=1 seed specials · ?spin=1 force spin ·
-?autospin=1 auto-trigger spin.
+?autospin=1 auto-trigger spin · ?repro=upgrade|upgrade-col plant the "special swallowed by its
+own upgrade" case (gapped column + a reel at (3,4); swipe it LEFT into the gap → match-4).
 DEV strip (top-left) mirrors model state (level/state/moves/score/objectives/hint) — the
 Claude browser pane starves the RAF clock and drops clicks while hidden; screenshots are
 the only reliable channel there, so verify via strip + autoplay/autospin, and confirm
 tap-targets on a real device.
 
 ## Build & deploy
-npm run dev (5173) · build (tsc+vite→dist) · preview (4173) · icons.
+npm run dev (5173, or $PORT if set — strict) · build (tsc+vite→dist) · preview (4173) ·
+test (vitest run) · icons.
 Deploy: GitHub Pages. With workflow scope: push to main → .github/workflows/deploy.yml
 builds and deploys automatically. Legacy fallback: publish dist/ to gh-pages branch.
 
 ## Roadmap (agreed direction)
 DONE: streak flame on Home (addStreakBadge) · endless weekly-seed race after L30 (shared board,
 BEST race — src/core/endless.ts) · star-milestone celebration every 10 levels (milestoneSplash) ·
-lives/energy (lose-only, 10-pool, 8-min regen — src/core/lives.ts) · in-level helper bar (spend
+lives/energy (lose-only, 5-pool, 20-min regen, grace below L10 — src/core/lives.ts) · in-level helper bar (spend
 earned chips on +1/+5 moves or a targeted bomb for the current level — src/core/store.ts POWER_ITEMS).
 TODO: tune levelSpec from Maya's real play · optionally let the daily spin grant a bonus life.
 Still rejected: real-money purchases, cash-out, home-decorating meta. (Both lives/energy and mid-level

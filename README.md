@@ -10,9 +10,10 @@ Screen to install it like an app (works offline after first load).
 
 ```sh
 npm install
-npm run dev      # http://localhost:5173
+npm run dev      # http://localhost:5173 (or $PORT, if set)
 npm run build    # typecheck + production build + service worker (dist/)
 npm run preview  # serve the production build at http://localhost:4173
+npm test         # unit tests (vitest, pure-logic core — no Phaser)
 npm run icons    # regenerate public/ PWA icons (procedural, no deps)
 ```
 
@@ -28,9 +29,9 @@ input, and tweens live in `src/scenes/` and `src/view/`.
 - [x] **Phase 4** — power-ups: Wild Reel (match-4), Dice Bomb (L/T), Jackpot Chip (match-5),
       full combo matrix (reel+reel cross, bomb+bomb 5x5, reel+bomb triple-cross,
       jackpot+reel/bomb color conversion, jackpot+jackpot board wipe), chain detonations
-- [x] **Levels** — 100 seeded levels with per-level collect objectives + move limits and a
+- [x] **Levels** — 300 seeded levels with per-level collect objectives + move limits and a
       difficulty curve (`src/core/levels.ts`), drag-scrollable level select with stars/unlocks,
-      win/lose overlays, persistent progress (localStorage v6 save)
+      win/lose overlays, persistent progress (localStorage v8 save)
 - [x] **Phase 5 — audio & juice** — procedural WebAudio SFX (pitch-shifting cascades, sirens),
       MEGA WIN choreography, haptics, mute toggle, selectable move sounds
 - [x] **Return hooks** — lives/energy pool (lose-only, self-refilling), daily bonus spin with
@@ -55,7 +56,10 @@ Round-4 additions: `?race[=rich|out|empty|loading|error|crownyou]` weekly-race p
 fixtures · `?raceline=rich|out|new` Home standings-line fixtures · `?coronation` /
 `?friend[=n]` celebration previews · `?invite=in|minting|welcome` store invite fixtures ·
 `?wheel` fire the armed jackpot wheel · `?wedge=N` pin the winning wedge ·
-`?ticket=N` free-spin ticket beat · `?ref=CODE` referral capture (works in prod too).
+`?ticket=N` free-spin ticket beat · `?ref=CODE` referral capture (works in prod too) ·
+`?repro=upgrade` plant the "special swallowed by its own upgrade" regression case ·
+`?lives=N` · `?endless=1` · `?scene=daily|home|levelselect` · `?spin=1` · `?autospin=1` ·
+`?help` / `?sound` auto-open those panels.
 An on-screen strip + `document.body.dataset.vegas` mirror expose model state
 (needed because the Claude browser pane's JS eval binds to a stale document —
 screenshots are the only reliable channel, so the game surfaces its state visually).
