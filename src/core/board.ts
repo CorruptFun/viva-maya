@@ -25,13 +25,25 @@ export class Board {
     this.regenerate()
   }
 
-  /** Fresh board: no pre-existing matches, at least one valid move. */
+  /**
+   * Fresh board: no pre-existing matches, at least one valid move.
+   *
+   * Specials RIDE THROUGH. A no-moves reshuffle used to hand back an all-normal board, quietly
+   * confiscating any Wild Reel / Dice Bomb / Jackpot Chip the player was holding — including ones
+   * bought or won from the daily spin. Only the KIND is carried over; each cell keeps whatever
+   * symbol the fresh fill gave it, so the board stays match-free, and re-planting can only ADD valid
+   * moves (a special never removes one), never invalidate the layout we just settled on.
+   */
   regenerate(): void {
+    const keep = this.grid.flatMap((row, r) =>
+      row.map((p, c) => ({ at: { row: r, col: c }, kind: p?.kind ?? 'normal' })).filter(x => x.kind !== 'normal')
+    )
     for (let attempt = 0; attempt < 100; attempt++) {
       this.fillWithoutMatches()
-      if (this.findFirstValidMove()) return
+      if (this.findFirstValidMove()) break
+      // Statistically unreachable at 8x8 with 5-6 symbols; the last fill stands regardless.
     }
-    // Statistically unreachable at 8x8 with 5-6 symbols; last fill stands regardless.
+    for (const { at, kind } of keep) this.plant(at, kind)
   }
 
   private palette(): SymbolType[] {
@@ -177,6 +189,10 @@ export class Board {
 
     const transformed: ClearWave['transformed'] = []
     const protectedCells = new Set<string>()
+    // A special standing on the upgrade cell is CONSUMED by this match, so it must still detonate —
+    // its blast rides along in the same wave (see below).
+    const carrySeeds: Coord[] = []
+    const carryEvents: BlastEvent[] = []
     for (const g of groups) {
       const maxLen = Math.max(...g.runs.map(r => r.cells.length))
       const bothDirs = g.runs.some(r => r.horizontal) && g.runs.some(r => !r.horizontal)
@@ -195,18 +211,31 @@ export class Board {
         g.runs[0].cells[Math.floor(g.runs[0].cells.length / 2)]
       const from = this.grid[spawnAt.row][spawnAt.col]
       if (!from) continue
+      // The upgrade cell can already hold a LIVE special — swipe a Wild Reel into a line of three and
+      // it lands in a match-4, which spawns a new reel right on top of it. The upgrade cell is
+      // protected from chainExpand (so the newborn survives its own wave), so overwriting blind ate
+      // the old special's blast: the line never fired and the piece looked like it "survived" the
+      // match, when it was really its own replacement standing there. Carry its detonation into the
+      // wave first (computed while it's still on the grid — the jackpot's pick reads the board).
+      if (from.kind !== 'normal') {
+        const blast = this.blastOf(from, spawnAt)
+        carrySeeds.push(...blast.seeds)
+        carryEvents.push(...blast.events)
+      }
       const to = this.newPiece(from.symbol, kind)
       this.grid[spawnAt.row][spawnAt.col] = to
       transformed.push({ at: spawnAt, from, to })
       protectedCells.add(key(spawnAt))
     }
 
-    const seeds: Coord[] = []
+    const seeds: Coord[] = [...carrySeeds]
     for (const g of groups) for (const c of g.cells.values()) seeds.push(c)
     const { cleared, events } = this.chainExpand(seeds, protectedCells)
     // Count the morphed pieces as collected too (their match consumed them).
     for (const t of transformed) cleared.push({ piece: t.from, at: t.at })
-    return { cleared, transformed, events }
+    // Carried blasts lead the event list so the view centres the wave on the detonation (epicenter,
+    // hitstop, score popup) rather than on the quiet match that set it off.
+    return { cleared, transformed, events: [...carryEvents, ...events] }
   }
 
   private intersectionOf(runs: RunMatch[]): Coord | null {
@@ -325,6 +354,47 @@ export class Board {
     return { cleared, transformed: [], events }
   }
 
+  /**
+   * The blast a special throws when it fires at `at`: the cells it reaches plus the event the view
+   * renders. ONE definition, shared by every trigger path — chainExpand (hit by another blast) and
+   * matchWave (swallowed by the match that upgrades it) — so a special detonates the same way no
+   * matter what set it off.
+   */
+  private blastOf(piece: Piece, at: Coord): { seeds: Coord[]; events: BlastEvent[] } {
+    const seeds: Coord[] = []
+    switch (piece.kind) {
+      case 'wildReelRow':
+        for (let c = 0; c < this.cols; c++) seeds.push({ row: at.row, col: c })
+        return { seeds, events: [{ type: 'reel', at, horizontal: true }] }
+      case 'wildReelCol':
+        for (let r = 0; r < this.rows; r++) seeds.push({ row: r, col: at.col })
+        return { seeds, events: [{ type: 'reel', at, horizontal: false }] }
+      case 'diceBomb':
+        for (let dr = -1; dr <= 1; dr++) {
+          for (let dc = -1; dc <= 1; dc++) seeds.push({ row: at.row + dr, col: at.col + dc })
+        }
+        return { seeds, events: [{ type: 'bomb', at, radius: 1 }] }
+      case 'jackpot': {
+        // Triggered by a blast: takes a random present symbol with it.
+        const present = this.palette().filter(s =>
+          this.grid.some(row => row.some(p => p && p.kind === 'normal' && p.symbol === s))
+        )
+        const symbol = present.length > 0 ? present[randInt(this.rng, present.length)] : null
+        if (symbol) {
+          for (let r = 0; r < this.rows; r++) {
+            for (let c = 0; c < this.cols; c++) {
+              const p = this.grid[r][c]
+              if (p && p.symbol === symbol && p.kind !== 'jackpot') seeds.push({ row: r, col: c })
+            }
+          }
+        }
+        return { seeds, events: [{ type: 'jackpot', at, symbol }] }
+      }
+      case 'normal':
+        return { seeds, events: [] }
+    }
+  }
+
   /** Flood outward from the seed cells, firing any specials hit along the way. */
   private chainExpand(
     seedCells: Coord[],
@@ -340,41 +410,9 @@ export class Board {
       const piece = this.grid[at.row][at.col]
       if (!piece) continue
       clearedMap.set(k, { piece, at })
-      switch (piece.kind) {
-        case 'wildReelRow':
-          events.push({ type: 'reel', at, horizontal: true })
-          for (let c = 0; c < this.cols; c++) queue.push({ row: at.row, col: c })
-          break
-        case 'wildReelCol':
-          events.push({ type: 'reel', at, horizontal: false })
-          for (let r = 0; r < this.rows; r++) queue.push({ row: r, col: at.col })
-          break
-        case 'diceBomb':
-          events.push({ type: 'bomb', at, radius: 1 })
-          for (let dr = -1; dr <= 1; dr++) {
-            for (let dc = -1; dc <= 1; dc++) queue.push({ row: at.row + dr, col: at.col + dc })
-          }
-          break
-        case 'jackpot': {
-          // Triggered by a blast: takes a random present symbol with it.
-          const present = this.palette().filter(s =>
-            this.grid.some(row => row.some(p => p && p.kind === 'normal' && p.symbol === s))
-          )
-          const symbol = present.length > 0 ? present[randInt(this.rng, present.length)] : null
-          events.push({ type: 'jackpot', at, symbol })
-          if (symbol) {
-            for (let r = 0; r < this.rows; r++) {
-              for (let c = 0; c < this.cols; c++) {
-                const p = this.grid[r][c]
-                if (p && p.symbol === symbol && p.kind !== 'jackpot') queue.push({ row: r, col: c })
-              }
-            }
-          }
-          break
-        }
-        case 'normal':
-          break
-      }
+      const blast = this.blastOf(piece, at)
+      queue.push(...blast.seeds)
+      events.push(...blast.events)
     }
     for (const { at } of clearedMap.values()) {
       this.grid[at.row][at.col] = null
@@ -439,10 +477,10 @@ export class Board {
     return this.findFirstValidMove() !== null
   }
 
-  /** Turn the piece at a cell into a special (keeps its symbol) — daily-boost plants + DEV tooling. */
-  plant(at: Coord, kind: PieceKind): void {
+  /** Author a cell: become `kind`, keeping the symbol unless one is given — daily-boost plants + DEV tooling. */
+  plant(at: Coord, kind: PieceKind, symbol?: SymbolType): void {
     const p = this.get(at)
-    if (p) this.grid[at.row][at.col] = this.newPiece(p.symbol, kind)
+    if (p) this.grid[at.row][at.col] = this.newPiece(symbol ?? p.symbol, kind)
   }
 
   /**

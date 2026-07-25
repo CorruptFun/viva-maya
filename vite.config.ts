@@ -5,7 +5,9 @@ import { VitePWA } from 'vite-plugin-pwa'
 // or under a subpath (GitHub Pages) without a rebuild.
 export default defineConfig({
   base: './',
-  server: { port: 5173, strictPort: true },
+  // 5173 by default; PORT overrides it so a second dev server (another agent/dev on the same repo)
+  // can run side by side instead of colliding on strictPort.
+  server: { port: Number(process.env.PORT) || 5173, strictPort: true },
   preview: { port: 4173, strictPort: true },
   // Split the (lazy, optional) Supabase client into its own named chunk so it can be excluded from the
   // PWA precache below — a LOCAL-ONLY build never downloads it; it's fetched on demand only if cloud

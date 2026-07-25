@@ -443,6 +443,41 @@ export class GameScene extends Phaser.Scene {
         this.board.plant({ row: 7, col: 1 }, 'diceBomb')
         this.board.plant({ row: 7, col: 2 }, 'jackpot')
       }
+      // ?repro=upgrade (?repro=upgrade-col for the column reel) — the "swallowed special" case,
+      // planted so it can be re-checked by hand. Column 3 holds the reel's own symbol at rows 1, 2
+      // and 4 with a GAP at row 3 (so nothing is matched yet); the reel sits at (3,4). Swipe it one
+      // cell LEFT into the gap and the column is four long — a match-4, which wants to spawn a new
+      // reel on the cell the old one just landed on. The old reel must still blast its line on the
+      // way out; it used to be overwritten in silence. Retries symbol pairs until the plant leaves
+      // the board run-free, so the repro starts clean.
+      const repro = params.get('repro')
+      if (repro === 'upgrade' || repro === 'upgrade-col') {
+        const kind = repro === 'upgrade-col' ? 'wildReelCol' : 'wildReelRow'
+        const line = [
+          { row: 1, col: 3 },
+          { row: 2, col: 3 },
+          { row: 4, col: 3 },
+        ]
+        const gap = { row: 3, col: 3 } // the reel's landing cell — swipe (3,4) → here
+        const reel = { row: 3, col: 4 }
+        const cells = [...line, gap, reel]
+        const before = cells.map(at => this.board.get(at)!.symbol)
+        // Stay inside the LEVEL's palette — a symbol the board can't refill would never return.
+        const pal = SYMBOLS.slice(0, this.board.symbolCount)
+        let clean = false
+        for (const s of pal) {
+          for (const other of pal) {
+            if (other === s || clean) continue
+            line.forEach(at => this.board.plant(at, 'normal', s))
+            this.board.plant(gap, 'normal', other)
+            this.board.plant(reel, kind, s)
+            clean = this.board.findRuns().length === 0
+          }
+        }
+        // No clean pair (vanishingly unlikely) — restore rather than start on a pre-matched board.
+        if (!clean) cells.forEach((at, i) => this.board.plant(at, 'normal', before[i]))
+        else this.log('repro=upgrade planted: swipe (3,4) LEFT')
+      }
       // ?wheel — fire the full armed post-win wheel flow (mirrors ?race) so automated checks can
       // reach the spectacle without grinding five wins. Routes through continueAfterWin, so the
       // hitstop + chip-fountain hooks are exercised exactly as in production.
