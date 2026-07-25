@@ -16,12 +16,50 @@ import { applyPageChrome, getTheme } from './view/theme'
 // PWA updates: 'prompt' mode (vite.config) surfaces a visible "new version — refresh" toast the
 // player taps, instead of a silent update that lands a launch late. Progress lives in localStorage,
 // which the refresh never touches, so updating can't lose a game.
+//
+// ⚠️ STALE-BUILD TRAP (found + reproduced 2026-07-25, both live and against `vite preview`):
+// `onNeedRefresh` only fires when a worker enters the WAITING state during THIS page's lifetime.
+// If the new worker finished installing on an earlier visit that the player closed without tapping
+// Refresh, it is already waiting at load — no event, no toast, and the player is pinned to the old
+// build FOREVER (every later visit repeats the same silent no-op). Observed exactly that: a live
+// registration reporting `waiting: true` with no toast, serving the previous bundle indefinitely.
+// So we also probe for an already-waiting worker at registration time, below.
 const updateSW = registerSW({
   immediate: true,
   onNeedRefresh() {
-    showUpdateToast(() => void updateSW(true))
+    showUpdateToast(applyUpdate)
+  },
+  onRegisteredSW(_swUrl, registration) {
+    // The missed case above: a worker that was ALREADY waiting before this page even loaded.
+    if (registration?.waiting) showUpdateToast(applyUpdate)
   },
 })
+
+/**
+ * Apply a waiting service worker and reload into it.
+ *
+ * Drives the waiting worker DIRECTLY (`SKIP_WAITING` → `controllerchange` → reload) rather than
+ * relying on `updateSW(true)`, because the plugin helper was observed dismissing the toast without
+ * ever activating the worker — leaving no prompt and no update. Messaging the registration's own
+ * `waiting` instance is the path that was verified to work. `updateSW(true)` stays as the fallback
+ * for the case where nothing is waiting yet.
+ */
+async function applyUpdate(): Promise<void> {
+  try {
+    const registration = await navigator.serviceWorker?.getRegistration()
+    if (registration?.waiting) {
+      // Reload the moment the new worker takes control, so the next paint is the new build.
+      navigator.serviceWorker.addEventListener('controllerchange', () => location.reload(), {
+        once: true,
+      })
+      registration.waiting.postMessage({ type: 'SKIP_WAITING' })
+      return
+    }
+  } catch {
+    // no SW support / registration lookup blocked — fall through to the plugin helper
+  }
+  void updateSW(true)
+}
 
 // Ask the browser NOT to evict our localStorage (the save) under storage pressure — a real durability
 // win for an installed PWA. Fire-and-forget; browsers without the API just skip it.
