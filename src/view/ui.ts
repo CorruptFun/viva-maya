@@ -459,7 +459,7 @@ export function addMarquee(scene: Phaser.Scene, centerX: number, y: number, opts
         .image(spanLeft - streakW, y, 'sweep')
         .setDisplaySize(streakW, 84)
         .setAngle(18)
-        .setTint(0xfffdf8)
+        .setTint(MT.cardFill)
         .setAlpha(0.5)
         .setBlendMode(Phaser.BlendModes.ADD)
       shine.setMask(word.createBitmapMask())
@@ -558,7 +558,7 @@ export function addStreakBadge(
   const container = scene.add.container(centerX, y)
   const flame = scene.add.text(0, 0, '🔥', { fontFamily: 'sans-serif', fontSize: '32px' }).setOrigin(0.5)
   const label = scene.add
-    .text(0, 0, `${streak} DAY STREAK`, { fontFamily: FONT, fontSize: '22px', fontStyle: '900', color: css(getTheme().goldDeep) })
+    .text(0, 0, `${streak} DAY STREAK`, { fontFamily: FONT, fontSize: '22px', fontStyle: '900', color: getTheme().goldText })
     .setOrigin(0, 0.5)
     .setLetterSpacing(2)
   const gap = 8
@@ -935,7 +935,7 @@ function drawPillFace(g: Phaser.GameObjects.Graphics, x: number, y: number, w: n
 }
 
 /** Cream + gold gloss face shared by the balance read-out and the streak badge (non-pressable). */
-const READOUT_STYLE: PillStyle = { id: 'readout', fill: 0xfff3d6, border: 0xf2c14e, textColor: '#4a3305' }
+const READOUT_STYLE: PillStyle = { id: 'readout', fill: 0xfff2cf, border: 0xffc233, textColor: '#4a3305' }
 
 /** Opt-in extras for a pressable control (additive — every call site works without passing this). */
 export interface PillOpts {
@@ -1348,9 +1348,9 @@ export function openHelpPanel(scene: Phaser.Scene): void {
   const ph = 1046
   const g = scene.add.graphics()
   dropShadow(g, px, pyTop, pw, ph, 30, getTheme().shadow, { alpha: 0.12, dist: 9 })
-  g.fillStyle(0xfffdf8, 1)
+  g.fillStyle(getTheme().cardFill, 1)
   g.fillRoundedRect(px, pyTop, pw, ph, 30)
-  g.lineStyle(4, 0xf2c14e, 1)
+  g.lineStyle(4, getTheme().goldBezel, 1)
   g.strokeRoundedRect(px, pyTop, pw, ph, 30)
   accentRimTop(g, px, pyTop, pw, 30, { alpha: 0.9 })
 
@@ -1358,7 +1358,7 @@ export function openHelpPanel(scene: Phaser.Scene): void {
   const block = scene.add.rectangle(W / 2, pyTop + ph / 2, pw, ph, 0xffffff, 0.001).setInteractive()
 
   const title = scene.add
-    .text(W / 2, pyTop + 56, 'HOW TO PLAY', { fontFamily: FONT, fontSize: '46px', fontStyle: '900', color: css(getTheme().goldDeep) })
+    .text(W / 2, pyTop + 56, 'HOW TO PLAY', { fontFamily: FONT, fontSize: '46px', fontStyle: '900', color: getTheme().goldText })
     .setOrigin(0.5)
     .setLetterSpacing(2)
     .setShadow(0, 2, 'rgba(0,0,0,0.12)', 4, false, true)
@@ -1442,9 +1442,9 @@ export function openSoundPanel(scene: Phaser.Scene): void {
   const pyTop = (H - ph) / 2
   const g = scene.add.graphics()
   dropShadow(g, px, pyTop, pw, ph, 30, getTheme().shadow, { alpha: 0.12, dist: 9 })
-  g.fillStyle(0xfffdf8, 1)
+  g.fillStyle(getTheme().cardFill, 1)
   g.fillRoundedRect(px, pyTop, pw, ph, 30)
-  g.lineStyle(4, 0xf2c14e, 1)
+  g.lineStyle(4, getTheme().goldBezel, 1)
   g.strokeRoundedRect(px, pyTop, pw, ph, 30)
   accentRimTop(g, px, pyTop, pw, 30, { alpha: 0.9 })
 
@@ -1452,7 +1452,7 @@ export function openSoundPanel(scene: Phaser.Scene): void {
   const block = scene.add.rectangle(W / 2, pyTop + ph / 2, pw, ph, 0xffffff, 0.001).setInteractive()
 
   const title = scene.add
-    .text(W / 2, pyTop + 56, 'MOVE SOUND', { fontFamily: FONT, fontSize: '46px', fontStyle: '900', color: css(getTheme().goldDeep) })
+    .text(W / 2, pyTop + 56, 'MOVE SOUND', { fontFamily: FONT, fontSize: '46px', fontStyle: '900', color: getTheme().goldText })
     .setOrigin(0.5)
     .setLetterSpacing(2)
     .setShadow(0, 2, 'rgba(0,0,0,0.12)', 4, false, true)
@@ -1657,9 +1657,9 @@ export function openThemePanel(scene: Phaser.Scene, openingThemeId: ThemeId = ge
 
   const g = scene.add.graphics()
   dropShadow(g, px, pyTop, pw, ph, 30, getTheme().shadow, { alpha: 0.12, dist: 9 })
-  g.fillStyle(0xfffdf8, 1)
+  g.fillStyle(getTheme().cardFill, 1)
   g.fillRoundedRect(px, pyTop, pw, ph, 30)
-  g.lineStyle(4, 0xf2c14e, 1)
+  g.lineStyle(4, getTheme().goldBezel, 1)
   g.strokeRoundedRect(px, pyTop, pw, ph, 30)
   accentRimTop(g, px, pyTop, pw, 30, { alpha: 0.9 })
 
@@ -1667,7 +1667,7 @@ export function openThemePanel(scene: Phaser.Scene, openingThemeId: ThemeId = ge
   const block = scene.add.rectangle(W / 2, pyTop + ph / 2, pw, ph, 0xffffff, 0.001).setInteractive()
 
   const title = scene.add
-    .text(W / 2, pyTop + 56, 'THEME', { fontFamily: FONT, fontSize: '46px', fontStyle: '900', color: css(getTheme().goldDeep) })
+    .text(W / 2, pyTop + 56, 'THEME', { fontFamily: FONT, fontSize: '46px', fontStyle: '900', color: getTheme().goldText })
     .setOrigin(0.5)
     .setLetterSpacing(2)
     .setShadow(0, 2, 'rgba(0,0,0,0.12)', 4, false, true)
@@ -1840,9 +1840,9 @@ export function openSettingsPanel(scene: Phaser.Scene): void {
 
   const g = scene.add.graphics()
   dropShadow(g, px, pyTop, pw, ph, 30, getTheme().shadow, { alpha: 0.12, dist: 9 })
-  g.fillStyle(0xfffdf8, 1)
+  g.fillStyle(getTheme().cardFill, 1)
   g.fillRoundedRect(px, pyTop, pw, ph, 30)
-  g.lineStyle(4, 0xf2c14e, 1)
+  g.lineStyle(4, getTheme().goldBezel, 1)
   g.strokeRoundedRect(px, pyTop, pw, ph, 30)
   accentRimTop(g, px, pyTop, pw, 30, { alpha: 0.9 })
 
@@ -1850,7 +1850,7 @@ export function openSettingsPanel(scene: Phaser.Scene): void {
   const block = scene.add.rectangle(W / 2, pyTop + ph / 2, pw, ph, 0xffffff, 0.001).setInteractive()
 
   const title = scene.add
-    .text(W / 2, pyTop + 56, 'SETTINGS', { fontFamily: FONT, fontSize: '46px', fontStyle: '900', color: css(getTheme().goldDeep) })
+    .text(W / 2, pyTop + 56, 'SETTINGS', { fontFamily: FONT, fontSize: '46px', fontStyle: '900', color: getTheme().goldText })
     .setOrigin(0.5)
     .setLetterSpacing(2)
     .setShadow(0, 2, 'rgba(0,0,0,0.12)', 4, false, true)
@@ -1918,9 +1918,9 @@ export function openOnboarding(scene: Phaser.Scene, onClose?: () => void): void 
 
   const g = scene.add.graphics()
   dropShadow(g, cx - cardW / 2, cy - cardH / 2, cardW, cardH, 30, getTheme().shadow, { alpha: 0.14, dist: 9 })
-  g.fillStyle(0xfffdf8, 1)
+  g.fillStyle(getTheme().cardFill, 1)
   g.fillRoundedRect(cx - cardW / 2, cy - cardH / 2, cardW, cardH, 30)
-  g.lineStyle(4, 0xf2c14e, 1)
+  g.lineStyle(4, getTheme().goldBezel, 1)
   g.strokeRoundedRect(cx - cardW / 2, cy - cardH / 2, cardW, cardH, 30)
   accentRimTop(g, cx - cardW / 2, cy - cardH / 2, cardW, 30, { alpha: 0.9 })
 
@@ -1928,7 +1928,7 @@ export function openOnboarding(scene: Phaser.Scene, onClose?: () => void): void 
   const block = scene.add.rectangle(cx, cy, cardW, cardH, 0xffffff, 0.001).setInteractive()
 
   const title = scene.add
-    .text(cx, cy - cardH / 2 + 66, 'HOW TO PLAY', { fontFamily: FONT, fontSize: '44px', fontStyle: '900', color: css(getTheme().goldDeep) })
+    .text(cx, cy - cardH / 2 + 66, 'HOW TO PLAY', { fontFamily: FONT, fontSize: '44px', fontStyle: '900', color: getTheme().goldText })
     .setOrigin(0.5)
     .setLetterSpacing(2)
     .setShadow(0, 2, 'rgba(0,0,0,0.12)', 4, false, true)
