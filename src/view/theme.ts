@@ -92,6 +92,15 @@ export interface Theme {
   glossLo: number
   rim: number
 
+  // --- Board cushions (numbers) — the 8×8 checkerboard tint pair (§V1) ---
+  /** Checkerboard tint A — the lit cushion the symbols are read against. */
+  tileA: number
+  /** Checkerboard tint B — its barely-cooler partner (a whisper, never a stripe). */
+  tileB: number
+  /** High-contrast (§E12) tint pair, used when the a11y contrast switch is on. */
+  tileHcA: number
+  tileHcB: number
+
   // --- Text on cream (CSS strings) — dark on cards, stay dark on all themes ---
   ink: string
   inkSoft: string
@@ -132,51 +141,70 @@ const golden: Theme = {
   id: 'golden',
   name: 'Golden Hour',
 
-  // Atmosphere
-  washTop: 0xfaf3ec,
-  washBottom: 0xefe7d6,
-  washGlowWarm: 0xf2c14e,
-  washGlowCool: 0xf0a3ad,
-  rayTint: 0xf2c14e,
-  rayTintCool: 0xf0a3ad,
-  bokehWarm: 0xf2c14e,
-  bokehCool: 0xf0a3ad,
-  marqueeDim: 0xc9930a,
-  marqueeBright: 0xf2b234,
-  sparkleTint: 0xffe8b0,
-  moteTint: 0xd9a521,
-  suitWatermark: 0x8a7a52,
+  // Atmosphere. §V1 vibrancy pass: the v1 wash (#faf3ec → #efe7d6) was a narrow, near-grey sepia
+  // band — the board, the cards and the backdrop all landed within ~6 points of lightness of each
+  // other, so NOTHING separated and the whole app read as one dingy tan sheet. The fix is a wider
+  // value range carrying real chroma: a clean warm-white top falling to a genuinely amber bottom.
+  // Same warm identity, but lit sunlight instead of old newsprint — and the light cards/cushions
+  // now sit clearly IN FRONT of it. Every downstream layer (backdrop wash, body CSS gradient,
+  // letterbox strips, <meta theme-color>) reads these two, so this one edit repaints the stage.
+  washTop: 0xfff9ec,
+  washBottom: 0xffdda8,
+  // The coloured light itself — pushed from muted honey/dusty-pink to hot amber + hot rose so the
+  // glow blobs, rays and bokeh read as SATURATED light sources rather than smudges on the wash.
+  washGlowWarm: 0xffab1f,
+  washGlowCool: 0xff8fa8,
+  rayTint: 0xffbe33,
+  rayTintCool: 0xff8fa8,
+  bokehWarm: 0xffb52e,
+  bokehCool: 0xff92ab,
+  marqueeDim: 0xbf7f00,
+  marqueeBright: 0xffb51f,
+  sparkleTint: 0xfff0c0,
+  moteTint: 0xe09a12,
+  suitWatermark: 0x9a7f45,
   scrim: 0x2a2417,
-  vignetteInk: 0x3a2a12,
+  vignetteInk: 0x4a3210,
 
-  // Brand accents
-  gold: 0xf2b234,
-  goldBright: 0xffd75e,
-  goldBezel: 0xf2c14e,
-  goldDeep: 0xc9930a,
-  goldDarkest: 0x7a5a08,
-  rose: 0xd3304f,
-  roseLight: 0xff7a85,
-  roseDeep: 0xa8213c,
-  navy: 0x26304d,
-  accent: 0xf2b234,
-  accentAlt: 0xd3304f,
+  // Brand accents — saturated to sit ON the richer wash instead of dissolving into it. The gold
+  // loses its mustard cast (more chroma, less grey) and the rose gains punch; both stay in the
+  // same hue family, so every derived shade (pill bevels, bezels, embosses) tracks for free.
+  gold: 0xffb01c,
+  goldBright: 0xffdc5c,
+  goldBezel: 0xffc233,
+  goldDeep: 0xd18a00,
+  goldDarkest: 0x7a5208,
+  rose: 0xe61f4d,
+  roseLight: 0xff6b82,
+  roseDeep: 0xb01536,
+  navy: 0x223056,
+  accent: 0xffb01c,
+  accentAlt: 0xe61f4d,
 
-  // Surfaces
-  cardFill: 0xfffdf8,
-  cardFillWarm: 0xfff3d6,
-  cardFillAlt: 0xf3ece0,
-  border: 0xe8dfc9,
-  shadow: 0x8a7a52,
-  cabinetGlow: 0xd3304f,
-  bloom: 0xffedc2,
-  bleedWarm: 0xf7cf68,
-  bleedCool: 0xf0a3ad,
+  // Surfaces — cards/cushions stay bright (they are the FIGURE against the new deeper ground) but
+  // shed their grey: cardFillAlt in particular was a dirty putty that muddied every secondary panel.
+  cardFill: 0xfffdf7,
+  cardFillWarm: 0xfff2cf,
+  cardFillAlt: 0xfaf0dd,
+  border: 0xf0dfb4,
+  shadow: 0x8a6b32,
+  cabinetGlow: 0xe61f4d,
+  bloom: 0xffeaba,
+  bleedWarm: 0xffcc52,
+  bleedCool: 0xff9db0,
 
   // Gloss
   glossHi: 0xfffef8,
-  glossLo: 0xf7e9cf,
+  glossLo: 0xfeecc8,
   rim: 0xfff7e0,
+
+  // Board cushions. v1 used hardcoded 0xf4e7c6 / 0xf7e3de literals in GameScene — a muddy cream and
+  // a dusty pink that DESATURATED every symbol sitting on them. These are brighter and cleaner, so
+  // the emoji (red 7, gold bell, blue diamond, green clover) read as lit objects on a lit cushion.
+  tileA: 0xfff6de,
+  tileB: 0xfff0e8,
+  tileHcA: 0xfffaf0,
+  tileHcB: 0xe8d3a8,
 
   // Text on cream. inkMuted / inkFaint / goldText are the deliberate WCAG-AA contrast nudge
   // (§E8 call #3 — the one intentional carve-out from P7's zero-visual-diff pledge): darkened so
@@ -194,15 +222,18 @@ const golden: Theme = {
   warn: '#d3302f',
   ok: '#2fae4c',
 
-  // Text on backdrop (Golden: wash is light → stays dark)
-  onBackdropInk: '#2a2732',
-  onBackdropMuted: '#9a927e',
+  // Text on backdrop (Golden: wash is light → stays dark). §V1: both were NEUTRAL GREYS sitting on a
+  // warm wash, which is what made the tagline / "Level N · best" lines look dusty and washed-out.
+  // Re-cast in the wash's own hue family — warm dark ink and a warm brown muted — so backdrop copy
+  // reads as part of the golden room. Muted clears 4.5:1 on the wash's lightest band.
+  onBackdropInk: '#3b2a12',
+  onBackdropMuted: '#8a6626',
 
   // Audio — warm golden-hour lounge: low sine bed, gentle room.
   audio: { bedRoot: 65.41 /* C2 */, waveBias: 'sine', filterWarmth: 900, reverbMix: 0.18 },
 
   // Page chrome
-  pageBg: '#f6f3ec',
+  pageBg: '#fff9ec',
 }
 
 /** Maya's Heart — tender valentine (free). Soft rose wash, rose glows, rose accent. */
@@ -210,27 +241,31 @@ const mayaHeart: Theme = {
   ...golden,
   id: 'mayaHeart',
   name: "Maya's Heart",
-  washTop: 0xfdf1f0,
-  washBottom: 0xf7e6e6,
-  washGlowWarm: 0xf5b6c0,
-  washGlowCool: 0xf0a3ad,
-  rayTint: 0xf5b6c0,
-  rayTintCool: 0xf0a3ad,
-  bokehWarm: 0xf5b6c0,
-  bokehCool: 0xf0a3ad,
-  marqueeBright: 0xf07a8c,
-  marqueeDim: 0xc94f66,
+  // §V1: same widen-the-range treatment as golden — the v1 rose wash (#fdf1f0 → #f7e6e6) was an
+  // even flatter near-grey than the default. Bottom drops into a real blush so the cards lift off it.
+  washTop: 0xfff2f4,
+  washBottom: 0xffcbd8,
+  washGlowWarm: 0xff9fb4,
+  washGlowCool: 0xff85a0,
+  rayTint: 0xffa8bc,
+  rayTintCool: 0xff85a0,
+  bokehWarm: 0xffa0b6,
+  bokehCool: 0xff8fa8,
+  marqueeBright: 0xff6b86,
+  marqueeDim: 0xc93f5e,
   sparkleTint: 0xffd6dd,
-  moteTint: 0xe08a98,
-  suitWatermark: 0x9a6a72,
-  vignetteInk: 0x4a2a30,
-  accent: 0xd3304f,
-  accentAlt: 0xf0a3ad,
-  onBackdropInk: '#6a3a45',
-  onBackdropMuted: '#a67e86',
+  moteTint: 0xf07d92,
+  suitWatermark: 0xa8656f,
+  vignetteInk: 0x5a2832,
+  accent: 0xe61f4d,
+  accentAlt: 0xff8fa8,
+  tileB: 0xfff0f2,
+  // §V1: darkened to clear 4.5:1 against the deepened blush wash (the old #a67e86 fell to ~2.9:1).
+  onBackdropInk: '#5c2732',
+  onBackdropMuted: '#8f4f5e',
   // Softer, a touch higher, more reverb — a tender valentine room.
   audio: { bedRoot: 73.42 /* D2 */, waveBias: 'sine', filterWarmth: 1150, reverbMix: 0.28 },
-  pageBg: '#fdf1f0',
+  pageBg: '#fff2f4',
 }
 
 /** Rose Midnight — after-hours velvet (plum near-dark). Gold+rose aurora on dark. */
@@ -238,29 +273,31 @@ const roseMidnight: Theme = {
   ...golden,
   id: 'roseMidnight',
   name: 'Rose Midnight',
-  washTop: 0x241a2e,
-  washBottom: 0x1a1526,
-  washGlowWarm: 0xf2b234,
-  washGlowCool: 0xd3304f,
-  rayTint: 0xf2c14e,
-  rayTintCool: 0xd3304f,
-  bokehWarm: 0xf2c14e,
-  bokehCool: 0xd3304f,
-  marqueeBright: 0xffd75e,
+  // §V1: deepened top-to-bottom (a real plum falloff, not two near-identical darks) and the aurora
+  // glows swapped onto the saturated gold/rose so the night reads lit rather than merely dim.
+  washTop: 0x2e1f3d,
+  washBottom: 0x150f1f,
+  washGlowWarm: 0xffb01c,
+  washGlowCool: 0xe61f4d,
+  rayTint: 0xffc233,
+  rayTintCool: 0xe61f4d,
+  bokehWarm: 0xffc233,
+  bokehCool: 0xe61f4d,
+  marqueeBright: 0xffdc5c,
   marqueeDim: 0x8a5e06,
   sparkleTint: 0xffe8b0,
-  moteTint: 0xc98ad0,
-  suitWatermark: 0x4a3a5a,
+  moteTint: 0xd494dd,
+  suitWatermark: 0x574468,
   scrim: 0x0d0912,
   vignetteInk: 0x0d0912,
   shadow: 0x0d0912,
-  accent: 0xd3304f,
-  accentAlt: 0xf2b234,
+  accent: 0xe61f4d,
+  accentAlt: 0xffb01c,
   onBackdropInk: '#f3e8f0',
   onBackdropMuted: '#b9a6c4',
   // Darker, lower, longer tail — after-hours velvet.
   audio: { bedRoot: 55.0 /* A1 */, waveBias: 'triangle', filterWarmth: 640, reverbMix: 0.34 },
-  pageBg: '#1a1526',
+  pageBg: '#2e1f3d',
 }
 
 /** Neon Vegas — the strip at night (navy neon). Magenta + cyan accents; cabinet halo stays warm. */
@@ -268,16 +305,17 @@ const neonVegas: Theme = {
   ...golden,
   id: 'neonVegas',
   name: 'Neon Vegas',
-  washTop: 0x14203a,
-  washBottom: 0x0e1730,
-  washGlowWarm: 0xff3d81,
-  washGlowCool: 0x35d0e0,
-  rayTint: 0xff3d81,
-  rayTintCool: 0x35d0e0,
-  bokehWarm: 0xff3d81,
-  bokehCool: 0x35d0e0,
-  marqueeBright: 0x35d0e0,
-  marqueeDim: 0xff3d81,
+  // §V1: a deeper night with a wider falloff, and the neon pushed to full electric saturation.
+  washTop: 0x1b2c50,
+  washBottom: 0x0a1128,
+  washGlowWarm: 0xff2b78,
+  washGlowCool: 0x1fdcf0,
+  rayTint: 0xff2b78,
+  rayTintCool: 0x1fdcf0,
+  bokehWarm: 0xff2b78,
+  bokehCool: 0x1fdcf0,
+  marqueeBright: 0x1fdcf0,
+  marqueeDim: 0xff2b78,
   sparkleTint: 0x9be8ff,
   moteTint: 0x35d0e0,
   suitWatermark: 0x2a4a7a,
@@ -290,7 +328,7 @@ const neonVegas: Theme = {
   onBackdropMuted: '#8fa8c8',
   // Saw bias + brighter, cyan shimmer — the strip at night, electric.
   audio: { bedRoot: 61.74 /* B1 */, waveBias: 'sawtooth', filterWarmth: 1450, reverbMix: 0.24 },
-  pageBg: '#0e1730',
+  pageBg: '#1b2c50',
 }
 
 export const THEMES: Record<ThemeId, Theme> = { golden, mayaHeart, roseMidnight, neonVegas }

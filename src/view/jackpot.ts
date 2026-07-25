@@ -87,6 +87,22 @@ export function addJackpotMeter(
   const pipH = trackH - pad
   const pips: Phaser.GameObjects.Container[] = []
   const pipX = (i: number): number => trackX0 + pad + pipW / 2 + i * (pipW + gap)
+
+  // §V1 · UNLIT SOCKETS. An empty meter used to be one flat dark bar — the single deadest element in
+  // the app, on BOTH Home and the board. Drawing the sockets the pips will fill turns it from "a bar
+  // that is off" into "a row of slots waiting to be charged": the player can see the goal. Faint warm
+  // outlines, drawn UNDER the pips so a lit pip covers its own socket completely.
+  const sockets = scene.add.graphics()
+  for (let i = 0; i < JACKPOT_GOAL; i++) {
+    const sx = pipX(i) - pipW / 2
+    const sr = Math.min(pipH / 2, 7)
+    sockets.fillStyle(T.goldBright, 0.09)
+    sockets.fillRoundedRect(sx, -pipH / 2, pipW, pipH, sr)
+    sockets.lineStyle(1, T.goldBright, 0.22)
+    sockets.strokeRoundedRect(sx, -pipH / 2, pipW, pipH, sr)
+  }
+  container.add(sockets)
+
   for (let i = 0; i < JACKPOT_GOAL; i++) {
     const pip = scene.add.container(pipX(i), 0)
     const face = scene.add.graphics()
@@ -95,6 +111,35 @@ export function addJackpotMeter(
     pip.setScale(0).setAlpha(0)
     container.add(pip)
     pips.push(pip)
+  }
+
+  // §V1 · ARMED CHARGE SWEEP. A soft gold light loafing left→right along the track — what makes a
+  // partly-charged meter feel plugged-in between wins instead of switched off. Deliberately NOT
+  // masked: `bgglow` is a soft radial falloff sized to sit INSIDE the well, so it fades out on its
+  // own at every edge and needs no stencil pass or mask-lifecycle bookkeeping. Parked dim under
+  // reduced motion; skipped on the low tier, where it is pure finish.
+  if (quality.tier() !== 'low' && scene.textures.exists('bgglow')) {
+    const sweep = scene.add
+      .image(trackX0 + trackW * 0.5, 0, 'bgglow')
+      .setTint(T.goldBright)
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setDisplaySize(trackW * 0.38, trackH * 0.92)
+      .setAlpha(reduced ? 0.1 : 0.18)
+    container.add(sweep)
+    if (!reduced) {
+      // Travel across the inner span only, so the glow never reaches the rounded caps.
+      sweep.x = trackX0 + trackW * 0.22
+      scene.tweens.add({
+        targets: sweep,
+        x: trackX0 + trackW * 0.78,
+        duration: 2600,
+        yoyo: true,
+        repeat: -1,
+        repeatDelay: 700,
+        hold: 400,
+        ease: E.hero,
+      })
+    }
   }
 
   // Soft "ready" halo behind the whole meter — hidden until near-full/full, then it lives (below).

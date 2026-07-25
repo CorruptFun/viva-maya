@@ -1367,6 +1367,7 @@ export class GameScene extends Phaser.Scene {
   // ----------------------------------------------------------------- build
 
   private buildBackdrop(): void {
+    const T = getTheme()
     // §R3 PLAY-FOCUS SCRIM: one translucent theme-ink sheet over the ENTIRE atmospheric backdrop
     // (all negative depths) but under every gameplay object (≥ 0). It pushes the lounge wash a
     // touch darker and duller while playing, so the elevated cabinet + HUD rail pop forward.
@@ -1378,8 +1379,8 @@ export class GameScene extends Phaser.Scene {
     // a soft rose halo bleeds past the frame. Surges on a win (see celebrateBoard).
     this.cabinetGlow = this.add
       .image(DESIGN_W / 2, BOARD_Y + BOARD_W / 2, 'bgglow')
-      .setTint(0xd3304f)
-      .setAlpha(0.1)
+      .setTint(T.cabinetGlow)
+      .setAlpha(0.13)
       .setBlendMode(Phaser.BlendModes.ADD)
     this.cabinetGlow.setDisplaySize(BOARD_W + 170, BOARD_W + 170)
     this.cabinetSurge = false // reset per build so a restart mid-surge can't leave the drive stuck off
@@ -1415,9 +1416,11 @@ export class GameScene extends Phaser.Scene {
     g.fillStyle(0x6b4c05, 0.5)
     g.fillRoundedRect(x + 2, y + 9, size - 4, size, 28)
     // Gold bezel frame (opaque) + a lit inner sheen and a dark outer edge for bevel depth.
-    g.fillStyle(0xc9930a, 1)
+    // §V1: the cabinet frame is the largest single block of gold on screen — read it from the theme
+    // so it carries the saturated brand instead of the v1 mustard it was frozen at.
+    g.fillStyle(T.goldDeep, 1)
     g.fillRoundedRect(x, y, size, size, 28)
-    g.fillStyle(0xf2b234, 1)
+    g.fillStyle(T.gold, 1)
     g.fillRoundedRect(x + 3, y + 3, size - 6, size - 6, 25)
     g.lineStyle(2, 0xffe6a8, 0.6)
     g.strokeRoundedRect(x + 3, y + 3, size - 6, size - 6, 25)
@@ -1453,8 +1456,8 @@ export class GameScene extends Phaser.Scene {
     // replaces the old flat one-graphics checkerboard at ≈ +1 persistent draw call.
     // §E12 High-Contrast: a second, higher-contrast checkerboard tint set (the warm default's two
     // tints are near-identical whispers), plus a 3px inset so the dark floor shows as cell separators.
-    const TILE_A = this.hc ? 0xf7f1e3 : 0xf4e7c6
-    const TILE_B = this.hc ? 0xe1cfa6 : 0xf7e3de
+    const TILE_A = this.hc ? T.tileHcA : T.tileA
+    const TILE_B = this.hc ? T.tileHcB : T.tileB
     const tileSize = this.hc ? CELL - 3 : CELL
     for (let r = 0; r < ROWS; r++) {
       for (let c = 0; c < COLS; c++) {
@@ -2420,7 +2423,7 @@ export class GameScene extends Phaser.Scene {
         scale: { start: 0.4, end: 0 },
         alpha: { start: 0.5, end: 0 },
         lifespan: { min: 150, max: 280 },
-        tint: [0xf2b234, 0xffd75e],
+        tint: [0xffb01c, 0xffdc5c],
         quantity: 1,
         frequency: 26,
         maxAliveParticles: quality.count(9),
@@ -3420,7 +3423,7 @@ export class GameScene extends Phaser.Scene {
           alpha: { start: 0.9, end: 0 },
           lifespan: { min: 160, max: 320 },
           gravityY: 140,
-          tint: [0xf2b234, 0xffd75e],
+          tint: [0xffb01c, 0xffdc5c],
           quantity: 1,
           frequency: this.reducedMotion ? 44 : 22,
           emitting: true,
@@ -3614,7 +3617,7 @@ export class GameScene extends Phaser.Scene {
         alpha: { start: 0.9, end: 0 },
         lifespan: { min: 300, max: 560 },
         gravityY: 380,
-        tint: [0xf2b234, 0xffcf6a, 0xd3304f],
+        tint: [0xffb01c, 0xffd24a, 0xe61f4d],
         emitting: false,
       })
       .setDepth(27)
@@ -3948,9 +3951,9 @@ export class GameScene extends Phaser.Scene {
   /** Beat 3: three staggered spark bursts + a capped confetti rain + a brand heart puff. */
   private winFireworks(track: <T extends Phaser.GameObjects.GameObject>(o: T) => T, at: (ms: number, cb: () => void) => void): void {
     const shots: Array<[number, number, number]> = [
-      [200, 360, 0xd3304f],
+      [200, 360, 0xe61f4d],
       [540, 300, 0x26304d],
-      [360, 240, 0xf2b234],
+      [360, 240, 0xffb01c],
     ]
     shots.forEach(([x, y, tint], i) => {
       at(i * 260, () => {
@@ -3986,7 +3989,7 @@ export class GameScene extends Phaser.Scene {
           gravityY: 220,
           rotate: { min: -180, max: 180 },
           lifespan: 1400,
-          tint: [0xf2b234, 0xd3304f, 0x26304d, 0xfffdf8],
+          tint: [0xffb01c, 0xe61f4d, 0x223056, 0xfffdf7],
           quantity: 4,
           frequency: 60,
           emitting: true,
