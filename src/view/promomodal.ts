@@ -13,10 +13,10 @@ const MODAL_ID = 'vm-promo-modal'
 
 // Warm palette (mirrors the game's cream card + gold accents), kept local so the modal is self-contained.
 const SANS = 'system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif'
-const CREAM = '#fffdf8'
+const CREAM = '#fffdf7'
 const INK = '#4a3305'
 const MUTED = '#6a6459'
-const GOLD = '#c9930a'
+const GOLD = '#d18a00'
 const BORDER = '#e6dcc4'
 const ERR = '#c0392b'
 const GOOD = '#2e7d32'

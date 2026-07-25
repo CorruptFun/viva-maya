@@ -19,9 +19,9 @@ const SEEN_KEY = 'viva-maya:install-nudge' // device-local UI latch — delibera
 const MAX_SHOWS = 3
 
 const SANS = 'system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif'
-const CREAM = '#fffdf8'
+const CREAM = '#fffdf7'
 const MUTED = '#6a6459'
-const GOLD = '#c9930a'
+const GOLD = '#d18a00'
 
 let shownThisSession = false
 

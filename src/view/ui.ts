@@ -369,13 +369,16 @@ export function addMarquee(scene: Phaser.Scene, centerX: number, y: number, opts
     .setOrigin(0, 0.5)
     .setLetterSpacing(4)
     .setShadow(0, 3, 'rgba(90,70,20,0.25)', 6, false, true)
-  viva.setTint(0xffd75e, 0xffd75e, 0xc9930a, 0xc9930a)
+  // §V1: the wordmark is the hero — its vertical gold/rose gradients now read the live theme tokens
+  // instead of frozen v1 literals, so the logo tracks the vibrancy pass (and every future palette move).
+  const MT = getTheme()
+  viva.setTint(MT.goldBright, MT.goldBright, MT.goldDeep, MT.goldDeep)
   const maya = scene.add
     .text(0, y, 'MAYA', { fontFamily: FONT, fontSize: '58px', fontStyle: '900', color: '#ffffff' })
     .setOrigin(0, 0.5)
     .setLetterSpacing(4)
     .setShadow(0, 3, 'rgba(90,20,15,0.25)', 6, false, true)
-  maya.setTint(0xff7a85, 0xff7a85, 0xd3304f, 0xd3304f)
+  maya.setTint(MT.roseLight, MT.roseLight, MT.rose, MT.rose)
   const gap = 18
   const heartW = 34
   const total = viva.width + gap + maya.width + 12 + heartW
@@ -409,14 +412,41 @@ export function addMarquee(scene: Phaser.Scene, centerX: number, y: number, opts
     const n = 9
     for (let i = 0; i < n; i++) {
       const bx = spanLeft + ((spanRight - spanLeft) * i) / (n - 1)
+      // Alternate gold / rose — `accent` is the same value as `gold` on the warm themes, so the v1
+      // pairing rendered as one flat colour instead of a two-tone cabinet sign.
       const bulb = scene.add
         .image(bx, by, 'bulb')
         .setDisplaySize(13, 13)
-        .setTint(i % 2 === 0 ? T.gold : T.accent)
-        .setAlpha(0.62)
+        .setTint(i % 2 === 0 ? T.gold : T.accentAlt)
+        .setAlpha(0.7)
       bulbs.push(bulb)
     }
   }
+
+  // §V1 · TRAVELLING BULB CHASE. The board's cabinet has run a chase since day one, but Home's sign
+  // lit once during the power-on cascade and then sat frozen for the whole session — the hero of the
+  // front door, dead still. Same recipe as `GameScene.buildCabinet` (one lap staggered by index) so
+  // both signs read as the same physical marquee. Started via `startChase()` rather than inline,
+  // because the power-on cascade animates these same alphas and the two must not overlap.
+  const CHASE_PERIOD = 1500
+  const startChase = (delay = 0): void => {
+    if (prefersReducedMotion() || bulbs.length === 0) return
+    bulbs.forEach((b, i) => {
+      b.setAlpha(0.45)
+      scene.tweens.add({
+        targets: b,
+        alpha: 1,
+        duration: CHASE_PERIOD / 2,
+        yoyo: true,
+        repeat: -1,
+        delay: delay + (i / bulbs.length) * CHASE_PERIOD,
+        ease: 'Sine.easeInOut',
+      })
+    })
+  }
+  // Normal entry (no power-on): chase from the start. A boot reveal calls `powerOn()` synchronously
+  // during the same `create()`, which cancels this and re-arms the chase behind its own cascade.
+  let chaseArmed = scene.time.delayedCall(0, () => startChase())
 
   // Slow light-sweep shine: a masked cream gloss that periodically glides VIVA→MAYA. Each word
   // gets its own streak clipped to its glyphs (bitmap mask), and the two share one tween value so
@@ -452,6 +482,10 @@ export function addMarquee(scene: Phaser.Scene, centerX: number, y: number, opts
     maya.setAlpha(0)
     s.tweens.killTweensOf(heart)
     heart.setScale(0)
+    // Cancel the normal-entry chase (it has not started yet — the delayedCall(0) fires next tick) and
+    // stop any chase tweens, so the cascade below owns these alphas outright.
+    chaseArmed.remove(false)
+    s.tweens.killTweensOf(bulbs)
     for (const b of bulbs) b.setAlpha(0.12)
 
     // A single bright gold sweep glides across the wordmark and reveals it as it passes.
@@ -478,6 +512,7 @@ export function addMarquee(scene: Phaser.Scene, centerX: number, y: number, opts
     s.tweens.add({ targets: viva, alpha: 1, duration: 240, delay: leadIn + 150, ease: 'Quad.easeOut' })
     s.tweens.add({ targets: maya, alpha: 1, duration: 240, delay: leadIn + 380, ease: 'Quad.easeOut' })
     // Bulbs cascade-light left→right in the sweep's wake.
+    const lastCascade = leadIn + 300 + (bulbs.length - 1) * 55 + 200 * 2 + 90
     bulbs.forEach((b, i) => {
       s.tweens.add({
         targets: b,
@@ -490,6 +525,8 @@ export function addMarquee(scene: Phaser.Scene, centerX: number, y: number, opts
         onComplete: () => b.setAlpha(0.62),
       })
     })
+    // …then the sign settles into its steady chase, so it keeps living after the reveal.
+    chaseArmed = s.time.delayedCall(lastCascade + 200, () => startChase())
     // Heart flourish pops in last, then resumes its heartbeat.
     s.tweens.add({
       targets: heart,
@@ -521,7 +558,7 @@ export function addStreakBadge(
   const container = scene.add.container(centerX, y)
   const flame = scene.add.text(0, 0, '🔥', { fontFamily: 'sans-serif', fontSize: '32px' }).setOrigin(0.5)
   const label = scene.add
-    .text(0, 0, `${streak} DAY STREAK`, { fontFamily: FONT, fontSize: '22px', fontStyle: '900', color: '#c9930a' })
+    .text(0, 0, `${streak} DAY STREAK`, { fontFamily: FONT, fontSize: '22px', fontStyle: '900', color: css(getTheme().goldDeep) })
     .setOrigin(0, 0.5)
     .setLetterSpacing(2)
   const gap = 8
@@ -564,10 +601,20 @@ export interface PillStyle {
   emboss?: string
 }
 
-export const GOLD_PILL: PillStyle = { id: 'gold', fill: 0xf2b234, border: 0xc9930a, textColor: '#4a3305' }
-export const GHOST_PILL: PillStyle = { id: 'ghost', fill: 0xffffff, border: 0xe8dfc9, textColor: '#8a8577' }
+// The three brand pills. Deliberately FLAT LITERALS, not `getTheme()` reads: these are module-level
+// constants baked into cached button textures, and (per theme.ts §2.4) the buttons are the one thing
+// that stays constant across all four themes — the same way the cards stay light everywhere. They
+// mirror the golden-theme accent tokens by hand; keep them in sync when those move.
+//
+// §V1 vibrancy pass: fills lifted onto the saturated brand accents (every bevel, pedestal, well and
+// emboss shade is derived from `fill` via `shade()`, so one number repaints the whole 3-D button).
+export const GOLD_PILL: PillStyle = { id: 'gold', fill: 0xffb01c, border: 0xd18a00, textColor: '#4a3305' }
+// Ghost: the v1 pure-white fill + `#8a8577` dead-grey label was the least legible thing in the app
+// (~3.4:1 — LEVELS / GIFT STORE all but vanished against the cream wash). Now a warm off-white cap
+// with a brand-brown label at ~6.5:1, so the secondary buttons read as buttons instead of ghosts.
+export const GHOST_PILL: PillStyle = { id: 'ghost', fill: 0xfffdf7, border: 0xf0dfb4, textColor: '#7a5a1f' }
 /** Rose "special mode" pill — sets the endless weekly race apart from the gold progression buttons. */
-export const ROSE_PILL: PillStyle = { id: 'rose', fill: 0xd3304f, border: 0xa8213c, textColor: '#ffffff' }
+export const ROSE_PILL: PillStyle = { id: 'rose', fill: 0xe61f4d, border: 0xb01536, textColor: '#ffffff' }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Chunky 3D pressable controls (visual-overhaul §3a / §4).
@@ -1311,7 +1358,7 @@ export function openHelpPanel(scene: Phaser.Scene): void {
   const block = scene.add.rectangle(W / 2, pyTop + ph / 2, pw, ph, 0xffffff, 0.001).setInteractive()
 
   const title = scene.add
-    .text(W / 2, pyTop + 56, 'HOW TO PLAY', { fontFamily: FONT, fontSize: '46px', fontStyle: '900', color: '#c9930a' })
+    .text(W / 2, pyTop + 56, 'HOW TO PLAY', { fontFamily: FONT, fontSize: '46px', fontStyle: '900', color: css(getTheme().goldDeep) })
     .setOrigin(0.5)
     .setLetterSpacing(2)
     .setShadow(0, 2, 'rgba(0,0,0,0.12)', 4, false, true)
@@ -1405,7 +1452,7 @@ export function openSoundPanel(scene: Phaser.Scene): void {
   const block = scene.add.rectangle(W / 2, pyTop + ph / 2, pw, ph, 0xffffff, 0.001).setInteractive()
 
   const title = scene.add
-    .text(W / 2, pyTop + 56, 'MOVE SOUND', { fontFamily: FONT, fontSize: '46px', fontStyle: '900', color: '#c9930a' })
+    .text(W / 2, pyTop + 56, 'MOVE SOUND', { fontFamily: FONT, fontSize: '46px', fontStyle: '900', color: css(getTheme().goldDeep) })
     .setOrigin(0.5)
     .setLetterSpacing(2)
     .setShadow(0, 2, 'rgba(0,0,0,0.12)', 4, false, true)
@@ -1537,7 +1584,7 @@ function buildThemeRow(
   if (!unlocked) {
     const lock = scene.add.image(rightX - 8, -12, 'lock').setDisplaySize(34, 34)
     const req = scene.add
-      .text(rightX, 22, `Reach Level ${meta.unlockLevel}`, { fontFamily: FONT, fontSize: '18px', fontStyle: '900', color: '#a8213c' })
+      .text(rightX, 22, `Reach Level ${meta.unlockLevel}`, { fontFamily: FONT, fontSize: '18px', fontStyle: '900', color: css(getTheme().roseDeep) })
       .setOrigin(1, 0.5)
     face.add([lock, req])
     face.setAlpha(0.55)
@@ -1620,7 +1667,7 @@ export function openThemePanel(scene: Phaser.Scene, openingThemeId: ThemeId = ge
   const block = scene.add.rectangle(W / 2, pyTop + ph / 2, pw, ph, 0xffffff, 0.001).setInteractive()
 
   const title = scene.add
-    .text(W / 2, pyTop + 56, 'THEME', { fontFamily: FONT, fontSize: '46px', fontStyle: '900', color: '#c9930a' })
+    .text(W / 2, pyTop + 56, 'THEME', { fontFamily: FONT, fontSize: '46px', fontStyle: '900', color: css(getTheme().goldDeep) })
     .setOrigin(0.5)
     .setLetterSpacing(2)
     .setShadow(0, 2, 'rgba(0,0,0,0.12)', 4, false, true)
@@ -1803,7 +1850,7 @@ export function openSettingsPanel(scene: Phaser.Scene): void {
   const block = scene.add.rectangle(W / 2, pyTop + ph / 2, pw, ph, 0xffffff, 0.001).setInteractive()
 
   const title = scene.add
-    .text(W / 2, pyTop + 56, 'SETTINGS', { fontFamily: FONT, fontSize: '46px', fontStyle: '900', color: '#c9930a' })
+    .text(W / 2, pyTop + 56, 'SETTINGS', { fontFamily: FONT, fontSize: '46px', fontStyle: '900', color: css(getTheme().goldDeep) })
     .setOrigin(0.5)
     .setLetterSpacing(2)
     .setShadow(0, 2, 'rgba(0,0,0,0.12)', 4, false, true)
@@ -1881,7 +1928,7 @@ export function openOnboarding(scene: Phaser.Scene, onClose?: () => void): void 
   const block = scene.add.rectangle(cx, cy, cardW, cardH, 0xffffff, 0.001).setInteractive()
 
   const title = scene.add
-    .text(cx, cy - cardH / 2 + 66, 'HOW TO PLAY', { fontFamily: FONT, fontSize: '44px', fontStyle: '900', color: '#c9930a' })
+    .text(cx, cy - cardH / 2 + 66, 'HOW TO PLAY', { fontFamily: FONT, fontSize: '44px', fontStyle: '900', color: css(getTheme().goldDeep) })
     .setOrigin(0.5)
     .setLetterSpacing(2)
     .setShadow(0, 2, 'rgba(0,0,0,0.12)', 4, false, true)

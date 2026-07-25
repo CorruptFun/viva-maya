@@ -88,7 +88,7 @@ function startGame(): void {
     parent: 'app',
     width: DESIGN_W,
     height: worldH(),
-    backgroundColor: '#f6f3ec',
+    backgroundColor: '#fff9ec',
     disableContextMenu: true,
     render: { antialias: true },
     scale: {

@@ -377,17 +377,9 @@ export class HomeScene extends Phaser.Scene {
     menuButtons.push(play)
     // Held for the C4/H3 idle attract beat — the "come play" pulse pauses this breathe, nudges, resumes.
     this.playButton = play
-    // PLAY breathe — gated (§E8): reduced motion leaves it at its resting scale.
-    if (!reduced) {
-      this.playBreathe = this.tweens.add({
-        targets: play,
-        scale: 1.04,
-        duration: 800,
-        yoyo: true,
-        repeat: -1,
-        ease: 'Sine.easeInOut',
-      })
-    }
+    // PLAY breathe is STARTED LATER (see the entrance stagger below). §V1 gave the entrance a real
+    // scale pop, and a resting breathe on the same property would fight it — so both idle breathes
+    // are deferred until their button has finished landing. Gated (§E8): reduced motion never starts.
     const sub =
       save.best > 0
         ? `Level ${currentLevel}  ·  best ${save.best.toLocaleString()}`
@@ -398,7 +390,11 @@ export class HomeScene extends Phaser.Scene {
 
     // Jackpot charge meter — a compact progress read-out in the hero area (fills one notch per level
     // win). Display-only: the wheel itself explodes in-game after the win that tops the meter off.
-    addJackpotMeter(this, DESIGN_W / 2, 590, { width: 300, compact: true }).update(save.jackpotMeter, false)
+    // §V1 spacing: was y=590, which left only ~5px between the tagline's descenders (y560, 24px) and
+    // the 24px-tall track — the two read as one crowded clump while a 130px void sat below them.
+    // Re-centred in the band between the tagline and PLAY (y720). Sits a touch above the true
+    // midpoint because PLAY's ambient halo bleeds ~10px past its cap, so optical centre ≠ geometric.
+    addJackpotMeter(this, DESIGN_W / 2, 618, { width: 300, compact: true }).update(save.jackpotMeter, false)
 
     // LEVELS + GIFT STORE share a row so the store gets a first-class entry without growing the stack.
     const levels = addPillButton(this, DESIGN_W / 2 - 158, 872, 300, 64, 'LEVELS', GHOST_PILL, () =>
@@ -419,10 +415,7 @@ export class HomeScene extends Phaser.Scene {
       startScene(this,'daily')
     )
     menuButtons.push(daily)
-    // Daily-ready breathe — gated (§E8): reduced motion leaves it at its resting scale.
-    if (ready && !reduced) {
-      this.tweens.add({ targets: daily, scale: 1.05, duration: 650, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' })
-    }
+    // Daily-ready breathe is likewise deferred to after the entrance (see the stagger below).
     // Banked free spins → a glowing "×N FREE SPINS" badge pinned to the DAILY BONUS corner. Rides
     // INSIDE the pill container so the daily breathe carries it; the glow pulse is its own beat
     // (reduce-flashing → static soft glow; reduced motion → static badge, no pop, no pulse).
@@ -444,27 +437,57 @@ export class HomeScene extends Phaser.Scene {
       menuButtons.push(addWeeklyRaceLockedModule(this, DESIGN_W / 2, 1134))
     }
 
-    // Entrance stagger: the stacked pill buttons fade + slide up 12px into place,
-    // ~60ms apart (PLAY, LEVELS, DAILY, ENDLESS). The scale pulses on PLAY/DAILY
-    // tween a different property, so they coexist with these y/alpha tweens.
-    // Reduced motion keeps every button in its final alpha=1 / final-y resting state.
+    // Entrance stagger (§V1 "pops off the screen" pass). v1 was a 12px fade-rise with a default
+    // `Back.easeOut` — correct, but so gentle the menu simply *appeared*. Now each pill SPRINGS in:
+    // it starts a little small and lower, then overshoots up past its resting spot and settles, with
+    // a wider ~76ms gap so the cascade reads as four distinct arrivals rather than one blur.
+    // Reduced motion keeps every button in its final alpha=1 / final-y / final-scale resting state.
+    const STAGGER_STEP = 76
+    const ENTRANCE_MS = 360
+    // Power-on beat #5: on boot the button stagger waits for the glow bloom, so the chips/buttons
+    // are the last thing to arrive; on a normal entrance it plays immediately (unchanged).
+    const staggerBase = powerOn ? 1080 : 0
+    /** When a given button has finished landing — the cue for its idle breathe to take over. */
+    const landedAt = (btn: Phaser.GameObjects.Container): number =>
+      staggerBase + Math.max(0, menuButtons.indexOf(btn)) * STAGGER_STEP + ENTRANCE_MS
     if (!reduced) {
-      // Power-on beat #5: on boot the button stagger waits for the glow bloom, so the chips/buttons
-      // are the last thing to arrive; on a normal entrance it plays immediately (unchanged).
-      const staggerBase = powerOn ? 1080 : 0
       menuButtons.forEach((btn, i) => {
         const finalY = btn.y
         btn.setAlpha(0)
-        btn.y = finalY + 12
+        btn.y = finalY + 26
+        btn.setScale(0.86)
         this.tweens.add({
           targets: btn,
           y: finalY,
           alpha: 1,
-          duration: 260,
-          delay: staggerBase + i * 60,
-          ease: 'Back.easeOut',
+          scale: 1,
+          duration: ENTRANCE_MS,
+          delay: staggerBase + i * STAGGER_STEP,
+          ease: backOut(OVERSHOOT.pop),
         })
       })
+      // Idle breathes hand off from the entrance: each starts only once ITS button has settled, so
+      // the two scale animations never overlap on the same target.
+      this.playBreathe = this.tweens.add({
+        targets: play,
+        scale: 1.04,
+        duration: 800,
+        delay: landedAt(play),
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut',
+      })
+      if (ready) {
+        this.tweens.add({
+          targets: daily,
+          scale: 1.05,
+          duration: 650,
+          delay: landedAt(daily),
+          yoyo: true,
+          repeat: -1,
+          ease: 'Sine.easeInOut',
+        })
+      }
     }
 
     // ── Growth celebrations (coronation, then friend-joined), queued AFTER the entrance settles —

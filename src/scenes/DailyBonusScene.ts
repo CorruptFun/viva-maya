@@ -723,7 +723,7 @@ export class DailyBonusScene extends Phaser.Scene {
           alpha: { start: 0.95, end: 0 },
           lifespan: { min: 700, max: 1100 },
           gravityY: 120,
-          tint: 0xf2b234,
+          tint: 0xffb01c,
           emitting: false,
         })
         .setDepth(46)
@@ -739,7 +739,7 @@ export class DailyBonusScene extends Phaser.Scene {
           gravityY: 220,
           rotate: { min: -180, max: 180 },
           lifespan: 1400,
-          tint: [0xf2b234, 0xd3304f, 0x26304d, 0xfffdf8],
+          tint: [0xffb01c, 0xe61f4d, 0x223056, 0xfffdf7],
           emitting: false,
         })
         .setDepth(44)
