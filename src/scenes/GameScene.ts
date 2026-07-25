@@ -264,6 +264,13 @@ export class GameScene extends Phaser.Scene {
 
   /** R4 · lazy "FREE SPINS ×N" corner counter — minted the first time a ticket flies (numbered levels). */
   private freeSpinBadge?: { root: Phaser.GameObjects.Container; label: Phaser.GameObjects.Text }
+  /**
+   * Where the free-spins counter parks, measured while the HUD rail is built (so it reads the SAME
+   * chip geometry rather than duplicating those magic numbers). The counter is the only HUD element
+   * whose neighbours change per level — 1–3 objective chips, or the endless week's-best card — so its
+   * home has to be derived, not hard-coded. See `ensureFreeSpinBadge`.
+   */
+  private freeSpinSpot?: { x: number; y: number }
 
   /** Set while the win result card is animating in — a tap fast-forwards it to the settled state. */
   private overlaySettle: (() => void) | null = null
@@ -1676,12 +1683,18 @@ export class GameScene extends Phaser.Scene {
           color: T.goldText,
         })
         .setOrigin(0.5)
+      // Free-spins counter parks in the rail gap between the moves card and this one.
+      this.freeSpinSpot = { x: (BOARD_X + 170 + bx) / 2, y: cardY }
     } else {
       const chipW = 118
       const chipGap = 12
       const n = this.objectives.length
       // A "COLLECT" tag over the objective cluster — names the chips unmistakably as TARGETS.
       const clusterCx = BOARD_X + BOARD_W - chipW / 2 - ((n - 1) * (chipW + chipGap)) / 2
+      // Free-spins counter parks in the rail gap between the moves card and the objective cluster.
+      // Narrowest at 3 objectives (~92px) and roomier with fewer, so it is derived, never fixed.
+      const firstChipLeft = BOARD_X + BOARD_W - chipW - (n - 1) * (chipW + chipGap)
+      this.freeSpinSpot = { x: (BOARD_X + 170 + firstChipLeft) / 2, y: cardY }
       this.add
         .text(clusterCx, cardY - 70, 'COLLECT', { fontFamily: FONT, fontSize: '18px', fontStyle: '900', color: T.goldText })
         .setOrigin(0.5)
@@ -5487,25 +5500,36 @@ export class GameScene extends Phaser.Scene {
   }
 
   /**
-   * R4 — the lazy "FREE SPINS ×N" corner counter: a mini golden ticket + count, top-right under the
-   * score, where the flying ticket banks. Minted hidden on first need (the arriving ticket reveals
-   * it); subsequent awards just pop + retally it. Depth 43 — above the win scrim, with the meters.
+   * R4 — the lazy "FREE SPINS ×N" counter: a mini golden ticket + count that sits in the HUD rail,
+   * where the flying ticket banks. Minted hidden on first need (the arriving ticket reveals it);
+   * subsequent awards just pop + retally it. Depth 43 — above the win scrim, with the meters.
+   *
+   * Placement history — the top-right corner is NOT free, despite looking it:
+   *   y=158 clipped the third objective chip; y=128 was then chosen for the "empty band under
+   *   SCORE", but that band does not exist either. The score READOUT runs to y≈122 (a 4-digit score
+   *   is ~110px wide, so it reaches left under the badge), the COLLECT tag ends at x≈550, and the
+   *   chips start at y=144 — leaving a ~20px hole the 34px badge could not fit. Live result: the
+   *   ticket sat on top of the score and butted into COLLECT.
+   * So it now parks in the genuinely empty gap of the card rail, between the moves card and the
+   * objective cluster (`freeSpinSpot`, measured where that geometry is known), vertically centred
+   * with those cards so it reads as part of the same rail. The caption stacks ABOVE the ticket
+   * rather than beside it — the sideways caption is what collided with COLLECT, and stacking keeps
+   * the whole counter inside the ~92px the narrowest (3-objective) layout leaves.
    */
   private ensureFreeSpinBadge(): { root: Phaser.GameObjects.Container; label: Phaser.GameObjects.Text } {
     if (this.freeSpinBadge) return this.freeSpinBadge
     const T = getTheme()
-    // y=128 keeps the badge in the empty band under SCORE — at 158 it clipped the third
-    // objective chip's top edge on 3-objective levels.
-    const root = this.add.container(BOARD_X + BOARD_W - 56, 128).setDepth(43).setAlpha(0)
+    const spot = this.freeSpinSpot ?? { x: BOARD_X + BOARD_W - 56, y: 196 }
+    const root = this.add.container(spot.x, spot.y).setDepth(43).setAlpha(0)
     const g = this.add.graphics()
-    this.drawTicketFace(g, 74, 34)
+    g.setY(9) // ticket sits below the caption; the pair stays optically centred on the container
+    this.drawTicketFace(g, 68, 34)
     const label = this.add
-      .text(6, 0, `×${loadSave().freeSpins}`, { fontFamily: FONT, fontSize: '20px', fontStyle: '900', color: css(T.goldDarkest) })
+      .text(0, 9, `×${loadSave().freeSpins}`, { fontFamily: FONT, fontSize: '20px', fontStyle: '900', color: css(T.goldDarkest) })
       .setOrigin(0.5)
     const spinCap = this.add
-      .text(-40, 0, 'FREE\nSPINS', { fontFamily: FONT, fontSize: '9px', fontStyle: '900', color: css(T.goldDarkest), align: 'right' })
-      .setOrigin(1, 0.5)
-      .setLineSpacing(-2)
+      .text(0, -18, 'FREE SPINS', { fontFamily: FONT, fontSize: '10px', fontStyle: '900', color: T.goldText })
+      .setOrigin(0.5)
     root.add([g, label, spinCap])
     this.freeSpinBadge = { root, label }
     return this.freeSpinBadge
