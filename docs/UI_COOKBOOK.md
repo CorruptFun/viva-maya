@@ -68,6 +68,34 @@ g.fillRoundedRect(x + ins, y, w - ins*2, bh, rb)
 g.fillRoundedRect(ox, oy, w, H, safeR(r, w, h))   // NOT safeR(r, w, H)
 ```
 
+### 2b-ii. Decorations laid along a **rounded** frame (bulbs floating off the border)
+**Symptom:** a marquee bulb row reads as "near the frame" instead of "studded into it" — the end
+bulbs of each run hang in empty background. Reported from a real phone as *"the red and yellow
+lights aren't connected to the border."*
+**Cause:** the run was distributed across the frame's **full** width, corner to corner, but the frame
+is a rounded rect. Past `x + r` the stroke has already curved away, so anything placed out at the
+square corner is up to `r` px from the line it's supposed to sit on.
+**Rule:** *a decoration that sits ON a rounded frame's edge must span only the **straight** part of
+that edge* — inset the run by the corner radius, and share ONE radius constant with the fill/stroke
+so they can't drift apart:
+```ts
+const cabR = 30                                  // used by fill, stroke AND the run
+const run  = cabW - cabR * 2                     // the straight span only
+const bx   = cabX + cabR + (run * i) / (n - 1)   // every bulb centred on the stroke
+```
+
+### 2b-iii. Fixed step around a ring leaves a **stub gap at every corner**
+**Symptom:** evenly spaced studs/bulbs that visibly bunch at the four corners.
+**Cause:** stepping a hard-coded pitch (`x += 56`) along a side whose length isn't a whole multiple
+of it. The leftover lands as one short gap per side — 652 / 56 leaves a 36px stub ×4.
+**Rule:** *derive the step from the span, don't hard-code it.* Round to the nearest whole count so
+the rhythm is preserved and the remainder is distributed instead of dumped at the corner:
+```ts
+const perSide = Math.max(1, Math.round(side / 56))   // nearest whole count
+const step    = side / perSide                       // 54.33 — every gap identical
+```
+Check it numerically, not by eye: walk the ring and assert `new Set(gaps).size === 1`.
+
 ### 2c. Never use radius == exactly half the smallest side
 Phaser's `fillRoundedRect`/`strokeRoundedRect` can spike at the corners when the radius equals *exactly* half a side (a perfect semicircle end) — the arc tessellation overshoots the tangent. Keep radii a hair under half:
 ```ts
