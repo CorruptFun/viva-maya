@@ -57,6 +57,7 @@ fixtures · `?raceline=rich|out|new` Home standings-line fixtures · `?coronatio
 `?friend[=n]` celebration previews · `?invite=in|minting|welcome` store invite fixtures ·
 `?wheel` fire the armed jackpot wheel · `?wedge=N` pin the winning wedge ·
 `?ticket=N` free-spin ticket beat · `?ref=CODE` referral capture (works in prod too) ·
+`?plinko[=PTS]` open the Plinko bonus drop · `?slot=N` pin its landing slot ·
 `?repro=upgrade` plant the "special swallowed by its own upgrade" regression case ·
 `?lives=N` · `?endless=1` · `?scene=daily|home|levelselect` · `?spin=1` · `?autospin=1` ·
 `?help` / `?sound` auto-open those panels.

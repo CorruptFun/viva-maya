@@ -24,10 +24,11 @@ import { Board } from '../core/board'
 import { awardFreeSpinsFor, todayKey } from '../core/daily'
 import { ENDLESS_MOVES, endlessBestForWeek, endlessRngForWeek, recordEndless, weekKey } from '../core/endless'
 import { LEVEL_COUNT, levelSpec } from '../core/levels'
+import { shouldOfferPlinko } from '../core/plinko'
 import { devSetLives, formatCountdown, refreshLives, spendLifeFor } from '../core/lives'
 import { maya, pendingOccasion, warmLoseLine, warmWinSubtitle } from '../core/maya'
 import { mulberry32 } from '../core/rng'
-import { addChips, addFreeSpins, bumpJackpotMeter, loadSave, markFinaleSeen, markOccasionSeen, persistSave, recordResult, recordScore, resetJackpotMeter, spendChips, takePendingBoosts } from '../core/save'
+import { addChips, addFreeSpins, bumpJackpotMeter, freeSpinRoom, loadSave, markFinaleSeen, markOccasionSeen, persistSave, recordResult, recordScore, resetJackpotMeter, spendChips, takePendingBoosts } from '../core/save'
 import { POWER_ITEMS } from '../core/store'
 import type { PowerItem } from '../core/store'
 import { jackpotReady } from '../core/jackpot'
@@ -35,6 +36,7 @@ import { SYMBOLS, key } from '../core/types'
 import type { BlastEvent, BoostType, ClearWave, Coord, FallMove, LevelSpec, Piece, Spawn, SymbolType } from '../core/types'
 import { addCasinoBackdrop } from '../view/background'
 import { addJackpotMeter, openJackpotWheel } from '../view/jackpot'
+import { openPlinko } from '../view/plinko'
 import type { JackpotMeter } from '../view/jackpot'
 import { D, E, OVERSHOOT, backOut, heartbeat } from '../view/motion'
 import { quality } from '../view/quality'
@@ -246,6 +248,11 @@ export class GameScene extends Phaser.Scene {
   /** Deepest MEGA tier (1 MEGA / 2 SUPER / 3 UNREAL) reached this resolve — so the strike PUNCTUATES
    *  each new tier instead of firing every wave. Reset per resolve (resolveLoop) + on restart. */
   private comboPeakTier = 0
+  /** Points the CURRENT chain has scored (summed across its waves) — the stake a Plinko drop
+   *  multiplies. Reset per resolve (resolveLoop) + on restart. */
+  private chainPoints = 0
+  /** One Plinko drop per level, however hot the player gets. Reset on restart (create). */
+  private plinkoUsedThisLevel = false
 
   /** §R3 score-medallion pool (≤MEDALLION_CAP slots, built lazily, reused for the whole round). */
   private medallionPool: MedallionSlot[] = []
@@ -392,6 +399,8 @@ export class GameScene extends Phaser.Scene {
     this.comboText = undefined
     this.comboTween = null
     this.comboPeakTier = 0
+    this.chainPoints = 0
+    this.plinkoUsedThisLevel = false // a fresh level re-arms the bonus drop
     this.freeSpinBadge = undefined // scene GameObject from a prior round — died with that scene
     // §R3 score-medallion pool: its slots' GameObjects (Text/Image/Container) were destroyed with the
     // prior scene, so drop the stale refs and let takeMedallion rebuild. A restart re-runs create() but
@@ -490,6 +499,25 @@ export class GameScene extends Phaser.Scene {
       // ?ticket=N — punch the "+N FREE SPINS" ticket beat on demand (presentation only; no award).
       const ticket = Number(params.get('ticket'))
       if (ticket > 0) this.time.delayedCall(700, () => this.freeSpinTicket(ticket))
+      // ?plinko[=PTS] — drop the Plinko board on demand (mirrors ?wheel) so automated checks can reach
+      // it without grinding for a chain. Routes through the real open path, so the award, the rigged
+      // landing and the board handback are all exercised exactly as in production. Pair with ?slot=N
+      // (read inside view/plinko.ts) to pin the landing slot.
+      if (params.has('plinko')) {
+        const stake = Number(params.get('plinko')) || 2000
+        // Wait for a settled board (the level intro owns the opening beat) so the drop borrows the
+        // board from exactly the state the resolve loop would hand it over in.
+        const fire = (): void => {
+          if (this.state !== 'idle') {
+            this.time.delayedCall(300, fire)
+            return
+          }
+          this.state = 'resolving'
+          this.chainPoints = stake
+          this.offerPlinko(99, true)
+        }
+        this.time.delayedCall(900, fire)
+      }
     }
 
     addCasinoBackdrop(this, 'game')
@@ -2578,6 +2606,7 @@ export class GameScene extends Phaser.Scene {
       let cascade = 0
       let wave = first
       this.comboPeakTier = 0 // fresh chain — the MEGA strike re-punctuates each new tier this resolve
+      this.chainPoints = 0 // ...and a fresh stake for a possible Plinko drop
       while (wave) {
         cascade++
         this.dbgStage = `playWave c${cascade} cl=${wave.cleared.length} tr=${wave.transformed.length} ev=${wave.events.length}`
@@ -2608,6 +2637,11 @@ export class GameScene extends Phaser.Scene {
         return
       }
       if (!this.board.hasValidMove()) await this.reshuffle()
+      // A SUPER-MEGA-grade chain can buy a Plinko drop. Offered only HERE — after the win/lose checks
+      // above have returned — so the overlay can never collide with the result card, and only on a
+      // board that's about to be playable again. When it opens it OWNS the handback (its CLAIM
+      // restores idle), so return rather than falling through to the three lines below.
+      if (this.offerPlinko(cascade)) return
       this.state = 'idle'
       this.scheduleAutoplay()
       this.armHint()
@@ -2736,6 +2770,7 @@ export class GameScene extends Phaser.Scene {
       }
     }
     const wavePoints = wave.cleared.length * POINTS_PER_PIECE * cascade
+    this.chainPoints += wavePoints // the stake a Plinko drop multiplies, if this chain earns one
     this.addScore(wavePoints)
     if (cascade >= 2) {
       this.showCombo(cascade)
@@ -5522,6 +5557,65 @@ export class GameScene extends Phaser.Scene {
     const granted = addFreeSpins(spins, todayKey())
     if (granted <= 0) return
     this.freeSpinTicket(granted)
+  }
+
+  // ------------------------------------------------- Plinko bonus drop
+
+  /**
+   * A settled chain may buy a Plinko drop. Returns TRUE when the overlay opened — the caller must
+   * then stop, because the overlay owns handing the board back (its CLAIM restores idle).
+   *
+   * Three gates keep this a treat rather than a routine interruption: the chain must reach
+   * PLINKO_MIN_CASCADE (x5 — measured, because the x4 MEGA bar lands ~1×/level even played passively
+   * and would have fired in most levels), it must win the PLINKO_CHANCE roll, and only one drop is
+   * offered per level. Lands at ~1 level in 8 played passively, ~1 in 5 played well. See
+   * core/plinko.rate.test.ts, which fails if a difficulty-curve change ever makes it routine.
+   *
+   * The board stays in 'resolving' for the overlay's whole life, so input is already gated; the
+   * overlay's interactive scrim is the second layer. Wrapped in try/catch because resolveLoop is
+   * reached from a fire-and-forget `void this.trySwap` — a throw here without a recovery would wedge
+   * the board in 'resolving' forever (UI_COOKBOOK §11).
+   */
+  private offerPlinko(cascade: number, force = false): boolean {
+    if (this.plinkoUsedThisLevel && !force) return false
+    if (!force && !shouldOfferPlinko(cascade, Math.random)) return false
+    const stake = this.chainPoints
+    if (stake <= 0) return false
+    this.plinkoUsedThisLevel = true
+    try {
+      this.disarmHint() // idle effects yield to the celebration
+      this.disarmTwinkle()
+      this.clearSelection()
+      openPlinko(this, {
+        chainPoints: stake,
+        // Endless has no wheel to spend a spin on, and a capped-out player can't be paid one — either
+        // way the ticket slots leave the pool so the ball can't land on a prize we can't honour.
+        allowTickets: !this.endless && freeSpinRoom(todayKey()) > 0,
+        hitstop: ms => this.hitstop(ms),
+        onClaim: result => {
+          if (result.kind === 'mult' && result.points > 0) {
+            this.addScore(result.points) // the single multiplier chokepoint — composes with doubleScore
+            const c = this.cellToXY({ row: ROWS >> 1, col: COLS >> 1 })
+            this.spawnScorePopup(result.points, c.x, c.y, 4)
+          } else if (result.spins > 0) {
+            this.freeSpinTicket(result.spins) // reuse the existing golden-ticket beat
+          }
+          this.handBackBoard()
+        },
+      })
+      return true
+    } catch (err) {
+      this.log('offerPlinko ERROR', err)
+      return false // fall through to the caller's normal idle handback
+    }
+  }
+
+  /** Restore a playable idle — the tail of resolveLoop, shared with anything that borrows the board. */
+  private handBackBoard(): void {
+    if ((this.state as GameState) === 'ended') return
+    this.state = 'idle'
+    this.scheduleAutoplay()
+    this.armHint()
   }
 
   /** A small golden-ticket face (gold slab + inner perforation rule + punched edge notches). */

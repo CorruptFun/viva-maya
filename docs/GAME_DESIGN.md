@@ -57,6 +57,21 @@ clears a RANDOM present color. Swap-combos (both consumed, epicenter = drag dest
 - Jackpot+Reel/Bomb: converts every piece of that color into that special, detonates all
 - Jackpot+Jackpot: clears the entire board
 
+## Plinko bonus drop (src/core/plinko.ts + src/view/plinko.ts + GameScene.offerPlinko)
+- Trigger: a SETTLED chain of PLINKO_MIN_CASCADE (x5) or deeper, then a PLINKO_CHANCE (1/2) roll, and
+  at most ONE drop per level. Offered after the win/lose checks, so it never collides with a result
+  card. Ships at ~1 level in 8 played passively, ~1 in 5 played well — MEASURED (plinko.rate.test.ts),
+  not guessed: the x4 MEGA bar lands ~1 chain/level even passively and would have fired most levels.
+- Board: 8 peg rows → 9 slots. Ball breaks left/right once per row, so "right N times" = "slot N".
+- Slots (l→r): x10 · SPIN · x5 · x3 · x2 · x3 · x5 · SPIN · x10, weights 2/6/10/17/30/17/10/6/2
+  (sum 100). Symmetric, binomial-shaped — cheap+common in the middle, x10 a 2% thrill at each edge.
+- Multiplier slots pay THE TRIGGERING CHAIN'S POINTS x the multiplier, one-shot, via GameScene.addScore
+  (so it composes with the doubleScore boost). SPIN slots bank one free wheel pull.
+- AWARD-FIRST: slot rolled + any ticket banked BEFORE the animation; dropPath then rigs the bounce to
+  land there. Quitting mid-drop can't lose the prize. Ticket slots leave the pool when they can't be
+  honoured (endless, or free-spin caps full — save.freeSpinRoom).
+- DROP to release · tap again to skip · CLAIM is the only exit and hands the board back to idle.
+
 ## Scoring
 - 20 pts/piece × cascade number (wave 1 ×1, wave 2 ×2, …). Specials count as their symbol.
 - COMBO popup at cascade ≥2; MEGA WIN at ≥4 (siren + big vibrate).
@@ -188,7 +203,7 @@ icon.html → 5×5 emoji board + VIVA MAYA banner (checkerboard = (row+col)%2). 
 ?level=N jump · ?endless=1 boot the weekly race · ?lives=N set the life pool (test the gate) ·
 ?scene=daily|home|levelselect · ?auto=MS autoplay hinted moves · ?turbo=N scale tween/timer
 clocks · ?goal=N ?moves=N override level · ?plant=1 seed specials · ?spin=1 force spin ·
-?autospin=1 auto-trigger spin · ?repro=upgrade|upgrade-col plant the "special swallowed by its
+?autospin=1 auto-trigger spin · ?plinko[=PTS] open the bonus drop · ?slot=N pin its landing slot · ?repro=upgrade|upgrade-col plant the "special swallowed by its
 own upgrade" case (gapped column + a reel at (3,4); swipe it LEFT into the gap → match-4).
 DEV strip (top-left) mirrors model state (level/state/moves/score/objectives/hint) — the
 Claude browser pane starves the RAF clock and drops clicks while hidden; screenshots are

@@ -351,6 +351,20 @@ export function addFreeSpins(n: number, dayKey: string): number {
 }
 
 /**
+ * How many free spins could be banked RIGHT NOW under both caps — a read-only peek at what
+ * `addFreeSpins` would grant, with the same day-rollover rule. Nothing is written.
+ *
+ * Exists so a reward can decline to OFFER a free spin it couldn't pay: Plinko rolls its ticket slots
+ * out of the pool when this is 0, rather than landing the ball on SPIN and awarding nothing. Same
+ * honesty rule as the ticket celebration itself — a capped-out player is never lied to.
+ */
+export function freeSpinRoom(dayKey: string): number {
+  const save = loadSave()
+  const earnedToday = save.freeSpinsDay === dayKey ? save.freeSpinsEarnedToday : 0
+  return Math.max(0, Math.min(FREE_SPIN_DAILY_CAP - earnedToday, FREE_SPIN_BANK_CAP - save.freeSpins))
+}
+
+/**
  * Spend one banked free spin — atomic load→check→dec→persist. Returns the REMAINING bank on success,
  * or null when the bank was empty (save untouched), so a caller can never double-spend.
  */
