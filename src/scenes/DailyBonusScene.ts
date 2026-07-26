@@ -204,12 +204,15 @@ export class DailyBonusScene extends Phaser.Scene {
     const cabH = 340
     const cabX = (DESIGN_W - cabW) / 2
     const cabY = 280
+    // One radius for the cabinet, shared by the fill, the stroke AND the marquee bulb run below —
+    // the bulbs sit ON the border line, so if these ever drift apart the end bulbs float off the frame.
+    const cabR = 30
     g.fillStyle(T.shadow, 0.14)
-    g.fillRoundedRect(cabX + 4, cabY + 8, cabW, cabH, 30)
+    g.fillRoundedRect(cabX + 4, cabY + 8, cabW, cabH, cabR)
     g.fillStyle(T.cardFill, 1)
-    g.fillRoundedRect(cabX, cabY, cabW, cabH, 30)
+    g.fillRoundedRect(cabX, cabY, cabW, cabH, cabR)
     g.lineStyle(3, T.goldBezel, 0.9)
-    g.strokeRoundedRect(cabX, cabY, cabW, cabH, 30)
+    g.strokeRoundedRect(cabX, cabY, cabW, cabH, cabR)
     const slotGap = (cabW - 3 * REEL_W) / 4
     for (let i = 0; i < 3; i++) {
       const wx = cabX + slotGap + i * (REEL_W + slotGap)
@@ -232,11 +235,15 @@ export class DailyBonusScene extends Phaser.Scene {
     g.lineStyle(2.5, T.gold, 0.9)
     g.strokeRoundedRect(plLeft, plCenterY - plBand / 2, plRight - plLeft, plBand, plBand / 2)
 
-    // Marquee bulbs framing the cabinet top & bottom edges.
+    // Marquee bulbs framing the cabinet top & bottom edges. The run spans only the STRAIGHT part of
+    // each edge (inset by the corner radius): past `cabX + cabR` the border has already curved away,
+    // so a bulb placed out at the square corner hangs in empty background, visibly disconnected from
+    // the frame it is supposed to be studded into. Inset, every bulb sits centred on the stroke.
     const bulbCols = 9
+    const bulbRun = cabW - cabR * 2
     for (const by of [cabY, cabY + cabH]) {
       for (let i = 0; i < bulbCols; i++) {
-        const bx = cabX + (cabW * i) / (bulbCols - 1)
+        const bx = cabX + cabR + (bulbRun * i) / (bulbCols - 1)
         const bulb = this.add
           .image(bx, by, 'bulb')
           .setDisplaySize(16, 16)

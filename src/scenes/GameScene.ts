@@ -1532,12 +1532,18 @@ export class GameScene extends Phaser.Scene {
     const right = BOARD_X - pad + (BOARD_W + pad * 2) - inset
     const top = BOARD_Y - pad + inset
     const bottom = BOARD_Y - pad + (BOARD_W + pad * 2) - inset
-    const step = 56
+    // Derive the step from the side length instead of hard-coding it. At a fixed 56 the side
+    // (652) isn't a whole number of steps, so each edge ended on a 36px stub gap right before the
+    // corner — the bulbs visibly bunched at all four corners. Rounding to the nearest whole count
+    // keeps the same 48 bulbs and the same ~56 rhythm, but every gap is now identical.
+    const side = right - left
+    const perSide = Math.max(1, Math.round(side / 56))
+    const step = side / perSide
     const pts: Array<{ x: number; y: number }> = []
-    for (let x = left; x < right - 1; x += step) pts.push({ x, y: top })
-    for (let y = top; y < bottom - 1; y += step) pts.push({ x: right, y })
-    for (let x = right; x > left + 1; x -= step) pts.push({ x, y: bottom })
-    for (let y = bottom; y > top + 1; y -= step) pts.push({ x: left, y })
+    for (let i = 0; i < perSide; i++) pts.push({ x: left + step * i, y: top })
+    for (let i = 0; i < perSide; i++) pts.push({ x: right, y: top + step * i })
+    for (let i = 0; i < perSide; i++) pts.push({ x: right - step * i, y: bottom })
+    for (let i = 0; i < perSide; i++) pts.push({ x: left, y: bottom - step * i })
 
     const period = 1500 // one lap of the chase
     pts.forEach((p, i) => {
