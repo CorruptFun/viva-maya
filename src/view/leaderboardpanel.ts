@@ -31,7 +31,7 @@ import Phaser from 'phaser'
 import { DESIGN_W, viewportCenterY, worldH } from '../config'
 import { sfx } from '../audio/sfx'
 import { cloudSession } from '../core/cloud'
-import { endlessBestThisWeek, weekKey } from '../core/endless'
+import { endlessBestThisWeek, formatWeekRemaining, weekEndsAt, weekKey } from '../core/endless'
 import { fetchChampion, fetchWeeklyBoard, previousWeekKey } from '../core/leaderboard'
 import type { Champion, LeaderboardEntry, WeeklyBoard } from '../core/leaderboard'
 import type { SaveData } from '../core/save'
@@ -354,7 +354,10 @@ export function openWeeklyRacePanel(scene: Phaser.Scene, opts: WeeklyRacePanelOp
     .setOrigin(0.5)
   cardRoot.add([title, weekLabel])
   const setWeek = (wk: string): void => {
-    weekLabel.setText(`this week's board  ·  ${wk}`)
+    // The ISO key stays — it's exactly what let us spot two friends sitting on DIFFERENT weeks from a
+    // pair of screenshots — but on its own "2026-W30" tells a player nothing. The half they actually
+    // want is when the board resets, and it's the same instant worldwide now (Monday 00:00 UTC).
+    weekLabel.setText(`${wk}  ·  ends in ${formatWeekRemaining(weekEndsAt().getTime() - Date.now())}`)
   }
   setWeek(opts.boardOverride?.week ?? weekKey())
 

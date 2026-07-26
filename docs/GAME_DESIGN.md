@@ -96,7 +96,15 @@ clears a RANDOM present color. Swap-combos (both consumed, epicenter = drag dest
 ## Endless weekly race (src/core/endless.ts + GameScene endless mode)
 - Unlocks after ENDLESS_UNLOCK_LEVEL=30 (fixed, independent of LEVEL_COUNT — save.unlocked > 30).
   Entry: rose ENDLESS pill on Home and LevelSelect.
-- weekKey(now) = ISO-8601 week "YYYY-Www" (local, Thursday-anchored). seedForWeek() = FNV-1a →
+- weekKey(now) = ISO-8601 week "YYYY-Www" in **UTC** (Thursday-anchored). The race opens and closes
+  at Monday 00:00 UTC for EVERYONE at once — that is Sunday evening in the Americas. It was local
+  time until 2026-07-26, which silently split the race: the key drives the board SEED, the
+  leaderboard partition written to AND the one read back, so a player whose local date had already
+  reached Monday sat on a different week — different board, a leaderboard containing only
+  themselves, and no way to tell why (hit for real by two friends 6 timezones apart). A forward-set
+  device clock could also jump into next week's board early. The panel now shows "ends in 2d 5h"
+  beside the key (formatWeekRemaining + weekEndsAt) so the reset is legible without decoding it.
+  seedForWeek() = FNV-1a →
   endlessRng() = mulberry32(seed): EVERYONE gets the SAME board that week; every attempt that
   week replays the identical starting board (a BEST-score race, not per-attempt random).
 - Score attack: ENDLESS_MOVES=30, all 6 symbols, NO objectives, NO boosts applied (planting

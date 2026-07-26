@@ -21,19 +21,56 @@ export const ENDLESS_MOVES = 30
 export const ENDLESS_UNLOCK_LEVEL = 30
 
 /**
- * ISO-8601 week key "YYYY-Www" in LOCAL time (Thursday-anchored, weeks start
- * Monday). Same week → same key → same board; the race resets when it rolls over.
+ * ISO-8601 week key "YYYY-Www" in **UTC** (Thursday-anchored, weeks start Monday). Same week → same
+ * key → same board; the race resets when it rolls over, at Monday 00:00 UTC, for EVERYONE at once.
+ *
+ * UTC, not local time, and that is the whole point. This used to read the device's local calendar
+ * date, which quietly split the race in two: a player whose local date had already ticked over to
+ * Monday got a different key, and the key drives everything — the board SEED (a different layout),
+ * the leaderboard partition it writes to, and the partition it reads back. Two friends a few
+ * timezones apart would each see a board with only themselves on it and no way to tell why. It also
+ * meant a device clock set forward could jump into next week's board early.
+ *
+ * One instant now maps to one week for every player on earth, whatever their timezone or clock
+ * offset. The visible trade is that the rollover is a fixed moment worldwide rather than local
+ * midnight — Monday 00:00 UTC is Sunday evening in the Americas.
  */
 export function weekKey(now = new Date()): string {
-  const d = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-  const dow = (d.getDay() + 6) % 7 // Mon=0 … Sun=6
-  d.setDate(d.getDate() - dow + 3) // hop to this week's Thursday
-  const year = d.getFullYear()
-  const firstThu = new Date(year, 0, 4)
-  const firstDow = (firstThu.getDay() + 6) % 7
-  firstThu.setDate(firstThu.getDate() - firstDow + 3)
+  const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()))
+  const dow = (d.getUTCDay() + 6) % 7 // Mon=0 … Sun=6
+  d.setUTCDate(d.getUTCDate() - dow + 3) // hop to this week's Thursday
+  const year = d.getUTCFullYear()
+  const firstThu = new Date(Date.UTC(year, 0, 4))
+  const firstDow = (firstThu.getUTCDay() + 6) % 7
+  firstThu.setUTCDate(firstThu.getUTCDate() - firstDow + 3)
   const week = 1 + Math.round((d.getTime() - firstThu.getTime()) / (7 * 86400000))
   return `${year}-W${String(week).padStart(2, '0')}`
+}
+
+/**
+ * The instant this week's race closes — Monday 00:00 UTC. Exposed so a surface can tell the player
+ * when the board resets instead of leaving "2026-W30" to be decoded, and so tests can pin the edge.
+ */
+export function weekEndsAt(now = new Date()): Date {
+  const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()))
+  const dow = (d.getUTCDay() + 6) % 7 // Mon=0 … Sun=6
+  d.setUTCDate(d.getUTCDate() + (7 - dow)) // next Monday, 00:00 UTC
+  return d
+}
+
+/**
+ * Coarse "time left in the race", for the panel subtitle: days+hours, then hours+minutes, then
+ * minutes. Deliberately not `lives.formatCountdown` (m:ss) — that's built for a 20-minute timer and
+ * would read as an absurd "3421:07" across a week.
+ */
+export function formatWeekRemaining(ms: number): string {
+  const mins = Math.floor(Math.max(0, ms) / 60000)
+  const d = Math.floor(mins / 1440)
+  const h = Math.floor((mins % 1440) / 60)
+  const m = mins % 60
+  if (d > 0) return `${d}d ${h}h`
+  if (h > 0) return `${h}h ${m}m`
+  return m > 0 ? `${m}m` : 'under a minute'
 }
 
 /** Deterministic 32-bit seed for a week key — same key → same seed → same board for everyone. */
