@@ -2423,6 +2423,30 @@ export class GameScene extends Phaser.Scene {
     if (h.coatsStripped.length > 0) this.refreshCoatLabel()
   }
 
+  /**
+   * Say NO out loud. A swipe that refuses silently is indistinguishable from a dropped input, and
+   * the player concludes the game is broken rather than that the piece is held — which is exactly
+   * the confusion this mechanic caused on its first outing. The piece shudders against the swipe
+   * and the invalid thud plays, borrowing the language the board already uses for a bad swap.
+   */
+  private refuseSwap(at: Coord): void {
+    const piece = this.board.get(at)
+    const sprite = piece ? this.sprites.get(piece.id) : undefined
+    this.clearSelection()
+    sfx.invalidThud()
+    if (!sprite || this.reducedMotion) return
+    const x0 = sprite.x
+    this.tweens.add({
+      targets: sprite,
+      x: x0 + 6,
+      duration: 52,
+      yoyo: true,
+      repeat: 2,
+      ease: 'Sine.easeInOut',
+      onComplete: () => sprite.setX(x0),
+    })
+  }
+
   /** The sweep counter: how much felt is still on the table. Hidden entirely when there is none. */
   private refreshCoatLabel(): void {
     if (!this.coatLabel) return
@@ -2487,6 +2511,23 @@ export class GameScene extends Phaser.Scene {
           glow.destroy()
           this.armedGlows.delete(id)
         }
+      }
+    }
+    // Clamps ride their piece and die with it — the SAME upkeep rule as the armed halos above,
+    // and skipping it is not cosmetic. A clamp is a separate GameObject keyed by piece id, so
+    // without this loop two things go wrong: it stays at the position where the piece was created
+    // (so it drifts off as the piece falls), and it survives the piece being matched away — a
+    // clamped piece still MATCHES, so this happens constantly. What the player then sees is a
+    // clamp sitting on a cell whose piece is long gone, apparently refusing to break no matter
+    // what they clear next to it, while the piece that fell in underneath is not clamped at all.
+    // That reads as the mechanic being broken, because it is.
+    for (const [id, clamp] of this.lockOverlays) {
+      const sprite = this.sprites.get(id)
+      if (sprite && sprite.active) {
+        clamp.setPosition(sprite.x, sprite.y)
+      } else {
+        clamp.destroy()
+        this.lockOverlays.delete(id)
       }
     }
     // Goal halos: keep each under its piece and shimmer its alpha. A per-piece phase (off the
@@ -2713,6 +2754,16 @@ export class GameScene extends Phaser.Scene {
     const pa = this.board.get(a)
     const pb = this.board.get(b)
     if (!pa || !pb) return
+    // Hazards gate the move HERE, not only inside `wouldSwapMatch`. That helper is consulted by the
+    // hint engine, the reshuffle check and the autoplay — but NOT by the swipe (`onMove`) or
+    // tap-tap (`onUp`) paths, which call straight through to this method. Enforcing the rule only
+    // in the helper meant a clamped piece could simply be dragged: the lock was visible, taught by
+    // an intro card, and completely unenforced against actual input.
+    const stuck = pa.locked ? a : pb.locked ? b : pa.kind === 'blocker' ? a : pb.kind === 'blocker' ? b : null
+    if (stuck) {
+      this.refuseSwap(stuck)
+      return
+    }
     this.state = 'swapping'
     this.disarmHint() // idle effects yield to the move (§3d composition)
     this.disarmSelectTelegraph() // B2: restore any leaned neighbors before the board animates
