@@ -1,6 +1,7 @@
 import { SYMBOLS } from './types'
 import type { LevelSpec, SymbolType } from './types'
 import { mulberry32, randInt } from './rng'
+import { DIFFICULTY, isTeachingLevel } from './difficulty'
 
 export const LEVEL_COUNT = 300
 
@@ -44,6 +45,16 @@ export const LEVEL_COUNT = 300
  * (planning cascades, banking specials onto goal colours) far outperforms that proxy, every level
  * is comfortably winnable, hardest at L300.
  */
+/** Last level of the protected early game — everything at or below this is untouched by the retune. */
+const PROTECTED_TO = DIFFICULTY.bands.lockStart - 1
+
+/**
+ * The 3-objective ratio exactly as the original curve left it at `PROTECTED_TO`. The post-band
+ * branch starts here rather than at a bare 3.0, so the seam can never step DOWN. Frozen by
+ * `levels.test.ts` ("does not dip at the seam").
+ */
+const RATIO_AT_SEAM = 3.0 + 0.27 * Math.log(1 + (PROTECTED_TO - 8) / 52)
+
 export function levelSpec(level: number): LevelSpec {
   const L = level
   const rng = mulberry32((0xc0ffee ^ Math.imul(L, 2654435761)) >>> 0)
@@ -57,22 +68,40 @@ export function levelSpec(level: number): LevelSpec {
   const total = perObjective * objectiveCount
 
   // Density-aware target collect ratio → move budget.
+  const legacyCurve = !DIFFICULTY.curve.enabled || L <= PROTECTED_TO
   let ratio: number
   if (objectiveCount === 1) {
     ratio = 0.5
   } else if (objectiveCount === 2) {
     ratio = 1.15 + 0.12 * (L - 3) // L3..L7 → 1.15..1.63
-  } else {
+  } else if (legacyCurve) {
     // Ease the 3-objective onset (L8..L11) so the 2→3 step isn't a spike, then a slow log creep
     // toward a 3.5 ceiling — the smooth main climb that never plateaus.
     const onsetEase = 0.14 * Math.max(0, Math.min(1, (11 - L) / 3))
     ratio = Math.min(3.5, 3.0 - onsetEase + 0.27 * Math.log(1 + Math.max(0, L - 8) / 52))
+  } else {
+    // ANCHORED at the seam value, never rebased to 3.0. Starting the new branch from a bare 3.0
+    // would put L31 BELOW L30 (3.016 vs 3.095) — reintroducing the exact "next level is easier"
+    // defect this retune exists to remove, right at the moment hazards first appear.
+    ratio = Math.min(4.05, RATIO_AT_SEAM + 0.32 * Math.log(1 + (L - PROTECTED_TO) / 38))
   }
 
-  // Breather cadence: a gentle +2 moves every 5th level — a "catch your breath" beat layered on
-  // the rising trend so the grind reads as a wave, not a monotone. A hard feasibility floor keeps
-  // the budget above the point where even a flawless clear (~6 collects/move) couldn't finish.
-  let moves = Math.round(total / ratio) + (L % 5 === 0 ? 2 : 0)
+  // Breather cadence. Below the protected band (and whenever the retune is switched off) this stays
+  // the original +2 moves every 5th level. ABOVE it the +2 is gone: it was a 4-5% difficulty DIP,
+  // larger than the trend gain over the surrounding 15-25 levels, and it made 31% of levels easier
+  // than their predecessor — the noise drowned the signal. The breather still exists up there, but
+  // as a visibly lighter table (see DIFFICULTY.breatherHazardScale) rather than an invisible +2.
+  const breather = legacyCurve && L % 5 === 0 ? 2 : 0
+  // The level that introduces a mechanic is taught gently. Gated on both switches so that turning
+  // the curve off restores the pre-overhaul budget exactly, and turning hazards off leaves nothing
+  // to teach.
+  const teaching =
+    DIFFICULTY.curve.enabled && DIFFICULTY.hazards.enabled && isTeachingLevel(L)
+      ? DIFFICULTY.teachingLevelBonusMoves
+      : 0
+  // A hard feasibility floor keeps the budget above the point where even a flawless clear
+  // (~6 collects/move) couldn't finish.
+  let moves = Math.round(total / ratio) + breather + teaching
   moves = Math.max(moves, Math.ceil(total / 6.2) + objectiveCount)
 
   // Distinct goal symbols, chosen deterministically per level (variety; feasibility is symbol-
