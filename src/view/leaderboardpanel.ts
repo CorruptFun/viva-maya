@@ -928,7 +928,21 @@ export function openWeeklyRacePanel(scene: Phaser.Scene, opts: WeeklyRacePanelOp
 
 /** Module plate geometry (design px) — full-width like the overlay cards (40px side gutters). */
 const MODULE_W = 640
-const MODULE_H = 132
+/**
+ * 152, up from 132: the standings line used to be a bare caption crammed against the plate's bottom
+ * edge, and nothing about it said "tap me" — it was the only interactive thing on Home with no
+ * container of its own. It is now a proper strip (see `ensureRaceStrip`), and the extra 20px is the
+ * breathing room that strip needs above and below. Home has ~80px of clear space under the module
+ * (only backdrop glow lives there), so the block still clears the design box comfortably.
+ */
+const MODULE_H = 152
+/**
+ * The standings strip: a wide, FLAT warm-cream chip with a gold hairline. Deliberately flatter than
+ * `GHOST_PILL` — no pedestal, no deep bevel — so it reads as a secondary tappable row rather than a
+ * third button competing with the rose ENDLESS pill above it, while still being obviously pressable.
+ */
+const STRIP_W = MODULE_W - 44
+const STRIP_H = 52
 
 /** Bake the module's cream plate: soft down-cast shadow + gloss bands + gold bezel (+ dark rim). */
 function ensureModulePlate(scene: Phaser.Scene): string {
@@ -963,6 +977,34 @@ function ensureModulePlate(scene: Phaser.Scene): string {
   return key
 }
 
+/**
+ * Bake the standings strip's face — the affordance that was missing. A warm-cream fill (a shade
+ * deeper than the plate it sits on, so it separates), ONE quiet top gloss band, a soft seat shadow
+ * and a gold hairline. The single gloss band is the whole trick: enough to read as a raised, pressable
+ * surface, far short of the three-band bevelled cap the real buttons wear, so the eye still ranks it
+ * below the rose ENDLESS pill.
+ */
+function ensureRaceStrip(scene: Phaser.Scene): string {
+  const T = getTheme()
+  const key = `race:strip:${T.id}:${STRIP_W}x${STRIP_H}`
+  if (scene.textures.exists(key)) return key
+  const g = scene.make.graphics({ x: 0, y: 0 }, false)
+  const x = PAD
+  const y = PAD
+  const r = STRIP_H / 2
+  g.fillStyle(T.shadow, 0.1)
+  g.fillRoundedRect(x, y + 3, STRIP_W, STRIP_H, r)
+  g.fillStyle(T.cardFillWarm, 1)
+  g.fillRoundedRect(x, y, STRIP_W, STRIP_H, r)
+  g.fillStyle(T.glossHi, 0.5)
+  g.fillRoundedRect(x + 5, y + 3, STRIP_W - 10, STRIP_H * 0.34, r * 0.6)
+  g.lineStyle(2, T.goldBezel, 1)
+  g.strokeRoundedRect(x, y, STRIP_W, STRIP_H, r)
+  g.generateTexture(key, STRIP_W + PAD * 2, STRIP_H + PAD * 2)
+  g.destroy()
+  return key
+}
+
 // Module-level standings cache: the last live board summary, so a return to Home paints the live
 // line instantly and a fetch only refreshes it. Keyed by week — a rolled-over week falls back.
 interface RaceLineData {
@@ -983,19 +1025,45 @@ export function devSeedRaceLine(variant: string | null): void {
 }
 
 /**
- * The live standings line — `🏆 this week · #R of M · best N ›` — and the WHOLE line is a
- * pressable that opens the WEEKLY RACE panel. Paints from the module cache instantly, refreshes
- * from `fetchWeeklyBoard` when signed in, and falls back to the save-local line (best this week /
- * "set the pace") when offline, dormant or the board is still empty — never blank, never a spinner.
+ * The live standings row — `this week · #R of M · best N` on its own strip, with a chevron — and the
+ * WHOLE strip is a pressable that opens the WEEKLY RACE panel. Paints from the module cache instantly,
+ * refreshes from `fetchWeeklyBoard` when signed in, and falls back to the save-local line (best this
+ * week / "set the pace") when offline, dormant or the board is still empty — never blank, never a spinner.
+ *
+ * This used to be bare text with a small `›` glued on the end, and players did not read it as something
+ * you could tap — it looked like a caption for the ENDLESS button above it. Three things fix that, in
+ * the order they do the work: it now sits on its own **container** (`ensureRaceStrip`), the chevron is
+ * a real affordance pinned at the strip's right edge instead of a punctuation mark inside the sentence,
+ * and the press moves the strip itself rather than only fading the text. The label stays on body ink —
+ * see the note at its declaration for why it deliberately did NOT move to the interactive gold.
  */
 function addWeeklyRaceLine(scene: Phaser.Scene, x: number, y: number, save: SaveData): Phaser.GameObjects.Container {
   const T = getTheme()
   const still = prefersReducedMotion()
   const container = scene.add.container(x, y)
+  // Everything visible rides `face` so the press can sink it while the tap zone stays put — moving the
+  // zone under a held finger is what makes a button flicker between over/out.
+  const face = scene.add.container(0, 0)
+  container.add(face)
+  face.add(scene.add.image(0, 0, ensureRaceStrip(scene)))
+  // Nudged left of centre so the label sits optically centred against the pinned chevron. The label
+  // deliberately stays on the high-contrast body ink (9:1) rather than moving to the interactive gold:
+  // gold on this warm fill measures 4.13:1, which passes AA only because the text is large and heavy,
+  // and this line carries real data — your rank, your best score. The strip and the chevron say
+  // "tappable" on their own, exactly as a settings row does; the numbers should just stay readable.
   const line = scene.add
-    .text(0, 0, '', { fontFamily: FONT, fontSize: '20px', fontStyle: '900', color: T.inkSoft })
+    .text(-14, 0, '', { fontFamily: FONT, fontSize: '20px', fontStyle: '900', color: T.inkSoft })
     .setOrigin(0.5)
-  container.add(line)
+  face.add(line)
+  const chev = scene.add
+    .text(STRIP_W / 2 - 30, -1, '›', { fontFamily: FONT, fontSize: '32px', fontStyle: '900', color: T.goldText })
+    .setOrigin(0.5)
+  face.add(chev)
+  // A slow drift on the chevron — the same "there is more this way" cue the LevelSelect frontier
+  // marker gives. One tween, off under reduced motion (§E8), where the strip alone carries the read.
+  if (!still) {
+    scene.tweens.add({ targets: chev, x: chev.x + 5, duration: 900, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' })
+  }
 
   const setLine = (data: RaceLineData | null): void => {
     let mid: string
@@ -1010,7 +1078,9 @@ function addWeeklyRaceLine(scene: Phaser.Scene, x: number, y: number, save: Save
       const wkBest = endlessBestThisWeek(save)
       mid = wkBest > 0 ? `this week’s board · best ${wkBest.toLocaleString()}` : `new weekly board · set the pace`
     }
-    line.setText(`🏆  ${mid}  ›`)
+    // No 🏆 prefix and no trailing `›` any more: the module already carries a trophy right above, and
+    // the chevron is its own pinned object — both were doing their job badly inside the sentence.
+    line.setText(mid)
   }
   setLine(raceLineCache && raceLineCache.week === weekKey() ? raceLineCache : null)
 
@@ -1027,23 +1097,35 @@ function addWeeklyRaceLine(scene: Phaser.Scene, x: number, y: number, save: Save
     })
   }
 
-  // The whole line is the tap target (≥44pt tall) → the WEEKLY RACE panel.
-  const zone = scene.add
-    .rectangle(0, 0, Math.max(300, line.width + 48), 52, 0xffffff, 0.001)
-    .setInteractive({ useHandCursor: true })
+  // The whole strip is the tap target (≥44pt tall) → the WEEKLY RACE panel. Sized to the strip now,
+  // not to the text, so the target no longer grows and shrinks as the standings copy changes.
+  const zone = scene.add.rectangle(0, 0, STRIP_W, STRIP_H, 0xffffff, 0.001).setInteractive({ useHandCursor: true })
   container.add(zone)
+  // Press = the strip itself sinks and dims, the grammar every other control here uses. The old press
+  // only faded the text, which is invisible on a surface players weren't reading as a control anyway.
+  let pressTween: Phaser.Tweens.Tween | undefined
+  const press = (down: boolean): void => {
+    pressTween?.stop()
+    if (still) {
+      face.y = down ? 2 : 0
+      face.setAlpha(down ? 0.85 : 1)
+      return
+    }
+    pressTween = scene.tweens.add({
+      targets: face,
+      y: down ? 2 : 0,
+      alpha: down ? 0.85 : 1,
+      duration: down ? D.micro : D.settle,
+      ease: down ? E.press : E.settle,
+    })
+  }
   zone.on('pointerdown', () => {
     sfx.uiPress()
-    if (still) line.setAlpha(0.7)
-    else scene.tweens.add({ targets: line, alpha: 0.7, duration: 60, ease: E.press })
+    press(true)
   })
-  const restore = (): void => {
-    scene.tweens.killTweensOf(line)
-    line.setAlpha(1)
-  }
-  zone.on('pointerout', restore)
+  zone.on('pointerout', () => press(false))
   zone.on('pointerup', () => {
-    restore()
+    press(false)
     sfx.uiTap()
     sfx.whoosh() // §E3 B14: the airy sweep partners the panel opening
     openWeeklyRacePanel(scene)
@@ -1068,7 +1150,7 @@ export function addWeeklyRaceModule(
   const container = scene.add.container(cx, cy)
   container.add(scene.add.image(0, 0, ensureModulePlate(scene)))
   // Side dressing flanking the pill: the race's trophy (left) + its name (right), quiet on the plate.
-  const trophy = scene.add.text(-232, -24, '🏆', { fontFamily: 'sans-serif', fontSize: '34px' }).setOrigin(0.5)
+  const trophy = scene.add.text(-232, -32, '🏆', { fontFamily: 'sans-serif', fontSize: '34px' }).setOrigin(0.5)
   container.add(trophy)
   if (!still) {
     // A whisper of life on the trophy — slow hero breathe, phase-free (one tween, killed with the scene).
@@ -1076,7 +1158,7 @@ export function addWeeklyRaceModule(
   }
   container.add(
     scene.add
-      .text(232, -24, 'WEEKLY\nRACE', {
+      .text(232, -32, 'WEEKLY\nRACE', {
         fontFamily: FONT,
         fontSize: '17px',
         fontStyle: '900',
@@ -1089,8 +1171,10 @@ export function addWeeklyRaceModule(
   )
   // The rose ENDLESS play pill stays the hero of the block (reparented into the module so the whole
   // block staggers in as one unit — addPillButton's press animates its inner face, so this is safe).
-  container.add(addPillButton(scene, 0, -24, 340, 72, 'ENDLESS', ROSE_PILL, onPlay))
-  container.add(addWeeklyRaceLine(scene, 0, 40, save))
+  // On the 152-tall plate (-76..76) the pill row sits at -32 → spans -68..4 with an 8px top margin,
+  // and the strip at 42 → spans 16..68 with a matching 8px below: a 12px gutter between the two.
+  container.add(addPillButton(scene, 0, -32, 340, 72, 'ENDLESS', ROSE_PILL, onPlay))
+  container.add(addWeeklyRaceLine(scene, 0, 42, save))
   return container
 }
 
