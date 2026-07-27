@@ -2,6 +2,9 @@ import Phaser from 'phaser'
 import { SWAP_SOUNDS, SWAP_SOUND_LABELS, sfx } from '../audio/sfx'
 import { DESIGN_W, LIFE_REGEN_MS, LIVES_MAX, restScrollY, viewportCenterY, worldH } from '../config'
 import { ENDLESS_UNLOCK_LEVEL } from '../core/endless'
+import type { HazardKind } from '../core/difficulty'
+import { hazardSkin } from './hazardskins'
+import { ensureHazardTexture } from './textures'
 import { formatCountdown } from '../core/lives'
 import type { LivesState } from '../core/lives'
 import { loadSave } from '../core/save'
@@ -1903,6 +1906,88 @@ export function openSettingsPanel(scene: Phaser.Scene): void {
  * button, and tap-outside-to-close. Pops in with a Back overshoot unless reduced motion (then static).
  * `onClose` lets the caller (GameScene) drop its input guard when the card is dismissed.
  */
+/**
+ * Teach-once card for a new board mechanic, shown the first time one appears. Same furniture as
+ * `openOnboarding` — cream card, gold bezel, GOT IT, tap-outside — because a new RULE deserves the
+ * same weight as the original how-to-play, and reusing the recipe keeps them visually one family.
+ *
+ * Copy and art come from the active `hazardSkin()`, never from core, so a seasonal pack renaming
+ * the blocker to "ice" gets a correct card for free.
+ */
+export function openHazardIntro(scene: Phaser.Scene, kind: HazardKind, onClose?: () => void): void {
+  const W = 720
+  const reduced = prefersReducedMotion()
+  const skin = hazardSkin()
+  const layer = scene.add.container(0, 0).setDepth(65)
+  const cx = W / 2
+  const cy = 560
+  const cardW = 600
+  // 520, not 460: a three-line blurb at 25px overran the shorter card and collided with GOT IT.
+  // The tallest copy any skin ships has to fit, so the card is sized for it rather than for the
+  // shortest one — a future theme pack must not have to re-tune this.
+  const cardH = 520
+
+  const scrim = scene.add.rectangle(W / 2, viewportCenterY(), W, worldH(), 0x2a2417, 0.6).setInteractive()
+  const close = (): void => {
+    layer.destroy()
+    onClose?.()
+  }
+  scrim.on('pointerup', close)
+
+  const g = scene.add.graphics()
+  dropShadow(g, cx - cardW / 2, cy - cardH / 2, cardW, cardH, 30, getTheme().shadow, { alpha: 0.14, dist: 9 })
+  g.fillStyle(getTheme().cardFill, 1)
+  g.fillRoundedRect(cx - cardW / 2, cy - cardH / 2, cardW, cardH, 30)
+  g.lineStyle(4, getTheme().goldBezel, 1)
+  g.strokeRoundedRect(cx - cardW / 2, cy - cardH / 2, cardW, cardH, 30)
+  accentRimTop(g, cx - cardW / 2, cy - cardH / 2, cardW, 30, { alpha: 0.9 })
+
+  const block = scene.add.rectangle(cx, cy, cardW, cardH, 0xffffff, 0.001).setInteractive()
+
+  const kicker = scene.add
+    .text(cx, cy - cardH / 2 + 52, 'SOMETHING NEW', {
+      fontFamily: FONT,
+      fontSize: '22px',
+      fontStyle: '900',
+      color: getTheme().inkMuted,
+    })
+    .setOrigin(0.5)
+    .setLetterSpacing(3)
+  const title = scene.add
+    .text(cx, cy - cardH / 2 + 104, skin.label[kind], {
+      fontFamily: FONT,
+      fontSize: '46px',
+      fontStyle: '900',
+      color: getTheme().goldText,
+    })
+    .setOrigin(0.5)
+    .setLetterSpacing(1)
+
+  // A real sample of the art, at board scale, so the card shows the thing itself.
+  const swatch = scene.add
+    .image(cx, cy - 40, ensureHazardTexture(scene, kind, kind === 'blocker' ? 2 : 1))
+    .setDisplaySize(132, 132)
+
+  const body = scene.add
+    .text(cx, cy + 92, skin.blurb[kind], {
+      fontFamily: 'Arial, sans-serif',
+      fontSize: '25px',
+      color: getTheme().inkMuted,
+      align: 'center',
+      wordWrap: { width: cardW - 96 },
+      lineSpacing: 7,
+    })
+    .setOrigin(0.5)
+
+  layer.add([scrim, g, block, kicker, title, swatch, body])
+  layer.add(addPillButton(scene, cx, cy + cardH / 2 - 58, 240, 66, 'GOT IT', GOLD_PILL, close))
+
+  if (!reduced) {
+    layer.setScale(0.88).setAlpha(0)
+    scene.tweens.add({ targets: layer, scale: 1, alpha: 1, duration: 260, ease: backOut(OVERSHOOT.pop) })
+  }
+}
+
 export function openOnboarding(scene: Phaser.Scene, onClose?: () => void): void {
   const W = 720
   const reduced = prefersReducedMotion()

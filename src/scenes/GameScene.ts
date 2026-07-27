@@ -24,6 +24,9 @@ import { Board } from '../core/board'
 import { awardFreeSpinsFor, todayKey } from '../core/daily'
 import { ENDLESS_MOVES, endlessBestForWeek, endlessRngForWeek, recordEndless, weekKey } from '../core/endless'
 import { LEVEL_COUNT, levelSpec } from '../core/levels'
+import { hazardPlan } from '../core/hazards'
+import { ensureHazardTexture } from '../view/textures'
+import type { HazardKind } from '../core/difficulty'
 import { shouldOfferPlinko } from '../core/plinko'
 import { devSetLives, formatCountdown, refreshLives, spendLifeFor } from '../core/lives'
 import { maya, pendingOccasion, warmLoseLine, warmWinSubtitle } from '../core/maya'
@@ -54,6 +57,7 @@ import {
   consumeFocus,
   goldFace,
   hcBoard,
+  openHazardIntro,
   openOnboarding,
   startScene,
 } from '../view/ui'
@@ -133,6 +137,13 @@ export class GameScene extends Phaser.Scene {
   private sparkEmitter!: Phaser.GameObjects.Particles.ParticleEmitter
   /** Looping additive halo behind each on-board special sprite (the "armed/loaded" tell). */
   private armedGlows = new Map<number, Phaser.GameObjects.Image>()
+  /** Felt sprites by cell key — the coat layer, drawn UNDER the pieces. */
+  private coatCells = new Map<string, Phaser.GameObjects.Image>()
+  /** Clamp furniture by piece id, mirroring `armedGlows`: same create/sync/destroy discipline. */
+  private lockOverlays = new Map<number, Phaser.GameObjects.Image>()
+  /** Coats present when the level started — the denominator for the sweep counter. */
+  private coatsTotal = 0
+  private coatLabel?: Phaser.GameObjects.Text
   /**
    * Soft CREAM shimmer halo behind each on-board NORMAL piece whose symbol is still a needed
    * objective — the "collect me" tell. Deliberately cool/white and phase-shimmered (see update)
@@ -365,7 +376,11 @@ export class GameScene extends Phaser.Scene {
     } else {
       this.spec = levelSpec(this.level)
       this.board = new Board(ROWS, COLS, this.spec.symbolCount, mulberry32((Math.random() * 2 ** 31) | 0))
+      // Hazards are numbered-levels-only, seeded once, never mid-level. Deliberately inside this
+      // arm rather than behind a second `if (!this.endless)` — one fork, one place to delete.
+      this.board.seedHazards(hazardPlan(this.level, ROWS, COLS))
     }
+    this.coatsTotal = this.board.coatsRemaining()
     this.movesLeft = this.spec.moves
     this.objectives = this.spec.objectives.map(o => ({ symbol: o.symbol, remaining: o.count, total: o.count }))
     this.score = 0
@@ -375,6 +390,8 @@ export class GameScene extends Phaser.Scene {
     this.sprites.clear()
     this.armedGlows.clear()
     this.goalGlows.clear()
+    this.coatCells.clear()
+    this.lockOverlays.clear()
     this.reducedMotion = this.prefersReducedMotion()
     this.hc = hcBoard() // §E12 — high-contrast board mode (darker floor + tints + thicker ring)
     this.hcRing = undefined // drop any stale ref from a prior create (restart doesn't re-init fields)
@@ -565,6 +582,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.maybeOnboarding()
+    this.maybeHazardIntro()
   }
 
   /**
@@ -623,6 +641,34 @@ export class GameScene extends Phaser.Scene {
     persistSave(save)
     this.introOpen = true
     openOnboarding(this, () => (this.introOpen = false))
+  }
+
+  /**
+   * Teach each new board mechanic ONCE, the first time a level actually contains it.
+   *
+   * Gated on what is really on this board, not on the level number, so a player who jumps ahead (or
+   * whose flags were changed) is never shown a rule for something they cannot see. The latch is
+   * persisted IMMEDIATELY, before the card renders — same discipline as `maybeOnboarding` — so
+   * dismissing by tapping away cannot make it re-appear. Never in endless, which has no hazards.
+   */
+  private maybeHazardIntro(): void {
+    if (this.endless || this.introOpen) return
+    const present: HazardKind[] = []
+    if (this.board.coatsRemaining() > 0) present.push('coat')
+    for (let r = 0; r < ROWS && present.length < 3; r++) {
+      for (let c = 0; c < COLS; c++) {
+        const p = this.board.get({ row: r, col: c })
+        if (p?.kind === 'blocker' && !present.includes('blocker')) present.push('blocker')
+        if (p?.locked && !present.includes('lock')) present.push('lock')
+      }
+    }
+    const save = loadSave()
+    const unseen = present.find(k => !save.hazardIntros.includes(k))
+    if (!unseen) return
+    save.hazardIntros.push(unseen)
+    persistSave(save)
+    this.introOpen = true
+    openHazardIntro(this, unseen, () => (this.introOpen = false))
   }
 
   /**
@@ -1658,6 +1704,25 @@ export class GameScene extends Phaser.Scene {
     this.burstTokens()
   }
 
+  /**
+   * The sweep counter. Lives in the 52px band between the HUD rail and the board top, directly
+   * above the felt so the eye connects the two, and it is not created at all on a level without
+   * coats — the objective row stays exactly three chips wide, untouched.
+   */
+  private buildCoatCounter(): void {
+    if (this.coatsTotal <= 0) return
+    this.coatLabel = this.add
+      .text(DESIGN_W / 2, BOARD_Y - 38, '', {
+        fontFamily: FONT,
+        fontSize: '23px',
+        fontStyle: '900',
+        color: getTheme().goldText,
+      })
+      .setOrigin(0.5)
+      .setLetterSpacing(2)
+    this.refreshCoatLabel()
+  }
+
   private buildHud(): void {
     const T = getTheme()
     // Top row: back · LEVEL N (or ENDLESS) · score.
@@ -2093,6 +2158,12 @@ export class GameScene extends Phaser.Scene {
   }
 
   private buildPieceLayer(deferDeal = false): void {
+    // The felt goes down with the layer it lives in; sendToBack inside buildCoatLayer keeps it
+    // under every piece that is dealt on top of it.
+    this.time.delayedCall(0, () => {
+      this.buildCoatLayer()
+      this.buildCoatCounter()
+    })
     const maskShape = this.make.graphics({ x: 0, y: 0 }, false)
     maskShape.fillStyle(0xffffff)
     maskShape.fillRect(BOARD_X - 4, BOARD_Y - 4, BOARD_W + 8, BOARD_W + 8)
@@ -2247,7 +2318,117 @@ export class GameScene extends Phaser.Scene {
     }
     this.pieceLayer.add(sprite)
     this.sprites.set(piece.id, sprite)
+    // A clamped piece still matches, so the furniture goes OVER the symbol rather than replacing
+    // it — the player has to read the symbol to plan around it. Keyed by id like armedGlows, so it
+    // can never stack, and synced/destroyed in update() by the same rule.
+    if (piece.locked && !this.lockOverlays.has(piece.id)) {
+      const clamp = this.add
+        .image(pos.x, y, ensureHazardTexture(this, 'lock'))
+        .setDisplaySize(PIECE_SIZE, PIECE_SIZE)
+      this.pieceLayer.add(clamp)
+      this.lockOverlays.set(piece.id, clamp)
+    }
     return sprite
+  }
+
+  /**
+   * Lay the felt. Drawn into `pieceLayer` and sent to the back, so it rides the same geometry mask
+   * as the pieces and always sits beneath them. Cell-keyed rather than piece-keyed: a coat belongs
+   * to the SQUARE, and the pieces above it come and go.
+   */
+  private buildCoatLayer(): void {
+    for (const sprite of this.coatCells.values()) sprite.destroy()
+    this.coatCells.clear()
+    if (this.board.coatsRemaining() === 0) return
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        const layers = this.board.coatAt({ row: r, col: c })
+        if (layers <= 0) continue
+        const pos = this.cellToXY({ row: r, col: c })
+        const felt = this.add
+          .image(pos.x, pos.y, ensureHazardTexture(this, 'coat', layers))
+          .setDisplaySize(CELL, CELL)
+        this.pieceLayer.add(felt)
+        this.pieceLayer.sendToBack(felt)
+        this.coatCells.set(`${r},${c}`, felt)
+      }
+    }
+  }
+
+  /**
+   * Play what a wave did to the hazards. Called from the resolve loop right after the clears, so
+   * the felt sweeps and the lockbox bursts land on the same beat as the match that caused them.
+   * Reduced motion collapses every beat to its finished state, as everywhere else in this scene.
+   */
+  private playHazardEffects(wave: ClearWave): void {
+    const h = wave.hazards
+    if (!h) return
+
+    for (const { at, remaining } of h.coatsStripped) {
+      const k = `${at.row},${at.col}`
+      const felt = this.coatCells.get(k)
+      if (!felt) continue
+      if (remaining > 0) {
+        // Down a layer, not gone: re-skin to the thinner felt.
+        felt.setTexture(ensureHazardTexture(this, 'coat', remaining))
+        continue
+      }
+      this.coatCells.delete(k)
+      if (this.reducedMotion) {
+        felt.destroy()
+      } else {
+        this.tweens.add({
+          targets: felt,
+          alpha: 0,
+          scale: felt.scale * 1.18,
+          duration: 220,
+          ease: 'Quad.easeOut',
+          onComplete: () => felt.destroy(),
+        })
+      }
+    }
+
+    // A damaged lockbox re-skins to its cracked art so "one more hit" reads without a number.
+    for (const { at, hp } of h.blockersDamaged) {
+      const piece = this.board.get(at)
+      const sprite = piece ? this.sprites.get(piece.id) : undefined
+      if (!sprite) continue
+      sprite.setTexture(ensureHazardTexture(this, 'blocker', hp))
+      sprite.setDisplaySize(PIECE_SIZE, PIECE_SIZE)
+      if (!this.reducedMotion) {
+        this.tweens.add({ targets: sprite, scale: sprite.scale * 0.9, duration: 90, yoyo: true, ease: 'Quad.easeOut' })
+      }
+    }
+
+    // Freed pieces drop their clamp. The sprite itself is untouched — only the furniture leaves.
+    for (const at of h.unlocked) {
+      const piece = this.board.get(at)
+      const clamp = piece ? this.lockOverlays.get(piece.id) : undefined
+      if (!clamp || !piece) continue
+      this.lockOverlays.delete(piece.id)
+      if (this.reducedMotion) {
+        clamp.destroy()
+      } else {
+        this.tweens.add({
+          targets: clamp,
+          alpha: 0,
+          scaleX: clamp.scaleX * 1.3,
+          angle: 14,
+          duration: 240,
+          ease: 'Back.easeIn',
+          onComplete: () => clamp.destroy(),
+        })
+      }
+    }
+    if (h.coatsStripped.length > 0) this.refreshCoatLabel()
+  }
+
+  /** The sweep counter: how much felt is still on the table. Hidden entirely when there is none. */
+  private refreshCoatLabel(): void {
+    if (!this.coatLabel) return
+    const left = this.board.coatsRemaining()
+    this.coatLabel.setText(left > 0 ? `FELT  ${this.coatsTotal - left}/${this.coatsTotal}` : 'TABLE SWEPT')
+    this.coatLabel.setColor(left > 0 ? getTheme().goldText : css(getTheme().goldBright))
   }
 
   /**
@@ -2612,6 +2793,7 @@ export class GameScene extends Phaser.Scene {
         this.dbgStage = `playWave c${cascade} cl=${wave.cleared.length} tr=${wave.transformed.length} ev=${wave.events.length}`
         this.log(this.dbgStage)
         await this.playWave(wave, cascade)
+        this.playHazardEffects(wave) // felt sweeps + lockbox cracks land on the beat of the match
         const falls = this.board.applyGravity()
         const spawns = this.board.refill()
         this.dbgStage = `falls c${cascade} f=${falls.length} s=${spawns.length}`
@@ -2627,7 +2809,9 @@ export class GameScene extends Phaser.Scene {
       this.dbgStage = 'end-checks'
       this.log('end-checks', 'objectivesDone', this.objectives.every(o => o.remaining <= 0), 'movesLeft', this.movesLeft)
       // Endless never "wins" on objectives (it has none) — it ends when moves run out.
-      if (!this.endless && this.objectives.every(o => o.remaining <= 0)) {
+      // Coats add the sweep: collecting every goal is no longer enough if felt is still on the
+      // table. `coatsRemaining()` is 0 on every hazard-free level, so this reads as before there.
+      if (!this.endless && this.objectives.every(o => o.remaining <= 0) && this.board.coatsRemaining() === 0) {
         this.finishWin()
         return
       }
@@ -2739,7 +2923,7 @@ export class GameScene extends Phaser.Scene {
     const changedObjectives = new Set<ObjectiveState>()
     const collectSources = new Map<ObjectiveState, Coord[]>()
     for (const { piece, at } of wave.cleared) {
-      if (piece.kind === 'jackpot') continue
+      if (piece.kind === 'jackpot' || piece.kind === 'blocker') continue
       const obj = this.objectives.find(o => o.symbol === piece.symbol)
       if (obj && obj.remaining > 0) {
         obj.remaining--

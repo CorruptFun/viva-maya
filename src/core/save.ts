@@ -2,7 +2,7 @@ import { LIVES_MAX } from '../config'
 import type { BoostType, PromoReward } from './types'
 
 export interface SaveData {
-  v: 8
+  v: 9
   best: number
   /** Highest level the player may attempt (1-based). */
   unlocked: number
@@ -31,6 +31,8 @@ export interface SaveData {
   lastOpenDate: string | null
   /** Full 'YYYY-MM-DD' keys of special-date dress-ups already fired (once-a-day gate; recurs yearly). */
   occasionsSeen: string[]
+  /** Hazard intro cards already shown, by kind — so each new rule is taught exactly once. */
+  hazardIntros: string[]
   /** Latch for the one-time ALL CLEAR (level 100) grand finale. */
   finaleSeen: boolean
   /** Latch for a future first-run onboarding intro. */
@@ -63,7 +65,7 @@ export const FREE_SPIN_DAILY_CAP = 6
 const KEY = 'viva-maya:v1'
 
 const DEFAULTS: SaveData = {
-  v: 8,
+  v: 9,
   best: 0,
   unlocked: 1,
   stars: {},
@@ -78,6 +80,7 @@ const DEFAULTS: SaveData = {
   firstPlayDate: null,
   lastOpenDate: null,
   occasionsSeen: [],
+  hazardIntros: [],
   finaleSeen: false,
   seenIntro: false,
   jackpotMeter: 0,
@@ -91,7 +94,7 @@ const DEFAULTS: SaveData = {
 
 function fresh(): SaveData {
   // Re-init every mutable reference type so a fresh save never aliases DEFAULTS' arrays/objects.
-  return { ...DEFAULTS, stars: {}, pendingBoosts: [], occasionsSeen: [], championWeeks: [] }
+  return { ...DEFAULTS, stars: {}, pendingBoosts: [], occasionsSeen: [], hazardIntros: [], championWeeks: [] }
 }
 
 /**
@@ -103,7 +106,8 @@ export function coerceSave(raw: unknown): SaveData {
   const base = fresh()
   if (!raw || typeof raw !== 'object') return base
   const data = raw as Partial<SaveData> & { best?: number }
-  // v1 {best}; v2 +unlocked/stars; v3 +daily-spin; v4 +endless race; v5 +lives/energy.
+  // v1 {best}; v2 +unlocked/stars; v3 +daily-spin; v4 +endless race; v5 +lives/energy;
+  // v9 +hazardIntros (the teach-once latch for each new board mechanic).
   base.best = typeof data.best === 'number' ? data.best : 0
     base.unlocked = typeof data.unlocked === 'number' ? Math.max(1, data.unlocked) : 1
     base.stars = data.stars && typeof data.stars === 'object' ? data.stars : {}
@@ -122,6 +126,11 @@ export function coerceSave(raw: unknown): SaveData {
     // shape-tolerantly like everything above so a malformed blob can never throw or leak a bad shape.
     base.firstPlayDate = typeof data.firstPlayDate === 'string' ? data.firstPlayDate : null
     base.lastOpenDate = typeof data.lastOpenDate === 'string' ? data.lastOpenDate : null
+    // v9: hazard intro latches. Shape-tolerant like every other array field, so a v8 save loads
+    // clean and a v9 save read back by a rolled-back build is simply ignored by coerceSave.
+    base.hazardIntros = Array.isArray(data.hazardIntros)
+      ? data.hazardIntros.filter((x): x is string => typeof x === 'string')
+      : []
     base.occasionsSeen = Array.isArray(data.occasionsSeen)
       ? data.occasionsSeen.filter((x): x is string => typeof x === 'string')
       : []

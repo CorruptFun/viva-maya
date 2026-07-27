@@ -2,6 +2,8 @@ import Phaser from 'phaser'
 import { SYMBOLS } from '../core/types'
 import type { Piece, PieceKind, SymbolType } from '../core/types'
 import { css, THEMES } from './theme'
+import { hazardSkin } from './hazardskins'
+import type { HazardKind } from '../core/difficulty'
 
 /**
  * Baked-art palette (§V1). Boot textures are generated ONCE and never re-baked on a theme change
@@ -771,7 +773,41 @@ function makeShockwave(scene: Phaser.Scene): void {
 export function pieceTextureKey(piece: Piece): string {
   if (piece.kind === 'jackpot') return 'jackpot'
   if (piece.kind === 'normal') return piece.symbol
+  // A blocker is furniture, not a symbol — its art depends on the SKIN and its remaining hits, and
+  // never on the symbol it happens to be standing on.
+  if (piece.kind === 'blocker') return hazardTextureKey('blocker', piece.hp ?? 1)
   return `${piece.symbol}|${piece.kind}`
+}
+
+/** Skin-scoped so two skins can coexist in the cache and a theme swap mints fresh art. */
+export function hazardTextureKey(kind: HazardKind, variant = 1): string {
+  return `haz|${hazardSkin().id}|${kind}|${variant}`
+}
+
+/**
+ * Bake a hazard's art on first use.
+ *
+ * Deliberately NOT part of `createAllTextures`: boot textures are never re-baked when the theme
+ * changes, so hazard art has to be mintable later under a fresh skin-scoped key. Mirrors
+ * `ensurePieceTexture` — same lazy-and-idempotent contract, same DynamicTexture discipline.
+ */
+export function ensureHazardTexture(scene: Phaser.Scene, kind: HazardKind, variant = 1): string {
+  const key = hazardTextureKey(kind, variant)
+  if (scene.textures.exists(key)) return key
+  const skin = hazardSkin()
+  // `intoTexture` owns the DynamicTexture creation — calling makeDT here as well would register the
+  // same key twice ("Texture key already in use") once per hazard on the board. The graphics buffer
+  // is made with `scene.make` and `addToScene: false`, matching `seatShadow`: it is a scratch
+  // surface to bake from, and must never join the display list.
+  intoTexture(scene, key, d => {
+    const g = scene.make.graphics({ x: 0, y: 0 }, false)
+    if (kind === 'blocker') skin.drawBlocker(g, BASE, variant, 2)
+    else if (kind === 'lock') skin.drawLock(g, BASE)
+    else skin.drawCoat(g, BASE, variant)
+    d.draw(g, 0, 0)
+    g.destroy()
+  })
+  return key
 }
 
 /** Representative colour per symbol — the "match by colour" accent carried onto specials. */
@@ -986,6 +1022,7 @@ function stampSymbolBadge(
 }
 
 export function ensurePieceTexture(scene: Phaser.Scene, piece: Piece): string {
+  if (piece.kind === 'blocker') return ensureHazardTexture(scene, 'blocker', piece.hp ?? 1)
   const key = pieceTextureKey(piece)
   if (scene.textures.exists(key)) return key
   const dt = makeDT(scene, key)
