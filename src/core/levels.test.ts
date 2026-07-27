@@ -107,9 +107,14 @@ describe('levelSpec — the climb above the protected band', () => {
     expect(required(b)).toBeGreaterThanOrEqual(required(b - 1) - 0.01)
   })
 
-  it('climbs meaningfully by L300 instead of flatlining', () => {
-    // Pre-overhaul this ratio was 1.17 (a ~17% climb no player could perceive).
-    expect(required(LEVEL_COUNT) / required(30)).toBeGreaterThan(1.25)
+  it('climbs by L300 instead of flatlining', () => {
+    // Pre-overhaul this ratio was 1.171 — a ~17% climb across 270 levels that no player could feel.
+    // The retune only lifts it to ~1.20 ON PURPOSE: a hotter arithmetic curve measured far too
+    // punishing once hazards were stacked on it (clear rate fell 71% at L300, squarely into
+    // "insane"). Hazards now carry most of the late-game climb, so the honest guarantee here is
+    // "the budget still tightens"; the TOTAL difficulty ramp is asserted in feasibility.test.ts,
+    // which measures the real board with hazards on.
+    expect(required(LEVEL_COUNT) / required(30)).toBeGreaterThan(1.18)
   })
 
   it('still leaves real headroom — never demands more than 70% of a flawless clear', () => {

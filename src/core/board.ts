@@ -1,7 +1,19 @@
-import { SYMBOLS, key } from './types'
-import type { BlastEvent, ClearWave, Coord, FallMove, Piece, PieceKind, RunMatch, Spawn, SymbolType } from './types'
+import { SYMBOLS, isMatchable, key } from './types'
+import type {
+  BlastEvent,
+  ClearWave,
+  Coord,
+  FallMove,
+  HazardEffects,
+  Piece,
+  PieceKind,
+  RunMatch,
+  Spawn,
+  SymbolType,
+} from './types'
 import { randInt } from './rng'
 import type { Rng } from './rng'
+import type { HazardPlan } from './hazards'
 
 /**
  * Pure board model — no Phaser imports. The scene owns sprites/tweens; this owns truth.
@@ -12,9 +24,17 @@ import type { Rng } from './rng'
  *   5+ straight     → Jackpot Chip (color bomb)
  * Any blast that hits another special chains it. Swapping two specials combos them.
  */
+const NO_EFFECTS: HazardEffects = { coatsStripped: [], blockersDamaged: [], blockersBroken: [], unlocked: [] }
+
 export class Board {
   private grid: (Piece | null)[][] = []
   private nextId = 1
+  /**
+   * Coat layers per cell, or null when this board has no coats. Lazily allocated so a hazard-free
+   * board — every level below the first band, and every endless run — does not even hold the
+   * structure, let alone pay for it.
+   */
+  private coats: number[][] | null = null
 
   constructor(
     readonly rows: number,
@@ -35,15 +55,160 @@ export class Board {
    * moves (a special never removes one), never invalidate the layout we just settled on.
    */
   regenerate(): void {
+    // Hazards ride through too, for the same reason specials do: a reshuffle that confiscated the
+    // blockers you had nearly broken (or the coats you had cleared around) would silently rewrite
+    // the level mid-play. Only kind/locked/hp are carried — the symbol under each comes from the
+    // fresh fill, so the board stays match-free.
     const keep = this.grid.flatMap((row, r) =>
-      row.map((p, c) => ({ at: { row: r, col: c }, kind: p?.kind ?? 'normal' })).filter(x => x.kind !== 'normal')
+      row
+        .map((p, c) => ({
+          at: { row: r, col: c },
+          kind: p?.kind ?? ('normal' as PieceKind),
+          locked: p?.locked === true,
+          hp: p?.hp,
+        }))
+        .filter(x => x.kind !== 'normal' || x.locked)
     )
     for (let attempt = 0; attempt < 100; attempt++) {
       this.fillWithoutMatches()
       if (this.findFirstValidMove()) break
       // Statistically unreachable at 8x8 with 5-6 symbols; the last fill stands regardless.
     }
-    for (const { at, kind } of keep) this.plant(at, kind)
+    for (const { at, kind, locked, hp } of keep) {
+      if (kind !== 'normal') this.plant(at, kind)
+      const p = this.grid[at.row][at.col]
+      if (!p) continue
+      if (locked) this.grid[at.row][at.col] = { ...p, locked: true }
+      if (kind === 'blocker') this.grid[at.row][at.col] = { ...this.grid[at.row][at.col]!, hp: hp ?? 1 }
+    }
+  }
+
+  // ------------------------------------------------------------- hazards
+
+  /**
+   * Lay a level's hazard plan onto a freshly generated board. Call once, right after construction;
+   * nothing here is ever invoked again mid-level. That is a deliberate guarantee the rest of the
+   * design leans on: because hazards are only ever removed after this point, a level gets strictly
+   * easier as it proceeds and can never soft-lock behind something it just spawned.
+   */
+  seedHazards(plan: HazardPlan): void {
+    for (const b of plan.blockers) {
+      if (!this.inBounds(b)) continue
+      const under = this.grid[b.row][b.col]
+      this.grid[b.row][b.col] = { ...this.newPiece(under?.symbol ?? this.palette()[0], 'blocker'), hp: b.hp }
+    }
+    for (const l of plan.locks) {
+      const p = this.inBounds(l) ? this.grid[l.row][l.col] : null
+      // Never lock a blocker (it cannot be swapped anyway) — that would just be a confusing overlay.
+      if (p && p.kind !== 'blocker') this.grid[l.row][l.col] = { ...p, locked: true }
+    }
+    if (plan.coats.length > 0) {
+      this.coats = Array.from({ length: this.rows }, () => new Array<number>(this.cols).fill(0))
+      for (const c of plan.coats) {
+        if (this.inBounds(c)) this.coats[c.row][c.col] = c.layers
+      }
+    }
+    // A plan can lock enough of the board to leave no legal swap. Reshuffling here (which preserves
+    // every hazard, see regenerate) is far better than handing the player a dead board on move one.
+    if (!this.findFirstValidMove()) this.regenerate()
+  }
+
+  /** Total coat layers still on the table — the second half of the win condition. 0 when unused. */
+  coatsRemaining(): number {
+    if (!this.coats) return 0
+    let n = 0
+    for (const row of this.coats) for (const v of row) n += v
+    return n
+  }
+
+  /** Coat layers on one cell (0 when none). For the view. */
+  coatAt(at: Coord): number {
+    return this.coats && this.inBounds(at) ? this.coats[at.row][at.col] : 0
+  }
+
+  /**
+   * Apply everything a wave's cleared cells do to the hazards, and return it for the view.
+   *
+   * Called from the three places a clear can originate — `matchWave`, `swapActivation` and
+   * `detonate` — so every route through the game (a plain match, a special combo, a purchased
+   * bomb) affects hazards identically. Destroyed blockers are appended to the wave's `cleared` by
+   * the caller so the view's existing destroy path handles the sprite.
+   *
+   * Damage is by ORTHOGONAL ADJACENCY to a cleared cell, at most once per wave. A blast that lands
+   * on a blocker is covered by the same rule, because any blast wide enough to cover the blocker
+   * covers one of its neighbours too.
+   */
+  private applyHazardSideEffects(cleared: { piece: Piece; at: Coord }[]): HazardEffects {
+    if (!this.coats && !this.hasPieceHazards()) return NO_EFFECTS
+
+    const effects: HazardEffects = { coatsStripped: [], blockersDamaged: [], blockersBroken: [], unlocked: [] }
+    const clearedKeys = new Set(cleared.map(c => key(c.at)))
+
+    // Coats: a clear ON the cell strips one layer. Specials strip whole swathes for free, which is
+    // exactly the intent — this is the mechanic that REWARDS the game's existing power pieces.
+    if (this.coats) {
+      for (const { at } of cleared) {
+        if (!this.inBounds(at) || this.coats[at.row][at.col] <= 0) continue
+        this.coats[at.row][at.col] -= 1
+        effects.coatsStripped.push({ at, remaining: this.coats[at.row][at.col] })
+      }
+    }
+
+    // Blockers and locks: adjacency, once per wave per cell.
+    const touched = new Set<string>()
+    for (const { at } of cleared) {
+      for (const n of [
+        { row: at.row - 1, col: at.col },
+        { row: at.row + 1, col: at.col },
+        { row: at.row, col: at.col - 1 },
+        { row: at.row, col: at.col + 1 },
+      ]) {
+        const k = key(n)
+        if (!this.inBounds(n) || touched.has(k) || clearedKeys.has(k)) continue
+        const p = this.grid[n.row][n.col]
+        if (!p) continue
+        if (p.kind === 'blocker') {
+          touched.add(k)
+          const hp = (p.hp ?? 1) - 1
+          if (hp > 0) {
+            this.grid[n.row][n.col] = { ...p, hp }
+            effects.blockersDamaged.push({ at: n, hp })
+          } else {
+            this.grid[n.row][n.col] = null
+            effects.blockersBroken.push({ piece: p, at: n })
+          }
+        } else if (p.locked) {
+          touched.add(k)
+          this.grid[n.row][n.col] = { ...p, locked: false }
+          effects.unlocked.push(n)
+        }
+      }
+    }
+    return effects
+  }
+
+  /**
+   * The single seam where a computed wave picks up its hazard consequences. Every clear origin
+   * returns through here, so there is one place to delete when the mechanic is rolled back.
+   *
+   * A destroyed blocker is pushed onto `cleared` so the view's existing "everything in cleared gets
+   * its sprite destroyed" path handles it — no parallel sprite plumbing, and the board.test.ts
+   * model/view fuzz invariant ("nothing leaves the board unreported") keeps holding.
+   */
+  private withHazards(wave: ClearWave): ClearWave {
+    const hazards = this.applyHazardSideEffects(wave.cleared)
+    if (hazards === NO_EFFECTS) return wave
+    wave.cleared.push(...hazards.blockersBroken)
+    wave.hazards = hazards
+    return wave
+  }
+
+  /** Cheap check: does any cell carry a piece-borne hazard (blocker or lock)? */
+  private hasPieceHazards(): boolean {
+    for (const row of this.grid) {
+      for (const p of row) if (p && (p.kind === 'blocker' || p.locked)) return true
+    }
+    return false
   }
 
   private palette(): SymbolType[] {
@@ -99,6 +264,11 @@ export class Board {
     const pa = this.get(a)
     const pb = this.get(b)
     if (!pa || !pb) return false
+    // Hazards gate the swap BEFORE anything else. Routing it through here means the hint engine,
+    // the reshuffle trigger and `findFirstValidMove` all respect locks and blockers for free —
+    // there is exactly one definition of "can these two cells trade places".
+    if (pa.kind === 'blocker' || pb.kind === 'blocker') return false
+    if (pa.locked || pb.locked) return false
     const spec = (p: Piece) => p.kind !== 'normal'
     if (pa.kind === 'jackpot' || pb.kind === 'jackpot' || (spec(pa) && spec(pb))) return true
     this.swap(a, b)
@@ -114,14 +284,14 @@ export class Board {
       let c = 0
       while (c < this.cols) {
         const p = this.grid[r][c]
-        if (!p || p.kind === 'jackpot') {
+        if (!isMatchable(p)) {
           c++
           continue
         }
         let end = c + 1
         while (end < this.cols) {
           const q = this.grid[r][end]
-          if (!q || q.kind === 'jackpot' || q.symbol !== p.symbol) break
+          if (!isMatchable(q) || q.symbol !== p.symbol) break
           end++
         }
         if (end - c >= 3) {
@@ -136,14 +306,14 @@ export class Board {
       let r = 0
       while (r < this.rows) {
         const p = this.grid[r][c]
-        if (!p || p.kind === 'jackpot') {
+        if (!isMatchable(p)) {
           r++
           continue
         }
         let end = r + 1
         while (end < this.rows) {
           const q = this.grid[end][c]
-          if (!q || q.kind === 'jackpot' || q.symbol !== p.symbol) break
+          if (!isMatchable(q) || q.symbol !== p.symbol) break
           end++
         }
         if (end - r >= 3) {
@@ -235,7 +405,7 @@ export class Board {
     for (const t of transformed) cleared.push({ piece: t.from, at: t.at })
     // Carried blasts lead the event list so the view centres the wave on the detonation (epicenter,
     // hitstop, score popup) rather than on the quiet match that set it off.
-    return { cleared, transformed, events: [...carryEvents, ...events] }
+    return this.withHazards({ cleared, transformed, events: [...carryEvents, ...events] })
   }
 
   private intersectionOf(runs: RunMatch[]): Coord | null {
@@ -351,7 +521,7 @@ export class Board {
 
     const { cleared, events: chained } = this.chainExpand(seeds, new Set())
     events.push(...chained)
-    return { cleared, transformed: [], events }
+    return this.withHazards({ cleared, transformed: [], events })
   }
 
   /**
@@ -392,6 +562,11 @@ export class Board {
       }
       case 'normal':
         return { seeds, events: [] }
+      case 'blocker':
+        // An obstacle, never an amplifier: it absorbs the hit and never propagates one. This is the
+        // single most important line for cascade health — a blocker that chained would turn the one
+        // mechanic that shortens chains into one that also randomises them.
+        return { seeds, events: [] }
     }
   }
 
@@ -409,6 +584,10 @@ export class Board {
       if (clearedMap.has(k) || protectedCells.has(k) || !this.inBounds(at)) continue
       const piece = this.grid[at.row][at.col]
       if (!piece) continue
+      // Blockers are never cleared by the flood itself — they take damage from clears landing
+      // ADJACENT to them (see applyHazardSideEffects), which is also what a direct blast does,
+      // since any blast wide enough to cover a blocker covers a neighbour too.
+      if (piece.kind === 'blocker') continue
       clearedMap.set(k, { piece, at })
       const blast = this.blastOf(piece, at)
       queue.push(...blast.seeds)
@@ -422,37 +601,70 @@ export class Board {
 
   // ------------------------------------------------------------- gravity
 
-  /** Compact each column downward. Returns every piece that moved, for the view to tween. */
+  /**
+   * Rows of column `c` at which a segment ENDS, walking bottom to top: every blocker row, plus a
+   * virtual boundary above row 0. A blocker never moves, so it splits its column into independent
+   * gravity regions.
+   *
+   * This is THE cascade-preservation mechanism. The naive alternative — letting gravity compact
+   * straight past a blocker — is not merely wrong, it starves the cells beneath one permanently:
+   * nothing above can ever reach them, so that region of the board dies for the rest of the level
+   * and chains can never run through it. Segmenting instead means a blocker costs match
+   * OPPORTUNITIES without ever costing chain CONTINUITY, which is what keeps Plinko firing.
+   */
+  private columnBoundaries(c: number): number[] {
+    const bounds: number[] = []
+    for (let r = this.rows - 1; r >= 0; r--) {
+      if (this.grid[r][c]?.kind === 'blocker') bounds.push(r)
+    }
+    bounds.push(-1) // the top of the column always closes the last segment
+    return bounds
+  }
+
+  /** Compact each column segment downward. Returns every piece that moved, for the view to tween. */
   applyGravity(): FallMove[] {
     const moves: FallMove[] = []
     for (let c = 0; c < this.cols; c++) {
-      let write = this.rows - 1
-      for (let r = this.rows - 1; r >= 0; r--) {
-        const p = this.grid[r][c]
-        if (!p) continue
-        if (write !== r) {
-          this.grid[write][c] = p
-          this.grid[r][c] = null
-          moves.push({ piece: p, from: { row: r, col: c }, to: { row: write, col: c } })
+      let segBottom = this.rows - 1
+      for (const boundary of this.columnBoundaries(c)) {
+        let write = segBottom
+        for (let r = segBottom; r > boundary; r--) {
+          const p = this.grid[r][c]
+          if (!p) continue
+          if (write !== r) {
+            this.grid[write][c] = p
+            this.grid[r][c] = null
+            moves.push({ piece: p, from: { row: r, col: c }, to: { row: write, col: c } })
+          }
+          write--
         }
-        write--
+        segBottom = boundary - 1
       }
     }
     return moves
   }
 
-  /** Fill remaining holes (all at column tops after gravity) with new pieces. */
+  /**
+   * Fill remaining holes with new pieces. Holes sit at the top of each SEGMENT after gravity, not
+   * just at the top of the column, so every segment refills — no cell is ever starved. `dropCells`
+   * is measured within the segment so the view drops the piece in from just under its blocker.
+   */
   refill(): Spawn[] {
     const spawns: Spawn[] = []
     const pal = this.palette()
     for (let c = 0; c < this.cols; c++) {
-      let holes = 0
-      for (let r = 0; r < this.rows; r++) if (!this.grid[r][c]) holes++
-      for (let r = 0; r < this.rows; r++) {
-        if (this.grid[r][c]) continue
-        const p = this.newPiece(pal[randInt(this.rng, pal.length)])
-        this.grid[r][c] = p
-        spawns.push({ piece: p, at: { row: r, col: c }, dropCells: holes })
+      let segBottom = this.rows - 1
+      for (const boundary of this.columnBoundaries(c)) {
+        const segTop = boundary + 1
+        let holes = 0
+        for (let r = segTop; r <= segBottom; r++) if (!this.grid[r][c]) holes++
+        for (let r = segTop; r <= segBottom; r++) {
+          if (this.grid[r][c]) continue
+          const p = this.newPiece(pal[randInt(this.rng, pal.length)])
+          this.grid[r][c] = p
+          spawns.push({ piece: p, at: { row: r, col: c }, dropCells: holes })
+        }
+        segBottom = boundary - 1
       }
     }
     return spawns
@@ -500,6 +712,6 @@ export class Board {
       }
     }
     const { cleared, events } = this.chainExpand(seeds, new Set())
-    return { cleared, transformed: [], events: [{ type: 'bomb', at: center, radius }, ...events] }
+    return this.withHazards({ cleared, transformed: [], events: [{ type: 'bomb', at: center, radius }, ...events] })
   }
 }

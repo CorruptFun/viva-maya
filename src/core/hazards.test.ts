@@ -126,10 +126,12 @@ describe('densityFor — the ramp', () => {
     expect(densityFor('coat', DIFFICULTY.bands.coatStart)).toBe(DIFFICULTY.density.coat.count[0])
   })
 
-  it('grows the table dressing from the first band to L300', () => {
-    expect(densityFor('lock', 300)).toBeGreaterThan(densityFor('lock', 31))
-    expect(densityFor('coat', 300)).toBeGreaterThan(densityFor('coat', 56))
-    expect(densityFor('blocker', 300)).toBeGreaterThan(densityFor('blocker', 86))
+  it('grows the table dressing from the first band to the end', () => {
+    // Compare like with like: L299, not L300, because every 5th level is a deliberate breather and
+    // L300 is one. Comparing a breather against a band floor measures the beat, not the trend.
+    expect(densityFor('lock', 299)).toBeGreaterThan(densityFor('lock', 31))
+    expect(densityFor('coat', 299)).toBeGreaterThan(densityFor('coat', 56))
+    expect(densityFor('blocker', 299)).toBeGreaterThan(densityFor('blocker', 86))
   })
 })
 

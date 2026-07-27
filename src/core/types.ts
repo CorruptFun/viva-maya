@@ -5,14 +5,32 @@ export type SymbolType = (typeof SYMBOLS)[number]
  * Phase 4 hook: special pieces created by match shapes.
  * wildReelRow/Col = match-4 line blast, diceBomb = L/T match 3x3 blast,
  * jackpotChip = match-5 color bomb.
+ *
+ * `blocker` is not a symbol at all — it is an obstacle occupying a cell (see core/hazards.ts). It
+ * never matches, never swaps, never falls and never chains a blast; it is broken by clears landing
+ * next to it. It lives in the grid as a Piece (rather than as a null cell plus a side table) so the
+ * view's whole sprite lifecycle — create, id map, destroy via `ClearWave.cleared` — works unchanged
+ * and the board.test.ts model/view fuzz invariant keeps holding for free.
  */
-export type PieceKind = 'normal' | 'wildReelRow' | 'wildReelCol' | 'diceBomb' | 'jackpot'
+export type PieceKind = 'normal' | 'wildReelRow' | 'wildReelCol' | 'diceBomb' | 'jackpot' | 'blocker'
 
 export interface Piece {
   readonly id: number
   symbol: SymbolType
   kind: PieceKind
+  /**
+   * Hazard: this piece still MATCHES normally but cannot be SWAPPED until a clear lands next to it.
+   * Rides on the Piece rather than on the cell so it survives gravity and jackpot conversion with
+   * no extra plumbing. Undefined everywhere hazards are off.
+   */
+  locked?: boolean
+  /** Remaining hits for a `blocker`. Undefined on every other kind. */
+  hp?: number
 }
+
+/** True when a piece takes part in symbol matching. Blockers are inert; jackpots match nothing. */
+export const isMatchable = (p: Piece | null): p is Piece =>
+  p !== null && p.kind !== 'jackpot' && p.kind !== 'blocker'
 
 export interface Coord {
   row: number
@@ -77,4 +95,14 @@ export interface ClearWave {
   cleared: { piece: Piece; at: Coord }[]
   transformed: { at: Coord; from: Piece; to: Piece }[]
   events: BlastEvent[]
+  /** What this wave did to the level's hazards. Absent when the board carries none. */
+  hazards?: HazardEffects
+}
+
+/** What a wave did to the hazards, for the view to animate and the scene to score. */
+export interface HazardEffects {
+  coatsStripped: { at: Coord; remaining: number }[]
+  blockersDamaged: { at: Coord; hp: number }[]
+  blockersBroken: { piece: Piece; at: Coord }[]
+  unlocked: Coord[]
 }

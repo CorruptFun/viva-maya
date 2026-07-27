@@ -59,8 +59,8 @@ export const DIFFICULTY = {
    *  blocker numbers are so much smaller than the others. */
   density: {
     lock: { from: 31, to: 60, count: [3, 8], lateCount: [8, 12] },
-    coat: { from: 56, to: 90, count: [6, 14], lateCount: [14, 22] },
-    blocker: { from: 86, to: 120, count: [2, 4], lateCount: [4, 6] },
+    coat: { from: 56, to: 90, count: [6, 14], lateCount: [14, 18] },
+    blocker: { from: 86, to: 120, count: [2, 4], lateCount: [4, 5] },
     /** Fraction of coats that get a 2nd layer / blockers that get 2 hp, ramped across the late band. */
     coat2LayerFrom: 151,
     coat2LayerMaxFrac: 0.35,

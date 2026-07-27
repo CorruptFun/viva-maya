@@ -83,7 +83,7 @@ export function levelSpec(level: number): LevelSpec {
     // ANCHORED at the seam value, never rebased to 3.0. Starting the new branch from a bare 3.0
     // would put L31 BELOW L30 (3.016 vs 3.095) — reintroducing the exact "next level is easier"
     // defect this retune exists to remove, right at the moment hazards first appear.
-    ratio = Math.min(4.05, RATIO_AT_SEAM + 0.32 * Math.log(1 + (L - PROTECTED_TO) / 38))
+    ratio = Math.min(3.7, RATIO_AT_SEAM + 0.2 * Math.log(1 + (L - PROTECTED_TO) / 38))
   }
 
   // Breather cadence. Below the protected band (and whenever the retune is switched off) this stays

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { Board } from './board'
+import { hazardPlan } from './hazards'
 import { levelSpec } from './levels'
 import { PLINKO_CHANCE, PLINKO_MIN_CASCADE } from './plinko'
 import { mulberry32 } from './rng'
@@ -92,6 +93,10 @@ function firstWaveSize(b: Board, a: Coord, to: Coord): number {
 function playLevel(seed: number, level: number, human: boolean): Array<{ cascade: number; points: number }> {
   const spec = levelSpec(level)
   const b = new Board(8, 8, spec.symbolCount, mulberry32(seed))
+  // Hazards ON, deliberately: this guard exists to catch a difficulty change that makes the drop
+  // routine or extinct, and hazards are now part of the difficulty. Seeding nothing here would
+  // leave it measuring a board no player above L30 ever sees.
+  b.seedHazards(hazardPlan(level, 8, 8))
   const chains: Array<{ cascade: number; points: number }> = []
   for (let m = 0; m < spec.moves; m++) {
     const moves = everyValidMove(b)
