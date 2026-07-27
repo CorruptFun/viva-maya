@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import { previousWeekKey } from './leaderboard'
-import { endlessRngForWeek, formatWeekRemaining, seedForWeek, weekEndsAt, weekKey } from './endless'
+import {
+  ENDLESS_UNLOCK_LEVEL,
+  endlessRngForWeek,
+  endlessUnlocked,
+  formatWeekRemaining,
+  seedForWeek,
+  weekEndsAt,
+  weekKey,
+} from './endless'
+import { coerceSave } from './save'
 
 /**
  * The weekly race only works if every player agrees on which week it is. The key drives THREE things
@@ -116,5 +125,27 @@ describe('the board everyone plays', () => {
     const rollsA = Array.from({ length: 50 }, () => a())
     const rollsB = Array.from({ length: 50 }, () => b())
     expect(rollsA).toEqual(rollsB)
+  })
+})
+
+/**
+ * `save.unlocked` is "the level you may now play", so it reads n+1 once level n is cleared. The gate
+ * is therefore `>` and not `>=`: the race opens when ENDLESS_UNLOCK_LEVEL has been BEATEN, not when
+ * it is merely reachable. Pinned because both the retune (30 → 20) and the boundary are easy to get
+ * off by one, and a wrong boundary silently locks the leaderboard away from players who earned it.
+ */
+describe('endlessUnlocked — who gets onto the leaderboard', () => {
+  it('opens the moment ENDLESS_UNLOCK_LEVEL is cleared, not before', () => {
+    expect(endlessUnlocked(coerceSave({ unlocked: ENDLESS_UNLOCK_LEVEL }))).toBe(false) // on it, not past it
+    expect(endlessUnlocked(coerceSave({ unlocked: ENDLESS_UNLOCK_LEVEL + 1 }))).toBe(true) // cleared it
+  })
+
+  it('keeps a brand-new save locked and a far-progressed one open', () => {
+    expect(endlessUnlocked(coerceSave({}))).toBe(false)
+    expect(endlessUnlocked(coerceSave({ unlocked: 300 }))).toBe(true)
+  })
+
+  it('is set to level 20 — the tuned milestone', () => {
+    expect(ENDLESS_UNLOCK_LEVEL).toBe(20)
   })
 })

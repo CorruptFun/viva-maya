@@ -19,7 +19,7 @@
  * warmth permanently and read fine on all four washes.
  */
 
-import { endlessUnlocked } from '../core/endless'
+import { ENDLESS_UNLOCK_LEVEL, endlessUnlocked } from '../core/endless'
 import type { SaveData } from '../core/save'
 
 export type ThemeId = 'golden' | 'roseMidnight' | 'neonVegas' | 'mayaHeart'
@@ -347,14 +347,17 @@ export const THEME_META: Record<ThemeId, ThemeMeta> = {
   golden: { name: 'Golden Hour', feel: 'the warm default', unlockLevel: 0 },
   mayaHeart: { name: "Maya's Heart", feel: 'a tender valentine', unlockLevel: 0 },
   roseMidnight: { name: 'Rose Midnight', feel: 'after-hours velvet', unlockLevel: 10 },
-  neonVegas: { name: 'Neon Vegas', feel: 'the strip at night', unlockLevel: 30 },
+  // Gated by `endlessUnlocked`, not by this number — so it must TRACK the endless constant, or the
+  // row advertises a level the theme already opened past when the race unlock is retuned.
+  neonVegas: { name: 'Neon Vegas', feel: 'the strip at night', unlockLevel: ENDLESS_UNLOCK_LEVEL },
 }
 
 /**
  * Read-only unlock gate for the picker (§3e / §7 #1). Cosmetic + ALWAYS FREE — this never gates
  * `getTheme()`/`setTheme()`; it only tells the picker which rows to render as locked. `golden` +
  * `mayaHeart` are free (`unlockLevel 0`); `roseMidnight` opens at `save.unlocked ≥ 10`; `neonVegas`
- * mirrors `endlessUnlocked` (`save.unlocked > 30`) so it lands together with the endless race.
+ * mirrors `endlessUnlocked` (`save.unlocked > ENDLESS_UNLOCK_LEVEL`) so it lands together with the
+ * endless race.
  */
 export function themeUnlocked(id: ThemeId, save: SaveData): boolean {
   if (id === 'neonVegas') return endlessUnlocked(save)

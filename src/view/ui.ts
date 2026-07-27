@@ -1,6 +1,7 @@
 import Phaser from 'phaser'
 import { SWAP_SOUNDS, SWAP_SOUND_LABELS, sfx } from '../audio/sfx'
 import { DESIGN_W, LIFE_REGEN_MS, LIVES_MAX, restScrollY, viewportCenterY, worldH } from '../config'
+import { ENDLESS_UNLOCK_LEVEL } from '../core/endless'
 import { formatCountdown } from '../core/lives'
 import type { LivesState } from '../core/lives'
 import { loadSave } from '../core/save'
@@ -1329,7 +1330,8 @@ const HELP_SECTIONS: HelpSection[] = [
   { icon: 'heart', title: 'LIVES', body: `Losing a level costs a heart — winning is free. Out of hearts? One returns every ${Math.round(LIFE_REGEN_MS / 60000)} minutes.` },
   { icon: 'chip', title: 'DAILY BONUS', body: 'Spin once a day for a free boost. Come back daily to grow your streak.' },
   { icon: 'star', title: 'STARS', body: 'Finish with moves to spare for up to 3 stars. Every 10th level is a milestone.' },
-  { icon: 'card', title: 'ENDLESS', body: 'After Level 30, race the weekly board — same for everyone. Beat your best score!' },
+  // Same rule as LIVES above: the unlock level comes from core/endless, never a literal.
+  { icon: 'card', title: 'ENDLESS', body: `After Level ${ENDLESS_UNLOCK_LEVEL}, race the weekly board — same for everyone. Beat your best score!` },
 ]
 
 /**

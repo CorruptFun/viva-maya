@@ -34,7 +34,7 @@ level start (`GameScene.applyBoosts` consumes the whole pile; endless never cons
 
 ## Cosmetics are intentionally NOT sold here
 Themes stay **free and progress-unlocked** via the existing theme picker
-(`view/theme.ts` `themeUnlocked` — Rose Midnight at L10, Neon Vegas past L30). The store is
+(`view/theme.ts` `themeUnlocked` — Rose Midnight at L10, Neon Vegas past L20). The store is
 boosts-only by design, so the picker's "always free, never chip-priced" contract is untouched.
 
 ## Files

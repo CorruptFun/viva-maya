@@ -31,7 +31,7 @@ import Phaser from 'phaser'
 import { DESIGN_W, viewportCenterY, worldH } from '../config'
 import { sfx } from '../audio/sfx'
 import { cloudSession } from '../core/cloud'
-import { endlessBestThisWeek, formatWeekRemaining, weekEndsAt, weekKey } from '../core/endless'
+import { ENDLESS_UNLOCK_LEVEL, endlessBestThisWeek, formatWeekRemaining, weekEndsAt, weekKey } from '../core/endless'
 import { fetchChampion, fetchWeeklyBoard, previousWeekKey } from '../core/leaderboard'
 import type { Champion, LeaderboardEntry, WeeklyBoard } from '../core/leaderboard'
 import type { SaveData } from '../core/save'
@@ -1115,7 +1115,7 @@ export function addWeeklyRaceLockedModule(scene: Phaser.Scene, cx: number, cy: n
   )
   container.add(
     scene.add
-      .text(16, 20, 'unlocks at level 30', { fontFamily: 'Arial, sans-serif', fontSize: '19px', color: T.inkFaint })
+      .text(16, 20, `unlocks at level ${ENDLESS_UNLOCK_LEVEL}`, { fontFamily: 'Arial, sans-serif', fontSize: '19px', color: T.inkFaint })
       .setOrigin(0.5)
       .setAlpha(0.8)
   )

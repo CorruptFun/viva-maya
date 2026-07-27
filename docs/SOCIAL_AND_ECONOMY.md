@@ -178,7 +178,7 @@ that re-grants after having been overwritten — self-healing, never a permanent
 | Promo codes | owner-minted (chips/hearts/boost) | `supabase/…/0005_promo_codes.sql` · `src/core/promo.ts` |
 | Win payout | stars×8 + leftover×2 | `src/scenes/GameScene.ts` |
 | Boost prices | 40–120 / helpers 8–35 | `src/core/store.ts` |
-| `ENDLESS_MOVES` / unlock | 30 / level 30 | `src/core/endless.ts` |
+| `ENDLESS_MOVES` / unlock | 30 / level 20 | `src/core/endless.ts` |
 
 ## Iron rules (do not bend without redesigning around them)
 

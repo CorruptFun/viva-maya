@@ -100,7 +100,7 @@ clears a RANDOM present color. Swap-combos (both consumed, epicenter = drag dest
   EARNED" splash (heart shower + fanfare) before the normal result card (GameScene.milestoneSplash).
 
 ## Endless weekly race (src/core/endless.ts + GameScene endless mode)
-- Unlocks after ENDLESS_UNLOCK_LEVEL=30 (fixed, independent of LEVEL_COUNT — save.unlocked > 30).
+- Unlocks after ENDLESS_UNLOCK_LEVEL=20 (fixed, independent of LEVEL_COUNT — save.unlocked > 20).
   Entry: rose ENDLESS pill on Home and LevelSelect.
 - weekKey(now) = ISO-8601 week "YYYY-Www" in **UTC** (Thursday-anchored). The race opens and closes
   at Monday 00:00 UTC for EVERYONE at once — that is Sunday evening in the Americas. It was local
@@ -231,7 +231,7 @@ Deploy: GitHub Pages. With workflow scope: push to main → .github/workflows/de
 builds and deploys automatically. Legacy fallback: publish dist/ to gh-pages branch.
 
 ## Roadmap (agreed direction)
-DONE: streak flame on Home (addStreakBadge) · endless weekly-seed race after L30 (shared board,
+DONE: streak flame on Home (addStreakBadge) · endless weekly-seed race after L20 (shared board,
 BEST race — src/core/endless.ts) · star-milestone celebration every 10 levels (milestoneSplash) ·
 lives/energy (lose-only, 5-pool, 20-min regen, grace below L10 — src/core/lives.ts) · in-level helper bar (spend
 earned chips on +1/+5 moves or a targeted bomb for the current level — src/core/store.ts POWER_ITEMS).

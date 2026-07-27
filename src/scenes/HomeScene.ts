@@ -428,7 +428,8 @@ export class HomeScene extends Phaser.Scene {
 
     // WEEKLY RACE module — the full-width ENDLESS block (replaces the v1 trophy chip). Unlocked:
     // the rose ENDLESS pill over a live, tappable standings line (leaderboardpanel owns the data +
-    // panel). Locked (<30): the same silhouette dimmed to a quiet "unlocks at level 30" signpost.
+    // panel). Locked: the same silhouette dimmed to a quiet "unlocks at level N" signpost, where N
+    // is ENDLESS_UNLOCK_LEVEL (the locked module reads the constant, so this copy never drifts).
     if (endlessUnlocked(save)) {
       menuButtons.push(
         addWeeklyRaceModule(this, DESIGN_W / 2, 1134, save, () => startScene(this, 'game', { endless: true }))

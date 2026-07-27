@@ -35,7 +35,7 @@ input, and tweens live in `src/scenes/` and `src/view/`.
 - [x] **Phase 5 — audio & juice** — procedural WebAudio SFX (pitch-shifting cascades, sirens),
       MEGA WIN choreography, haptics, mute toggle, selectable move sounds
 - [x] **Return hooks** — lives/energy pool (lose-only, self-refilling), daily bonus spin with
-      streaks, star milestones every 10 levels, endless weekly-seed score race (unlocks at L30)
+      streaks, star milestones every 10 levels, endless weekly-seed score race (unlocks at L20)
 - [x] **Presentation** — slot-cabinet visuals + ambient casino backdrop, home screen,
       how-to-play panel
 - [x] **UI/animation overhaul (rounds 1–3)** — tactile pressables (tap-flash, release

@@ -17,8 +17,9 @@ import type { SaveData } from './save'
 export const ENDLESS_MOVES = 30
 
 /** Endless opens after this many numbered levels are cleared — a fixed milestone, independent of
- * the total level count (so raising LEVEL_COUNT doesn't push the unlock out of reach). */
-export const ENDLESS_UNLOCK_LEVEL = 30
+ * the total level count (so raising LEVEL_COUNT doesn't push the unlock out of reach). Lowered
+ * 30 → 20 so the weekly race (and the leaderboards it feeds) is reachable earlier. */
+export const ENDLESS_UNLOCK_LEVEL = 20
 
 /**
  * ISO-8601 week key "YYYY-Www" in **UTC** (Thursday-anchored, weeks start Monday). Same week → same

@@ -89,7 +89,7 @@ data (`ClearWave`, `FallMove[]`, `Spawn[]`, `BlastEvent[]`). Tuning happens in
 | `src/core/levels.ts` | `LEVEL_COUNT=300`; deterministic `levelSpec(n)` — seeded per-level objectives, symbol count, and move budget |
 | `src/core/save.ts` | `localStorage` save (key `viva-maya:v1`, schema **v8**): load/persist, shape-tolerant migrations, `recordResult`/`recordScore`/`takePendingBoosts` |
 | `src/core/daily.ts` | Daily-spin logic: `todayKey`, streak math, weighted `PRIZES` table, `performSpin` (award-before-animate) |
-| `src/core/endless.ts` | Weekly endless race: `weekKey` (ISO-8601, **UTC**), `weekEndsAt`/`formatWeekRemaining`, `seedForWeek` (FNV-1a), shared seeded RNG, `recordEndless`, `endlessUnlocked` (after L30) |
+| `src/core/endless.ts` | Weekly endless race: `weekKey` (ISO-8601, **UTC**), `weekEndsAt`/`formatWeekRemaining`, `seedForWeek` (FNV-1a), shared seeded RNG, `recordEndless`, `endlessUnlocked` (after L20) |
 | `src/core/lives.ts` | Lives/energy pool: wall-clock regen banking, `spendLife`/`grantLife`/`refreshLives`, `devSetLives`, `formatCountdown` |
 
 **Scenes (Phaser)**
@@ -259,8 +259,8 @@ Home shows a 🔥 flame pill "N DAY STREAK" when `streak > 0` (the flame is a se
 text object — `letterSpacing` splits emoji surrogate pairs in Phaser's renderer).
 
 ### Endless weekly race — `src/core/endless.ts`, `GameScene` endless mode
-Unlocks after **Level 30** (`endlessUnlocked` = `save.unlocked > ENDLESS_UNLOCK_LEVEL`,
-`ENDLESS_UNLOCK_LEVEL=30`). Entry via the rose ENDLESS pill on Home and Level Select.
+Unlocks after **Level 20** (`endlessUnlocked` = `save.unlocked > ENDLESS_UNLOCK_LEVEL`,
+`ENDLESS_UNLOCK_LEVEL=20`). Entry via the rose ENDLESS pill on Home and Level Select.
 Everyone in the same week plays the **same** board (`seedForWeek` FNV-1a → `mulberry32`);
 a fixed budget (`ENDLESS_MOVES=30`), all 6 symbols, **no objectives, no boosts** (planting
 would change the shared board and break the race). Ends only on moves-out (`finishEndless`).
@@ -539,7 +539,9 @@ and a v6 save that are both a generation behind). Re-verified against code 2026-
    correct.
 5. **Endless unlock is L30** (`ENDLESS_UNLOCK_LEVEL` in `core/endless.ts`, independent of
    `LEVEL_COUNT`). `GAME_DESIGN.md` already states this correctly — the prior note here
-   claiming otherwise was itself out of date.
+   claiming otherwise was itself out of date. *(Superseded 2026-07-27: retuned to **L20** so
+   the weekly race is reachable sooner. The two copy surfaces that hardcoded "30" — the help
+   panel's ENDLESS blurb and the locked WEEKLY RACE module — now derive from the constant.)*
 6. **`README.md` is no longer materially behind** — Phase 5 is checked and the round-4
    knobs are listed. Remaining gap was "100 levels" + "v6 save", now fixed. Its license
    section is current.
