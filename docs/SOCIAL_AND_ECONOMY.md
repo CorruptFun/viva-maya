@@ -122,15 +122,36 @@ account**. `max_redemptions` gives an optional global lifetime cap. This keeps c
 **owner-controlled, inflation-safe faucet** (they're granted, never purchased — iron rule #1 holds),
 and dormant-safe: cloud-off / signed-out / offline all degrade to a friendly message, never a throw.
 
-## Trust model (v1) and the hardening path
+## Trust model and the hardening path
 
 All submissions (scores, qualifications, claims) are self-reported by signed-in
-clients. RLS confines every writer to its own rows; server triggers make scores
-monotonic and timestamps set-once — so nobody can touch anyone else's data, but a
-modified client could inflate its OWN numbers. Acceptable at family-and-friends
-scale. If stakes ever rise: the endless race is fully deterministic (seed + move
-list), so server-side replay validation (submit moves, server replays the board) is
-the designed hardening path — see `Supabase_Architecture.md`.
+clients. RLS confines every writer to its own rows, and server triggers make scores
+monotonic and timestamps set-once — so nobody can touch anyone else's data.
+
+**The WEEK a score is filed under is now the server's decision, not the client's**
+(`0006_endless_week_guard.sql`). The trigger recomputes the current ISO week in UTC and
+rejects any `week_key` that isn't it, with a one-hour grace so a run that starts before
+the rollover and syncs after it still lands. That closes two holes at once:
+
+- **Clock tampering** — the week key seeds the board, so a device clock set forward
+  opened a future week's board early (play it unhurried, then arrive on that week with an
+  unchaseable score); set backward, it reopened a layout already known.
+- **Backfilling a closed week** — the champion is "top score of the week that just
+  closed", so a client could drop a score into a finished week and take a crown already
+  awarded. This one needed no malice at all: a player who raced and synced days later did
+  it by accident.
+
+That migration **refuses to apply** if the server's ISO week ever disagrees with
+`core/endless.ts weekKey()` — it self-checks against the same instants pinned in
+`core/endless.test.ts`, including a session-timezone probe. A silent drift would reject
+every honest score and empty the board, which is worse than the hole it closes.
+
+**Still open, deliberately:** the SCORE itself is self-reported, so a modified client can
+inflate its own number. Bounding *when* a score may be filed doesn't bound *what* it says.
+The endless race is fully deterministic (weekly seed + move list), so server-side replay
+validation — submit the moves, let the server replay the seeded board — remains the
+designed hardening path, and is the next thing to build if the game grows past a circle
+where nobody wants to cheat.
 
 ## Multi-device notes
 
