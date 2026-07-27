@@ -14,6 +14,19 @@ const GRID_COLS = 5
 const CHIP = 108
 const GAP = 18
 const ROW_H = CHIP + GAP
+const TOP_PAD = 32
+/**
+ * L6 · windowed grid. `LEVEL_COUNT` is 300, so building the whole ladder up front put ~1,400 Game
+ * Objects on screen — 300 of them Graphics, and each Graphics breaks Phaser's sprite batch into its
+ * own draw call — plus a single trail Graphics carrying ~2,400 tessellated dots. Measured on the dev
+ * build that grid was ~100% of the frame cost (chips and trail roughly half each), which is the
+ * scroll lag. Now only the rows the mask can actually show are built, plus `ROW_BUFFER` rows of
+ * headroom either side so even a hard flick never scrolls into a hole; rows that leave the window are
+ * destroyed. Live object count is flat in `LEVEL_COUNT` — the list stays smooth at 300 levels or 3,000.
+ * Scroll BOUNDS still span the full ladder, so this is invisible to the player: no paging, no "show
+ * more", the same one continuous scroll to level 300.
+ */
+const ROW_BUFFER = 2
 /** L2: gold frame band width — a milestone chip's cream face insets this much so the baked `goldFace` rim shows as an ornamental border. */
 const MILESTONE_FRAME = 7
 /**
@@ -51,6 +64,8 @@ const EDGE_MAX = 72
 const EDGE_BOUNCE_MAX = 40
 const TRAIL_DOT_GAP = 15
 const TRAIL_DOT_R = 3.4
+/** Polygon sides per trail dot — at r=3.4 an octagon is indistinguishable from a circle (see `dot`). */
+const TRAIL_DOT_SIDES = 8
 const TRAIL_LIT_ALPHA = 0.5
 const TRAIL_DIM_ALPHA = 0.26
 const TRAIL_RETURN_BOW = 16
@@ -60,6 +75,8 @@ export class LevelSelectScene extends Phaser.Scene {
   private dragMoved = 0
   /** Beat 5: set when routed here straight from a win, so the newly-current chip celebrates. */
   private fromWin = false
+  /** Beat 5 · L6: latches once the win arrival has been celebrated, so a row rebuild can't replay it. */
+  private celebrated = false
   /** L1: masked level-grid container (its `y` is the scroll offset) — held so update() can coast it. */
   private scrollContent?: Phaser.GameObjects.Container
   /** L1: the drag clamp's bounds, captured so the fling reuses the exact same [min,max] limits. */
@@ -74,6 +91,22 @@ export class LevelSelectScene extends Phaser.Scene {
   /** C4: the current-level chip + its steady "you are here" breathe — the idle beat pauses it for one nudge. */
   private currentChip?: Phaser.GameObjects.Container
   private currentChipPulse?: Phaser.Tweens.Tween
+  /** L6: the live rows of the windowed grid, keyed by row index — the build/destroy ledger. */
+  private rowNodes = new Map<number, Phaser.GameObjects.Container>()
+  /** L6: the row span currently built (inclusive), so syncWindow() early-outs on an unchanged window. */
+  private winFirst = -1
+  private winLast = -1
+  /** L6: grid geometry + the save snapshot a row needs, captured once per create() for the row builder. */
+  private grid?: {
+    startX: number
+    viewTop: number
+    viewBottom: number
+    rows: number
+    unlocked: number
+    stars: Record<number, number>
+    content: Phaser.GameObjects.Container
+    trail: Phaser.GameObjects.Graphics
+  }
 
   constructor() {
     super('levelselect')
@@ -81,6 +114,7 @@ export class LevelSelectScene extends Phaser.Scene {
 
   init(data: { fromWin?: boolean }): void {
     this.fromWin = data?.fromWin === true
+    this.celebrated = false
   }
 
   create(): void {
@@ -95,10 +129,18 @@ export class LevelSelectScene extends Phaser.Scene {
     this.currentChip = undefined
     this.currentChipPulse = undefined
     this.edgeSpring = undefined // L5: stale tween refs die with the old grid — never resurrect one
+    // L6: the previous visit's rows died with its display list — drop the stale ledger so the first
+    // syncWindow() rebuilds the window from scratch rather than trusting handles to destroyed rows.
+    this.rowNodes.clear()
+    this.winFirst = -1
+    this.winLast = -1
     const save = loadSave()
     addCasinoBackdrop(this, 'menu')
     addMarquee(this, DESIGN_W / 2, 96)
-    addPillButton(this, 64, 84, 84, 56, '‹', GHOST_PILL, () => startScene(this,'home'))
+    // Depth 50 puts the scene chrome above the scrolling grid for input as well as drawing — the same
+    // rank addMuteChip already takes. The chip hit areas are clipped to the viewport (see buildChip),
+    // so this is belt-and-braces: nothing in the list can outrank the way out of the screen.
+    addPillButton(this, 64, 84, 84, 56, '‹', GHOST_PILL, () => startScene(this, 'home')).setDepth(50)
     addMuteChip(this, 676, 40)
 
     const unlocked = endlessUnlocked(save)
@@ -109,25 +151,15 @@ export class LevelSelectScene extends Phaser.Scene {
     const content = this.add.container(0, 0)
     const gridW = GRID_COLS * CHIP + (GRID_COLS - 1) * GAP
     const startX = (DESIGN_W - gridW) / 2
-    const topPad = 32
     // L4 · map "journey" trail — a faint dotted, winding line threading the chip centres in level
-    // order, lit gold up to the current chip and muted beyond. Added FIRST so it sits UNDER every chip;
-    // it lives in `content`, so it rides L1's scroll (content.y) + the existing geometry mask (no
-    // second mask). Static → reduced motion unaffected.
-    content.add(this.buildPathTrail(startX, topPad, viewTop, save.unlocked))
-    const reduced = this.prefersReducedMotion()
-    const chipEntries: { container: Phaser.GameObjects.Container; cy: number; col: number; current: boolean }[] = []
-    for (let n = 1; n <= LEVEL_COUNT; n++) {
-      const row = Math.floor((n - 1) / GRID_COLS)
-      const col = (n - 1) % GRID_COLS
-      const cx = startX + col * (CHIP + GAP) + CHIP / 2
-      const cy = viewTop + topPad + row * ROW_H + CHIP / 2
-      const chip = this.buildChip(n, cx, cy, save.unlocked, save.stars[n] ?? 0, viewTop, viewBottom, content)
-      content.add(chip)
-      chipEntries.push({ container: chip, cy, col, current: n === save.unlocked })
-    }
+    // order, lit gold up to the current chip and muted beyond. Added FIRST so it sits UNDER every chip
+    // (rows are only ever appended after it, so that ordering survives the L6 window churn); it lives
+    // in `content`, so it rides L1's scroll (content.y) + the existing geometry mask (no second mask).
+    // Static → reduced motion unaffected. L6: redrawn per window, not once for all 300 levels.
+    const trail = this.add.graphics()
+    content.add(trail)
     const rows = Math.ceil(LEVEL_COUNT / GRID_COLS)
-    const contentBottom = viewTop + topPad + rows * ROW_H + 24
+    const contentBottom = viewTop + TOP_PAD + rows * ROW_H + 24
 
     const maskG = this.make.graphics({ x: 0, y: 0 }, false)
     maskG.fillStyle(0xffffff)
@@ -135,44 +167,27 @@ export class LevelSelectScene extends Phaser.Scene {
     content.setMask(maskG.createGeometryMask())
 
     // Scroll bounds + the container, held on the scene so update()'s L1 fling reuses the exact clamp.
+    // The bounds span the FULL ladder even though only a window of it is built — the player still has
+    // one uninterrupted scroll from level 1 to LEVEL_COUNT.
     this.scrollContent = content
     this.scrollVel = 0
     this.minScroll = Math.min(0, viewBottom - contentBottom)
     this.maxScroll = 0
     // Open scrolled so the current level sits mid-viewport.
     const curRow = Math.floor((Math.min(save.unlocked, LEVEL_COUNT) - 1) / GRID_COLS)
-    const curCy = viewTop + topPad + curRow * ROW_H + CHIP / 2
+    const curCy = viewTop + TOP_PAD + curRow * ROW_H + CHIP / 2
     content.y = Phaser.Math.Clamp((viewTop + viewBottom) / 2 - curCy, this.minScroll, this.maxScroll)
 
-    // Grid entrance cascade: chips (with their star icons, nested in each container) scale + fade
-    // in, springing up with a calibrated overshoot in a diagonal wave — on-screen row sets the main
-    // beat, the column offset tips each row left→right so the ripple sweeps the way the trail reads.
-    // Runs after content.y is finalised so the stagger tracks what the player actually sees; rows
-    // clipped by the mask fall out harmlessly at the clamped ends. The current chip's idle pulse
-    // waits for its pop so the two scale tweens don't collide.
-    for (const { container, cy, col, current } of chipEntries) {
-      const startPulse = current ? () => this.startChipPulse(container) : undefined
-      if (reduced) {
-        // Reduced motion (§E8): skip the entrance pop AND the "you are here" breathing pulse —
-        // the current chip is already distinguished by its gold border, so it rests static.
-        continue
-      }
-      container.setScale(0.55).setAlpha(0)
-      const visRow = Phaser.Math.Clamp(Math.round((cy + content.y - viewTop) / ROW_H), 0, 10)
-      this.tweens.add({
-        targets: container,
-        scale: 1,
-        alpha: 1,
-        duration: CASCADE_DURATION,
-        delay: visRow * CASCADE_STAGGER + col * CASCADE_COL_STAGGER,
-        ease: backOut(OVERSHOOT.pop),
-        onComplete: startPulse,
-      })
-    }
+    // L6: everything a row needs to build itself, so syncWindow() can mint rows mid-scroll. Set AFTER
+    // content.y is finalised, so the opening window (and its entrance cascade) tracks what the player
+    // actually sees.
+    this.grid = { startX, viewTop, viewBottom, rows, unlocked: save.unlocked, stars: save.stars, content, trail }
+    this.syncWindow(true)
 
     // Drag to scroll (chip taps are suppressed once the press has travelled — see buildChip). While
     // the finger is down the grid tracks it 1:1; L1 adds a flick — the release velocity is smoothed
     // during the drag and, unless motion is reduced, committed to update() to coast under friction.
+    const reduced = this.prefersReducedMotion()
     let dragging = false
     let startPointerY = 0
     let startContentY = 0
@@ -265,6 +280,10 @@ export class LevelSelectScene extends Phaser.Scene {
     // pulse (the subtler LevelSelect counterpart to Home's H3 beat). Runs before the L1 coast's early
     // return so it ticks every frame regardless of scroll state; reduced motion is handled in the beat.
     this.updateIdleAttract()
+    // L6 · keep the built row window in step with wherever the grid has landed. Runs BEFORE the coast's
+    // early return because content.y also moves under the finger and under L5's edge springs, neither of
+    // which sets scrollVel; syncWindow() is a few comparisons when the window hasn't turned over.
+    this.syncWindow()
     // L1 flick inertia (unchanged) — coast the masked grid under friction after a release with momentum.
     if (this.scrollVel === 0 || !this.scrollContent) return
     const raw = this.scrollContent.y + this.scrollVel
@@ -290,6 +309,102 @@ export class LevelSelectScene extends Phaser.Scene {
     }
     this.scrollVel *= FLICK_FRICTION
     if (Math.abs(this.scrollVel) < FLICK_STOP) this.scrollVel = 0
+  }
+
+  /**
+   * L6 · the windowed grid's one moving part: bring the built rows in line with the current scroll.
+   * Computes the row span the mask can show at `content.y`, pads it by `ROW_BUFFER` rows either side,
+   * then destroys what fell out and builds what came in. The span is compared against the last one
+   * first, so the common frame — scrolling within the rows already built — costs two divisions and an
+   * equality test. `cascade` is the create() entry: it forces a build and gives the opening rows their
+   * §L entrance ripple; rows minted later during a scroll appear at rest, since a chip popping in under
+   * a moving finger would read as a stutter rather than a flourish.
+   */
+  private syncWindow(cascade = false): void {
+    const grid = this.grid
+    if (!grid) return
+    // Row `r` spans content-y [rowTop, rowTop + CHIP] where rowTop = viewTop + TOP_PAD + r*ROW_H; the
+    // mask shows content-y [viewTop - y, viewBottom - y]. Solve that overlap for r, then pad.
+    const y = grid.content.y
+    const first = Phaser.Math.Clamp(Math.ceil((-y - TOP_PAD - CHIP) / ROW_H) - ROW_BUFFER, 0, grid.rows - 1)
+    const last = Phaser.Math.Clamp(Math.floor((grid.viewBottom - grid.viewTop - TOP_PAD - y) / ROW_H) + ROW_BUFFER, 0, grid.rows - 1)
+    if (!cascade && first === this.winFirst && last === this.winLast) return
+    this.winFirst = first
+    this.winLast = last
+    for (const row of [...this.rowNodes.keys()]) {
+      if (row < first || row > last) this.destroyRow(row)
+    }
+    for (let row = first; row <= last; row++) {
+      if (!this.rowNodes.has(row)) this.rowNodes.set(row, this.buildRow(row, cascade))
+    }
+    this.drawTrail(first, last)
+  }
+
+  /**
+   * L6 · build one row of the ladder — its ≤5 chips, parented to a row container so the window can
+   * retire them in one call. `cascade` gives the chips the create() entrance ripple (§L: on-screen row
+   * sets the beat, the column offset tips it left→right into a diagonal wave); otherwise they start at
+   * rest. Either way the current "you are here" chip picks its breathe back up — after the pop when
+   * there is one, immediately when there isn't — so scrolling the frontier off screen and back doesn't
+   * leave it inert. Reduced motion (§E8) takes neither the pop nor the breathe.
+   */
+  private buildRow(row: number, cascade: boolean): Phaser.GameObjects.Container {
+    const grid = this.grid!
+    const reduced = this.prefersReducedMotion()
+    const node = this.add.container(0, 0)
+    for (let col = 0; col < GRID_COLS; col++) {
+      const n = row * GRID_COLS + col + 1
+      if (n > LEVEL_COUNT) break
+      const cx = grid.startX + col * (CHIP + GAP) + CHIP / 2
+      const cy = grid.viewTop + TOP_PAD + row * ROW_H + CHIP / 2
+      const chip = this.buildChip(n, cx, cy)
+      node.add(chip)
+      const startPulse = n === grid.unlocked && !reduced ? () => this.startChipPulse(chip) : undefined
+      if (!cascade || reduced) {
+        startPulse?.()
+        continue
+      }
+      chip.setScale(0.55).setAlpha(0)
+      const visRow = Phaser.Math.Clamp(Math.round((cy + grid.content.y - grid.viewTop) / ROW_H), 0, 10)
+      this.tweens.add({
+        targets: chip,
+        scale: 1,
+        alpha: 1,
+        duration: CASCADE_DURATION,
+        delay: visRow * CASCADE_STAGGER + col * CASCADE_COL_STAGGER,
+        ease: backOut(OVERSHOOT.pop),
+        onComplete: startPulse,
+      })
+    }
+    grid.content.add(node)
+    return node
+  }
+
+  /**
+   * L6 · retire a row that has scrolled out of the window. Tweens are killed down the whole subtree
+   * first — a chip's pop, press-spring, frontier-chevron bob and win-halo all target objects nested
+   * inside it, and a tween left ticking on a destroyed target is how you get a null-property crash
+   * three frames later. The "you are here" refs are dropped with their chip so the C4 idle beat can
+   * never nudge a corpse; the next build of that row hands them straight back.
+   */
+  private destroyRow(row: number): void {
+    const node = this.rowNodes.get(row)
+    if (!node) return
+    if (this.currentChip && node.list.includes(this.currentChip)) {
+      this.currentChipPulse?.stop()
+      this.currentChip = undefined
+      this.currentChipPulse = undefined
+    }
+    this.killTweensDeep(node)
+    this.rowNodes.delete(row)
+    node.destroy(true)
+  }
+
+  /** L6: kill every tween targeting `obj` or anything nested under it (see destroyRow). */
+  private killTweensDeep(obj: Phaser.GameObjects.GameObject): void {
+    this.tweens.killTweensOf(obj)
+    const kids = (obj as Phaser.GameObjects.Container).list
+    if (kids) for (const child of [...kids]) this.killTweensDeep(child)
   }
 
   /**
@@ -398,28 +513,42 @@ export class LevelSelectScene extends Phaser.Scene {
    * it stamps faint dots — a straight run within a row, and a gently downward-bowed "carriage return"
    * quadratic where the grid wraps to the next row's left start. Two-tone — dots up to the current
    * unlocked chip glow `gold`, everything beyond is muted `suitWatermark` — so the lit trail terminates
-   * exactly at the "you are here" chip. Returned to create() to be added FIRST into `content`, so it
-   * sits UNDER every chip and rides L1's scroll + the existing geometry mask (no second mask; static).
+   * exactly at the "you are here" chip. It draws into the Graphics create() puts FIRST into `content`,
+   * so it sits UNDER every chip and rides L1's scroll + the existing geometry mask (no second mask).
+   *
+   * L6: only the rows in the live window are stamped (one row of margin either side, so a row entering
+   * the window never arrives ahead of its path), and the whole thing is redrawn when the window turns
+   * over. Stamping all 300 levels put ~2,400 filled circles in one Graphics — a single draw call, but
+   * one whose geometry was re-tessellated every frame, and on its own about as costly as all 300 chips.
    */
-  private buildPathTrail(startX: number, topPad: number, viewTop: number, unlocked: number): Phaser.GameObjects.Graphics {
+  private drawTrail(firstRow: number, lastRow: number): void {
+    const grid = this.grid
+    if (!grid) return
     const T = getTheme()
-    const g = this.add.graphics()
+    const g = grid.trail
+    g.clear()
+    const { startX, viewTop, unlocked } = grid
     // Chip centre in content-local space — the exact cx/cy formula buildChip uses, so the trail threads
     // the real grid geometry (GRID_COLS columns on a CHIP+GAP pitch, ROW_H rows).
     const centre = (n: number): Phaser.Math.Vector2 => {
       const row = Math.floor((n - 1) / GRID_COLS)
       const col = (n - 1) % GRID_COLS
-      return new Phaser.Math.Vector2(startX + col * (CHIP + GAP) + CHIP / 2, viewTop + topPad + row * ROW_H + CHIP / 2)
+      return new Phaser.Math.Vector2(startX + col * (CHIP + GAP) + CHIP / 2, viewTop + TOP_PAD + row * ROW_H + CHIP / 2)
     }
     // One faint dot; travelled dots glow gold, the rest sit muted (colour + alpha reset per stamp so a
-    // single Graphics carries both tones).
+    // single Graphics carries both tones). `fillEllipse` at TRAIL_DOT_SIDES rather than `fillCircle`,
+    // which arcs at Phaser's default 32 segments: a 3.4px dot cannot show 32 sides, but it can pay for
+    // them — a Graphics re-tessellates its whole command buffer every frame, so at ~600 dots that
+    // default was tens of thousands of triangles per frame for pixels no one can resolve.
     const dot = (x: number, y: number, lit: boolean): void => {
       g.fillStyle(lit ? T.gold : T.suitWatermark, lit ? TRAIL_LIT_ALPHA : TRAIL_DIM_ALPHA)
-      g.fillCircle(x, y, TRAIL_DOT_R)
+      g.fillEllipse(x, y, TRAIL_DOT_R * 2, TRAIL_DOT_R * 2, TRAIL_DOT_SIDES)
     }
     // Walk the chips in level order, dotting each n → n+1 gap; endpoints (chip centres) are left
     // unstamped — they hide under the chips anyway and skipping them keeps shared vertices seam-free.
-    for (let n = 1; n < LEVEL_COUNT; n++) {
+    const from = Math.max(1, (firstRow - 1) * GRID_COLS + 1)
+    const to = Math.min(LEVEL_COUNT, (lastRow + 2) * GRID_COLS)
+    for (let n = from; n < to; n++) {
       const a = centre(n)
       const b = centre(n + 1)
       // Lit once the destination chip is unlocked; the segment LEAVING the current chip stays dim, so
@@ -442,19 +571,11 @@ export class LevelSelectScene extends Phaser.Scene {
         }
       }
     }
-    return g
   }
 
-  private buildChip(
-    n: number,
-    cx: number,
-    cy: number,
-    unlocked: number,
-    stars: number,
-    viewTop: number,
-    viewBottom: number,
-    content: Phaser.GameObjects.Container
-  ): Phaser.GameObjects.Container {
+  private buildChip(n: number, cx: number, cy: number): Phaser.GameObjects.Container {
+    const { unlocked, viewTop, viewBottom, content } = this.grid!
+    const stars = this.grid!.stars[n] ?? 0
     const playable = n <= unlocked
     const current = n === unlocked
     const milestone = n % 10 === 0 // L2: every 10th level is a gilded "landmark" on the journey map
@@ -504,8 +625,13 @@ export class LevelSelectScene extends Phaser.Scene {
         })
         .setOrigin(0.5)
       container.add(numText)
-      // Beat 5 echo: the freshly-unlocked current chip pops + sparkles + haloes on win arrival.
-      if (current && this.fromWin) this.celebrateCurrentChip(container, numText, cx, cy, content)
+      // Beat 5 echo: the freshly-unlocked current chip pops + sparkles + haloes on win arrival. L6: the
+      // arrival is a one-shot, so it is latched — scrolling the frontier out of the window and back
+      // rebuilds that chip, and the welcome should not be thrown a second time.
+      if (current && this.fromWin && !this.celebrated) {
+        this.celebrated = true
+        this.celebrateCurrentChip(container, numText, cx, cy, content)
+      }
       // L3: frontier "keep going" cue — a soft gold chevron on the current chip aimed at the next
       // (locked) run, so a returning player instantly reads which way the journey continues.
       if (current && n < LEVEL_COUNT) this.addFrontierMarker(container, n)
@@ -523,7 +649,23 @@ export class LevelSelectScene extends Phaser.Scene {
           container.add(star)
         }
       }
-      const zone = this.add.rectangle(0, 0, CHIP, CHIP, 0xffffff, 0.001).setInteractive({ useHandCursor: true })
+      // A geometry mask clips PIXELS, never input: Phaser's hit test walks the interactive list with no
+      // idea a mask exists, so a chip scrolled up out of the viewport stayed tappable over the header —
+      // and because `input.topOnly` hands the event to whichever candidate sits highest in the display
+      // list, that invisible chip (added after the chrome) swallowed taps meant for the ‹ back button.
+      // That is the "back only works if I scroll up first" bug: scrolling moved the offending row off
+      // the button. So the hit area is clipped to the same band the mask draws — outside it the chip is
+      // not a candidate at all, and the tap falls through to the button underneath. The local y Phaser
+      // hands us is origin-normalised (0 = the zone's top edge), and `container.scaleY` folds in the
+      // press/breathe scales, so this tracks the drawn pixels exactly.
+      const zone = this.add.rectangle(0, 0, CHIP, CHIP, 0xffffff, 0.001).setInteractive({
+        useHandCursor: true,
+        hitArea: new Phaser.Geom.Rectangle(0, 0, CHIP, CHIP),
+        hitAreaCallback: (area: Phaser.Geom.Rectangle, hx: number, hy: number): boolean => {
+          const pointerY = cy + content.y + (hy - CHIP / 2) * container.scaleY
+          return pointerY >= viewTop && pointerY <= viewBottom && Phaser.Geom.Rectangle.Contains(area, hx, hy)
+        },
+      })
       // L5 · springy press feel: the chip squashes on touch and springs back with a release overshoot —
       // the same physical grammar as the pill buttons. One reusable tween slot per chip so press/release
       // never stack; the current chip's breathe pulse is paused for the press so the two scale tweens
