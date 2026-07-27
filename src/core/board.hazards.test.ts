@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { COLS, ROWS } from '../config'
 import { Board } from './board'
 import { hazardPlan } from './hazards'
+import { DIFFICULTY } from './difficulty'
 import { mulberry32 } from './rng'
 import type { ClearWave, Coord, Piece } from './types'
 
@@ -36,11 +37,31 @@ function pieces(b: Board): Map<number, Piece> {
   return m
 }
 
-/** A board for `level` with its real hazard plan applied. */
+/**
+ * A board for `level` with its full hazard plan applied.
+ *
+ * Every mechanic is forced ON here regardless of the shipped rollout. These are RULE tests: if
+ * they respected the live flags, staging the rollout (shipping locks alone) would silently reduce
+ * this file to fuzzing an almost-empty board and it would stay green while proving nothing about
+ * the code it exists to guard.
+ */
+const MECH = DIFFICULTY.hazards as { enabled: boolean; lock: boolean; coat: boolean; blocker: boolean }
+function allOn<T>(fn: () => T): T {
+  const was = { ...MECH }
+  Object.assign(MECH, { enabled: true, lock: true, coat: true, blocker: true })
+  try {
+    return fn()
+  } finally {
+    Object.assign(MECH, was)
+  }
+}
+
 function hazardBoard(level: number, seed: number): Board {
-  const b = new Board(ROWS, COLS, 6, mulberry32(seed))
-  b.seedHazards(hazardPlan(level, ROWS, COLS))
-  return b
+  return allOn(() => {
+    const b = new Board(ROWS, COLS, 6, mulberry32(seed))
+    b.seedHazards(hazardPlan(level, ROWS, COLS))
+    return b
+  })
 }
 
 function everyValidMove(b: Board): { a: Coord; to: Coord }[] {
@@ -166,7 +187,7 @@ describe('hazard rules hold on a live board', () => {
       if (moves.length === 0) break
       playMove(b, moves[0], 'refill-check', [])
     }
-    const seeded = hazardPlan(300, ROWS, COLS).blockers.length
+    const seeded = allOn(() => hazardPlan(300, ROWS, COLS)).blockers.length
     let blockers = 0
     for (const row of gridOf(b)) for (const p of row) if (p?.kind === 'blocker') blockers++
     expect(blockers).toBeLessThanOrEqual(seeded)

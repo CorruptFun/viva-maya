@@ -17,7 +17,25 @@ import type { HazardPlan } from './hazards'
  *  3. THE PANIC SWITCH IS REAL — flags off must mean GONE, provably, not "mostly gone".
  */
 
-const plan = (level: number): HazardPlan => hazardPlan(level, ROWS, COLS)
+/**
+ * The mechanic flags are a ROLLOUT control, not a statement about whether the logic works. These
+ * tests therefore force every mechanic on before exercising the planner, so staging the rollout
+ * (shipping locks alone, say) can never turn this file green by making it test nothing. The
+ * shipped configuration is asserted separately, at the bottom, where it belongs.
+ */
+const MECH = DIFFICULTY.hazards as { enabled: boolean; lock: boolean; coat: boolean; blocker: boolean }
+function allOn<T>(fn: () => T): T {
+  const was = { ...MECH }
+  Object.assign(MECH, { enabled: true, lock: true, coat: true, blocker: true })
+  try {
+    return fn()
+  } finally {
+    Object.assign(MECH, was)
+  }
+}
+
+const plan = (level: number): HazardPlan => allOn(() => hazardPlan(level, ROWS, COLS))
+const density = (kind: 'lock' | 'coat' | 'blocker', level: number): number => allOn(() => densityFor(kind, level))
 const allCells = (p: HazardPlan): string[] => [
   ...p.coats.map(c => `${c.row},${c.col}`),
   ...p.blockers.map(b => `${b.row},${b.col}`),
@@ -106,7 +124,7 @@ describe('densityFor — the ramp', () => {
       let prev = 0
       for (let L = 31; L <= 300; L++) {
         if (L % 5 === 0) continue // the breather is an intentional dip
-        const d = densityFor(kind, L)
+        const d = density(kind, L)
         expect(d).toBeGreaterThanOrEqual(prev - 1) // -1 tolerance for integer rounding
         prev = d
       }
@@ -115,23 +133,23 @@ describe('densityFor — the ramp', () => {
 
   it('makes every 5th level visibly lighter — the breather you can actually see', () => {
     // L200 vs its neighbours: same band, but the breather halves the table dressing.
-    const busy = densityFor('coat', 199) + densityFor('lock', 199)
-    const breather = densityFor('coat', 200) + densityFor('lock', 200)
+    const busy = density('coat', 199) + density('lock', 199)
+    const breather = density('coat', 200) + density('lock', 200)
     expect(breather).toBeLessThan(busy)
   })
 
   it('gives a teaching level its band floor, never a breather-shrunk version', () => {
     // L56 introduces coats and is not a multiple of 5, but L86 (blockers) is — the floor must hold.
-    expect(densityFor('blocker', DIFFICULTY.bands.blockerStart)).toBe(DIFFICULTY.density.blocker.count[0])
-    expect(densityFor('coat', DIFFICULTY.bands.coatStart)).toBe(DIFFICULTY.density.coat.count[0])
+    expect(density('blocker', DIFFICULTY.bands.blockerStart)).toBe(DIFFICULTY.density.blocker.count[0])
+    expect(density('coat', DIFFICULTY.bands.coatStart)).toBe(DIFFICULTY.density.coat.count[0])
   })
 
   it('grows the table dressing from the first band to the end', () => {
     // Compare like with like: L299, not L300, because every 5th level is a deliberate breather and
     // L300 is one. Comparing a breather against a band floor measures the beat, not the trend.
-    expect(densityFor('lock', 299)).toBeGreaterThan(densityFor('lock', 31))
-    expect(densityFor('coat', 299)).toBeGreaterThan(densityFor('coat', 56))
-    expect(densityFor('blocker', 299)).toBeGreaterThan(densityFor('blocker', 86))
+    expect(density('lock', 299)).toBeGreaterThan(density('lock', 31))
+    expect(density('coat', 299)).toBeGreaterThan(density('coat', 56))
+    expect(density('blocker', 299)).toBeGreaterThan(density('blocker', 86))
   })
 })
 
@@ -147,18 +165,48 @@ describe('the panic switch', () => {
    * proves the OFF path rather than trusting it. If this ever fails, the panic switch is a lie.
    */
   it('flags off means gone — not "mostly gone"', () => {
-    const flags = DIFFICULTY.hazards as { enabled: boolean; lock: boolean; coat: boolean; blocker: boolean }
-    const original = { ...flags }
+    const original = { ...MECH }
+    const raw = (L: number): HazardPlan => hazardPlan(L, ROWS, COLS)
     try {
-      flags.blocker = false
-      for (let L = 86; L <= 300; L += 11) expect(plan(L).blockers).toHaveLength(0)
-      expect(plan(300).coats.length).toBeGreaterThan(0) // other mechanics untouched
-      flags.blocker = original.blocker
+      Object.assign(MECH, { enabled: true, lock: true, coat: true, blocker: true })
+      MECH.blocker = false
+      for (let L = 86; L <= 300; L += 11) expect(raw(L).blockers).toHaveLength(0)
+      expect(raw(300).coats.length).toBeGreaterThan(0) // other mechanics untouched
+      MECH.blocker = true
 
-      flags.enabled = false
-      for (let L = 1; L <= 300; L += 13) expect(plan(L)).toEqual({ coats: [], blockers: [], locks: [] })
+      MECH.enabled = false
+      for (let L = 1; L <= 300; L += 13) expect(raw(L)).toEqual({ coats: [], blockers: [], locks: [] })
     } finally {
-      Object.assign(flags, original)
+      Object.assign(MECH, original)
     }
+  })
+})
+
+/**
+ * THE SHIPPED ROLLOUT. Staging is deliberate: locks are the cheapest mechanic by measurement
+ * (~-4% to a player's collects-per-move, versus roughly 10x that per cell for a blocker), so they
+ * are the safest thing to put in front of real players first. Coats and blockers are built,
+ * measured and tested — they are switched off, not absent.
+ *
+ * This test exists so the shipped state is a DECISION rather than an accident: changing the
+ * rollout means changing this assertion, on purpose, in the same commit.
+ */
+describe('the shipped rollout', () => {
+  it('ships locks only, with coats and blockers built but held back', () => {
+    expect({
+      hazards: DIFFICULTY.hazards.enabled,
+      lock: DIFFICULTY.hazards.lock,
+      coat: DIFFICULTY.hazards.coat,
+      blocker: DIFFICULTY.hazards.blocker,
+      curve: DIFFICULTY.curve.enabled,
+    }).toEqual({ hazards: true, lock: true, coat: false, blocker: false, curve: true })
+  })
+
+  it('means a live board carries clamps and nothing else', () => {
+    for (const L of [31, 56, 86, 150, 300]) {
+      const live = hazardPlan(L, ROWS, COLS)
+      expect({ L, coats: live.coats.length, blockers: live.blockers.length }).toEqual({ L, coats: 0, blockers: 0 })
+    }
+    expect(hazardPlan(120, ROWS, COLS).locks.length).toBeGreaterThan(0)
   })
 })

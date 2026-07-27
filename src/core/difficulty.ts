@@ -36,15 +36,28 @@
 export type HazardKind = 'coat' | 'blocker' | 'lock'
 
 export const DIFFICULTY = {
-  /** Master + per-mechanic kill switches. */
+  /**
+   * Master + per-mechanic kill switches — and the ROLLOUT control.
+   *
+   * Shipping locks first is deliberate. Locks are the cheapest mechanic by measurement (~-4% to a
+   * player's collects-per-move; a blocker cell is roughly 10x more punishing), and with the other
+   * two off the live surface is tiny: `coatsRemaining()` is always 0 so the win condition is
+   * untouched, and segment-aware gravity never engages because no blocker ever exists. What is
+   * left is one guard in `wouldSwapMatch` plus an overlay.
+   *
+   * Coats and blockers are BUILT, measured and tested — held back, not missing. Turning either on
+   * is one boolean and needs no other change. `hazards.test.ts` forces every mechanic on for its
+   * logic assertions and asserts this shipped state separately, so staging can never quietly make
+   * the suite test nothing.
+   */
   hazards: {
     enabled: true,
     /** A normal symbol that still MATCHES but cannot be SWAPPED until an adjacent clear frees it. */
     lock: true,
     /** A coated table square that clears when any match lands on it. The only win-condition change. */
-    coat: true,
+    coat: false,
     /** An obstacle that never matches and must be broken by adjacent clears. The sharp instrument. */
-    blocker: true,
+    blocker: false,
   },
 
   /** The move-budget retune. Independent of `hazards` above. */
