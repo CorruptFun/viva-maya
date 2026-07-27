@@ -71,6 +71,12 @@ clears a RANDOM present color. Swap-combos (both consumed, epicenter = drag dest
   land there. Quitting mid-drop can't lose the prize. Ticket slots leave the pool when they can't be
   honoured (endless, or free-spin caps full — save.freeSpinRoom).
 - DROP to release · tap again to skip · CLAIM is the only exit and hands the board back to idle.
+- Presentation: a cast cabinet (goldFace frame, bezel rivets, crown/apron bulb chase, recessed
+  playfield, release gate, domed pegs, slot divider pins) and a value ladder you can read at a glance —
+  cream x2 → dim gold x3 → gold x5 → NAVY for the SPIN tickets → rose-under-gold for the x10 edges
+  (navy = "another currency", rose = "the richest", both borrowed from the wheel's wedge language).
+- The fall is a ballistic PHYSICS integrator, not a tween chain — see BUILD_OVERVIEW for why that
+  distinction is load-bearing. Skipping mid-fall always snaps the chip to its slot at rest.
 
 ## Scoring
 - 20 pts/piece × cascade number (wave 1 ×1, wave 2 ×2, …). Specials count as their symbol.

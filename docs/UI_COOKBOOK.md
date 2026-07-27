@@ -264,6 +264,15 @@ collapsible, reduceFlashing-aware where they flash, governor-scaled where they s
 - **Celebration family** (one language, three sizes): coronation (crown descent +
   confetti + count-up), friend-joined toast queue (max 2/visit), welcome toast with
   chip-fly. Always: celebrate FIRST, then claim/award — a crash re-offers.
+- **Falling/bouncing objects — integrate, don't chain tweens.** A per-hop tween chain *always* reads
+  as janky, because every ease-in restarts from zero velocity: the object dead-stops at each contact.
+  Solve the motion instead (closed-form ballistic segments + one UPDATE handler evaluating the
+  parabola) so velocity is continuous across contacts, and keep the axis that must land EXACTLY
+  (a rigged target) on constant velocity so correctness is independent of the physics feel. Ramp
+  restitution DOWN over the fall so it gathers pace. **Verify per-frame, not by eye:** dump per-frame
+  `dy` and look for runs of near-zero — a physically-correct bounce apex can still *hang* long enough
+  to feel slow (0.42 restitution over a 42px gap cost four dead frames per row). Reference:
+  `view/plinko.ts buildFall`.
 - **Jackpot wheel**: crouch → accel blur → decel ticks → near-miss creep → detent;
   payoff = gold burst (or reduceFlashing swell) + chip fountain INTO the balance pill
   + marquee letter-punch. Skips must snap the rig to rest scale (see the round-4

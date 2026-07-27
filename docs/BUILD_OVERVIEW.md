@@ -183,6 +183,19 @@ pixel moves, then `dropPath` synthesises the bounce. Quitting mid-drop cannot lo
 slots are rolled OUT of the pool entirely when they can't be honoured (endless, or the daily/bank cap
 is full — see `freeSpinRoom`), so the ball never lands on a prize the player won't be paid.
 
+**The fall is INTEGRATED, not tweened** (2026-07 rebuild — do not "simplify" it back). v1 replayed the
+rigged path as a tween chain, one `Quad.easeIn` per row; every ease-in starts from zero velocity, so
+the ball dead-stopped on each peg and re-accelerated — eight stalls that read as slow and janky. Now
+`buildFall` solves each row as a closed-form **ballistic hop** (leave the peg with an upward kick, arc,
+arrive already moving) and one scene-UPDATE handler evaluates the parabola. Vertical velocity is
+continuous across every contact; horizontal travel is constant-velocity per hop and lands on the exact
+half-pitch, so the award-first rig stays honest to the pixel. Restitution ramps DOWN by row
+(`REST_TOP` 0.26 → `REST_BOTTOM` 0.10) so the hops shorten and the drop gathers pace: ~1.6s, and it
+reads faster than v1's 1.4s because it accelerates. Restitution is the one knob to be careful with —
+measured per-frame, a 0.42 first bounce lifted the chip 10px over a 42px row gap and left four
+near-stationary frames hanging at every apex, which is the exact feel the rebuild exists to remove.
+The payoff fires on the FLOOR hit, so the slot lights while the chip is still rattling in the well.
+
 ### Scoring & cascades — `GameScene.playWave` / `addScore`
 `cleared.length × POINTS_PER_PIECE(20) × cascade` per wave (wave 1 ×1, wave 2 ×2,
 …). `doubleScore` boost multiplies everything ×2 via `scoreMult`. `COMBO ×n` popup at
