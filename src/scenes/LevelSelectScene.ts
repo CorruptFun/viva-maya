@@ -1,10 +1,11 @@
 import Phaser from 'phaser'
 import { sfx } from '../audio/sfx'
 import { DESIGN_W, restScrollY } from '../config'
-import { endlessBestThisWeek, endlessUnlocked } from '../core/endless'
+import { endlessUnlocked } from '../core/endless'
 import { LEVEL_COUNT } from '../core/levels'
 import { loadSave } from '../core/save'
 import { addCasinoBackdrop } from '../view/background'
+import { addWeeklyRaceStrip } from '../view/leaderboardpanel'
 import { D, E, OVERSHOOT, backOut } from '../view/motion'
 import { quality } from '../view/quality'
 import { getTheme, prefersReducedMotion, reduceFlashing } from '../view/theme'
@@ -145,7 +146,11 @@ export class LevelSelectScene extends Phaser.Scene {
 
     const unlocked = endlessUnlocked(save)
     const viewTop = 156
-    const viewBottom = unlocked ? 1092 : 1176
+    // 1060 when ENDLESS is offered (was 1092): the footer grew by the height of the weekly-race strip
+    // that replaced the old one-line caption, and it buys that back from the grid rather than from the
+    // bottom margin. Costs about a quarter of a row of chips. `viewBottom` is the single source for
+    // both the mask and the chip hit-area clip, so they stay in lockstep for free.
+    const viewBottom = unlocked ? 1060 : 1176
 
     // Scrollable grid of level chips.
     const content = this.add.container(0, 0)
@@ -245,20 +250,17 @@ export class LevelSelectScene extends Phaser.Scene {
       }
     })
 
-    // Fixed footer.
+    // Fixed footer. The weekly-race strip is the SAME component Home's module uses — one definition of
+    // what the standings row looks like, what it says, and what it does, so the board is reachable from
+    // both screens that offer ENDLESS. This slot used to be a dead caption ("weekly board · best N")
+    // that looked tappable next to Home's live one but wasn't wired to anything; the strip also
+    // upgrades the copy from save-local to the live standings when signed in.
     if (unlocked) {
-      const wkBest = endlessBestThisWeek(save)
-      addPillButton(this, DESIGN_W / 2, 1150, 420, 68, 'ENDLESS', ROSE_PILL, () => startScene(this,'game', { endless: true }))
-      this.add
-        .text(DESIGN_W / 2, 1196, wkBest > 0 ? `weekly board  ·  best ${wkBest.toLocaleString()}` : `new weekly board`, {
-          fontFamily: FONT,
-          fontSize: '19px',
-          color: getTheme().onBackdropMuted,
-        })
-        .setOrigin(0.5)
+      addPillButton(this, DESIGN_W / 2, 1104, 420, 68, 'ENDLESS', ROSE_PILL, () => startScene(this, 'game', { endless: true }))
+      addWeeklyRaceStrip(this, DESIGN_W / 2, 1176, save)
     }
     this.add
-      .text(DESIGN_W / 2, 1238, `BEST  ${save.best.toLocaleString()}`, {
+      .text(DESIGN_W / 2, 1240, `BEST  ${save.best.toLocaleString()}`, {
         fontFamily: FONT,
         fontSize: '26px',
         fontStyle: '900',

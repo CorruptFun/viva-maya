@@ -1037,7 +1037,7 @@ export function devSeedRaceLine(variant: string | null): void {
  * and the press moves the strip itself rather than only fading the text. The label stays on body ink —
  * see the note at its declaration for why it deliberately did NOT move to the interactive gold.
  */
-function addWeeklyRaceLine(scene: Phaser.Scene, x: number, y: number, save: SaveData): Phaser.GameObjects.Container {
+export function addWeeklyRaceStrip(scene: Phaser.Scene, x: number, y: number, save: SaveData): Phaser.GameObjects.Container {
   const T = getTheme()
   const still = prefersReducedMotion()
   const container = scene.add.container(x, y)
@@ -1174,7 +1174,7 @@ export function addWeeklyRaceModule(
   // On the 152-tall plate (-76..76) the pill row sits at -32 → spans -68..4 with an 8px top margin,
   // and the strip at 42 → spans 16..68 with a matching 8px below: a 12px gutter between the two.
   container.add(addPillButton(scene, 0, -32, 340, 72, 'ENDLESS', ROSE_PILL, onPlay))
-  container.add(addWeeklyRaceLine(scene, 0, 42, save))
+  container.add(addWeeklyRaceStrip(scene, 0, 42, save))
   return container
 }
 
