@@ -11,6 +11,13 @@ import {
  * Referral program client — the read/write surface over `public.referral_codes` +
  * `public.referrals` (see supabase/migrations/0004_referrals.sql).
  *
+ * CODE VISIBILITY: this module reads `referral_codes` only for the caller's OWN row (mintMyCode).
+ * Resolving somebody else's code goes through `resolve_referral_code()` (migration 0008), because
+ * the table's original `for select using (true)` policy made every code and its owner's auth UUID
+ * enumerable by anyone holding the publishable key — which is every visitor. 0009 removes that
+ * policy. Until 0008 is applied the RPC simply errors and registration retries on the next save
+ * push; the stash is NOT cleared on an error, so nothing is lost by deploying this first.
+ *
  * FLOW: every player mints one short code (mintMyCode). The invite link carries
  * ?ref=CODE; the friend's client stashes it at boot (captureRefFromUrl), and after
  * sign-in inserts its own referrals row (maybeRegisterReferral — one per account,
@@ -179,10 +186,15 @@ export async function maybeRegisterReferral(): Promise<void> {
       registerDoneFor = s.userId
       return
     }
-    // Resolve the code to its owner (codes are world-readable by design).
-    const owner = await c.from('referral_codes').select('user_id').eq('code', stash).maybeSingle()
-    if (owner.error) return // transient — retry on the next push
-    const referrerId = (owner.data as { user_id: string } | null)?.user_id
+    // Resolve the code to its owner through the SECURITY DEFINER lookup (migration 0008) rather
+    // than reading `referral_codes` directly. The table used to be world-readable — `for select
+    // using (true)` — which made every invite code and its owner's auth UUID dumpable by anyone
+    // holding the publishable key. The function answers one exact code at a time instead, the same
+    // shape 0005 already uses for promo codes. 0009 then removes the permissive policy.
+    const owner = await c.rpc('resolve_referral_code', { p_code: stash })
+    if (owner.error) return // transient (or 0008 not yet applied) — retry on the next push
+    // The function returns the uuid scalar directly, or null for a code that isn't real.
+    const referrerId = typeof owner.data === 'string' ? owner.data : null
     if (!referrerId || referrerId === s.userId) {
       clearStash() // definitive: dead code, or our own (self-referral)
       registerDoneFor = s.userId

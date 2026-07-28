@@ -334,6 +334,28 @@ ladder that never rolls over would defeat the point of the race-name scrub entir
 > client is DORMANT, not broken: the fetch resolves empty, the panel shows its signed-out/empty
 > state, and the strip falls back to the save-local `your climb · level N · ★S` line.
 
+### Referral code visibility — migrations 0008 + 0009
+An RLS audit (2026-07-28) found `referral_codes` shipped with `for select using (true)`, making the
+whole table **enumerable by anyone holding the publishable key** — which is every visitor, since it
+ships in the bundle. An anonymous `GET /rest/v1/referral_codes` returned real codes together with
+their owners' auth UUIDs. The intent was only "somebody I gave a code to can resolve it", which
+needs lookup-by-exact-code, not read-the-whole-table.
+
+The fix is the shape **0005 already uses for promo codes**: the table stops being readable and a
+`SECURITY DEFINER` function becomes the single entry point. `resolve_referral_code(p_code)` returns
+the owner's `user_id` or NULL, has `search_path` pinned, and is `EXECUTE`-granted to `authenticated`
+only. It is still a lookup oracle — one guess at a time against a 36⁶ keyspace — which is an
+enormous improvement over publishing the table, not a claim of perfection.
+
+**It is deliberately two migrations, and the order is load-bearing.** The app is a PWA with
+`registerType: 'prompt'`, so players keep running a cached bundle until they accept the update toast.
+Apply **0008** (additive, breaks nothing) → deploy the client → let players update → apply **0009**
+(removes the permissive policy). Applying 0009 early would make an old client's direct SELECT return
+zero rows for someone else's code; `maybeRegisterReferral` reads that as a *definitive* rejection and
+**clears the stashed code**, so the referral is lost rather than retried. The client is safe to
+deploy before 0008 lands: the RPC simply errors, which is treated as transient, and the stash is
+kept.
+
 ### Slot-cabinet visuals — `GameScene.buildBackdrop`/`buildCabinet`, `view/background.ts`
 Board sits in a cream cabinet with a gold bezel and a rose "screen is on" glow behind
 it. A ring of alternating red/gold marquee **bulbs** runs a traveling chase around the
