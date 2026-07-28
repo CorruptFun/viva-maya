@@ -11,6 +11,7 @@ import { quality } from './quality'
 import type { Theme } from './theme'
 import { css, getTheme, hapticsOff, prefersReducedMotion, reduceFlashing } from './theme'
 import { addPillButton, FONT, GOLD_PILL, goldFace } from './ui'
+import { vibratePattern } from './haptics'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Plinko bonus drop — the "a SUPER MEGA chain buys you a ball drop" moment.
@@ -995,7 +996,7 @@ export function openPlinko(scene: Phaser.Scene, opts: PlinkoOpenOpts): void {
     if (prize.kind === 'ticket') sfx.starDing(1)
     else if (isTop) sfx.jackpotStrike()
     else sfx.winFanfare()
-    if (!hapticsOff()) navigator.vibrate?.(isTop || prize.kind === 'ticket' ? [60, 40, 140] : 40)
+    if (!hapticsOff()) vibratePattern(isTop || prize.kind === 'ticket' ? [60, 40, 140] : 40)
 
     if (!reduced) {
       // Landing ring + spark spray + a light pool under the slot, governor-scaled. Under

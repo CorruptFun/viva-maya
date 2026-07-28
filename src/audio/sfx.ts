@@ -8,6 +8,7 @@
  */
 
 import { getTheme } from '../view/theme'
+import { degree, PENTATONIC, rung } from './scale'
 
 const MUTE_KEY = 'viva-maya:muted'
 const SWAP_KEY = 'viva-maya:swapSound'
@@ -16,8 +17,21 @@ const AMBIENCE_KEY = 'viva-maya:ambience'
 /** Subtle level every dry voice bleeds into the shared reverb bus (§E3-A1) — a light send, not a wash. */
 const REVERB_SEND = 0.12
 
-/** Major-pentatonic semitone classes — the key-lock scale (§E3-A10). */
-const PENTATONIC = [0, 2, 4, 7, 9]
+/**
+ * Length (s) of the ONE shared noise buffer. It is deliberately much longer than any voice that reads
+ * it, because every noise one-shot starts at a RANDOM offset into it (`noiseStart`) — that offset is
+ * the whole reason nine impact voices no longer replay a byte-identical waveform on every fire. 2 s at
+ * 48 kHz is ~380 KB, generated once, lazily, on the first noise voice.
+ */
+const NOISE_SECONDS = 2
+
+/**
+ * Buffer (s) kept in reserve past the random start offset, so no voice can run off the end of the
+ * buffer (a source past its last sample emits silence — the tail would simply vanish). Must stay above
+ * the longest single noise one-shot, currently `reshuffleSwirl` at 0.46 s, with slack for the ±3%
+ * playback-rate jitter stretching it. Leaves ~1.45 s of start positions ≈ 70k distinct waveforms.
+ */
+const NOISE_TAIL = 0.55
 
 /** Selectable "move a piece" sound. 'silk'/'chime'/'aurora' are the smooth/mystical set. */
 export type SwapSound = 'silk' | 'chime' | 'aurora' | 'classic'
@@ -205,9 +219,39 @@ class Sfx {
       if (!Ctor) return null
       const ctx = new Ctor()
       const master = ctx.createGain()
-      master.gain.value = 0.5
-      // Gentle limiter so stacked cascade voices never clip harshly.
+      // 0.32, not 0.5: with the limiter below no longer squashing the mix, peaks that used to be
+      // crushed now pass through and need the headroom back. Per single voice the game still comes
+      // out LOUDER than before, because it is no longer being compressed on the way past.
+      master.gain.value = 0.32
+      // SAFETY LIMITER — a catch for true peaks, NOT a mix bus compressor. These five params are the
+      // whole point; do NOT delete them and "let the defaults handle it". The WebAudio defaults
+      // (threshold -24 dB, ratio 12:1, knee 30, release 250 ms) put a brick wall UNDER the entire
+      // game: nothing here peaks below -24 dBFS, and a 30 dB knee stretches the curve from -24 all
+      // the way to +6 dBFS, so every sound the game makes sat inside the compression curve at all
+      // times. Measured consequence: a x6 MEGA cascade came out ~2 dB louder than a UI button tap.
+      // The 250 ms release made it worse than the static curve suggests — a clear wave fires its
+      // pops/tinks in a stagger tens of ms apart, so the reduction from the first hit was still fully
+      // applied when the last one landed and the wave got QUIETER as it went, the exact inverse of
+      // the crescendo the visuals are building.
+      //
+      // threshold -3: sits above every single voice, so `comp.reduction` reads 0 in ordinary play and
+      //   only a real pile-up touches it. A uiTap (peak 0.32) lands at -19.8 dBFS — 17 dB clear — and
+      //   even megaBoom at tier 3 only reaches ~-6 dBFS with all four of its layers summed coherently.
+      //   A full cascade stack (pops + tinks + land + riser + boom, ~2.0 summed pre-master) arrives at
+      //   ~-4 dBFS and dips a couple of dB. That is ~16 dB of range where there were ~2.
+      // ratio 8 + knee 3: above the knee the output rises 1 dB per 8 dB of input, so the mix cannot
+      //   realistically reach full scale, while the soft knee keeps a peak's SHAPE instead of
+      //   flattening its transient into a click.
+      // attack 4 ms: fast enough to catch a peak, slow enough to leave the crack on bombBoom/megaBoom.
+      // release 120 ms: short enough to recover between the hits inside one clear wave (see above)
+      //   instead of riding the reduction down through a whole chain. The most important value here —
+      //   a long release is what turns a limiter into the mix crusher this used to be.
       const comp = ctx.createDynamicsCompressor()
+      comp.threshold.value = -3
+      comp.knee.value = 3
+      comp.ratio.value = 8
+      comp.attack.value = 0.004
+      comp.release.value = 0.12
       master.connect(comp)
       comp.connect(ctx.destination)
       this.ctx = ctx
@@ -286,9 +330,13 @@ class Sfx {
   // ------------------------------------------------------------- key-lock (§A10)
 
   /**
-   * Snap a frequency to the nearest note of the theme's C-pentatonic scale (rooted on `bedRoot`),
-   * so busy cascades arpeggiate consonantly. Purely tonal — the nudge is < ~1.5 semitones and never
+   * Snap a frequency to the nearest note of the theme's C-pentatonic scale (rooted on `bedRoot`), so a
+   * fixed note lands in the active room's key. Purely tonal — the nudge is < ~1.5 semitones and never
    * touches gain, so nothing gets louder. Safe on any input (bad values pass through untouched).
+   *
+   * For ONE-OFF notes only (bells, chords, the leitmotif, the "cha-ching"). A LADDER must never be
+   * built by snapping a chromatic ramp: a 5-note scale quantises consecutive semitones onto the same
+   * degree and the climb flattens out. Use `degree()` from `./scale` — that is what it is for.
    */
   private snap(freq: number): number {
     const root = getTheme().audio.bedRoot
@@ -327,7 +375,7 @@ class Sfx {
 
   private getNoise(ctx: AudioContext): AudioBuffer {
     if (!this.noiseBuffer) {
-      const len = Math.floor(ctx.sampleRate * 0.8)
+      const len = Math.floor(ctx.sampleRate * NOISE_SECONDS)
       const buf = ctx.createBuffer(1, len, ctx.sampleRate)
       const data = buf.getChannelData(0)
       for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1
@@ -336,10 +384,28 @@ class Sfx {
     return this.noiseBuffer
   }
 
+  /**
+   * A noise voice off the shared buffer, with a ±3% playback-rate jitter (a slight spectral tilt, so
+   * repeated hits differ in colour as well as in waveform).
+   *
+   * MUST be started with `noiseStart()`, never `src.start()` — the random start offset lives there,
+   * and it is the part that matters. Ten one-shot voices (plus the bed's room tone) read this single
+   * buffer and every one of them used to begin at sample 0, so `land` — one per settling column, up
+   * to COLS=8 of them in a refill — and `whoosh` (21 call sites) replayed a byte-identical waveform
+   * on every single fire: the classic machine-gun artefact, where a rain of impacts reads as one
+   * stuttering sample instead of eight separate objects landing. Both knobs are allocation-free: two
+   * `Math.random()` calls per fire against a buffer generated once.
+   */
   private noiseSource(ctx: AudioContext): AudioBufferSourceNode {
     const src = ctx.createBufferSource()
     src.buffer = this.getNoise(ctx)
+    src.playbackRate.value = 0.97 + Math.random() * 0.06
     return src
+  }
+
+  /** Start a noise voice at a random offset into the shared buffer — see `noiseSource()`. */
+  private noiseStart(src: AudioBufferSourceNode, t: number): void {
+    src.start(t, Math.random() * (NOISE_SECONDS - NOISE_TAIL))
   }
 
   /** Enveloped oscillator with an optional exponential pitch glide. */
@@ -422,7 +488,7 @@ class Sfx {
       ng.gain.exponentialRampToValueAtTime(0.045, t + 0.05)
       ng.gain.exponentialRampToValueAtTime(0.0001, t + 0.22)
       n.connect(nlp).connect(ng).connect(out)
-      n.start(t)
+      this.noiseStart(n, t)
       n.stop(t + 0.24)
     }, force)
   }
@@ -504,7 +570,7 @@ class Sfx {
       g.gain.exponentialRampToValueAtTime(0.28, t + 0.04)
       g.gain.exponentialRampToValueAtTime(0.0001, t + 0.2)
       src.connect(bp).connect(g).connect(out)
-      src.start(t)
+      this.noiseStart(src, t)
       src.stop(t + 0.22)
     }, force)
   }
@@ -521,20 +587,24 @@ class Sfx {
       g.gain.setValueAtTime(0.22, t)
       g.gain.exponentialRampToValueAtTime(0.0001, t + 0.06)
       src.connect(lp).connect(g).connect(out)
-      src.start(t)
+      this.noiseStart(src, t)
       src.stop(t + 0.08)
     })
   }
 
   /**
-   * Signature clear blip — a bright coin-like "ding" that rises one semitone per
-   * cascade step (rate = 2^((cascade-1)/12)).
+   * Signature clear blip — a bright coin-like "ding" that climbs one pentatonic DEGREE per cascade
+   * wave, anchored four octaves above the theme root (880–1175 Hz depending on the room).
+   *
+   * It used to build a chromatic rate (`2^((cascade-1)/12)`) and hand it to `snap()`, which quantised
+   * consecutive semitones onto the same scale degree — 10 waves gave 5 distinct pitches on every
+   * theme, with three identical waves in a row on neonVegas. `degree()` walks the scale instead, so
+   * every wave is audibly higher than the last; see `scale.ts` for the rung ceiling.
    */
   pop(cascade: number, pan = 0): void {
     this.voice((ctx, t, out0) => {
       const out = this.panOut(ctx, out0, pan) // pan by board column (§A8); centre by default
-      const rate = Math.pow(2, (Math.max(1, cascade) - 1) / 12)
-      const base = this.snap(880 * rate) // key-lock: cascades arpeggiate on the theme scale (§A10)
+      const base = degree(getTheme().audio.bedRoot * 16, rung(cascade)) // key-locked ladder (§A10)
       // quick upward chirp with fast decay = coin flip
       this.tone(ctx, out, t, { type: 'triangle', freq: base, endFreq: base * 1.5, peak: 0.34, dur: 0.18 })
       // octave-up sine sparkle = casino "ding"
@@ -575,7 +645,7 @@ class Sfx {
       g.gain.setValueAtTime(0.5, t)
       g.gain.exponentialRampToValueAtTime(0.0001, t + 0.32)
       src.connect(lp).connect(g).connect(out)
-      src.start(t)
+      this.noiseStart(src, t)
       src.stop(t + 0.34)
     })
   }
@@ -605,7 +675,7 @@ class Sfx {
       g.gain.setValueAtTime(0.4 + k * 0.06, t)
       g.gain.exponentialRampToValueAtTime(0.0001, t + 0.36)
       src.connect(lp).connect(g).connect(out)
-      src.start(t)
+      this.noiseStart(src, t)
       src.stop(t + 0.4)
       // A rising shimmer over the top tiers — the "wow" glint riding the thump (key-locked).
       if (k >= 2) this.tone(ctx, out, t, { type: 'sine', freq: this.snap(784), endFreq: this.snap(1568), peak: 0.12, dur: 0.5, attack: 0.02, delay: 0.04 })
@@ -739,15 +809,22 @@ class Sfx {
   }
 
   /**
-   * Coin roll-up tally — ~8 ascending metallic pings (a brighter, pitched-up cousin of
-   * reelSweep's tick train) closed by a 2-note "cha-ching" (the top two winFanfare notes).
-   * Scores the payout counter as it rolls 0→reward.
+   * Coin roll-up tally — 8 ascending metallic pings (a brighter, glassier cousin of reelSweep's tick
+   * train) closed by a 2-note "cha-ching" (the top two winFanfare notes). Scores the payout counter as
+   * it rolls 0→reward.
+   *
+   * The pings walk 8 pentatonic DEGREES (§A10) from three octaves above the theme root, not the old
+   * chromatic-into-`snap()` climb that collapsed 8 pings onto 4 pitches. Anchored an octave below
+   * `pop`'s ladder deliberately: 8 rungs span an octave and a third, so starting at 440–587 Hz lands
+   * the top ping at 1109–1480 Hz — right where the old tally topped out. The sweep got bigger; the
+   * ceiling did not, which keeps the "cha-ching" below resolving down into it the way it always has.
    */
   coinCount(): void {
     this.voice((ctx, t, out) => {
       const pings = 8
+      const root = getTheme().audio.bedRoot * 8
       for (let i = 0; i < pings; i++) {
-        const f = this.snap(880 * Math.pow(2, i / 12)) // key-locked climb — arpeggiates in scale (§A10)
+        const f = degree(root, i) // key-locked climb — a real ladder, one scale degree per ping
         const delay = i * 0.07
         this.tone(ctx, out, t, { type: 'triangle', freq: f, endFreq: f * 1.5, peak: 0.16, dur: 0.07, attack: 0.003, delay })
         this.tone(ctx, out, t, { type: 'sine', freq: f * 2, peak: 0.07, dur: 0.05, attack: 0.003, delay })
@@ -805,7 +882,7 @@ class Sfx {
       g.gain.exponentialRampToValueAtTime(0.24, t + 0.08)
       g.gain.exponentialRampToValueAtTime(0.0001, t + 0.44)
       src.connect(bp).connect(g).connect(out)
-      src.start(t)
+      this.noiseStart(src, t)
       src.stop(t + 0.46)
     })
   }
@@ -830,7 +907,7 @@ class Sfx {
       g.gain.setValueAtTime(0.06, t)
       g.gain.exponentialRampToValueAtTime(0.0001, t + 0.04)
       src.connect(lp).connect(g).connect(out)
-      src.start(t)
+      this.noiseStart(src, t)
       src.stop(t + 0.05)
     })
   }
@@ -851,21 +928,21 @@ class Sfx {
       g.gain.exponentialRampToValueAtTime(0.12, t + 0.06) // subtle — never a lead
       g.gain.exponentialRampToValueAtTime(0.0001, t + 0.28)
       src.connect(bp).connect(g).connect(out)
-      src.start(t)
+      this.noiseStart(src, t)
       src.stop(t + 0.3)
     })
   }
 
   /**
-   * Light glassy "tink" on a match-clear pop — an octave above `pop`'s climb, key-locked to the same
-   * scale (§A10) so it shimmers consonantly over the cascade, panned by board column (§A8). Kept very
-   * quiet so a busy wave stays musical rather than clacky.
+   * Light glassy "tink" on a match-clear pop — literally an octave above `pop`'s climb (same rung, an
+   * anchor of `bedRoot * 32`), so the two track each other exactly up the key-locked ladder (§A10)
+   * instead of drifting apart. Panned by board column (§A8) and kept very quiet, so a busy wave stays
+   * musical rather than clacky. `view/plinko.ts` drives it with a peg row rather than a cascade.
    */
   clearTink(cascade = 1, pan = 0): void {
     this.voice((ctx, t, out0) => {
       const out = this.panOut(ctx, out0, pan)
-      const rate = Math.pow(2, (Math.max(1, cascade) - 1) / 12)
-      const f = this.snap(1760 * rate)
+      const f = degree(getTheme().audio.bedRoot * 32, rung(cascade))
       this.tone(ctx, out, t, { type: 'sine', freq: f, peak: 0.07, dur: 0.09, attack: 0.002 })
       this.tone(ctx, out, t, { type: 'sine', freq: f * 2.01, peak: 0.03, dur: 0.06, attack: 0.002 })
     })
@@ -890,16 +967,20 @@ class Sfx {
       g.gain.setValueAtTime(0.05 + 0.05 * h, t)
       g.gain.exponentialRampToValueAtTime(0.0001, t + 0.03)
       src.connect(lp).connect(g).connect(out)
-      src.start(t)
+      this.noiseStart(src, t)
       src.stop(t + 0.04)
     })
   }
 
-  /** Short rising tick — the special-piece charge→release wind-up (§E6). Key-locked, subtle. */
+  /**
+   * Short rising tick — the special-piece charge→release wind-up (§E6). Key-locked, subtle. The
+   * fifth ladder voice, and it had the same chromatic-into-`snap()` collapse as `pop`: DailyBonusScene
+   * steps it 1→4 for consecutive spins, and steps 1–2 came out at an identical pitch on three of the
+   * four themes, so the "each spin winds up higher" cue simply did not exist. Walks degrees now.
+   */
   charge(cascade = 1): void {
     this.voice((ctx, t, out) => {
-      const rate = Math.pow(2, (Math.max(1, cascade) - 1) / 12)
-      const base = this.snap(440 * rate)
+      const base = degree(getTheme().audio.bedRoot * 8, rung(cascade))
       this.tone(ctx, out, t, { type: 'triangle', freq: base, endFreq: base * 3, peak: 0.12, dur: 0.09, attack: 0.006 })
     })
   }
@@ -925,7 +1006,7 @@ class Sfx {
       g.gain.setValueAtTime(0.14, t)
       g.gain.exponentialRampToValueAtTime(0.0001, t + 0.05)
       src.connect(bp).connect(g).connect(out)
-      src.start(t)
+      this.noiseStart(src, t)
       src.stop(t + 0.06)
     })
   }
@@ -1011,7 +1092,10 @@ class Sfx {
       const step = Math.max(1, cascade)
       const level = Math.min(0.12, 0.05 + step * 0.015) // subtle, capped — a bed, never a lead
       const root = getTheme().audio.bedRoot
-      const f = this.snap(root * 2 * Math.pow(2, Math.min(step - 1, 7) / 12)) // climbs, capped at +7 steps
+      // One pentatonic DEGREE per wave, one octave above the bed root (110–147 Hz), holding at the
+      // octave. The old chromatic `snap(root*2 * 2^(min(step-1,7)/12))` cap resolved to only FOUR
+      // distinct pitches over ten waves — the ratchet stalled while the visuals kept escalating.
+      const f = degree(root * 2, rung(cascade))
       const g = ctx.createGain()
       g.gain.setValueAtTime(Math.max(0.0001, this.riserGain ? 0.02 : 0.0001), t)
       g.gain.linearRampToValueAtTime(level, t + 0.12) // swell in
@@ -1134,7 +1218,7 @@ class Sfx {
       const roomG = ctx.createGain()
       roomG.gain.value = 0.12
       room.connect(roomLp).connect(roomG).connect(warmth)
-      room.start(t)
+      this.noiseStart(room, t)
       nodes.push(room)
 
       // One slow LFO breath (~16s period, matching the backdrop's slow breath) swelling the level.

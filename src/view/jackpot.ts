@@ -10,6 +10,7 @@ import { quality } from './quality'
 import { css, getTheme, hapticsOff, prefersReducedMotion, reduceFlashing } from './theme'
 import type { Theme } from './theme'
 import { addPillButton, FONT, GOLD_PILL, goldFace } from './ui'
+import { vibratePattern } from './haptics'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Jackpot Wheel — the "it fills as you play, then explodes into a spin" moment.
@@ -915,7 +916,7 @@ export function openJackpotWheel(scene: Phaser.Scene, opts: WheelOpenOpts): void
 
     // Detent + punch.
     sfx.reelClunk(0)
-    if (!hapticsOff()) navigator.vibrate?.(isJackpot ? [20, 40, 30] : 16)
+    if (!hapticsOff()) vibratePattern(isJackpot ? [20, 40, 30] : 16)
     if (!reduced) scene.cameras.main.shake(isJackpot ? 260 : 120, isJackpot ? 0.008 : 0.004)
 
     // R4 payoff: the room floods gold (slow swell when flash-averse) and the screen takes one breath.

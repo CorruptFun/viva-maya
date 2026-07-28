@@ -185,28 +185,38 @@ describe('the panic switch', () => {
 /**
  * THE SHIPPED ROLLOUT. Staging is deliberate: locks are the cheapest mechanic by measurement
  * (~-4% to a player's collects-per-move, versus roughly 10x that per cell for a blocker), so they
- * are the safest thing to put in front of real players first. Coats and blockers are built,
- * measured and tested — they are switched off, not absent.
+ * were the safest thing to put in front of real players first.
  *
  * This test exists so the shipped state is a DECISION rather than an accident: changing the
- * rollout means changing this assertion, on purpose, in the same commit.
+ * rollout means changing this assertion, on purpose, in the same commit. It has now done that job
+ * once — §G6 advanced the rollout to locks + coats, and this file failed until the decision was
+ * written down here.
+ *
+ * **Coats are live from L56; blockers are still held back.** Coats are a second objective ARCHETYPE
+ * (clear every covered square) and the live game needed one — one goal shape across 300 levels was
+ * the ladder's biggest structural weakness. Blockers stay off for now because they are the sharp
+ * instrument: a permanently inert cell is ~10x more punishing per cell than a lock and the effect is
+ * superlinear, so they are worth their own measured rollout rather than riding along with this one.
  */
 describe('the shipped rollout', () => {
-  it('ships locks only, with coats and blockers built but held back', () => {
+  it('ships locks + coats, with blockers built but held back', () => {
     expect({
       hazards: DIFFICULTY.hazards.enabled,
       lock: DIFFICULTY.hazards.lock,
       coat: DIFFICULTY.hazards.coat,
       blocker: DIFFICULTY.hazards.blocker,
       curve: DIFFICULTY.curve.enabled,
-    }).toEqual({ hazards: true, lock: true, coat: false, blocker: false, curve: true })
+    }).toEqual({ hazards: true, lock: true, coat: true, blocker: false, curve: true })
   })
 
-  it('means a live board carries clamps and nothing else', () => {
+  it('means a live board carries clamps and felt, and never a blocker', () => {
     for (const L of [31, 56, 86, 150, 300]) {
-      const live = hazardPlan(L, ROWS, COLS)
-      expect({ L, coats: live.coats.length, blockers: live.blockers.length }).toEqual({ L, coats: 0, blockers: 0 })
+      expect({ L, blockers: hazardPlan(L, ROWS, COLS).blockers.length }).toEqual({ L, blockers: 0 })
     }
     expect(hazardPlan(120, ROWS, COLS).locks.length).toBeGreaterThan(0)
+    // Coats respect their own band: nothing before `coatStart`, something from it on.
+    expect(hazardPlan(DIFFICULTY.bands.coatStart - 1, ROWS, COLS).coats.length).toBe(0)
+    expect(hazardPlan(DIFFICULTY.bands.coatStart, ROWS, COLS).coats.length).toBeGreaterThan(0)
+    expect(hazardPlan(300, ROWS, COLS).coats.length).toBeGreaterThan(0)
   })
 })

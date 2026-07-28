@@ -54,8 +54,39 @@ export const DIFFICULTY = {
     enabled: true,
     /** A normal symbol that still MATCHES but cannot be SWAPPED until an adjacent clear frees it. */
     lock: true,
-    /** A coated table square that clears when any match lands on it. The only win-condition change. */
-    coat: false,
+    /**
+     * A coated table square that clears when any match lands on it. The only win-condition change.
+     *
+     * §G6 ROLLOUT ADVANCED (from `false`). Locks alone made the live game one mechanic wide across
+     * all 300 levels — every level from 8 to 300 was "collect N of 3 symbols" with a slowly rising
+     * N, which is the single biggest reason the ladder reads as generated rather than authored.
+     * Coats are a genuine SECOND OBJECTIVE ARCHETYPE (clear every covered square — the genre's
+     * jelly), and they were already complete end to end: the board term, the FELT n/m HUD counter,
+     * the procedural art, the just-in-time intro card and their own fairness gate in
+     * feasibility.test.ts. They were staged, not missing.
+     *
+     * MEASURED ON FLIP (banker proxy, n=120/level, NON-breather levels — every multiple of 5 is
+     * halved by `breatherHazardScale`, so sampling L70/L120/L300 measures the wrong thing and was
+     * the first attempt's mistake):
+     *
+     *     level        57     72    118    163    221    299
+     *     coat cells    6     10     14     15     16     18
+     *     layers        6     10     14     15     19     24
+     *     win% delta   -8     -2     -7     +8     -4    -16   (percentage points)
+     *     share of failures with felt still on the table:
+     *                 19%    15%    27%     8%    23%    51%
+     *
+     * So felt is a real binding constraint that ramps with the level, at an average cost of ~5pp.
+     * The dense `VM_FULL_SWEEP=1` feasibility sweep passes unchanged.
+     *
+     * ⚠️ READ THOSE DELTAS AS AN UPPER BOUND ON THE HARM, NOT AS AN ESTIMATE. `sim.ts`'s `goalValue`
+     * scores ONLY goal symbols, so the proxy cannot see felt and clears it purely by accident — it
+     * is the worst possible player at precisely this mechanic, and prioritising the felt is the
+     * skill the archetype exists to reward. Do NOT retune this density against these numbers. If it
+     * ever does need tuning, make the proxy coat-aware FIRST — and re-baseline
+     * `plinko.rate.test.ts` at the same time, because that guard reads the same policy.
+     */
+    coat: true,
     /** An obstacle that never matches and must be broken by adjacent clears. The sharp instrument. */
     blocker: false,
   },

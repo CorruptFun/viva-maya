@@ -1,4 +1,5 @@
 import { LIVES_MAX } from '../config'
+import { DIFFICULTY } from './difficulty'
 import type { BoostType, PromoReward } from './types'
 
 export interface SaveData {
@@ -445,13 +446,38 @@ export function setReferredByCode(code: string): void {
   }
 }
 
-/** Consume all pending boosts (they apply to the level being started, win or lose). */
+/**
+ * Consume the boosts that apply to the level being started (win or lose).
+ *
+ * §G4 — takes at most `DIFFICULTY.economy.boostApplyMax`, and at most `jackpotBoostPerLevel` of the
+ * board-clearing jackpot chips. Both constants were written as the guard for exactly this and had no
+ * reader: the old code drained the ENTIRE bank into one level, so a player who had banked a fortnight
+ * of daily spins opened a level with ~13 boosts — roughly +13 moves and eight pre-planted specials,
+ * which trivialises any level and then leaves the bank empty for the levels that actually needed it.
+ *
+ * The surplus STAYS BANKED, which is strictly better for the player than the old behaviour: it used
+ * to evaporate on whatever level happened to be next. Ordering is preserved so the oldest prizes are
+ * spent first, and jackpots that don't fit this level keep their place in the queue.
+ */
 export function takePendingBoosts(): BoostType[] {
   const save = loadSave()
-  const boosts = save.pendingBoosts
-  if (boosts.length > 0) {
-    save.pendingBoosts = []
-    persistSave(save)
+  const pending = save.pendingBoosts
+  if (pending.length === 0) return []
+
+  const take: BoostType[] = []
+  const keep: BoostType[] = []
+  let jackpots = 0
+  for (const b of pending) {
+    const room = take.length < DIFFICULTY.economy.boostApplyMax
+    const jackpotOk = b !== 'jackpot' || jackpots < DIFFICULTY.economy.jackpotBoostPerLevel
+    if (room && jackpotOk) {
+      if (b === 'jackpot') jackpots++
+      take.push(b)
+    } else {
+      keep.push(b)
+    }
   }
-  return boosts
+  save.pendingBoosts = keep
+  persistSave(save)
+  return take
 }

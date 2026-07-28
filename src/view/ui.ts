@@ -29,6 +29,7 @@ import type { Theme, ThemeId } from './theme'
 import { openCloudModal } from './cloudmodal'
 import { quality } from './quality'
 import { D, E, OVERSHOOT, backOut } from './motion'
+import { vibratePattern } from './haptics'
 
 export const FONT = '"Arial Black", "Helvetica Neue", Arial, sans-serif'
 
@@ -642,7 +643,7 @@ const TEX_PAD = 12
 function pressHaptic(): void {
   if (hapticsOff()) return
   try {
-    if ('vibrate' in navigator) navigator.vibrate?.(8)
+    vibratePattern(8)
   } catch {
     // no Vibration API — silent no-op
   }

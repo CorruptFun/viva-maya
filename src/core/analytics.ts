@@ -97,6 +97,17 @@ export const EVENTS = {
   PLINKO_OFFERED: 'plinko_offered',
   PLINKO_PLAYED: 'plinko_played',
 
+  /**
+   * §G2 the out-of-moves continue funnel: {level, price, chips, near} shown → {level, price} taken.
+   * `shown` minus `taken` is the decline rate, and `near` (goal pieces still owed) is what makes the
+   * pair readable — a high decline rate on near=1 means the price is wrong, while a high decline on
+   * near=40 just means the offer fired on a level the player had already given up on.
+   * A level that is failed far more often than it is continued is a wall; one that is continued far
+   * more often than it is failed is a level whose move budget is simply short.
+   */
+  CONTINUE_SHOWN: 'continue_shown',
+  CONTINUE_TAKEN: 'continue_taken',
+
   /** The update toast, which the PWA stale-build trap makes worth watching. */
   UPDATE_SHOWN: 'update_shown',
   UPDATE_APPLIED: 'update_applied',

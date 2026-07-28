@@ -12,6 +12,7 @@ import { D, E, OVERSHOOT, backOut, fadeRise, popIn } from '../view/motion'
 import { css, getTheme, hapticsOff, prefersReducedMotion, reduceFlashing } from '../view/theme'
 import { ensurePieceTexture } from '../view/textures'
 import { FONT, GHOST_PILL, GOLD_PILL, addPillButton, applyEntrance, goldFace, startScene } from '../view/ui'
+import { vibratePattern } from '../view/haptics'
 
 const REEL_W = 150
 const REEL_H = 210
@@ -667,7 +668,7 @@ export class DailyBonusScene extends Phaser.Scene {
     // §E3/B14: a mechanical reel-landing clunk, panned by reel (left/centre/right) so the three stops
     // read across the stereo field. A light haptic partners each detent (a11y-gated).
     sfx.reelClunk((i - 1) * 0.6)
-    if (!hapticsOff() && 'vibrate' in navigator) navigator.vibrate?.(12)
+    if (!hapticsOff()) vibratePattern(12)
     // Reel-settle kick routed through the reduced-motion gate (§E8) — the sound still lands.
     if (!reduced) this.cameras.main.shake(60, 0.004)
     // Soft gold glow behind the settled winning symbol (separate object → not clipped by the reel mask).

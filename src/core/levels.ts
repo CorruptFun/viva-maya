@@ -116,3 +116,43 @@ export function levelSpec(level: number): LevelSpec {
 
   return { level: L, moves, symbolCount, objectives }
 }
+
+/**
+ * §G3 · what a 3★ / 2★ clear is graded against, as a COLLECT RATE (goal pieces per move) rather
+ * than a fixed slice of the move budget.
+ *
+ * The bug this replaces: stars were graded on a constant `movesLeft / moves >= 0.5` while the curve
+ * above ramps the REQUIRED ratio from 2.94 to 3.52 collects/move. A fixed half-budget bar therefore
+ * silently means "sustain 2× the level's own required rate" — 5.87/mv at L30, 7.03/mv at L300 —
+ * while line 105 right above declares ~6.2/mv to be a FLAWLESS clear. So from L32 the top grade
+ * asked for more than this file's own definition of perfect play, and 3★ stopped existing. It was
+ * invisible because star records are stored best-of and the early levels (where the bar is
+ * reachable) are the ones people replay.
+ *
+ * Calibrated against `sim.ts`'s headless proxy, which is a deliberately WEAK player (no lookahead
+ * past the opening wave): across L15–L300 it sustains ~3.2–3.5 collects/move and peaks near 4.7 on
+ * its best seeds. So 3★ at 4.7 is "beat the proxy's best run", and 2★ at 4.0 is "clearly beat its
+ * average" — a real mastery bar that a thinking player can actually hit, at every level.
+ *
+ * The clamps preserve the early game exactly: below ~L8 the required ratio is so low that both
+ * formulas exceed the old constants, so they clamp to today's 0.5 / 0.25 and L1–L7 grade unchanged.
+ */
+const RATE_3 = 4.7
+const RATE_2 = 4.0
+
+export function starThresholds(spec: LevelSpec): { three: number; two: number } {
+  const total = spec.objectives.reduce((n, o) => n + o.count, 0)
+  const req = total / Math.max(1, spec.moves)
+  const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, v))
+  return {
+    three: clamp(1 - req / RATE_3, 0.08, 0.5),
+    two: clamp(1 - req / RATE_2, 0.04, 0.25),
+  }
+}
+
+/** Stars for a clear that finished with `earnedLeftover` of its own (unbought) moves unspent. */
+export function starsFor(spec: LevelSpec, earnedLeftover: number): 1 | 2 | 3 {
+  const frac = Math.max(0, earnedLeftover) / Math.max(1, spec.moves)
+  const t = starThresholds(spec)
+  return frac >= t.three ? 3 : frac >= t.two ? 2 : 1
+}

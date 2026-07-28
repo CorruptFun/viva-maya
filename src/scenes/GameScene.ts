@@ -23,10 +23,10 @@ import {
 import { Board } from '../core/board'
 import { awardFreeSpinsFor, todayKey } from '../core/daily'
 import { ENDLESS_MOVES, endlessBestForWeek, endlessRngForWeek, recordEndless, weekKey } from '../core/endless'
-import { LEVEL_COUNT, levelSpec } from '../core/levels'
+import { LEVEL_COUNT, levelSpec, starsFor } from '../core/levels'
 import { hazardPlan } from '../core/hazards'
 import { ensureHazardTexture } from '../view/textures'
-import type { HazardKind } from '../core/difficulty'
+import { DIFFICULTY, type HazardKind } from '../core/difficulty'
 import { shouldOfferPlinko } from '../core/plinko'
 import { EVENTS, track } from '../core/analytics'
 import { devSetLives, formatCountdown, refreshLives, spendLifeFor } from '../core/lives'
@@ -45,6 +45,7 @@ import { openPlinko } from '../view/plinko'
 import type { JackpotMeter } from '../view/jackpot'
 import { D, E, OVERSHOOT, backOut, heartbeat } from '../view/motion'
 import { quality } from '../view/quality'
+import { vibratePattern } from '../view/haptics'
 import { css, getTheme, hapticsOff, prefersReducedMotion, reduceFlashing as prefReduceFlashing } from '../view/theme'
 import { TEX_SIZE, ensurePieceTexture } from '../view/textures'
 import {
@@ -115,6 +116,13 @@ const MEDALLION_CAP = 4
 
 const PIECE_SCALE = PIECE_SIZE / TEX_SIZE
 const DRAG_THRESHOLD = CELL * 0.3
+/**
+ * §G1 · how long a swap aimed mid-cascade stays booked. Sized against the resolve it has to outlive:
+ * a wave is ~CLEAR_MS + a fall (~100–450ms), so a typical x3–x4 chain settles inside ~1.5s and the
+ * book survives it. Much longer and a swipe fires long after the player stopped meaning it; much
+ * shorter and the buffer stops covering the deep chains that made it necessary.
+ */
+const BUFFERED_SWAP_MS = 1600
 /** C5 · remaining-count at/under which a collect objective rings its one "almost there" tone. */
 const OBJECTIVE_NEAR = 1
 
@@ -230,6 +238,25 @@ export class GameScene extends Phaser.Scene {
   private dragStartX = 0
   private dragStartY = 0
   private dragConsumed = false
+
+  /**
+   * §G1 INPUT BUFFER — one swap, aimed while a cascade was still resolving, replayed the instant the
+   * board settles. Field initializers do NOT re-run across `scene.restart()`, so every one of these is
+   * reset in `create()` alongside the other carried state (see the scene-restart hygiene note there).
+   *
+   * Only ONE swap is ever held: a queue would let a mashed board run away from the player, and every
+   * genre benchmark buffers exactly one. The book is dropped on expiry (`BUFFERED_SWAP_MS`) and
+   * whenever the level ends, so a swipe made during the win cascade can never fire into the next level.
+   */
+  private bufferFrom: Coord | null = null
+  private bufferStartX = 0
+  private bufferStartY = 0
+  private bufferConsumed = false
+  /** The first half of a tap-tap pair aimed mid-resolve (the idle `selected` ring's off-board twin). */
+  private bufferSelected: Coord | null = null
+  /** The booked swap + the scene-clock ms it was aimed at, or null when nothing is queued. */
+  private bookedSwap: { from: Coord; to: Coord; at: number } | null = null
+
   /** B1 swipe-intent trail — a faint spark follow riding the grabbed piece across a swap glide; null when idle. */
   private swipeTrail: Phaser.GameObjects.Particles.ParticleEmitter | null = null
 
@@ -306,6 +333,8 @@ export class GameScene extends Phaser.Scene {
   private purchasedMoves = 0
   /** True between tapping BOMB and picking a target: the next board tap detonates instead of selecting. */
   private bombArmed = false
+  /** §G4 — purchased bombs DETONATED this level, against `DIFFICULTY.economy.maxBombsPerLevel`. */
+  private bombsUsed = 0
   /** The bomb-aim overlay (board-frame highlight + prompt + cancel); torn down on detonate/cancel. */
   private bombAimLayer?: Phaser.GameObjects.Container
   /** The looping pulse on the aim board-frame — killed explicitly (Phaser 3.90 won't sweep it on destroy). */
@@ -416,6 +445,11 @@ export class GameScene extends Phaser.Scene {
     this.twinkleTween = null
     this.nextTwinkleAt = 0
     this.dragFrom = null
+    // §G1 — a swap booked during the LAST level's final cascade must never fire into this one.
+    this.bookedSwap = null
+    this.bufferFrom = null
+    this.bufferSelected = null
+    this.bufferConsumed = false
     this.scoreMult = 1
     this.movesPulse = null
     // Combo readout is a scene GameObject — the old one was destroyed on restart, so drop the stale ref.
@@ -448,6 +482,7 @@ export class GameScene extends Phaser.Scene {
     this.powerItemsLayer = undefined
     this.powerToastText = undefined
     this.purchasedMoves = 0
+    this.bombsUsed = 0 // §G4 — per-level cap, so it must reset with the level (field inits don't re-run)
     this.bombArmed = false
     this.bombAimLayer = undefined
     this.bombAimTween = undefined
@@ -569,7 +604,10 @@ export class GameScene extends Phaser.Scene {
         .setOrigin(1, 0)
     }
     if (this.activeBoosts.length > 0) this.showBoostBanner(this.activeBoosts)
-    this.showGoalCallout()
+    // §G7 — the goal callout stays HERE, before the idle-handoff check below, because
+    // `playLevelIntro` also owns the board deal-in and the handoff itself. The teach cards are what
+    // move: they now run on its settle (see `teachAfterIntro`) instead of on top of it.
+    this.showGoalCallout(() => this.teachAfterIntro())
     this.maybeOccasion() // §E9 special-date dress-up (dormant unless an occasion is configured for today)
 
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => this.onDown(p))
@@ -587,8 +625,24 @@ export class GameScene extends Phaser.Scene {
       this.armHint()
     }
 
-    this.maybeOnboarding()
-    this.maybeHazardIntro()
+  }
+
+  /**
+   * §G7 — the teach cards, run ONE AT A TIME once the level intro has settled.
+   *
+   * They used to fire in `create()` in the same frame as the goal callout: the callout drew the
+   * "COLLECT ×N" card at depth 44 and `maybeOnboarding` then drew an opaque card at depth 65 straight
+   * over it — and the goal card self-destructs on a timer, so by the time a brand-new player
+   * dismissed the teach card the one screen that says what to collect had already gone. The player
+   * most in need of the goal card was the only one guaranteed never to see it.
+   *
+   * Order: HOW TO PLAY (the rules) before the hazard card (the exception to them). Each card owns
+   * the handoff to the next, so two are never up together either.
+   */
+  private teachAfterIntro(): void {
+    if (!this.scene.isActive()) return
+    const hazard = (): void => void this.maybeHazardIntro(() => {})
+    if (!this.maybeOnboarding(hazard)) hazard()
   }
 
   /**
@@ -639,14 +693,18 @@ export class GameScene extends Phaser.Scene {
    * `unlocked = 47`). Never in endless. Marked seen immediately (so it can't re-show even if the card
    * is dismissed by tapping away), then rendered; `introOpen` gates board taps while it's up.
    */
-  private maybeOnboarding(): void {
-    if (this.endless) return
+  private maybeOnboarding(then: () => void): boolean {
+    if (this.endless) return false
     const save = loadSave()
-    if (save.seenIntro || save.unlocked > 1) return
+    if (save.seenIntro || save.unlocked > 1) return false
     save.seenIntro = true
     persistSave(save)
     this.introOpen = true
-    openOnboarding(this, () => (this.introOpen = false))
+    openOnboarding(this, () => {
+      this.introOpen = false
+      then() // §G7 — the card owns the handoff; the goal callout runs once the player has read this
+    })
+    return true
   }
 
   /**
@@ -657,8 +715,8 @@ export class GameScene extends Phaser.Scene {
    * persisted IMMEDIATELY, before the card renders — same discipline as `maybeOnboarding` — so
    * dismissing by tapping away cannot make it re-appear. Never in endless, which has no hazards.
    */
-  private maybeHazardIntro(): void {
-    if (this.endless || this.introOpen) return
+  private maybeHazardIntro(then: () => void): boolean {
+    if (this.endless || this.introOpen) return false
     const present: HazardKind[] = []
     if (this.board.coatsRemaining() > 0) present.push('coat')
     for (let r = 0; r < ROWS && present.length < 3; r++) {
@@ -670,11 +728,15 @@ export class GameScene extends Phaser.Scene {
     }
     const save = loadSave()
     const unseen = present.find(k => !save.hazardIntros.includes(k))
-    if (!unseen) return
+    if (!unseen) return false
     save.hazardIntros.push(unseen)
     persistSave(save)
     this.introOpen = true
-    openHazardIntro(this, unseen, () => (this.introOpen = false))
+    openHazardIntro(this, unseen, () => {
+      this.introOpen = false
+      then() // §G7 — see maybeOnboarding
+    })
+    return true
   }
 
   /**
@@ -875,16 +937,23 @@ export class GameScene extends Phaser.Scene {
    * "get ready" heart cameo, a light-sweep exit — and THEN the board builds in as a fast diagonal
    * wave. No-op in endless / when there are no objectives.
    */
-  private showGoalCallout(): void {
-    if (this.endless || this.objectives.length === 0) return
+  /** `onSettled` fires once the intro has finished and the board is playable (§G7 teach-card cue). */
+  private showGoalCallout(onSettled: () => void = () => {}): void {
+    if (this.endless || this.objectives.length === 0) {
+      onSettled()
+      return
+    }
     if (!this.reducedMotion) {
-      this.playLevelIntro()
+      this.playLevelIntro(onSettled)
       return
     }
     // Reduced motion — the instant resting card, byte-for-byte the old behaviour.
     const { layer, fit } = this.buildGoalCard(false)
     layer.setScale(fit)
-    this.time.delayedCall(1400, () => layer.destroy())
+    this.time.delayedCall(1400, () => {
+      layer.destroy()
+      onSettled()
+    })
   }
 
   /**
@@ -980,7 +1049,7 @@ export class GameScene extends Phaser.Scene {
    * rest and unlocks immediately (the settle-actions discipline: kill → destroy → snap → handoff).
    * Never runs under reduced motion (showGoalCallout keeps the instant card + instant fill).
    */
-  private playLevelIntro(): void {
+  private playLevelIntro(onSettled: () => void = () => {}): void {
     const T = getTheme()
     const { layer, icons, counts, ready, heart, fit, w } = this.buildGoalCard(true)
     const cy = layer.y
@@ -1005,6 +1074,7 @@ export class GameScene extends Phaser.Scene {
       this.state = 'idle'
       this.scheduleAutoplay()
       this.armHint()
+      onSettled() // §G7 — the board is playable; now (and only now) a teach card may take the screen
     }
 
     // The build-in wave: every piece born at its own cell, dropping in a short third-of-a-cell
@@ -1833,11 +1903,20 @@ export class GameScene extends Phaser.Scene {
       const chipW = 118
       const chipGap = 12
       const n = this.objectives.length
-      // A "COLLECT" tag over the objective cluster — names the chips unmistakably as TARGETS.
-      const clusterCx = BOARD_X + BOARD_W - chipW / 2 - ((n - 1) * (chipW + chipGap)) / 2
+      // §G8 — the cluster is CENTRED on a fixed anchor, not right-aligned to the board edge.
+      //
+      // Right-aligning grew the cluster leftwards from the board's right edge, so its width — and
+      // therefore the "COLLECT" tag's x — moved with the objective count. At the three objectives
+      // every level from 8 onward has, that put the tag safely mid-rail; at ONE objective (levels 1
+      // and 2 — literally every new player's first two screens) the lone chip hugged the right edge
+      // and its tag landed directly underneath the SCORE readout, printing "SCORE / 0 / COLLECT" as
+      // one column. The anchor below IS the n=3 centre, so the common case is byte-for-byte
+      // unchanged and only the narrow clusters move.
+      const clusterCx = BOARD_X + BOARD_W - chipW / 2 - (chipW + chipGap)
+      const slot = (i: number): number => clusterCx + (i - (n - 1) / 2) * (chipW + chipGap)
       // Free-spins counter parks in the rail gap between the moves card and the objective cluster.
       // Narrowest at 3 objectives (~92px) and roomier with fewer, so it is derived, never fixed.
-      const firstChipLeft = BOARD_X + BOARD_W - chipW - (n - 1) * (chipW + chipGap)
+      const firstChipLeft = slot(0) - chipW / 2
       this.freeSpinSpot = { x: (BOARD_X + 170 + firstChipLeft) / 2, y: cardY }
       this.add
         .text(clusterCx, cardY - 70, 'COLLECT', { fontFamily: FONT, fontSize: '18px', fontStyle: '900', color: T.goldText })
@@ -1845,8 +1924,7 @@ export class GameScene extends Phaser.Scene {
         .setLetterSpacing(4)
         .setShadow(0, 2, 'rgba(90,70,20,0.18)', 3, false, true)
       this.objectives.forEach((o, i) => {
-        const cx = BOARD_X + BOARD_W - chipW / 2 - (n - 1 - i) * (chipW + chipGap)
-        const chip = this.add.container(cx, cardY)
+        const chip = this.add.container(slot(i), cardY)
         // §R3 elevated-rail underlay — BELOW the gold halo so the additive breathe stays luminous.
         chip.add(this.add.image(0, 8, 'softshadow').setDisplaySize(chipW + 48, 104 + 48).setAlpha(0.28))
         // Soft gold halo bleeding out around the (opaque) chip — breathes to pull the eye to an
@@ -1987,12 +2065,20 @@ export class GameScene extends Phaser.Scene {
       this.armBomb(item, btn)
       return
     }
+    const n = item.moves ?? 0
+    // §G2 — the buy cap (`DIFFICULTY.economy.purchasedMovesFrac`) is checked BEFORE the spend, so a
+    // capped-out player is never charged for moves they don't receive. Endless has no `spec.moves`
+    // budget and never shows this shelf, so the cap only ever governs numbered levels.
+    if (n > 0 && this.purchasedMoveRoom() < n) {
+      sfx.invalidThud()
+      this.powerToast('Move top-ups maxed for this level', 'bad')
+      return
+    }
     const balance = spendChips(item.price)
     if (balance === null) {
       this.denyPower(btn)
       return
     }
-    const n = item.moves ?? 0
     this.grantMoves(n)
     sfx.coinCount()
     this.flyChipToHud(btn.x, btn.y)
@@ -2076,6 +2162,13 @@ export class GameScene extends Phaser.Scene {
   /** Pay for the bomb, then enter aim mode (the next board tap blasts a 3×3 there). */
   private armBomb(item: PowerItem, btn: Phaser.GameObjects.Container): void {
     if (this.bombArmed) return
+    // §G4 — `DIFFICULTY.economy.maxBombsPerLevel`, the last of the written-but-never-read economy
+    // caps. Checked BEFORE the spend so a capped player is never charged for a bomb they can't arm.
+    if (this.bombsUsed >= DIFFICULTY.economy.maxBombsPerLevel) {
+      sfx.invalidThud()
+      this.powerToast('Bombs maxed for this level', 'bad')
+      return
+    }
     const balance = spendChips(item.price)
     if (balance === null) {
       this.denyPower(btn)
@@ -2153,6 +2246,7 @@ export class GameScene extends Phaser.Scene {
    */
   private detonatePurchasedBomb(center: Coord): void {
     this.bombArmed = false
+    this.bombsUsed++ // §G4 — counted on DETONATION, so a cancelled (and refunded) aim doesn't burn one
     this.hideBombAim()
     this.clearSelection()
     this.disarmHint()
@@ -2591,7 +2685,23 @@ export class GameScene extends Phaser.Scene {
       if (cell) this.detonatePurchasedBomb(cell)
       return
     }
-    if (this.state !== 'idle') return
+    // §G1 INPUT BUFFER — a gesture started mid-resolve is REMEMBERED, not dropped. Every genre
+    // leader lets you line up the next swap while a cascade plays; this scene used to bail here, so
+    // a four-deep chain ate ~2s of input and the board felt unresponsive exactly when it was at its
+    // most exciting. `resolving` only — never `swapping` (the swap tween is 130ms, too short to aim
+    // into), never `ended`/`shuffling` (the board is leaving or being rebuilt).
+    if (this.state !== 'idle') {
+      if (this.state === 'resolving') {
+        const at = this.xyToCell(p.worldX, p.worldY)
+        if (at) {
+          this.bufferFrom = at
+          this.bufferStartX = p.worldX
+          this.bufferStartY = p.worldY
+          this.bufferConsumed = false
+        }
+      }
+      return
+    }
     this.disarmTwinkle() // B4 — the board is being touched; kill any idle gleam instantly
     // Pieces are WORLD objects (rendered at BOARD_X/Y + col/row*CELL). Since the fill-screen change
     // scrolls the main camera by restScrollY() to centre the design box, game-space (p.x/p.y) no
@@ -2611,6 +2721,21 @@ export class GameScene extends Phaser.Scene {
   }
 
   private onMove(p: Phaser.Input.Pointer): void {
+    // §G1 — a swipe completed during a resolve books the swap for the moment the board settles.
+    if (this.state === 'resolving' && this.bufferFrom && !this.bufferConsumed) {
+      const bdx = p.worldX - this.bufferStartX
+      const bdy = p.worldY - this.bufferStartY
+      if (Math.max(Math.abs(bdx), Math.abs(bdy)) >= DRAG_THRESHOLD) {
+        this.bufferConsumed = true
+        const from = this.bufferFrom
+        const to: Coord =
+          Math.abs(bdx) > Math.abs(bdy)
+            ? { row: from.row, col: from.col + Math.sign(bdx) }
+            : { row: from.row + Math.sign(bdy), col: from.col }
+        this.bookSwap(from, to)
+      }
+      return
+    }
     if (this.state !== 'idle' || !this.dragFrom || this.dragConsumed) return
     const dx = p.worldX - this.dragStartX // world-space deltas (dragStartX/Y are world; see onDown)
     const dy = p.worldY - this.dragStartY
@@ -2629,6 +2754,29 @@ export class GameScene extends Phaser.Scene {
 
   private onUp(p: Phaser.Input.Pointer): void {
     void p
+    // §G1 — a tap-tap pair completed mid-resolve books its swap too, so the two input idioms stay
+    // equivalent. A lone tap during a resolve only arms the pair; it never paints a selection ring
+    // (the ring is an idle affordance and would sit over a moving board).
+    if (this.state === 'resolving') {
+      const cell = this.bufferFrom
+      if (cell && !this.bufferConsumed) {
+        if (this.bufferSelected && Board.areAdjacent(this.bufferSelected, cell)) {
+          const from = this.bufferSelected
+          this.bufferSelected = null
+          this.bookSwap(from, cell)
+        } else if (
+          this.bufferSelected &&
+          this.bufferSelected.row === cell.row &&
+          this.bufferSelected.col === cell.col
+        ) {
+          this.bufferSelected = null
+        } else {
+          this.bufferSelected = cell
+        }
+      }
+      this.bufferFrom = null
+      return
+    }
     if (this.state === 'idle' && this.dragFrom && !this.dragConsumed) {
       const cell = this.dragFrom
       if (this.selected && Board.areAdjacent(this.selected, cell)) {
@@ -2642,6 +2790,49 @@ export class GameScene extends Phaser.Scene {
       }
     }
     this.dragFrom = null
+  }
+
+  /**
+   * §G1 — record a swap aimed while the board was resolving. Bounds are checked now (cheap, and a
+   * swipe off the edge should not occupy the single slot); everything else is re-checked at flush,
+   * because the board the player was aiming at is not the board they will get.
+   */
+  private bookSwap(from: Coord, to: Coord): void {
+    if (!this.board.inBounds(to)) return
+    this.bookedSwap = { from, to, at: this.time.now }
+  }
+
+  /** Drop any booked swap. Called when the level ends and whenever the board is rebuilt. */
+  private clearBookedSwap(): void {
+    this.bookedSwap = null
+    this.bufferFrom = null
+    this.bufferSelected = null
+    this.bufferConsumed = false
+  }
+
+  /**
+   * §G1 — replay a booked swap at the idle handoff. Returns true if it started a swap (in which case
+   * the caller must NOT arm the hint/autoplay — `trySwap` owns the board again).
+   *
+   * Two guards, and both matter:
+   *  - EXPIRY. A book older than `BUFFERED_SWAP_MS` is intent the player has stopped meaning. Without
+   *    this, a swipe made at the start of a long chain fires seconds later, out of nowhere.
+   *  - VALIDITY. The pieces under those coordinates have changed — gravity ran. `wouldSwapMatch` is
+   *    the same predicate the hint engine and the reshuffle check use, so a booked swap is held to
+   *    exactly the standard a live one is. An invalid book is dropped SILENTLY: replaying it into
+   *    `trySwap` would thud and shake at a board the player never actually swiped at.
+   */
+  private flushBookedSwap(): boolean {
+    const booked = this.bookedSwap
+    this.bookedSwap = null
+    if (!booked) return false
+    if (this.time.now - booked.at > BUFFERED_SWAP_MS) return false
+    if (!this.board.inBounds(booked.from) || !this.board.inBounds(booked.to)) return false
+    if (!Board.areAdjacent(booked.from, booked.to)) return false
+    if (!this.board.wouldSwapMatch(booked.from, booked.to)) return false
+    this.clearSelection()
+    void this.trySwap(booked.from, booked.to)
+    return true
   }
 
   private select(at: Coord): void {
@@ -2878,7 +3069,11 @@ export class GameScene extends Phaser.Scene {
       }
       if (this.movesLeft <= 0) {
         if (this.endless) this.finishEndless()
-        else this.finishLose()
+        // §G2 — the genre's highest-leverage 30 seconds: offer to keep THIS board alive before the
+        // level is called. `offerContinue` returns true when it took the screen (it then owns the
+        // handback: buy → resume idle, or decline → finishLose). False = nothing to offer, fall
+        // straight through to the loss exactly as before.
+        else if (!this.offerContinue()) this.finishLose()
         return
       }
       if (!this.board.hasValidMove()) await this.reshuffle()
@@ -2888,6 +3083,10 @@ export class GameScene extends Phaser.Scene {
       // restores idle), so return rather than falling through to the three lines below.
       if (this.offerPlinko(cascade)) return
       this.state = 'idle'
+      // §G1 — hand the board back to a swap the player already aimed, before arming the idle nudges.
+      // A flushed swap re-enters `resolveLoop`, which owns the next handoff; arming the hint here too
+      // would fight it (and `armHint` on a board that is about to move is a wasted timer).
+      if (this.flushBookedSwap()) return
       this.scheduleAutoplay()
       this.armHint()
     } catch (err) {
@@ -4053,6 +4252,7 @@ export class GameScene extends Phaser.Scene {
   private finishWin(): void {
     this.log('finishWin')
     this.state = 'ended'
+    this.clearBookedSwap() // §G1 — a swipe aimed during the winning cascade dies with the level
     this.stopMovesPulse()
     this.powerBar?.setVisible(false) // retire the helper shelf — the result card takes the screen
     this.celebrateBoard() // Beat 0: casino light flash + chip/card burst on the still-visible board
@@ -4061,17 +4261,30 @@ export class GameScene extends Phaser.Scene {
     // player can't top up moves to farm stars or chips (which would run the closed chip economy away).
     // A clean in-budget run is unaffected (purchasedMoves is 0); only bought-move surplus is discounted.
     const earnedLeftover = Math.max(0, this.movesLeft - this.purchasedMoves)
-    const movesFrac = earnedLeftover / this.spec.moves
-    const stars = movesFrac >= 0.5 ? 3 : movesFrac >= 0.25 ? 2 : 1
+    // §G3 — graded against the level's own required collect rate, not a fixed half-budget. See
+    // `starThresholds` in core/levels.ts for why the constant bar made 3★ unreachable past L32.
+    const stars = starsFor(this.spec, earnedLeftover)
     const bonus = earnedLeftover * MOVES_BONUS
     if (bonus > 0) this.addScore(bonus)
     // §E9 new-best: capture the stored best BEFORE recordResult bumps it, then compare the final score.
-    const prevBest = loadSave().best
+    // §G4 also reads the pre-win save to tell a FIRST clear from a REPLAY — both facts have to be
+    // taken before `recordResult` advances `unlocked` and overwrites the stored star count.
+    const prev = loadSave()
+    const prevBest = prev.best
+    const isReplay = prev.unlocked > this.level
+    const beatsBest = stars > (prev.stars[this.level] ?? 0)
     const save = recordResult(this.level, stars, this.score)
     this.newBestThisWin = this.score > prevBest
     // Reward payout — rewards a clean, fast clear and is BANKED to the persistent chip balance.
     // Once per win (finishWin runs exactly once per completed level); endless/losses pay nothing.
-    const chipReward = stars * 8 + earnedLeftover * 2
+    //
+    // §G4 REPLAY FAUCET. `DIFFICULTY.economy.replayChipFraction` was written for exactly this and had
+    // no reader anywhere, so re-clearing level 1 paid full price forever — an unbounded chip source
+    // that quietly devalues the champion purse, the referral reward and every check-in payout. A
+    // replay now pays a fraction UNLESS it beats your stored star count, because chasing stars is the
+    // whole point of replaying and must stay worth doing at full rate. Replay itself remains free.
+    const replayScale = isReplay && !beatsBest ? DIFFICULTY.economy.replayChipFraction : 1
+    const chipReward = Math.round((stars * 8 + earnedLeftover * 2) * replayScale)
     this.chipBanked = addChips(chipReward)
     // Paired with the level_start / level_fail below, this is the per-level win rate — the query that
     // separates "level 21 is a wall" from "level 21 is just how far a new player gets in a day".
@@ -4080,7 +4293,11 @@ export class GameScene extends Phaser.Scene {
     track(EVENTS.LEVEL_WIN, { level: this.level, stars, moves_left: earnedLeftover })
     // Charge the jackpot meter one notch. When it fills, arm the wheel — the win-card Continue then
     // fires it (see continueAfterWin). Persisted immediately, so quitting can't lose progress.
-    const meter = bumpJackpotMeter()
+    //
+    // §G4 — but only on PROGRESS. Charging on replays made the wheel farmable by grinding an early
+    // level in a few seconds each, which is a far better rate than playing the game as intended; the
+    // meter is supposed to measure how far you have come, not how many times you pressed retry.
+    const meter = isReplay ? prev.jackpotMeter : bumpJackpotMeter()
     this.jackpotHud?.update(meter)
     this.jackpotArmed = jackpotReady(meter)
     const totalStars = Object.values(save.stars).reduce((sum, s) => sum + s, 0)
@@ -4549,9 +4766,183 @@ export class GameScene extends Phaser.Scene {
     return stars >= 3 ? 'PERFECT!' : stars === 2 ? 'GREAT!' : 'NICE!'
   }
 
+  /**
+   * §G2 · the move budget a player is allowed to BUY on one level, from `DIFFICULTY.economy
+   * .purchasedMovesFrac`. That constant was written as the anti-farm guard for exactly this and had
+   * no reader anywhere in the codebase — the shelf and the continue offer both go through here now,
+   * so "how much of a level can be bought" has one definition.
+   *
+   * Endless is uncapped-by-absence: it never reaches the continue offer and has no `spec.moves`
+   * budget to take a fraction of.
+   */
+  private purchasedMoveCap(): number {
+    return Math.max(0, Math.floor(this.spec.moves * DIFFICULTY.economy.purchasedMovesFrac))
+  }
+
+  /** Moves the player may still buy on this level (cap minus what they have already bought). */
+  private purchasedMoveRoom(): number {
+    return Math.max(0, this.purchasedMoveCap() - this.purchasedMoves)
+  }
+
+  /**
+   * §G2 THE CONTINUE OFFER — "you ran out; keep this board for N chips?"
+   *
+   * This is the beat every leader in the genre builds its fail state around, and the one thing this
+   * game's loss loop was missing. Everything it needs already existed: a chip balance, a priced
+   * `moves5` helper, an atomic `spendChips`, a live `grantMoves`, and a `purchasedMoves` counter that
+   * already excludes bought moves from stars, the moves bonus and the chip reward — so a continue
+   * buys a WIN and can never buy a better GRADE. That property is what makes offering this safe.
+   *
+   * Deliberately only shown when it is ACTIONABLE (affordable and under the buy cap). Candy Crush
+   * shows an unaffordable offer because the next tap is a payment sheet; here there is no such tap,
+   * so an offer the player cannot take is just a taunt — and the lose card already carries the
+   * "you were close" beat with its still-needed row.
+   *
+   * Returns true if it took the screen and now owns the handback.
+   */
+  private offerContinue(): boolean {
+    if (this.endless) return false
+    const item = POWER_ITEMS.find(i => i.type === 'moves5')
+    const grant = item?.moves ?? 0
+    if (!item || grant <= 0) return false
+    if (this.purchasedMoveRoom() < grant) return false
+    const chips = loadSave().chips
+    if (chips < item.price) return false
+
+    const owed = this.objectives.reduce((n, o) => n + Math.max(0, o.remaining), 0)
+    if (owed <= 0) return false
+
+    // REACHABILITY GATE. An offer the extra moves cannot actually cash is worse than no offer: it
+    // charges for a loss and teaches the player the button is a con. So calibrate on what THIS player
+    // did on THIS board — collected-per-move over the moves they just spent — and only offer when the
+    // grant plausibly closes the gap. The 1.4 is deliberate optimism (a late cascade beats the
+    // average), not a fudge: at 1.0 a player who needed one lucky chain would never see the offer.
+    const collected = this.objectives.reduce((n, o) => n + (o.total - Math.max(0, o.remaining)), 0)
+    const movesUsed = Math.max(1, this.spec.moves + this.purchasedMoves - this.movesLeft)
+    if (owed > (collected / movesUsed) * grant * 1.4) return false
+
+    track(EVENTS.CONTINUE_SHOWN, { level: this.level, price: item.price, chips, near: owed })
+
+    const T = getTheme()
+    const reduced = this.reducedMotion
+    const cx = DESIGN_W / 2
+    const cy = 590
+    const halfH = 210
+    const w = 520
+    // Own scrim rather than `overlayScrim()`: this is the one overlay in the scene that can be
+    // DISMISSED back to a live board, so it needs a handle to destroy. `setInteractive` swallows taps
+    // on the board underneath, which matters here more than anywhere else — the board is still
+    // playable and a stray tap must not reach it while the offer is up.
+    this.clearSelection()
+    const scrim = this.add
+      .rectangle(DESIGN_W / 2, viewportCenterY(), DESIGN_W, worldH(), T.scrim, 0.5)
+      .setDepth(40)
+      .setInteractive()
+    sfx.loseWah()
+
+    const card = this.add.container(cx, cy).setDepth(41)
+    const g = this.add.graphics()
+    g.fillStyle(T.shadow, 0.25)
+    g.fillRoundedRect(-w / 2 + 4, -halfH + 8, w, halfH * 2, 34)
+    g.fillStyle(T.cardFill, 1)
+    g.fillRoundedRect(-w / 2, -halfH, w, halfH * 2, 34)
+    g.lineStyle(4, T.goldBezel, 1)
+    g.strokeRoundedRect(-w / 2, -halfH, w, halfH * 2, 34)
+    card.add(g)
+
+    card.add(
+      this.add
+        .text(0, -150, 'OUT OF MOVES', { fontFamily: FONT, fontSize: '40px', fontStyle: '900', color: T.navyText })
+        .setOrigin(0.5)
+        .setShadow(0, 3, 'rgba(0,0,0,0.15)', 6, false, true)
+    )
+
+    // The stake, stated plainly. The still-needed row is the lose card's job; here the player needs
+    // exactly one number to decide, so we show the single nearest goal rather than all three.
+    let nearIdx = -1
+    let nearRem = Infinity
+    this.objectives.forEach((o, i) => {
+      if (o.remaining > 0 && o.remaining < nearRem) {
+        nearRem = o.remaining
+        nearIdx = i
+      }
+    })
+    if (nearIdx >= 0) {
+      const near = this.objectives[nearIdx]
+      const row = this.add.container(0, -92)
+      const label = this.add
+        .text(-16, 0, `${near.remaining} more`, { fontFamily: FONT, fontSize: '30px', fontStyle: '900', color: T.ink })
+        .setOrigin(1, 0.5)
+      row.add([label, this.add.image(label.x + 34, 0, near.symbol).setDisplaySize(44, 44)])
+      card.add(row)
+    }
+
+    const priceRow = this.add.container(0, -30)
+    const priceText = this.add
+      .text(14, 0, String(item.price), { fontFamily: FONT, fontSize: '34px', fontStyle: '900', color: T.ink })
+      .setOrigin(0, 0.5)
+    priceRow.add([this.add.image(-10, 0, 'chip').setDisplaySize(40, 40), priceText])
+    card.add(priceRow)
+    card.add(
+      this.add
+        .text(0, 12, `you have ${chips.toLocaleString()}`, { fontFamily: FONT, fontSize: '20px', color: T.inkMuted })
+        .setOrigin(0.5)
+    )
+
+    // One-shot latch: both exits destroy the card, and whichever fires first disables the other, so a
+    // double-tap can never both spend chips AND lose the level.
+    let settled = false
+    const close = (): void => {
+      card.destroy()
+      scrim.destroy()
+    }
+
+    const keepGoing = (): void => {
+      if (settled) return
+      settled = true
+      const balance = spendChips(item.price)
+      if (balance === null) {
+        // Chips moved under us (another surface spent them). Treat as a decline rather than a silent
+        // no-op: the player asked to continue and we could not honour it, so end the level honestly.
+        close()
+        this.finishLose()
+        return
+      }
+      track(EVENTS.CONTINUE_TAKEN, { level: this.level, price: item.price })
+      close()
+      this.chipHud?.update(balance)
+      sfx.coinCount()
+      this.grantMoves(grant)
+      this.powerToast(`+${grant} moves`, 'good')
+      this.renderPowerItems() // affordability changed — restyle the shelf before it comes back
+      this.powerBar?.setVisible(true)
+      // Hand the board back exactly the way `resolveLoop` does at its idle handoff.
+      this.state = 'idle'
+      this.scheduleAutoplay()
+      this.armHint()
+    }
+
+    const giveUp = (): void => {
+      if (settled) return
+      settled = true
+      close()
+      this.finishLose()
+    }
+
+    card.add(addPillButton(this, 0, 88, 380, 84, `+${grant} MOVES`, GOLD_PILL, keepGoing))
+    card.add(addPillButton(this, 0, 172, 300, 60, 'GIVE UP', GHOST_PILL, giveUp))
+
+    if (!reduced) {
+      card.setScale(0.94).setAlpha(0).setY(cy + 18)
+      this.tweens.add({ targets: card, scale: 1, alpha: 1, y: cy, duration: 360, ease: E.settle })
+    }
+    return true
+  }
+
   private finishLose(): void {
     this.log('finishLose')
     this.state = 'ended'
+    this.clearBookedSwap() // §G1
     this.stopMovesPulse()
     this.powerBar?.setVisible(false) // retire the helper shelf — the result card takes the screen
     spendLifeFor(this.level) // a loss costs a life (grace below level 10; numbered levels only reach finishLose)
@@ -4563,6 +4954,7 @@ export class GameScene extends Phaser.Scene {
   private finishEndless(): void {
     this.log('finishEndless')
     this.state = 'ended'
+    this.clearBookedSwap() // §G1
     this.stopMovesPulse()
     const { best, isRecord } = recordEndless(this.score, this.endlessWeekKey)
     track(EVENTS.ENDLESS_END, { score: this.score, is_record: isRecord })
@@ -6034,6 +6426,7 @@ export class GameScene extends Phaser.Scene {
   /** Haptic buzz, guarded for browsers without the Vibration API + the a11y haptics-off switch (§E8). */
   private vibrate(pattern: number | number[]): void {
     if (hapticsOff()) return
-    if ('vibrate' in navigator) navigator.vibrate?.(pattern)
+    // §G5 — routed through view/haptics so iOS (no Web Vibration API at all) still gets something.
+    vibratePattern(pattern)
   }
 }

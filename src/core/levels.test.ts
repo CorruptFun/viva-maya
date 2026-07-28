@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { LEVEL_COUNT, levelSpec } from './levels'
+import { LEVEL_COUNT, levelSpec, starThresholds, starsFor } from './levels'
 import { DIFFICULTY, isTeachingLevel } from './difficulty'
 import type { SymbolType } from './types'
 
@@ -157,5 +157,57 @@ describe('the panic switch', () => {
 
   it('leaves levels 1-30 on the legacy budget even with the retune ON', () => {
     for (let L = 1; L <= 30; L++) expect(levelSpec(L).moves).toBe(legacyMoves(L))
+  })
+})
+
+/**
+ * §G3 — the star grade must stay inside the curve's own definition of achievable play.
+ *
+ * `levelSpec` floors the move budget at `total / 6.2` and calls that "even a flawless clear". The
+ * old fixed `movesLeft/moves >= 0.5` bar for 3★ therefore demanded twice the level's required
+ * ratio — 7.03 collects/move at L300 — which is well past that flawless ceiling, so from L32 the
+ * top grade was asking for more than the game itself considered possible. These assertions make
+ * that class of bug fail loudly rather than silently draining every star out of the late game.
+ */
+describe('star thresholds stay achievable', () => {
+  const FLAWLESS = 6.2
+
+  it('never asks for more than a flawless clear, at any of the 300 levels', () => {
+    for (let L = 1; L <= LEVEL_COUNT; L++) {
+      const spec = levelSpec(L)
+      const total = spec.objectives.reduce((n, o) => n + o.count, 0)
+      const t = starThresholds(spec)
+      // Rate a 3-star clear implies: finish `total` collects inside the moves it is allowed to spend.
+      const rate3 = total / (spec.moves * (1 - t.three))
+      expect({ L, over: rate3 > FLAWLESS }).toEqual({ L, over: false })
+      expect(t.two).toBeLessThanOrEqual(t.three)
+    }
+  })
+
+  it('keeps the pre-existing 0.5 / 0.25 bar on the early levels it was calibrated for', () => {
+    for (let L = 1; L <= 7; L++) {
+      const t = starThresholds(levelSpec(L))
+      expect({ L, ...t }).toEqual({ L, three: 0.5, two: 0.25 })
+    }
+  })
+
+  it('grades the boundaries exactly, and every level can still reach all three grades', () => {
+    for (const L of [1, 8, 32, 100, 300]) {
+      const spec = levelSpec(L)
+      const t = starThresholds(spec)
+      const at = (frac: number): number => starsFor(spec, Math.ceil(frac * spec.moves))
+      expect({ L, s: at(t.three) }).toEqual({ L, s: 3 })
+      expect({ L, s: at((t.two + t.three) / 2) }).toEqual({ L, s: 2 })
+      expect({ L, s: starsFor(spec, 0) }).toEqual({ L, s: 1 })
+      // A grade you cannot reach is not a grade: 3-star must cost fewer moves than the level HAS.
+      expect(Math.ceil(t.three * spec.moves)).toBeLessThan(spec.moves)
+    }
+  })
+
+  it('never grades a bought move — purchased surplus is excluded before it gets here', () => {
+    const spec = levelSpec(100)
+    // starsFor takes the EARNED leftover; passing the raw remainder is the bug it guards against.
+    expect(starsFor(spec, 0)).toBe(1)
+    expect(starsFor(spec, spec.moves)).toBe(3)
   })
 })
