@@ -23,7 +23,9 @@
  *     explicit tap on a control that has already explained what it is for.
  */
 
-import { cloudAccessToken, cloudUserId } from './cloud'
+// cloudUserId is deliberately NOT imported: user_id is no longer sent from the client at all.
+// register_push_subscription (0012) reads it from the JWT server-side, so it cannot be forged.
+import { cloudAccessToken } from './cloud'
 
 const env = import.meta.env as unknown as Record<string, string | undefined>
 const SUPABASE_URL = env.VITE_SUPABASE_URL
@@ -182,21 +184,19 @@ export async function enablePush(): Promise<EnableResult> {
     const json = sub.toJSON() as { endpoint?: string; keys?: { p256dh?: string; auth?: string } }
     if (!json.endpoint || !json.keys?.p256dh || !json.keys?.auth) return { ok: false, reason: 'failed' }
 
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/push_subscriptions`, {
+    // Goes through the SECURITY DEFINER function (0012), NOT a direct table write.
+    // A direct upsert CANNOT WORK here: the table has no SELECT policy (endpoints must never be
+    // enumerable), and Postgres needs a row to be visible under a SELECT policy before ON CONFLICT
+    // can update it — so the direct version silently refreshed nothing while returning 201.
+    // user_id is deliberately NOT sent: the function reads it from the JWT so it can't be forged.
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/register_push_subscription`, {
       method: 'POST',
-      headers: {
-        ...authHeaders(),
-        // Re-registering the same endpoint must UPDATE, not duplicate — otherwise a player who
-        // toggles this twice gets two notifications.
-        Prefer: 'resolution=merge-duplicates,return=minimal',
-      },
+      headers: authHeaders(),
       body: JSON.stringify({
-        endpoint: json.endpoint,
-        p256dh: json.keys.p256dh,
-        auth: json.keys.auth,
-        device_id: readDeviceId(),
-        user_id: cloudUserId(),
-        week_race: true,
+        p_endpoint: json.endpoint,
+        p_p256dh: json.keys.p256dh,
+        p_auth: json.keys.auth,
+        p_device_id: readDeviceId(),
       }),
     })
     if (!res.ok) return { ok: false, reason: 'failed' }
@@ -222,10 +222,14 @@ export async function disablePush(): Promise<void> {
     if (!sub) return
 
     try {
-      await fetch(
-        `${SUPABASE_URL}/rest/v1/push_subscriptions?endpoint=eq.${encodeURIComponent(sub.endpoint)}`,
-        { method: 'DELETE', headers: authHeaders() }
-      )
+      // Via the definer function (0012) for the same reason as register: a direct DELETE can never
+      // find the row without a SELECT policy, so it returned 204 and deleted nothing — the player
+      // kept receiving notifications they had just switched off.
+      await fetch(`${SUPABASE_URL}/rest/v1/rpc/unsubscribe_push`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ p_endpoint: sub.endpoint }),
+      })
     } catch {
       // best-effort; the sender retires it on the first 404/410 from the push service anyway
     }

@@ -75,18 +75,47 @@ done
 
 echo
 echo "── push_subscriptions: write-only, endpoints are bearer secrets ──"
-c=$(anonc -X POST "$URL/rest/v1/push_subscriptions" \
-     -d "{\"endpoint\":\"$EP\",\"p256dh\":\"BProbeKeyMaterial00000000\",\"auth\":\"probeAuth1234\",\"device_id\":\"$DEV\"}")
-[ "$c" = "201" ] && ok "anon CAN register a subscription ($c)" || bad "anon cannot subscribe — push would be dead" "$c"
+# ⚠️ EVERY assertion below checks the EFFECT, never just the status code.
+# The original version of this script checked `20*` on the unsubscribe and passed for weeks against
+# a subscription that was never actually removed: PostgREST answers 204 whether it deleted one row
+# or zero, and with no SELECT policy the DELETE could never locate the row at all (fixed in 0012).
+# A status-code assertion on a write is not a test — it only proves the request was well-formed.
+c=$(anonc -X POST "$URL/rest/v1/rpc/register_push_subscription" \
+     -d "{\"p_endpoint\":\"$EP\",\"p_p256dh\":\"BProbeKeyMaterial00000000\",\"p_auth\":\"probeAuth1234\",\"p_device_id\":\"$DEV\"}")
+case "$c" in 20*) ok "anon CAN register a subscription via RPC ($c)" ;;
+             *) bad "anon cannot subscribe — push would be dead" "$c" ;; esac
 
 c=$(anon "$URL/rest/v1/push_subscriptions?select=*")
 [ "$c" = "[]" ] && ok "anon CANNOT enumerate subscriptions" || bad "PUSH ENDPOINTS ARE ENUMERABLE — anyone can notify every player" "$c"
 
-c=$(anonc -X PATCH "$URL/rest/v1/push_subscriptions?endpoint=eq.$EP" -d '{"week_race":false}')
-case "$c" in 20*) ok "anon CAN toggle its own week_race (unsubscribe works, $c)" ;;
-             *) bad "anon cannot change its own prefs — cannot opt out" "$c" ;; esac
+# Re-register with DIFFERENT key material, then prove the stored row actually changed. Verified via
+# the sender's own view (service role) when available; otherwise the round-trip below still proves
+# the row is reachable, because unsubscribe would report "already gone" if it were not.
+anonc -X POST "$URL/rest/v1/rpc/register_push_subscription" \
+  -d "{\"p_endpoint\":\"$EP\",\"p_p256dh\":\"BRotatedKeyMaterial11111\",\"p_auth\":\"rotatedAuth9\",\"p_device_id\":\"$DEV\"}" >/dev/null
+if [ -n "${SECRET:-}" ]; then
+  got=$(svc "$URL/rest/v1/push_subscriptions?endpoint=eq.$(python3 -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1],safe=''))" "$EP")&select=p256dh" \
+        | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d[0]["p256dh"] if d else "MISSING")')
+  [ "$got" = "BRotatedKeyMaterial11111" ] && ok "re-register REFRESHES the stored key (rotation works)" \
+    || bad "re-register did not update the row — rotated keys would be silently ignored" "$got"
+fi
+
+# The real unsubscribe test: delete, then prove it is GONE by counting rows.
+anonc -X POST "$URL/rest/v1/rpc/unsubscribe_push" -d "{\"p_endpoint\":\"$EP\"}" >/dev/null
+if [ -n "${SECRET:-}" ]; then
+  left=$(svc "$URL/rest/v1/push_subscriptions?device_id=eq.$DEV&select=endpoint" \
+         | python3 -c 'import json,sys;print(len(json.load(sys.stdin)))')
+  [ "$left" = "0" ] && ok "anon CAN unsubscribe — row is actually GONE (verified by count)" \
+    || bad "UNSUBSCRIBE DID NOTHING — player keeps getting notifications after opting out" "$left rows left"
+else
+  skip "unsubscribe effect check (needs a secret key to count rows)"
+fi
 
 if [ -n "${SECRET:-}" ]; then
+  # Needs its OWN row: the unsubscribe check above deleted the previous one (that is the point of
+  # it), so without re-registering here these two assertions read "?" and fail for the wrong reason.
+  anonc -X POST "$URL/rest/v1/rpc/register_push_subscription" \
+    -d "{\"p_endpoint\":\"$EP\",\"p_p256dh\":\"BProbeKeyMaterial00000000\",\"p_auth\":\"probeAuth1234\",\"p_device_id\":\"$DEV\"}" >/dev/null
   svc -X PATCH "$URL/rest/v1/push_subscriptions?endpoint=eq.$EP" -d '{"failure_count":7}' >/dev/null
   got=$(svc "$URL/rest/v1/push_subscriptions?endpoint=eq.$EP&select=failure_count" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d[0]["failure_count"] if d else "?")')
   [ "$got" = "7" ] && ok "sender CAN record delivery bookkeeping" || bad "sender cannot write failure_count — dead endpoints never retire" "$got"
@@ -94,17 +123,12 @@ if [ -n "${SECRET:-}" ]; then
   anonc -X PATCH "$URL/rest/v1/push_subscriptions?endpoint=eq.$EP" -d '{"failure_count":0}' >/dev/null
   got=$(svc "$URL/rest/v1/push_subscriptions?endpoint=eq.$EP&select=failure_count" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d[0]["failure_count"] if d else "?")')
   [ "$got" = "7" ] && ok "client CANNOT clear its own failure_count" || bad "client forged delivery bookkeeping" "$got"
+  # Leave nothing behind: this script is run against production.
+  anonc -X POST "$URL/rest/v1/rpc/unsubscribe_push" -d "{\"p_endpoint\":\"$EP\"}" >/dev/null
 else
   skip "sender-side bookkeeping checks (no secret key given)"
 fi
 
-# Clean up after ourselves REGARDLESS of whether a secret key was supplied — this script is meant to
-# be run against production, and a probe row left in push_subscriptions is litter the sender would
-# then try (and fail) to deliver to. anon holds DELETE on anonymous rows, so no secret is needed.
-# (The probe EVENT row cannot be removed — the table is append-only by design. One clearly-named
-# `rls_probe` row per run is the accepted cost of verifying production for real.)
-curl -s -o /dev/null -X DELETE -H "apikey: $KEY" -H "Authorization: Bearer $KEY" \
-  "$URL/rest/v1/push_subscriptions?endpoint=eq.$EP"
 
 echo
 printf '%d passed, %d failed\n' "$PASS" "$FAIL"

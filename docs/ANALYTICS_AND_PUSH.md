@@ -72,6 +72,14 @@ import from `src/`). A drift there is silent and total: a wrong key reads an emp
 everyone the generic copy while nothing errors. `src/core/analytics.test.ts` pins the two together
 across three years of dates plus the rollover and ISO-year edges. **Do not delete that test.**
 
+**⚠️ Subscribe/unsubscribe go through `SECURITY DEFINER` RPCs (`0012`), never direct table writes.**
+PostgreSQL requires rows to be visible under a **SELECT** policy before `UPDATE`/`DELETE` can locate
+them — the lookup is governed by the SELECT policy, not the UPDATE one. `0011` intentionally grants
+no SELECT (endpoints must never be enumerable), so the direct `DELETE` returned **204 having deleted
+nothing** and the upsert never refreshed rotated keys. Both failed silently. If you ever add another
+write-only table that clients must also modify, it needs the same RPC shape. Do not "fix" it by
+adding `using (true)` — that republishes every endpoint.
+
 **iOS:** Web Push works only in an *installed* PWA (16.4+). `pushSupport()` returns `needs-install`
 for that case and the UI says "Add to Home Screen first" rather than showing a dead button.
 
