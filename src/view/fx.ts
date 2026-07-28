@@ -18,7 +18,6 @@
  */
 import Phaser from 'phaser'
 import { DESIGN_W, worldH } from '../config'
-import { ensureBandTexture } from './background'
 import { D, E, heartbeat, reduced } from './motion'
 import { quality } from './quality'
 import { getTheme } from './theme'
@@ -47,28 +46,20 @@ export function addScreenGloss(scene: Phaser.Scene): void {
   const H = worldH() // scrollFactor-0 space: the camera viewport spans the full visible world
 
   // --- Over-screen vignette: the faintest inward focus ON TOP of the UI (warm ink, never black).
-  // Same four-band technique as the backdrop vignette, at ~1/3 its alpha, screen-anchored — drawn as
-  // tinted `bgband` images, not fillGradientStyle, which mis-composites on the transparent canvas
-  // (see background.ensureBandTexture).
-  ensureBandTexture(scene)
+  // Same four-band gradient technique as the backdrop vignette, at ~1/3 its alpha, screen-anchored.
   const ink = T.vignetteInk
+  const g = scene.add.graphics().setDepth(GLOSS_DEPTH).setScrollFactor(0)
   const Vt = 0.035
   const Vb = 0.055
   const Vs = 0.04
-  const band = (x: number, y: number, w: number, h: number, alpha: number, angle: number): void => {
-    scene.add
-      .image(x, y, 'bgband')
-      .setDisplaySize(w, h)
-      .setAngle(angle)
-      .setTint(ink)
-      .setAlpha(alpha)
-      .setDepth(GLOSS_DEPTH)
-      .setScrollFactor(0)
-  }
-  band(W / 2, 110, W, 220, Vt, 0) // top (fades down)
-  band(W / 2, H - 130, W, 260, Vb, 180) // bottom (fades up)
-  band(60, H / 2, H, 120, Vs, -90) // left (fades right)
-  band(W - 60, H / 2, H, 120, Vs, 90) // right (fades left)
+  g.fillGradientStyle(ink, ink, ink, ink, Vt, Vt, 0, 0)
+  g.fillRect(0, 0, W, 220)
+  g.fillGradientStyle(ink, ink, ink, ink, 0, 0, Vb, Vb)
+  g.fillRect(0, H - 260, W, 260)
+  g.fillGradientStyle(ink, ink, ink, ink, Vs, 0, Vs, 0)
+  g.fillRect(0, 0, 120, H)
+  g.fillGradientStyle(ink, ink, ink, ink, 0, Vs, 0, Vs)
+  g.fillRect(W - 120, 0, 120, H)
 
   // --- Warm light-leaks: big soft `bgglow` smudges bleeding in from the top corners, drifting on
   // slow yoyo loops so the light never sits perfectly still. Single-digit alphas — felt, not seen.

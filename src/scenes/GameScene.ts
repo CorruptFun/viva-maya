@@ -38,7 +38,6 @@ import { jackpotReady } from '../core/jackpot'
 import { SYMBOLS, key } from '../core/types'
 import type { BlastEvent, BoostType, ClearWave, Coord, FallMove, LevelSpec, Piece, Spawn, SymbolType } from '../core/types'
 import { addCasinoBackdrop } from '../view/background'
-import { stageFlare, stagePulse } from '../view3d/stage'
 import { addJackpotMeter, openJackpotWheel } from '../view/jackpot'
 import { openPlinko } from '../view/plinko'
 import type { JackpotMeter } from '../view/jackpot'
@@ -3131,10 +3130,6 @@ export class GameScene extends Phaser.Scene {
   private punch(opts: { trauma?: number; dirX?: number; dirY?: number; flash?: { x: number; y: number; size?: number } }): void {
     if (opts.trauma) this.addTrauma(opts.trauma, opts.dirX ?? 0, opts.dirY ?? 0)
     if (opts.flash && !this.reduceFlashing) this.impactFrame(opts.flash.x, opts.flash.y, opts.flash.size)
-    // The 3D room feels every hit too: its beams/dust/underglow surge with the impact and decay.
-    // Routed through the same single authority so the room can never flash when the screen doesn't.
-    // (stagePulse guards reduced-motion / reduce-flashing / poster mode itself; no-op without the room.)
-    if (opts.trauma) stagePulse(Math.min(0.6, opts.trauma * 1.4))
   }
 
   /** Feed the trauma accumulator (clamped) + latch a blast direction. No-op under reduced motion. */
@@ -3282,9 +3277,6 @@ export class GameScene extends Phaser.Scene {
    * (it's an optional fill-rate layer); `quality.scale()` thins the peak alpha on MED.
    */
   private cascadeEdgeTick(cascade: number): void {
-    // The room rides the chain: each deeper cascade surges the beams + dust a notch harder.
-    // Before the early-outs on purpose — the 3D layer applies its own calmer gates internally.
-    stagePulse(Math.min(0.85, 0.22 + cascade * 0.09))
     if (this.reducedMotion || quality.tier() === 'low') return
     const T = getTheme()
     // Same heat ramp as showCombo, in fill-colour form: x2 warm gold → x3 bright amber → x4 rose →
@@ -3696,7 +3688,6 @@ export class GameScene extends Phaser.Scene {
     if (!this.reduceFlashing) this.cameras.main.flash(280, 255, 214, 90)
     this.punch({ trauma: 0.95 })
     this.boardSlam(1.3) // the board-wipe strike hits hardest — the deepest slam of the three
-    stageFlare() // and the whole ROOM ignites — the slow warm swell behind the strike
   }
 
   /**
@@ -4283,7 +4274,6 @@ export class GameScene extends Phaser.Scene {
 
   /** Beat 3: three staggered spark bursts + a capped confetti rain + a brand heart puff. */
   private winFireworks(track: <T extends Phaser.GameObjects.GameObject>(o: T) => T, at: (ms: number, cb: () => void) => void): void {
-    stageFlare() // light the whole room for the celebration, decaying under the confetti
     const shots: Array<[number, number, number]> = [
       [200, 360, 0xe61f4d],
       [540, 300, 0x26304d],
@@ -5615,7 +5605,6 @@ export class GameScene extends Phaser.Scene {
     const cy = BOARD_Y + BOARD_W / 2
     sfx.megaBoom(tier) // the visceral low thump — audio is never motion-gated (§E8)
     this.flashCabinet(1 + tier) // one more, biggest re-strike as the chain lands
-    stageFlare() // the room's celebratory swell under the shockwave ring
     if (this.reducedMotion) {
       // Keep only a single soft gold bloom that fades (mirrors the reduced-motion heartbloom) — no
       // expand / zoom / shake. The rolling score + settled board already carry the information.

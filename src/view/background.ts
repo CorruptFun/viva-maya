@@ -1,6 +1,5 @@
 import Phaser from 'phaser'
 import { BOARD_W, BOARD_Y, contentOffsetY, DESIGN_H, DESIGN_W, worldH } from '../config'
-import { setStageMood } from '../view3d/stage'
 import { D, E } from './motion'
 import { quality } from './quality'
 import { css, getTheme, getThemeId, prefersReducedMotion } from './theme'
@@ -78,36 +77,7 @@ const SUITS_MID: SuitSpec[] = [
   ['♣', 690, 860, 42, -12, 0.06],
 ]
 
-/**
- * Bake the shared edge-fade band ('bgband'): a white strip whose ALPHA falls 1 → 0
- * top-to-bottom, drawn through the 2D-canvas gradient API (not Graphics
- * fillGradientStyle). Consumed by the backdrop vignette and fx.ts's screen gloss.
- *
- * Why it exists: with the game canvas now transparent (the 3D room lives behind
- * it), Phaser's WebGL GRADIENT fills leave a broken alpha channel wherever they
- * land on unpainted canvas — the browser then mis-composites them into pale
- * hard-edged rectangles (observed on every fillGradientStyle band; plain fills,
- * text and texture draws are unaffected). Textured images go through the
- * premultiplied texture pipeline and composite correctly on every path, so the
- * bands are now tinted images of this strip instead.
- */
-export function ensureBandTexture(scene: Phaser.Scene): void {
-  if (scene.textures.exists('bgband')) return
-  const c = document.createElement('canvas')
-  c.width = 32
-  c.height = 256
-  const ctx = c.getContext('2d')
-  if (!ctx) return
-  const grad = ctx.createLinearGradient(0, 0, 0, 256)
-  grad.addColorStop(0, 'rgba(255,255,255,1)')
-  grad.addColorStop(1, 'rgba(255,255,255,0)')
-  ctx.fillStyle = grad
-  ctx.fillRect(0, 0, 32, 256)
-  scene.textures.addCanvas('bgband', c)
-}
-
 function ensureTextures(scene: Phaser.Scene): void {
-  ensureBandTexture(scene)
   if (!scene.textures.exists('bgdot')) {
     const g = scene.make.graphics({ x: 0, y: 0 }, false)
     g.fillStyle(0xffffff, 0.35)
@@ -451,15 +421,15 @@ function sparkle(scene: Phaser.Scene, variant: BackdropVariant): void {
 }
 
 /**
- * L6 (−34, NORMAL): the warm vignette — four edge fade bands whose overlap darkens
- * corners more than sides, in warm `vignetteInk` (NEVER black). Sits above the light
- * stack (contains the glow) but below the marquee + gameplay. Drawn as tinted images
- * of the baked `bgband` strip, NOT fillGradientStyle — WebGL gradient fills leave a
- * broken alpha channel on the now-transparent canvas (see ensureBandTexture).
+ * L6 (−34, NORMAL): the warm vignette — four edge gradient bands (reliable per-corner
+ * alpha via `fillGradientStyle` on `fillRect`) whose overlap darkens corners more than
+ * sides. One static object in warm `vignetteInk` (NEVER black). Sits above the light
+ * stack (contains the glow) but below the marquee + gameplay.
  */
 function vignette(scene: Phaser.Scene): void {
   const T = getTheme()
   const ink = T.vignetteInk
+  const g = scene.add.graphics().setDepth(Z.vignette)
   const W = DESIGN_W
   // Anchor the vignette to the VISIBLE world edges (design box + reclaimed margins), so the inward
   // focus still lands at the true screen edges on flexible-height screens.
@@ -472,15 +442,18 @@ function vignette(scene: Phaser.Scene): void {
   const bandT = 340
   const bandB = 380
   const bandS = 200
-  const band = (x: number, y: number, w: number, h: number, alpha: number, angle: number): void => {
-    // displaySize is pre-rotation: the texture's fade axis (its height) must span the band's
-    // fade extent, so the side bands swap w/h and rotate into place.
-    scene.add.image(x, y, 'bgband').setDisplaySize(w, h).setAngle(angle).setTint(ink).setAlpha(alpha).setDepth(Z.vignette)
-  }
-  band(W / 2, VT + bandT / 2, W, bandT, Vt, 0) // top (fades down)
-  band(W / 2, VT + VH - bandB / 2, W, bandB, Vb, 180) // bottom (fades up)
-  band(bandS / 2, VT + VH / 2, VH, bandS, Vs, -90) // left (fades right)
-  band(W - bandS / 2, VT + VH / 2, VH, bandS, Vs, 90) // right (fades left)
+  // top (fades down)
+  g.fillGradientStyle(ink, ink, ink, ink, Vt, Vt, 0, 0)
+  g.fillRect(0, VT, W, bandT)
+  // bottom (fades up)
+  g.fillGradientStyle(ink, ink, ink, ink, 0, 0, Vb, Vb)
+  g.fillRect(0, VT + VH - bandB, W, bandB)
+  // left (fades right)
+  g.fillGradientStyle(ink, ink, ink, ink, Vs, 0, Vs, 0)
+  g.fillRect(0, VT, bandS, VH)
+  // right (fades left)
+  g.fillGradientStyle(ink, ink, ink, ink, 0, Vs, 0, Vs)
+  g.fillRect(W - bandS, VT, bandS, VH)
 }
 
 /**
@@ -777,43 +750,24 @@ export function addProscenium(scene: Phaser.Scene): void {
  * Compose the atmospheric backdrop for a scene. Layers are added back-to-front; each
  * helper reads the active theme + reduced-motion + quality tier itself and sets its
  * own explicit negative depth, so ordering here is for readability only.
- *
- * §3D-3 — when the three.js LIVING STAGE mounts for this scene (view3d/stage.ts —
- * an Extern draw hook at depth −59, just above the wash), the room provides every
- * faked volumetric (aurora, board bleed, spotlight, god-rays, bokeh, sparkle dust)
- * with REAL depth, so those layers are skipped here — painting them too would
- * double the light and hide the room. The wash STAYS on every path: it is the
- * opaque base under the room (first-frame cover, and the live fallback if the
- * stage ever dies mid-scene). The GRAPHIC identity stays 2D on every path too:
- * suit watermarks, the per-theme flourish, the vignette, the marquee chase and the
- * proscenium frame are drawn by Phaser regardless, so the brand reads identically
- * with or without the room. When the stage is unavailable (Save-Data, Canvas
- * renderer, context loss, LOW tier) this function paints byte-for-byte what it
- * always painted — the 2D stack IS the fallback.
  */
 export function addCasinoBackdrop(scene: Phaser.Scene, variant: BackdropVariant): void {
   ensureTextures(scene)
 
   washBase(scene)
-  const room3d = setStageMood(scene, variant)
-
-  let auroraLoop: AmbientLoop | undefined
-  if (!room3d) {
-    auroraLoop = aurora(scene, variant)
-    boardBleed(scene, variant)
-    spotlight(scene, variant)
-    godRays(scene, variant)
-    bokeh(scene, variant)
-  }
+  const auroraLoop = aurora(scene, variant)
+  boardBleed(scene, variant)
+  spotlight(scene, variant)
+  godRays(scene, variant)
+  bokeh(scene, variant)
   suits(scene, variant)
-  if (!room3d) sparkle(scene, variant) // the room's GPU dust motes replace the 2D sparkle
+  sparkle(scene, variant)
   themeFlourish(scene, variant) // A1 — one theme-specific margin accent so themes read as different rooms
   vignette(scene)
   const marqueeLoop = marquee(scene, variant)
   addProscenium(scene) // §E15 — the shared frame, identical coords on every scene (frontmost backdrop)
 
   // A2 — throttle the heaviest ambient loops (aurora + marquee) while the PWA is left open (idle).
-  // (The 3D room reads quality.idle() itself and dims/halves its own frame rate to match.)
   const loops: AmbientLoop[] = []
   if (auroraLoop) loops.push(auroraLoop)
   if (marqueeLoop) loops.push(marqueeLoop)
