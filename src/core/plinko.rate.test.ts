@@ -1,9 +1,17 @@
 import { describe, expect, it } from 'vitest'
 import { Board } from './board'
+import { ENDLESS_MOVES } from './endless'
 import { hazardPlan } from './hazards'
 import { levelSpec } from './levels'
-import { PLINKO_CHANCE, PLINKO_MIN_CASCADE } from './plinko'
+import {
+  PLINKO_CHANCE,
+  PLINKO_ENDLESS_CHANCE,
+  PLINKO_ENDLESS_MIN_CASCADE,
+  PLINKO_MIN_CASCADE,
+  shouldOfferPlinko,
+} from './plinko'
 import { mulberry32 } from './rng'
+import { SYMBOLS } from './types'
 import type { Coord, Piece } from './types'
 
 /**
@@ -122,6 +130,47 @@ function playLevel(seed: number, level: number, human: boolean): Array<{ cascade
   return chains
 }
 
+/**
+ * One ENDLESS run: 8x8, every symbol, NO hazards, a flat 30 moves. Deliberately NOT `playLevel` with
+ * a level number — endless does not go through `levelSpec` at all (GameScene builds its own spec),
+ * and seeding hazards here would measure a board the weekly race never puts in front of anyone.
+ */
+function playEndlessRun(seed: number, human: boolean): Array<{ cascade: number; points: number }> {
+  const b = new Board(8, 8, SYMBOLS.length, mulberry32(seed))
+  const chains: Array<{ cascade: number; points: number }> = []
+  for (let m = 0; m < ENDLESS_MOVES; m++) {
+    const moves = everyValidMove(b)
+    if (moves.length === 0) {
+      b.regenerate()
+      continue
+    }
+    let pick = moves[0]
+    if (human) {
+      const snap = snapshot(b)
+      let best = -1
+      for (const mv of moves) {
+        const size = firstWaveSize(b, mv.a, mv.to)
+        if (size > best) {
+          best = size
+          pick = mv
+        }
+        restore(b, snap)
+      }
+    }
+    chains.push(resolveSwap(b, pick.a, pick.to))
+  }
+  return chains
+}
+
+/**
+ * Replay GameScene's actual gate over a run's chains: walk them in order and stop at the first that
+ * fires, which is exactly what the once-per-level latch does. Calls the REAL `shouldOfferPlinko`, so
+ * this guards the shipped function rather than a copy of its arithmetic that can drift away from it.
+ */
+function runShowsDrop(chains: Array<{ cascade: number }>, rng: () => number, endless: boolean): boolean {
+  return chains.some(c => shouldOfferPlinko(c.cascade, rng, endless))
+}
+
 const LEVELS = [1, 10, 40, 120, 300] // a spread across the difficulty curve
 
 function measure(human: boolean, runs: number): { perLevel: number; pctOfLevels: number; medianPoints: number } {
@@ -151,5 +200,40 @@ describe('Plinko stays a treat', () => {
     // The owner's constraint: never "every game", but not a unicorn either.
     expect(strong.pctOfLevels, 'a typical player would see Plinko too often').toBeLessThan(35)
     expect(weak.pctOfLevels, 'a passive player would hardly ever see Plinko').toBeGreaterThan(5)
+  }, 120_000)
+
+  /**
+   * ENDLESS is guarded separately and to a DELIBERATELY more generous band. It is the one mode
+   * scored purely on points and raced on a shared weekly board, and it plays without the hazards the
+   * numbered curve leans on — so the drop has to be reachable inside 30 moves or it cannot influence
+   * the thing the mode is about. The old shared x5/0.5 pair put it at ~5% of runs passive.
+   *
+   * Still a ceiling, not a blank cheque: the per-run latch means one drop per run at most, and if a
+   * board change ever pushed this toward "every run" the upper bound below fails.
+   */
+  it('endless stays reachable inside 30 hazard-free moves, without becoming every run', () => {
+    const measureEndless = (human: boolean, runs: number): { pctOfRuns: number; perRun: number } => {
+      // A fixed roll stream, seeded once, so the whole guard is deterministic across CI runs.
+      const roll = mulberry32(0xc0ffee)
+      let shown = 0
+      let qualifying = 0
+      for (let s = 1; s <= runs; s++) {
+        const chains = playEndlessRun(s * 7919 + 13, human)
+        qualifying += chains.filter(c => c.cascade >= PLINKO_ENDLESS_MIN_CASCADE).length
+        if (runShowsDrop(chains, roll, true)) shown++
+      }
+      return { pctOfRuns: (shown / runs) * 100, perRun: qualifying / runs }
+    }
+
+    const weak = measureEndless(false, 150)
+    const strong = measureEndless(true, 80)
+    console.log(
+      `\nENDLESS: MIN_CASCADE=${PLINKO_ENDLESS_MIN_CASCADE} CHANCE=${PLINKO_ENDLESS_CHANCE} (${ENDLESS_MOVES} moves, no hazards)\n` +
+        `  passive player: ${weak.perRun.toFixed(3)} qualifying chains/run → drop in ${weak.pctOfRuns.toFixed(1)}% of runs\n` +
+        `  typical player: ${strong.perRun.toFixed(3)} qualifying chains/run → drop in ${strong.pctOfRuns.toFixed(1)}% of runs`
+    )
+
+    expect(strong.pctOfRuns, 'endless Plinko has become effectively every run').toBeLessThan(80)
+    expect(weak.pctOfRuns, 'endless Plinko is back out of reach for a passive player').toBeGreaterThan(15)
   }, 120_000)
 })

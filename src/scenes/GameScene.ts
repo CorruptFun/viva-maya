@@ -5811,11 +5811,16 @@ export class GameScene extends Phaser.Scene {
    * A settled chain may buy a Plinko drop. Returns TRUE when the overlay opened — the caller must
    * then stop, because the overlay owns handing the board back (its CLAIM restores idle).
    *
-   * Three gates keep this a treat rather than a routine interruption: the chain must reach
-   * PLINKO_MIN_CASCADE (x5 — measured, because the x4 MEGA bar lands ~1×/level even played passively
-   * and would have fired in most levels), it must win the PLINKO_CHANCE roll, and only one drop is
-   * offered per level. Lands at ~1 level in 8 played passively, ~1 in 5 played well. See
-   * core/plinko.rate.test.ts, which fails if a difficulty-curve change ever makes it routine.
+   * Three gates keep this a treat rather than a routine interruption: the chain must reach the
+   * mode's bar (x5 on a numbered level — measured, because the x4 MEGA bar lands ~1×/level even
+   * played passively and would have fired in most levels), it must win the mode's roll, and only one
+   * drop is offered per level. Numbered levels land at ~1 in 7 passive, ~1 in 5 played well.
+   *
+   * ENDLESS passes its own flag and gets its own, more generous pair (x4, always) — it has no
+   * hazards and only 30 moves, so the numbered-level constants halved the rate on the one mode
+   * scored purely on points. An UNREAL x8 chain skips the roll in both modes. The per-run latch is
+   * unchanged, so endless still shows at most one drop per run. See core/plinko.rate.test.ts, which
+   * guards BOTH modes and fails if a curve change ever makes either routine or extinct.
    *
    * The board stays in 'resolving' for the overlay's whole life, so input is already gated; the
    * overlay's interactive scrim is the second layer. Wrapped in try/catch because resolveLoop is
@@ -5824,7 +5829,7 @@ export class GameScene extends Phaser.Scene {
    */
   private offerPlinko(cascade: number, force = false): boolean {
     if (this.plinkoUsedThisLevel && !force) return false
-    if (!force && !shouldOfferPlinko(cascade, Math.random)) return false
+    if (!force && !shouldOfferPlinko(cascade, Math.random, this.endless)) return false
     const stake = this.chainPoints
     if (stake <= 0) return false
     this.plinkoUsedThisLevel = true

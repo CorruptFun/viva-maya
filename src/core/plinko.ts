@@ -28,6 +28,37 @@ export const PLINKO_MIN_CASCADE = 5
 export const PLINKO_CHANCE = 0.5
 
 /**
+ * ENDLESS runs its own pair, because the numbered-level tuning above is calibrated against a board
+ * endless never plays. A numbered level has hazards (felt sweeps and lockboxes deepen chains) and a
+ * per-level move budget; endless has NEITHER — no hazards at all, a flat ENDLESS_MOVES of 30. Reusing
+ * x5/0.5 there quietly halved the drop rate: measured at 5.4% of runs for a passive player and 11.1%
+ * for a typical one, against the ~15%/~22% the same constants buy on the numbered curve.
+ *
+ * x4 + a certain roll restores it to ~27% of runs passive, ~59% typical — the once-per-run latch in
+ * GameScene is what keeps that from becoming "every chain". The bar can drop to the MEGA line here
+ * precisely because the thing that made x4 too generous on numbered levels (~1-1.9 qualifying chains
+ * per level) does not hold without hazards: endless yields ~0.36 passive, ~0.92 typical.
+ *
+ * Endless also pays BETTER per drop — `allowTickets` is false there, so the two SPIN slots leave the
+ * pool and every landing is a multiplier (~3.4x on the triggering chain). That is the whole point:
+ * the weekly race is scored on one number, so the drop has to be reachable to matter.
+ *
+ * Guarded by the endless half of plinko.rate.test.ts. Re-run it if you touch these.
+ */
+export const PLINKO_ENDLESS_MIN_CASCADE = 4
+export const PLINKO_ENDLESS_CHANCE = 1
+
+/**
+ * An UNREAL-grade chain ALWAYS offers the drop, in either mode — no roll. At x8 the chance gate is
+ * pure salt: the chain is already rare enough (~1 run in 67 for a typical endless player, rarer for
+ * a passive one) that losing a coin flip on top reads as the game welching on the best thing that
+ * happens in it. Costs almost nothing in rate terms (~+0.7pp in endless) and buys the guarantee.
+ *
+ * Matches the UNREAL band in GameScene.megaTier — keep the two in step if that renames.
+ */
+export const PLINKO_GUARANTEED_CASCADE = 8
+
+/**
  * A slot pays EITHER a multiplier on the triggering chain's points or a free-spin ticket.
  * `label` is the short face text painted on the slot.
  */
@@ -57,9 +88,9 @@ export const PLINKO_SLOTS: PlinkoPrize[] = [
   { kind: 'mult', mult: 10, label: '×10', weight: 2 },
 ]
 
-/** True once a settled chain is deep enough to roll for a drop. */
-export function plinkoQualifies(cascade: number): boolean {
-  return cascade >= PLINKO_MIN_CASCADE
+/** True once a settled chain is deep enough to roll for a drop. Endless uses the lower bar. */
+export function plinkoQualifies(cascade: number, endless = false): boolean {
+  return cascade >= (endless ? PLINKO_ENDLESS_MIN_CASCADE : PLINKO_MIN_CASCADE)
 }
 
 /**
@@ -97,7 +128,14 @@ export function dropPath(rng: Rng, targetSlot: number, rows: number = PLINKO_ROW
   return path
 }
 
-/** Roll whether a settled chain offers the drop. GameScene owns the once-per-level latch. */
-export function shouldOfferPlinko(cascade: number, rng: Rng): boolean {
-  return plinkoQualifies(cascade) && rng() < PLINKO_CHANCE
+/**
+ * Roll whether a settled chain offers the drop. GameScene owns the once-per-level latch, so this
+ * only answers "is THIS chain worth a drop" — never "has one already been spent".
+ *
+ * An UNREAL chain short-circuits without drawing from `rng`; that is deliberate, not an oversight.
+ */
+export function shouldOfferPlinko(cascade: number, rng: Rng, endless = false): boolean {
+  if (cascade >= PLINKO_GUARANTEED_CASCADE) return true
+  if (!plinkoQualifies(cascade, endless)) return false
+  return rng() < (endless ? PLINKO_ENDLESS_CHANCE : PLINKO_CHANCE)
 }

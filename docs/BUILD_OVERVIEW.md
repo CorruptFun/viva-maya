@@ -171,12 +171,24 @@ A settled chain of **x5+** can hand the board off to a ball drop: 8 peg rows int
 multiplier** as a one-shot bonus; a SPIN slot banks a free wheel pull. Tap DROP to release, tap again
 to skip to the payoff, CLAIM is the only exit and hands the board straight back.
 
-**Frequency is the design.** Three gates keep it a treat: the x5 bar, a 1-in-2 roll, and one drop per
-level. x5 (not the x4 MEGA bar) because it was **measured** — `plinko.rate.test.ts` plays the real
-board core headlessly across the difficulty curve and found x4 chains land ~1×/level even played
-passively, so an x4 trigger would have fired in most levels. As shipped: a drop in **~1 level in 8**
-played passively, **~1 in 5** played well. That test is a guard, not a benchmark — it FAILS if a
-difficulty-curve change ever makes the drop routine (or so rare nobody sees it).
+**Frequency is the design, and it is PER-MODE.** Three gates keep it a treat on a numbered level: the
+x5 bar, a 1-in-2 roll, and one drop per level. x5 (not the x4 MEGA bar) because it was **measured** —
+`plinko.rate.test.ts` plays the real board core headlessly across the difficulty curve and found x4
+chains land ~1×/level even played passively, so an x4 trigger would have fired in most levels. As
+shipped: a drop in **~1 level in 7** played passively, **~1 in 5** played well.
+
+**Endless has its own constants** (`PLINKO_ENDLESS_MIN_CASCADE` x4, `PLINKO_ENDLESS_CHANCE` always).
+The numbered-level pair is calibrated against a board endless never plays: endless has **no hazards**
+(which deepen chains) and a flat `ENDLESS_MOVES` of 30, so x5/0.5 quietly halved the rate on the one
+mode scored purely on points and raced on a shared weekly board — **5.4%** of runs passive / **11.1%**
+typical, against **~27%** / **~59%** now. The per-run latch is untouched, so it is still at most one
+drop per run. Endless also pays better per drop (`allowTickets` false → pure multiplier, ~3.4× EV).
+
+A chain at `PLINKO_GUARANTEED_CASCADE` (**x8 UNREAL**) skips the roll in both modes — at ~1 run in 67
+even for a strong endless player, losing a coin flip on top reads as the game welching. ~+0.7pp.
+
+`plinko.rate.test.ts` guards **both** modes and is a guard, not a benchmark — it FAILS if a
+difficulty-curve change ever makes either routine (or so rare nobody sees it).
 
 **AWARD-FIRST**, like the wheel: the slot is rolled and a SPIN prize banked (`addFreeSpins`) before a
 pixel moves, then `dropPath` synthesises the bounce. Quitting mid-drop cannot lose the prize. Ticket
@@ -458,7 +470,7 @@ Last verified **2026-07-25**.
 | Check | Command | Result |
 |---|---|---|
 | Type check | `npx tsc --noEmit` | **PASS** — exit 0, no errors |
-| Unit tests | `npm test` | **PASS** — 39 tests across 5 files (`board`, `plinko`, `plinko.rate`, `merge`, `daily`) |
+| Unit tests | `npm test` | **PASS** — 112 tests across 12 files (`board`, `board.hazards`, `daily`, `endless`, `feasibility`, `hazards`, `leaderboard`, `levels`, `merge`, `plinko`, `plinko.rate`, `view3d/space`) |
 | Production build | `npm run build` | **PASS** — exit 0; 90 modules transformed, `dist/` + SW written in ~3 s |
 
 Build output of note: the main JS chunk is **1,507.62 kB (gzip 425.19 kB)** — over
@@ -477,7 +489,8 @@ manual chunking/code-splitting). The SW precaches 24 entries (~1769 KiB). No err
 - Core match-3 loop: fill-without-matches, swipe + tap-tap swap, run detection,
   cascade resolve loop, gravity/refill, reshuffle on dead board, hint/autoplay.
 - Full special-piece matrix + combos + chain detonation.
-- Plinko bonus drop on a x5+ chain (rigged-but-honest ball drop paying a chain multiplier or a free spin).
+- Plinko bonus drop on a x5+ chain — x4+ in endless, always on x8 UNREAL (rigged-but-honest ball drop
+  paying a chain multiplier or a free spin).
 - 300 procedural levels, seeded objectives/moves, stars, unlock progression.
 - Drag-scrollable Level Select with from-win chip celebration.
 - Lives/energy pool (5, 20-min wall-clock regen, lose-only + quit-after-move, entry

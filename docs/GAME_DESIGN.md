@@ -58,10 +58,17 @@ clears a RANDOM present color. Swap-combos (both consumed, epicenter = drag dest
 - Jackpot+Jackpot: clears the entire board
 
 ## Plinko bonus drop (src/core/plinko.ts + src/view/plinko.ts + GameScene.offerPlinko)
-- Trigger: a SETTLED chain of PLINKO_MIN_CASCADE (x5) or deeper, then a PLINKO_CHANCE (1/2) roll, and
-  at most ONE drop per level. Offered after the win/lose checks, so it never collides with a result
-  card. Ships at ~1 level in 8 played passively, ~1 in 5 played well — MEASURED (plinko.rate.test.ts),
-  not guessed: the x4 MEGA bar lands ~1 chain/level even passively and would have fired most levels.
+- Trigger (numbered levels): a SETTLED chain of PLINKO_MIN_CASCADE (x5) or deeper, then a
+  PLINKO_CHANCE (1/2) roll, and at most ONE drop per level. Offered after the win/lose checks, so it
+  never collides with a result card. Ships at ~1 level in 7 played passively, ~1 in 5 played well —
+  MEASURED (plinko.rate.test.ts), not guessed: the x4 MEGA bar lands ~1 chain/level even passively
+  and would have fired most levels.
+- Trigger (ENDLESS): its own, more generous pair — PLINKO_ENDLESS_MIN_CASCADE (x4) and
+  PLINKO_ENDLESS_CHANCE (always). Endless has NO hazards and a flat 30 moves, so the numbered-level
+  constants halved the rate on the one mode scored purely on points: 5.4% of runs passive / 11.1%
+  typical, versus ~27% / ~59% now. The one-drop-per-run latch is unchanged.
+- UNREAL override: a chain at PLINKO_GUARANTEED_CASCADE (x8) skips the roll entirely in BOTH modes —
+  at that rarity a lost coin flip reads as the game welching. Costs ~+0.7pp in endless.
 - Board: 8 peg rows → 9 slots. Ball breaks left/right once per row, so "right N times" = "slot N".
 - Slots (l→r): x10 · SPIN · x5 · x3 · x2 · x3 · x5 · SPIN · x10, weights 2/6/10/17/30/17/10/6/2
   (sum 100). Symmetric, binomial-shaped — cheap+common in the middle, x10 a 2% thrill at each edge.
