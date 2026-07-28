@@ -88,6 +88,35 @@ export const PLINKO_SLOTS: PlinkoPrize[] = [
   { kind: 'mult', mult: 10, label: '×10', weight: 2 },
 ]
 
+/**
+ * What a ticket well is RESTRUCK as when a free spin can't be paid. ×5 because it keeps the board's
+ * outward ×2→×3→×5→×10 ramp monotonic — the ticket wells sit at index 1 and 7, just inside the ×10
+ * edges, so anything below ×5 would dip the ramp on its way out.
+ */
+export const PLINKO_TICKET_SUBSTITUTE_MULT = 5
+
+/**
+ * The EFFECTIVE slot table for one drop.
+ *
+ * When a ticket cannot be honoured — endless, or a player already at the daily/bank free-spin cap —
+ * the two SPIN wells are not blanked, they are restruck as ×5 keeping their original weight. The
+ * older behaviour zeroed their weight instead, which kept the ball out of them but left the view
+ * painting two "SPIN" faces that were **physically unwinnable**: 2 of 9 wells advertising a prize
+ * the player could never land, with nothing on screen saying so.
+ *
+ * Substituting fixes that at the source — every well the player can see is a well they can win.
+ * Weights are untouched, so the table still sums to 100 and each weight still reads directly as a
+ * percentage (the zeroing version quietly summed to 88). Multiplier EV goes ~3.44x → ~3.62x.
+ */
+export function plinkoSlots(allowTickets: boolean): PlinkoPrize[] {
+  if (allowTickets) return PLINKO_SLOTS
+  return PLINKO_SLOTS.map(p =>
+    p.kind === 'ticket'
+      ? { kind: 'mult', mult: PLINKO_TICKET_SUBSTITUTE_MULT, label: `×${PLINKO_TICKET_SUBSTITUTE_MULT}`, weight: p.weight }
+      : p
+  )
+}
+
 /** True once a settled chain is deep enough to roll for a drop. Endless uses the lower bar. */
 export function plinkoQualifies(cascade: number, endless = false): boolean {
   return cascade >= (endless ? PLINKO_ENDLESS_MIN_CASCADE : PLINKO_MIN_CASCADE)
@@ -97,19 +126,19 @@ export function plinkoQualifies(cascade: number, endless = false): boolean {
  * Weighted slot pick — cumulative-weight selection (identical shape to core/jackpot.ts
  * `rollWheelIndex`). The caller rigs the drop to land on this index.
  *
- * `allowTickets` false zeroes the ticket slots — endless mode has no wheel to spend a spin on, and a
- * player already at the daily/bank cap cannot be paid one. Their weight simply leaves the pool, so
- * the remaining slots re-normalise and nobody is ever shown a prize that can't be honoured.
+ * Rolls over the EFFECTIVE table (`plinkoSlots`), so when a ticket can't be honoured those two wells
+ * are still live — they have simply been restruck as ×5. Nobody is ever shown a prize that can't be
+ * paid, and nobody is shown a well they cannot win either.
  */
 export function rollSlotIndex(rng: Rng, allowTickets: boolean): number {
-  const weightOf = (p: PlinkoPrize): number => (p.kind === 'ticket' && !allowTickets ? 0 : p.weight)
-  const total = PLINKO_SLOTS.reduce((sum, p) => sum + weightOf(p), 0)
+  const slots = plinkoSlots(allowTickets)
+  const total = slots.reduce((sum, p) => sum + p.weight, 0)
   let roll = rng() * total
-  for (let i = 0; i < PLINKO_SLOTS.length; i++) {
-    roll -= weightOf(PLINKO_SLOTS[i])
+  for (let i = 0; i < slots.length; i++) {
+    roll -= slots[i].weight
     if (roll < 0) return i
   }
-  return PLINKO_SLOTS.length >> 1 // defensive (float drift): the centre slot always exists
+  return slots.length >> 1 // defensive (float drift): the centre slot always exists
 }
 
 /**

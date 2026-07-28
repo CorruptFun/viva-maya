@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { PLINKO_MIN_CASCADE, PLINKO_ROWS, PLINKO_SLOTS, dropPath, rollSlotIndex, shouldOfferPlinko } from './plinko'
+import { PLINKO_MIN_CASCADE, PLINKO_ROWS, PLINKO_SLOTS, dropPath, plinkoSlots, rollSlotIndex, shouldOfferPlinko } from './plinko'
 import { mulberry32 } from './rng'
 
 /**
@@ -61,13 +61,48 @@ describe('rollSlotIndex', () => {
     expect(rollSlotIndex(() => 0.9999999, true)).toBe(PLINKO_SLOTS.length - 1)
   })
 
-  it('never returns a ticket slot when tickets cannot be paid', () => {
+  it('never pays a ticket PRIZE when tickets cannot be paid', () => {
+    const effective = plinkoSlots(false)
     const bad: string[] = []
     for (let seed = 1; seed <= 2000; seed++) {
       const i = rollSlotIndex(mulberry32(seed), false)
-      if (PLINKO_SLOTS[i].kind === 'ticket' && bad.length < 20) bad.push(`seed ${seed} → ticket slot ${i}`)
+      if (effective[i].kind === 'ticket' && bad.length < 20) bad.push(`seed ${seed} → ticket slot ${i}`)
     }
     expect(bad).toEqual([])
+  })
+
+  /**
+   * The wells that HELD tickets stay reachable — they were restruck as ×5, not switched off. This is
+   * the regression guard for the bug that motivated the substitution: zeroing their weight left the
+   * view painting two "SPIN" faces the ball could never reach, so 2 of 9 wells advertised a prize
+   * the player could not win. Reaching them is now the CORRECT behaviour, so pin it.
+   */
+  it('still reaches the substituted wells, and pays them as a multiplier', () => {
+    const effective = plinkoSlots(false)
+    const ticketWells = PLINKO_SLOTS.map((p, i) => (p.kind === 'ticket' ? i : -1)).filter(i => i >= 0)
+    expect(ticketWells.length).toBeGreaterThan(0)
+
+    const rng = mulberry32(4242)
+    const seen = new Set<number>()
+    for (let i = 0; i < 20_000; i++) seen.add(rollSlotIndex(rng, false))
+
+    for (const w of ticketWells) {
+      expect(seen.has(w), `well ${w} became unreachable — the dead-slot bug is back`).toBe(true)
+      expect(effective[w].kind).toBe('mult')
+      expect(effective[w].label).not.toBe('SPIN')
+    }
+    // Substitution must not disturb the wells around it, or the painted board changes for everyone.
+    PLINKO_SLOTS.forEach((p, i) => {
+      if (p.kind !== 'ticket') expect(effective[i]).toEqual(p)
+      expect(effective[i].weight).toBe(p.weight)
+    })
+  })
+
+  it('keeps the table summing to 100 in BOTH modes, so a weight still reads as a percentage', () => {
+    for (const allow of [true, false]) {
+      const total = plinkoSlots(allow).reduce((s, p) => s + p.weight, 0)
+      expect(total, `allowTickets=${allow}`).toBe(100)
+    }
   })
 
   it('pays out close to the declared weights over many rolls', () => {

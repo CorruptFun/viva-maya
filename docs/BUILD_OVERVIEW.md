@@ -191,9 +191,17 @@ even for a strong endless player, losing a coin flip on top reads as the game we
 difficulty-curve change ever makes either routine (or so rare nobody sees it).
 
 **AWARD-FIRST**, like the wheel: the slot is rolled and a SPIN prize banked (`addFreeSpins`) before a
-pixel moves, then `dropPath` synthesises the bounce. Quitting mid-drop cannot lose the prize. Ticket
-slots are rolled OUT of the pool entirely when they can't be honoured (endless, or the daily/bank cap
-is full — see `freeSpinRoom`), so the ball never lands on a prize the player won't be paid.
+pixel moves, then `dropPath` synthesises the bounce. Quitting mid-drop cannot lose the prize.
+
+**When a ticket can't be honoured** (endless, or the daily/bank cap is full — see `freeSpinRoom`) the
+two SPIN wells are **restruck as ×5**, not switched off. `plinkoSlots(allowTickets)` returns the
+effective table and the cabinet paint, the slot labels and the payout all read from that one source,
+so they cannot disagree. The earlier behaviour zeroed their weight, which kept the ball out of them
+but left the view painting two **unwinnable "SPIN" faces** — 2 of 9 wells advertising a prize the
+player could never land, with nothing on screen saying so. ×5 keeps the outward ×2→×3→×5→×10 ramp
+monotonic (the ticket wells sit at index 1 and 7, just inside the ×10 edges), the table still sums to
+100 in **both** modes so a weight still reads as a percentage (the zeroing version summed to 88), and
+multiplier EV goes ~3.44× → ~3.62×.
 
 **The fall is INTEGRATED, not tweened** (2026-07 rebuild — do not "simplify" it back). v1 replayed the
 rigged path as a tween chain, one `Quad.easeIn` per row; every ease-in starts from zero velocity, so
@@ -470,7 +478,7 @@ Last verified **2026-07-25**.
 | Check | Command | Result |
 |---|---|---|
 | Type check | `npx tsc --noEmit` | **PASS** — exit 0, no errors |
-| Unit tests | `npm test` | **PASS** — 112 tests across 12 files (`board`, `board.hazards`, `daily`, `endless`, `feasibility`, `hazards`, `leaderboard`, `levels`, `merge`, `plinko`, `plinko.rate`, `view3d/space`) |
+| Unit tests | `npm test` | **PASS** — 114 tests across 12 files (`board`, `board.hazards`, `daily`, `endless`, `feasibility`, `hazards`, `leaderboard`, `levels`, `merge`, `plinko`, `plinko.rate`, `view3d/space`) |
 | Production build | `npm run build` | **PASS** — exit 0; 90 modules transformed, `dist/` + SW written in ~3 s |
 
 Build output of note: the main JS chunk is **1,507.62 kB (gzip 425.19 kB)** — over

@@ -3,7 +3,7 @@ import { sfx } from '../audio/sfx'
 import { DESIGN_W, viewportCenterY, worldH } from '../config'
 import { todayKey } from '../core/daily'
 import type { PlinkoPrize } from '../core/plinko'
-import { PLINKO_ROWS, PLINKO_SLOTS, dropPath, rollSlotIndex } from '../core/plinko'
+import { PLINKO_ROWS, PLINKO_SLOTS, dropPath, plinkoSlots, rollSlotIndex } from '../core/plinko'
 import { mulberry32 } from '../core/rng'
 import { addFreeSpins } from '../core/save'
 import { backOut, E, OVERSHOOT } from './motion'
@@ -329,8 +329,16 @@ function paintPlate(g: Phaser.GameObjects.Graphics, x: number, y: number, w: num
  * top → the slot row (wells, divider pins, value plates).
  *
  * Exported so the dev atlas can render the real cabinet at scale — no second copy to drift.
+ *
+ * `slots` is the EFFECTIVE table (see core `plinkoSlots`) — it decides each value plate's TONE, so a
+ * drop where tickets can't be paid gets gold ×5 plates where the navy SPIN ones would have been.
+ * Defaults to the base table so the atlas and any future caller keep the canonical face.
  */
-export function drawPlinkoCabinet(g: Phaser.GameObjects.Graphics, T: Theme = getTheme()): void {
+export function drawPlinkoCabinet(
+  g: Phaser.GameObjects.Graphics,
+  T: Theme = getTheme(),
+  slots: PlinkoPrize[] = PLINKO_SLOTS
+): void {
   const fx = -FRAME_W / 2
   const fy = FRAME_TOP
 
@@ -446,7 +454,7 @@ export function drawPlinkoCabinet(g: Phaser.GameObjects.Graphics, T: Theme = get
     g.strokeRoundedRect(wx, SLOT_TOP, ww, SLOT_H, 12)
     g.lineStyle(1.2, T.goldBright, 0.16)
     g.strokeRoundedRect(wx + 2, SLOT_TOP + 2, ww - 4, SLOT_H - 4, 10)
-    paintPlate(g, x - (PITCH - 10) / 2, PLATE_Y, PITCH - 10, PLATE_H, toneOf(PLINKO_SLOTS[s]), T)
+    paintPlate(g, x - (PITCH - 10) / 2, PLATE_Y, PITCH - 10, PLATE_H, toneOf(slots[s]), T)
   }
   // Divider pins — a cast wall between neighbouring slots, capped with a dome. The last peg row sits
   // directly above these, so the ball always leaves a peg on a divider and lands on a slot centre.
@@ -472,13 +480,16 @@ export function openPlinko(scene: Phaser.Scene, opts: PlinkoOpenOpts): void {
 
   // 1) AWARD-FIRST — decide the slot and bank anything persisted before a single pixel moves.
   const rng = mulberry32((Math.random() * 2 ** 31) | 0)
+  // The EFFECTIVE table for this drop — when a spin can't be paid the two ticket wells arrive here
+  // already restruck as ×5, so paint, labels and payout all read from ONE source and cannot disagree.
+  const slots = plinkoSlots(opts.allowTickets)
   let slot = rollSlotIndex(rng, opts.allowTickets)
   if (import.meta.env.DEV) {
     // ?slot=N — pin the landing slot so automated checks can exercise every payoff deterministically.
     const s = Number(new URLSearchParams(location.search).get('slot'))
     if (Number.isInteger(s) && s >= 0 && s < SLOTS) slot = s
   }
-  const prize = PLINKO_SLOTS[slot]
+  const prize = slots[slot]
   const points = prize.kind === 'mult' ? Math.round(opts.chainPoints * prize.mult) : 0
   // Tickets are persisted state, so they bank NOW; `granted` is what actually stuck under the caps,
   // so the celebration below is sized honestly (a capped player is never lied to). Points are scene
@@ -568,7 +579,7 @@ export function openPlinko(scene: Phaser.Scene, opts: PlinkoOpenOpts): void {
   // cabinet art → glow/win light → slot labels → pegs → impact FX → the ball and its trail.
   const board = track(scene.add.container(cx, BOARD_CY).setDepth(61))
   const cab = scene.add.graphics()
-  drawPlinkoCabinet(cab, T)
+  drawPlinkoCabinet(cab, T, slots)
   const glowLayer = scene.add.container(0, 0)
   const labelLayer = scene.add.container(0, 0)
   const pegLayer = scene.add.container(0, 0)
@@ -636,11 +647,11 @@ export function openPlinko(scene: Phaser.Scene, opts: PlinkoOpenOpts): void {
   // sit on top of the number. They stagger in from the centre outward on entrance.
   const slotLabels: Phaser.GameObjects.Text[] = []
   for (let s = 0; s < SLOTS; s++) {
-    const tone = toneOf(PLINKO_SLOTS[s])
+    const tone = toneOf(slots[s])
     const label = scene.add
-      .text(slotX(s), PLATE_Y + PLATE_H / 2, PLINKO_SLOTS[s].label, {
+      .text(slotX(s), PLATE_Y + PLATE_H / 2, slots[s].label, {
         fontFamily: FONT,
-        fontSize: PLINKO_SLOTS[s].kind === 'ticket' ? '16px' : '25px',
+        fontSize: slots[s].kind === 'ticket' ? '16px' : '25px',
         fontStyle: '900',
         color: inkOf(tone, T),
       })
