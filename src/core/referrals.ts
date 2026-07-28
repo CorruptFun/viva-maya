@@ -204,6 +204,10 @@ export async function maybeRegisterReferral(): Promise<void> {
       .from('referrals')
       .insert({ referee_user_id: s.userId, referrer_user_id: referrerId })
     if (!ins.error) {
+      // The bottom of the invite funnel: a real referral row actually landed. Paired with
+      // share_clicked (view/invite.ts) this is the first end-to-end answer to "does the referral
+      // system convert anyone".
+      void import('./analytics').then(a => a.track(a.EVENTS.REFERRAL_REGISTERED))
       clearStash()
       registerDoneFor = s.userId
       return

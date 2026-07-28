@@ -1,6 +1,7 @@
 import Phaser from 'phaser'
 import { sfx } from '../audio/sfx'
 import { DESIGN_W } from '../config'
+import { EVENTS, track } from '../core/analytics'
 import { cloudSession } from '../core/cloud'
 import {
   REFEREE_CHIPS,
@@ -74,6 +75,10 @@ function inviteMessage(): string {
  * elsewhere, and a plain code read-back toast when even the clipboard is blocked. Never throws.
  */
 function shareInvite(code: string, toast: (msg: string) => void): void {
+  // Three invite codes had been minted by 2026-07-28 with no way to tell whether any were ever sent,
+  // let alone redeemed. This is the top of that funnel; referral_registered (core/referrals.ts) is
+  // the bottom.
+  track(EVENTS.SHARE_CLICKED, { surface: 'invite' })
   const text = inviteMessage()
   const url = inviteUrl(code)
   const copyFallback = (): void => {

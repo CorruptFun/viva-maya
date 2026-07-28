@@ -28,6 +28,7 @@ import { hazardPlan } from '../core/hazards'
 import { ensureHazardTexture } from '../view/textures'
 import type { HazardKind } from '../core/difficulty'
 import { shouldOfferPlinko } from '../core/plinko'
+import { EVENTS, track } from '../core/analytics'
 import { devSetLives, formatCountdown, refreshLives, spendLifeFor } from '../core/lives'
 import { maya, pendingOccasion, warmLoseLine, warmWinSubtitle } from '../core/maya'
 import { mulberry32 } from '../core/rng'
@@ -383,6 +384,10 @@ export class GameScene extends Phaser.Scene {
     }
     this.coatsTotal = this.board.coatsRemaining()
     this.movesLeft = this.spec.moves
+    // Placed AFTER the lives gate returns, so a bounced entry is not counted as an attempt — a level
+    // the player couldn't even get into must not drag down its own win rate.
+    if (this.endless) track(EVENTS.ENDLESS_START, { week: this.endlessWeekKey })
+    else track(EVENTS.LEVEL_START, { level: this.level, moves: this.spec.moves })
     this.objectives = this.spec.objectives.map(o => ({ symbol: o.symbol, remaining: o.count, total: o.count }))
     this.score = 0
     this.shownScore = 0
@@ -740,6 +745,10 @@ export class GameScene extends Phaser.Scene {
    */
   private exitToLevels(): void {
     if (!this.endless && this.state === 'idle' && this.moveMade) spendLifeFor(this.level)
+    // Tracked separately from level_fail: walking away reads very differently from being beaten, and
+    // a level with a high QUIT rate but a normal loss rate is a boredom/confusion problem, not a
+    // difficulty one. Lumping them together would hide that distinction entirely.
+    if (!this.endless) track(EVENTS.LEVEL_QUIT, { level: this.level, moved: this.moveMade })
     startScene(this,'levelselect')
   }
 
@@ -4064,6 +4073,11 @@ export class GameScene extends Phaser.Scene {
     // Once per win (finishWin runs exactly once per completed level); endless/losses pay nothing.
     const chipReward = stars * 8 + earnedLeftover * 2
     this.chipBanked = addChips(chipReward)
+    // Paired with the level_start / level_fail below, this is the per-level win rate — the query that
+    // separates "level 21 is a wall" from "level 21 is just how far a new player gets in a day".
+    // `moves_left` is the earned leftover, not the raw remainder, so a bought win can't read as a
+    // comfortable one and flatter a level that is actually hard.
+    track(EVENTS.LEVEL_WIN, { level: this.level, stars, moves_left: earnedLeftover })
     // Charge the jackpot meter one notch. When it fills, arm the wheel — the win-card Continue then
     // fires it (see continueAfterWin). Persisted immediately, so quitting can't lose progress.
     const meter = bumpJackpotMeter()
@@ -4542,6 +4556,7 @@ export class GameScene extends Phaser.Scene {
     this.powerBar?.setVisible(false) // retire the helper shelf — the result card takes the screen
     spendLifeFor(this.level) // a loss costs a life (grace below level 10; numbered levels only reach finishLose)
     recordScore(this.score)
+    track(EVENTS.LEVEL_FAIL, { level: this.level, reason: 'out_of_moves' })
     this.time.delayedCall(400, () => this.showOverlay(false, 0, 0))
   }
 
@@ -4550,6 +4565,7 @@ export class GameScene extends Phaser.Scene {
     this.state = 'ended'
     this.stopMovesPulse()
     const { best, isRecord } = recordEndless(this.score, this.endlessWeekKey)
+    track(EVENTS.ENDLESS_END, { score: this.score, is_record: isRecord })
     this.time.delayedCall(450, () => this.showEndlessOverlay(this.score, best, isRecord))
   }
 
@@ -5833,6 +5849,10 @@ export class GameScene extends Phaser.Scene {
     const stake = this.chainPoints
     if (stake <= 0) return false
     this.plinkoUsedThisLevel = true
+    // The 2026-07-28 endless retune (5.4% → ~27% passive) was tuned entirely against a simulated
+    // board — plinko.rate.test.ts guards the model, not reality. This is the first field measurement
+    // of the offer rate, split by mode so the two tunings stay separately readable.
+    track(EVENTS.PLINKO_OFFERED, { cascade, endless: this.endless, stake })
     try {
       this.disarmHint() // idle effects yield to the celebration
       this.disarmTwinkle()

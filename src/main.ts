@@ -1,7 +1,8 @@
 import Phaser from 'phaser'
 import { registerSW } from 'virtual:pwa-register'
 import { DESIGN_W, restScrollY, setSafeTopInset, updateWorldH, worldH } from './config'
-import { bootstrapCloud, pushCloudSave } from './core/cloud'
+import { EVENTS, initAnalytics, track } from './core/analytics'
+import { bootstrapCloud, cloudAccessToken, cloudUserId, pushCloudSave } from './core/cloud'
 import { captureRefFromUrl } from './core/referrals'
 import { setPersistListener } from './core/save'
 import { BootScene } from './scenes/BootScene'
@@ -114,7 +115,14 @@ pushSafeTop(window.innerWidth)
 // its own precached three.js chunk and stands the renderer up — or resolves inactive, in which case
 // background.ts paints the 2D backdrop exactly as before. Deciding BEFORE boot keeps every scene's
 // create() a simple synchronous branch (no mid-scene "the room just arrived" repaint case).
-void Promise.all([bootstrapCloud(), prepareStage()]).then(startGame)
+void Promise.all([bootstrapCloud(), prepareStage()]).then(() => {
+  // Analytics starts AFTER the cloud bootstrap so app_open already carries the restored session's
+  // user id — starting it earlier would file every returning signed-in player's first event as
+  // anonymous and understate the signed-in cohort in exactly the funnel it exists to measure.
+  // Dormant (no-op) when VITE_SUPABASE_* isn't configured, like every other network path here.
+  initAnalytics(cloudUserId, cloudAccessToken)
+  startGame()
+})
 
 function startGame(): void {
   // --- Scaling: stock Phaser FIT --------------------------------------------
@@ -211,6 +219,9 @@ function pushSafeTop(appWidthPx: number): boolean {
  */
 function showUpdateToast(onRefresh: () => void): void {
   if (document.getElementById('vm-update-toast')) return
+  // Shown-vs-applied is the measurement of the stale-build trap documented above: a wide gap means
+  // players are seeing the prompt and not taking it, which pins them to an old bundle.
+  track(EVENTS.UPDATE_SHOWN)
   const bar = document.createElement('div')
   bar.id = 'vm-update-toast'
   bar.style.cssText =
@@ -227,6 +238,7 @@ function showUpdateToast(onRefresh: () => void): void {
     'background:#c9930a;color:#fff;font:700 15px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif'
   btn.onclick = () => {
     bar.remove()
+    track(EVENTS.UPDATE_APPLIED)
     onRefresh()
   }
   bar.append(label, btn)

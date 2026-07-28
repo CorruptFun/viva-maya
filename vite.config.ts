@@ -22,6 +22,14 @@ export default defineConfig({
       output: { manualChunks: { supabase: ['@supabase/supabase-js'], three: ['three'] } },
     },
   },
+  // Stamp the build into the bundle so every analytics event says which code produced it. Under a
+  // 'prompt'-mode PWA players sit on several bundles at once (they update when they tap the toast,
+  // not when we deploy), so a metric that moves after a release is unreadable without this — you
+  // cannot otherwise tell "the change worked" from "half the players haven't got the change yet".
+  // GITHUB_SHA is set by Actions; 'dev' locally.
+  define: {
+    __APP_VERSION__: JSON.stringify((process.env.GITHUB_SHA ?? 'dev').slice(0, 7)),
+  },
   plugins: [
     VitePWA({
       // 'prompt' (not 'autoUpdate') so a new deploy surfaces a visible "new version — refresh" toast
@@ -45,6 +53,14 @@ export default defineConfig({
         ]
       },
       workbox: {
+        // Web Push handlers, layered onto the GENERATED worker rather than replacing it. Switching to
+        // injectManifest to hand-write a worker would mean owning the precache wiring, the
+        // navigateFallback denylist and the SKIP_WAITING plumbing the update toast depends on — all
+        // of which already work. See public/push-sw.js (which must never throw at top level: it is
+        // evaluated during install, so a failure there would take offline + updates down with it).
+        // Resolved relative to the worker's own URL, so it works under the /viva-maya/ Pages subpath
+        // and at a domain root without a rebuild — same reason `base` is './'.
+        importScripts: ['push-sw.js'],
         globPatterns: ['**/*.{js,css,html,png,svg,ico,webmanifest,woff2}'],
         // Social-preview poster is for link unfurlers only; the Supabase chunk is optional + lazy —
         // keep both out of the offline precache so local-only builds never download the cloud client.

@@ -10,7 +10,9 @@
 // held while open) and after each async action, so it always reflects reality.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { EVENTS, analyticsEnabled, setAnalyticsEnabled, track } from '../core/analytics'
 import { cloudSession, isCloudConfigured, onCloudChange, signInWithGoogle, signOutCloud } from '../core/cloud'
+import { disablePush, enablePush, isPushEnabled, pushSupport } from '../core/push'
 import { getHandle, sanitizeName, setHandle } from '../core/leaderboard'
 import { exportSave, importSave } from '../core/save'
 
@@ -213,6 +215,10 @@ export function openCloudModal(): void {
       authError = ''
       signInBtn.disabled = true
       signInBtn.textContent = 'Continuing…'
+      // Only signin_STARTED can be tracked from here — the tap navigates the whole page to Google, so
+      // nothing after the redirect runs. The matching signin_completed is fired on the way back in,
+      // from the cloud bootstrap, and the gap between the two is the OAuth drop-off rate.
+      track(EVENTS.SIGNIN_STARTED)
       signInWithGoogle()
         .then((res) => {
           if (!res.ok) {
@@ -287,6 +293,107 @@ export function openCloudModal(): void {
       : 'Shown with your score on the weekly race once you sign in — set it now and your email name never appears.'
 
     return stack([heading('Race name'), note(copy), input, preview, saveBtn])
+  }
+
+  // ── Weekly race notifications ─────────────────────────────────────────────────────────────
+  // The endless race resets Monday 00:00 UTC and nothing has ever told anyone, so the reset — the
+  // one built-in reason to come back — passes most players by. This is the opt-in for a single
+  // reminder before it closes.
+  //
+  // Rendered as an explicit BUTTON rather than an auto-prompt on load, because a denied
+  // Notification permission is effectively permanent: the browser will not ask twice and the player
+  // has to go into site settings to undo it. Spending that one irreversible ask on someone who has
+  // not been told what it is for is how a feature gets killed on its first day.
+  const buildNotify = (): HTMLElement => {
+    const support = pushSupport()
+
+    if (support === 'needs-install') {
+      // iOS supports Web Push ONLY in an installed PWA. Saying so converts; a disabled button that
+      // silently does nothing on iPhone would just read as broken.
+      return stack([
+        heading('Weekly race reminder'),
+        note(
+          'Add Viva Maya to your Home Screen first (tap Share, then “Add to Home Screen”), then come back here to turn on a reminder before the weekly race ends.'
+        ),
+      ])
+    }
+    if (support === 'unsupported') {
+      return stack([
+        heading('Weekly race reminder'),
+        note('This browser can’t show notifications. Everything else works normally.'),
+      ])
+    }
+
+    const status = note('')
+    const btn = ghostBtn('Remind me before the week ends')
+    let enabled = false
+
+    const paint = (): void => {
+      btn.textContent = enabled ? 'Turn off reminders' : 'Remind me before the week ends'
+      status.textContent = enabled
+        ? 'On — you’ll get one nudge a few hours before the week closes.'
+        : Notification.permission === 'denied'
+          ? 'Notifications are blocked for this site in your browser settings.'
+          : 'One notification a week, before the race resets. Nothing else.'
+      // A permanent browser-level denial can't be undone from here, so don't offer a button that
+      // cannot succeed.
+      btn.disabled = !enabled && Notification.permission === 'denied'
+      btn.style.opacity = btn.disabled ? '0.55' : '1'
+    }
+
+    void isPushEnabled().then(on => {
+      enabled = on
+      paint()
+    })
+    paint()
+    track(EVENTS.PUSH_SHOWN)
+
+    btn.addEventListener('click', () => {
+      btn.disabled = true
+      if (enabled) {
+        void disablePush().then(() => {
+          enabled = false
+          btn.disabled = false
+          paint()
+        })
+        return
+      }
+      void enablePush().then(res => {
+        enabled = res.ok
+        btn.disabled = false
+        if (res.ok) {
+          track(EVENTS.PUSH_ENABLED)
+        } else {
+          track(EVENTS.PUSH_BLOCKED, { reason: res.reason ?? 'failed' })
+        }
+        paint()
+        if (!res.ok && res.reason === 'failed') status.textContent = 'Couldn’t turn reminders on. Please try again.'
+      })
+    })
+
+    return stack([heading('Weekly race reminder'), status, btn])
+  }
+
+  // ── Anonymous gameplay events ─────────────────────────────────────────────────────────────
+  // public/privacy.html promises this control by name ("Turn off anonymous gameplay events from
+  // Settings → Cloud & Backup"), so it has to exist and has to work — a privacy policy describing a
+  // toggle that isn't there is worse than collecting nothing at all.
+  const buildAnalytics = (): HTMLElement => {
+    const status = note('')
+    const btn = ghostBtn('')
+    const paint = (): void => {
+      const on = analyticsEnabled()
+      btn.textContent = on ? 'Turn off gameplay stats' : 'Turn on gameplay stats'
+      status.textContent = on
+        ? 'On — anonymous counts of levels started, won and lost, so we can see which levels are too hard. No name, no email, nothing about your phone.'
+        : 'Off — nothing about your play is recorded. The game works exactly the same.'
+    }
+    btn.addEventListener('click', () => {
+      setAnalyticsEnabled(!analyticsEnabled())
+      paint()
+    })
+    paint()
+    return stack([heading('Gameplay stats'), status, btn])
   }
 
   // ── Backup / restore block (always shown) ─────────────────────────────────────────────────
@@ -388,6 +495,10 @@ export function openCloudModal(): void {
     if (isCloudConfigured()) {
       content.append(divider())
       content.append(buildRaceName())
+      content.append(divider())
+      content.append(buildNotify())
+      content.append(divider())
+      content.append(buildAnalytics())
     }
     content.append(divider())
     content.append(buildBackup())

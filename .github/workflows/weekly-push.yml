@@ -1,0 +1,60 @@
+name: Weekly race reminder
+
+# The endless race closes Monday 00:00 UTC (core/endless.ts weekEndsAt). This fires ~6 hours before
+# that, which is Sunday evening in the Americas and Monday morning in Europe — awkward for nobody and
+# late enough that the standings being reported are close to final.
+#
+# GitHub's scheduler is best-effort and can run 10–30 minutes late under load. That is irrelevant
+# here: the message says "in N hours", computed at run time from the real clock, so a delayed run
+# reports a smaller N rather than saying anything untrue.
+on:
+  schedule:
+    - cron: '0 18 * * 0' # Sunday 18:00 UTC
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Print what would be sent without sending anything'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  # Never let a manual test overlap a scheduled run — two senders would double-notify every player,
+  # which is the fastest way to get notifications switched off for good.
+  group: weekly-push
+  cancel-in-progress: false
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Send
+        env:
+          SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+          # Service-role key: bypasses RLS, which is the only way to read push_subscriptions
+          # (0011 grants SELECT to nobody). A SECRET, never a repo variable — unlike the
+          # publishable key, this one must never be readable from the client or the repo UI.
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          VAPID_PUBLIC_KEY: ${{ vars.VITE_VAPID_PUBLIC_KEY }}
+          VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+          VAPID_SUBJECT: ${{ vars.VAPID_SUBJECT }}
+          # Passed through env rather than interpolated into the script body. This particular input is
+          # a typed boolean from a collaborator-only trigger, so it is not really attacker-controlled —
+          # but `${{ }}` inside `run:` is textual substitution into the shell, and keeping the one
+          # habit everywhere is what stops a genuinely untrusted field being pasted in later.
+          # On a scheduled run this is empty, so the real send is the default and --dry-run is opt-in.
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          if [ "$DRY_RUN" = "true" ]; then
+            node scripts/send-push.mjs --dry-run
+          else
+            node scripts/send-push.mjs
+          fi

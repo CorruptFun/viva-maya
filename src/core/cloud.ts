@@ -57,6 +57,16 @@ export interface CloudSession {
   email: string | null
 }
 let session: CloudSession | null = null
+/**
+ * The live access token, mirrored out of the Supabase session.
+ *
+ * Exists for core/analytics.ts, which posts to PostgREST with a RAW fetch rather than through the
+ * Supabase client (it needs `keepalive` on the page-unload flush, which supabase-js doesn't expose).
+ * Without the token those writes would be anonymous and could not carry a user_id past the 0010 RLS
+ * check. Kept as a separate variable rather than a field on CloudSession so the shape every other
+ * consumer already destructures stays untouched.
+ */
+let accessToken: string | null = null
 const listeners = new Set<() => void>()
 
 function notify(): void {
@@ -78,6 +88,16 @@ export function onCloudChange(cb: () => void): () => void {
 /** The current signed-in session, or null (signed out / unconfigured). */
 export function cloudSession(): CloudSession | null {
   return session
+}
+
+/** The current user id, or null. Convenience for callers that only need attribution. */
+export function cloudUserId(): string | null {
+  return session?.userId ?? null
+}
+
+/** The current access token, or null. See the `accessToken` note above for why this is exposed. */
+export function cloudAccessToken(): string | null {
+  return accessToken
 }
 
 // ---------------------------------------------------------------------------- pull / push
@@ -183,8 +203,13 @@ export async function signOutCloud(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------- boot
-function applySession(s: { user?: { id: string; email?: string | null } | null } | null): void {
+function applySession(
+  s: { access_token?: string | null; user?: { id: string; email?: string | null } | null } | null
+): void {
   session = s?.user ? { userId: s.user.id, email: s.user.email ?? null } : null
+  // Mirrored for analytics' raw-fetch path. Refreshed on every auth event, so a rotated token
+  // (autoRefreshToken is on) can't leave analytics posting with a stale one.
+  accessToken = s?.user ? (s.access_token ?? null) : null
 }
 
 /**
@@ -205,7 +230,14 @@ export async function initCloud(): Promise<void> {
     // "furthest-progressed wins" → persist + push) BEFORE any local persist can mirror a fresh/default
     // save over the player's real cloud progress. Idempotent: the redundant run alongside
     // bootstrapCloud's own syncNow simply converges. Does NOT fire on token refresh or sign-out.
-    if (session && !hadSession) void syncNow()
+    if (session && !hadSession) {
+      // The other half of the OAuth funnel (signin_started is fired before the redirect, in
+      // view/cloudmodal.ts). This null→session transition IS the redirect returning, so it is the
+      // only place a completed sign-in can be observed. Lazy import so the auth path never waits on
+      // analytics and cloud.ts keeps no static dependency on it.
+      void import('./analytics').then(a => a.track(a.EVENTS.SIGNIN_COMPLETED))
+      void syncNow()
+    }
   })
   try {
     const { data } = await c.auth.getSession()
