@@ -24,6 +24,13 @@ jobs:
         env:
           VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ vars.VITE_SUPABASE_ANON_KEY }}
+          # Public half of the VAPID pair — safe in the bundle by design (the client has to present
+          # it to subscribe). Setting the repo VARIABLE is not enough on its own: Vite only inlines
+          # VITE_* vars that are present in the build environment, and a missing one is not an error —
+          # it silently compiles to undefined, so core/push.ts reports 'unsupported' and the opt-in
+          # disappears with nothing in the logs. Shipped once without this line; caught by grepping
+          # the live bundle for the key.
+          VITE_VAPID_PUBLIC_KEY: ${{ vars.VITE_VAPID_PUBLIC_KEY }}
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
