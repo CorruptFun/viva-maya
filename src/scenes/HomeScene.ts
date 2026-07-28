@@ -106,6 +106,10 @@ export class HomeScene extends Phaser.Scene {
   create(): void {
     this.noteOpen = false // reset per entry (scene.start reuses the instance)
     this.wasIdle = false // C4: re-arm the idle-attract latch per entry (the instance is reused across navigation)
+    // §11: field initializers do NOT re-run on scene.restart(), and this one is only ASSIGNED on the
+    // animated path — so a restart into reduced motion (the settings panel does exactly that) would
+    // otherwise leave a destroyed tween here for playIdleBeat to pause/resume.
+    this.playBreathe = undefined
     // Warm cream fade-in (never black) — the receiving half of every startScene cross-fade.
     this.cameras.main.fadeIn(this.prefersReducedMotion() ? 90 : 180, 255, 253, 248)
     // Centre the 720×1280 design box in the (possibly taller) world; applyEntrance/power-on animate
@@ -120,6 +124,28 @@ export class HomeScene extends Phaser.Scene {
     // Directional push/pop (§E10) rides the NORMAL entrances (returns settle DOWN); the power-on IS
     // its own entrance, so it opts out of the camera nudge. Reduced-motion → applyEntrance no-ops.
     if (!powerOn) applyEntrance(this)
+    // ── Entrance beat sheet ──────────────────────────────────────────────────────────────────────
+    // The spring itself is the §V1 "pops off the screen" pass: each pill starts a little small and
+    // low, overshoots past its resting spot and settles (ENTRANCE_MS), with a wide STAGGER_STEP gap
+    // so the stack reads as distinct arrivals rather than one blur.
+    //
+    // What changed is the ORDER on a cold boot. The power-on reveal is KEPT — it is the identity
+    // moment — but the primary action no longer queues behind it. v1 held the whole menu, PLAY
+    // included, until the wordmark and the glow bloom had finished: measured off the live tween
+    // list, PLAY landed at 1440ms (stagger base 1080 + 360) and the last module at 1744ms, on the
+    // one entry per app launch where a returning player is already waiting to tap. Genre leaders are
+    // tappable well under a second. So PLAY springs in on its OWN early beat and the theatre plays
+    // around it:
+    //   0.10s  the emblem springs up          — identity
+    //   0.14s  PLAY + its halo bloom          — the primary action, fully landed by 0.50s
+    //   0.42s  the marquee gold sweep + bulbs — wordmark reveal (audio swell at 0.56s)
+    //   0.76s  the subordinate stack staggers in BEHIND it (last module ~1.35s)
+    // Off-boot both beats collapse to the old cascade — PLAY, then the stack one step behind it —
+    // so returning from a level / a settings restart is unchanged to the millisecond.
+    const STAGGER_STEP = 76
+    const ENTRANCE_MS = 360
+    const HERO_BEAT = powerOn ? 140 : 0
+    const STACK_BEAT = powerOn ? 760 : STAGGER_STEP
     const save = loadSave()
     // §E9 — stamp first/last open dates (safe: touches only those two fields). Enables future
     // "welcome back" warmth; never alters progress.
@@ -129,6 +155,18 @@ export class HomeScene extends Phaser.Scene {
     maybeShowInstallNudge(this)
     const currentLevel = Math.min(save.unlocked, LEVEL_COUNT)
     const reduced = this.prefersReducedMotion()
+    // ── Progressive reveal ───────────────────────────────────────────────────────────────────────
+    // A destination that can do NOTHING for this player yet is DEFERRED, not shown greyed-out: on a
+    // brand-new save LEVELS can only reach the level PLAY already starts, the Gift Store's cheapest
+    // boost is 40 chips against a balance of 0, and the locked WEEKLY RACE plate advertises a
+    // milestone 19 levels out. Same shape as the `endlessUnlocked(save)` branch further down — read
+    // the save, branch once — rather than a second gating idiom.
+    //
+    // Deliberately the TIGHTEST gate that still clears the first screen: one finished level OR one
+    // banked chip opens all three, and BOTH of those only ever grow (a level win banks chips; so
+    // does the very first daily spin, via its check-in purse). So an entry can appear and can never
+    // disappear again — nothing a player has ever been able to use is taken off the screen.
+    const preFirstWin = save.unlocked <= 1 && save.chips === 0
     // Stacked pill buttons that fade + slide up into place on entrance (see below).
     const menuButtons: Phaser.GameObjects.Container[] = []
 
@@ -225,13 +263,22 @@ export class HomeScene extends Phaser.Scene {
     // + black spades/clubs come straight from the platform emoji. All four share the same 384² frame,
     // so `setTexture()` swaps mid-tween with no size jump. Reduced motion (§E8): a single static
     // heart, no cycle — identical to the old resting emblem.
+    //
+    // 168², was 190²: at 190 the decoration was the biggest object on a screen whose PLAY cap is
+    // 340×96, and it out-shouted the primary action on motion too (see HOLD_MS below). −20% of its
+    // area hands the visual lead back to PLAY while the emblem stays the hero of the top band.
     const emblemY = 330
     const SUITS = ['suitHeart', 'suitSpade', 'suitDiamond', 'suitClub'] as const
     const emblem = this.add.image(DESIGN_W / 2, emblemY, reduced ? 'heartbig' : SUITS[0])
-    emblem.setDisplaySize(190, 190)
+    emblem.setDisplaySize(168, 168)
     this.heroEmblem = emblem // held so the C4/H3 idle suit-ghost can drift across behind it
     const base = emblem.scaleX
     let suitIdx = 0
+    // Rest between shuffles. Was 200ms, which put the emblem in motion ~85% of the time (560ms beat
+    // + 200 rest + 170 wind-down + 480 spring ≈ a 1.4s cycle) — a perpetual motor next to PLAY's
+    // 1.04 breathe, i.e. the loudest motion on the screen belonged to decoration. At 2200 the same
+    // choreography becomes a periodic flourish (~35% moving) and the eye settles back on the button.
+    const HOLD_MS = 2200
     // Hold the landed suit with one gentle heartbeat, then shuffle on to the next.
     const holdBeat = (): void => {
       this.tweens.add({
@@ -240,7 +287,7 @@ export class HomeScene extends Phaser.Scene {
         duration: 280,
         yoyo: true,
         ease: 'Sine.easeInOut',
-        onComplete: () => this.time.delayedCall(200, spinNext),
+        onComplete: () => this.time.delayedCall(HOLD_MS, spinNext),
       })
     }
     // One turn of the shuffle: wind the current suit down + tip it (Back.easeIn anticipation), swap
@@ -349,10 +396,12 @@ export class HomeScene extends Phaser.Scene {
     this.playGlowBaseSY = glowSY
     this.playGlowLive = false
     if (!reduced) {
-      // Power-on beat #4: on boot the warm glow BLOOMS up (delayed + swelling from small) after the
-      // wordmark reveal; on a normal entrance it just fades in alongside PLAY. Then the shared
+      // On boot the warm glow BLOOMS up (swelling from small) WITH the primary action — it used to
+      // wait for the wordmark at 980ms, which is what pushed PLAY itself to the back of the queue.
+      // Now it rides PLAY's own beat, a hair ahead so the light is already gathering as the cap
+      // lands. On a normal entrance it just fades in alongside PLAY (unchanged). Then the shared
       // heartbeat takes over its steady breathing (see update()) — no independent yoyo.
-      const bloomDelay = powerOn ? 980 : 0
+      const bloomDelay = powerOn ? HERO_BEAT - 60 : 0
       if (powerOn) glow.setScale(glowSX * 0.7, glowSY * 0.7)
       this.tweens.add({
         targets: glow,
@@ -381,12 +430,13 @@ export class HomeScene extends Phaser.Scene {
     },
       { sheen: true }
     )
-    menuButtons.push(play)
+    // PLAY is deliberately NOT in `menuButtons`: it is the one primary action and it gets its own
+    // early entrance beat (HERO_BEAT) rather than a slot in the subordinate stagger below.
     // Held for the C4/H3 idle attract beat — the "come play" pulse pauses this breathe, nudges, resumes.
     this.playButton = play
-    // PLAY breathe is STARTED LATER (see the entrance stagger below). §V1 gave the entrance a real
-    // scale pop, and a resting breathe on the same property would fight it — so both idle breathes
-    // are deferred until their button has finished landing. Gated (§E8): reduced motion never starts.
+    // PLAY's breathe is STARTED LATER (see the entrance below). §V1 gave the entrance a real scale
+    // pop, and a resting breathe on the same property would fight it — so the idle breathe is
+    // deferred until the button has finished landing. Gated (§E8): reduced motion never starts it.
     const sub =
       save.best > 0
         ? `Level ${currentLevel}  ·  best ${save.best.toLocaleString()}`
@@ -403,96 +453,140 @@ export class HomeScene extends Phaser.Scene {
     // midpoint because PLAY's ambient halo bleeds ~10px past its cap, so optical centre ≠ geometric.
     addJackpotMeter(this, DESIGN_W / 2, 618, { width: 300, compact: true }).update(save.jackpotMeter, false)
 
-    // LEVELS + GIFT STORE share a row so the store gets a first-class entry without growing the stack.
-    const levels = addPillButton(this, DESIGN_W / 2 - 158, 872, 300, 64, 'LEVELS', GHOST_PILL, () =>
-      startScene(this, 'levelselect')
-    )
-    menuButtons.push(levels)
-    const store = addPillButton(this, DESIGN_W / 2 + 158, 872, 300, 64, 'GIFT STORE', GHOST_PILL, () =>
-      startScene(this, 'store')
-    )
-    menuButtons.push(store)
+    // ── The subordinate stack under PLAY ─────────────────────────────────────────────────────────
+    // Rows carry no hard-coded y: whatever survives the progressive reveal is CENTRED in the fixed
+    // band under PLAY (840 — a clear 50px below the sub-line — down to 1210). The full stack fills
+    // that band exactly, so it reproduces the §V1 spacing to the pixel (872 / 986 / 1134) with 44px
+    // of air between pills and 34 above the race plate, whose bake carries its own inner padding.
+    // A short stack then keeps the band's balance rather than clumping up under the primary action
+    // (two gold pills nose-to-tail read as a pair, not as primary + secondary) or stranding the
+    // survivors at the bottom.
+    const STACK_TOP = 840
+    const STACK_BOTTOM = 1210
+    const showBrowseRow = !preFirstWin
+    const showRaceRow = endlessUnlocked(save) || !preFirstWin
+    /** The surviving rows, top → bottom: [height, air above it]. Drives the centring below. */
+    const stackRows: Array<[number, number]> = []
+    if (showBrowseRow) stackRows.push([64, 0]) // LEVELS + GIFT STORE
+    stackRows.push([76, 44]) // DAILY BONUS — never deferred (see below)
+    if (showRaceRow) stackRows.push([152, 34]) // WEEKLY RACE, live or locked signpost
+    const stackH = stackRows.reduce((total, [h, gap], i) => total + h + (i > 0 ? gap : 0), 0)
+    let stackY = STACK_TOP + Math.round((STACK_BOTTOM - STACK_TOP - stackH) / 2)
+    let stackIdx = 0
+    /** Seat the next surviving row — called in the same order `stackRows` was built. */
+    const seatRow = (): number => {
+      const [h, gap] = stackRows[stackIdx]
+      if (stackIdx > 0) stackY += gap
+      stackIdx += 1
+      const cy = stackY + h / 2
+      stackY += h
+      return cy
+    }
 
-    // Daily bonus entry: glowing when the spin is ready, quiet when claimed.
+    // LEVELS + GIFT STORE share a row so the store gets a first-class entry without growing the
+    // stack. Both are deferred pre-first-win: LEVELS would open a grid whose only reachable chip is
+    // the level PLAY already starts, and the store's cheapest boost costs 40 chips of a balance of 0.
+    if (showBrowseRow) {
+      const rowY = seatRow()
+      const levels = addPillButton(this, DESIGN_W / 2 - 158, rowY, 300, 64, 'LEVELS', GHOST_PILL, () =>
+        startScene(this, 'levelselect')
+      )
+      menuButtons.push(levels)
+      const store = addPillButton(this, DESIGN_W / 2 + 158, rowY, 300, 64, 'GIFT STORE', GHOST_PILL, () =>
+        startScene(this, 'store')
+      )
+      menuButtons.push(store)
+    }
+
+    // Daily bonus entry: glowing when the spin is ready, quiet when claimed. NEVER deferred — day
+    // one is exactly when the spin pays (it seeds the streak and boosts the first level), so this is
+    // the one first-run entry that can already do something.
     // NOTE: no emoji in pill labels — addPillButton's letterSpacing splits
     // surrogate pairs in Phaser's glyph renderer (renders tofu).
     const ready = spinAvailable(save)
     const label = ready ? 'DAILY BONUS' : `SPUN · DAY ${Math.max(1, save.streak)}`
-    const daily = addPillButton(this, DESIGN_W / 2, 986, 340, 76, label, ready ? GOLD_PILL : GHOST_PILL, () =>
+    const dailyY = seatRow()
+    const daily = addPillButton(this, DESIGN_W / 2, dailyY, 340, 76, label, ready ? GOLD_PILL : GHOST_PILL, () =>
       startScene(this,'daily')
     )
     menuButtons.push(daily)
-    // Daily-ready breathe is likewise deferred to after the entrance (see the stagger below).
+    // The daily's ARRIVAL beat is fired after the entrance (see the stagger below) — it no longer
+    // breathes, so PLAY owns the only perpetual "tap me" on the screen.
     // Banked free spins → a glowing "×N FREE SPINS" badge pinned to the DAILY BONUS corner. Rides
-    // INSIDE the pill container so the daily breathe carries it; the glow pulse is its own beat
+    // INSIDE the pill container so the daily's beat carries it; the glow pulse is its own beat
     // (reduce-flashing → static soft glow; reduced motion → static badge, no pop, no pulse).
     if (save.freeSpins > 0) daily.add(this.buildFreeSpinsBadge(save.freeSpins))
     if (save.pendingBoosts.length > 0) {
+      // Rides under the daily pill wherever it was seated (a first-run spin banks a boost while the
+      // rows above are still deferred, so this can't key off the full stack's geometry).
       this.add
-        .text(DESIGN_W / 2, 1044, `🎁 boost ready for your next level`, { fontFamily: FONT, fontSize: '20px', color: getTheme().goldText })
+        .text(DESIGN_W / 2, dailyY + 58, `🎁 boost ready for your next level`, { fontFamily: FONT, fontSize: '20px', color: getTheme().goldText })
         .setOrigin(0.5)
     }
 
     // WEEKLY RACE module — the full-width ENDLESS block (replaces the v1 trophy chip). Unlocked:
     // the rose ENDLESS pill over a live, tappable standings line (leaderboardpanel owns the data +
     // panel). Locked: the same silhouette dimmed to a quiet "unlocks at level N" signpost, where N
-    // is ENDLESS_UNLOCK_LEVEL (the locked module reads the constant, so this copy never drifts).
-    if (endlessUnlocked(save)) {
+    // is ENDLESS_UNLOCK_LEVEL (the locked module reads the constant, so this copy never drifts) —
+    // shown from the first win onward, so the signpost lands when the road to it has actually begun.
+    if (showRaceRow) {
+      const raceY = seatRow()
       menuButtons.push(
-        addWeeklyRaceModule(this, DESIGN_W / 2, 1134, save, () => startScene(this, 'game', { endless: true }))
+        endlessUnlocked(save)
+          ? addWeeklyRaceModule(this, DESIGN_W / 2, raceY, save, () => startScene(this, 'game', { endless: true }))
+          : addWeeklyRaceLockedModule(this, DESIGN_W / 2, raceY)
       )
-    } else {
-      menuButtons.push(addWeeklyRaceLockedModule(this, DESIGN_W / 2, 1134))
     }
 
-    // Entrance stagger (§V1 "pops off the screen" pass). v1 was a 12px fade-rise with a default
-    // `Back.easeOut` — correct, but so gentle the menu simply *appeared*. Now each pill SPRINGS in:
-    // it starts a little small and lower, then overshoots up past its resting spot and settles, with
-    // a wider ~76ms gap so the cascade reads as four distinct arrivals rather than one blur.
-    // Reduced motion keeps every button in its final alpha=1 / final-y / final-scale resting state.
-    const STAGGER_STEP = 76
-    const ENTRANCE_MS = 360
-    // Power-on beat #5: on boot the button stagger waits for the glow bloom, so the chips/buttons
-    // are the last thing to arrive; on a normal entrance it plays immediately (unchanged).
-    const staggerBase = powerOn ? 1080 : 0
-    /** When a given button has finished landing — the cue for its idle breathe to take over. */
-    const landedAt = (btn: Phaser.GameObjects.Container): number =>
-      staggerBase + Math.max(0, menuButtons.indexOf(btn)) * STAGGER_STEP + ENTRANCE_MS
-    if (!reduced) {
-      menuButtons.forEach((btn, i) => {
-        const finalY = btn.y
-        btn.setAlpha(0)
-        btn.y = finalY + 26
-        btn.setScale(0.86)
-        this.tweens.add({
-          targets: btn,
-          y: finalY,
-          alpha: 1,
-          scale: 1,
-          duration: ENTRANCE_MS,
-          delay: staggerBase + i * STAGGER_STEP,
-          ease: backOut(OVERSHOOT.pop),
-        })
+    // Entrance (timings + rationale in the beat sheet at the top of create()). Reduced motion keeps
+    // every button in its final alpha=1 / final-y / final-scale resting state — nothing below runs.
+    /** The spring-in itself — one definition, shared by the hero beat and the stagger. */
+    const springIn = (btn: Phaser.GameObjects.Container, delay: number): void => {
+      const finalY = btn.y
+      btn.setAlpha(0)
+      btn.y = finalY + 26
+      btn.setScale(0.86)
+      this.tweens.add({
+        targets: btn,
+        y: finalY,
+        alpha: 1,
+        scale: 1,
+        duration: ENTRANCE_MS,
+        delay,
+        ease: backOut(OVERSHOOT.pop),
       })
-      // Idle breathes hand off from the entrance: each starts only once ITS button has settled, so
-      // the two scale animations never overlap on the same target.
+    }
+    /** When a stack button has finished landing — the cue for the beat that hands off from it. */
+    const landedAt = (btn: Phaser.GameObjects.Container): number =>
+      STACK_BEAT + Math.max(0, menuButtons.indexOf(btn)) * STAGGER_STEP + ENTRANCE_MS
+    if (!reduced) {
+      springIn(play, HERO_BEAT) // the primary action leads; on boot it is fully landed at 500ms
+      menuButtons.forEach((btn, i) => springIn(btn, STACK_BEAT + i * STAGGER_STEP))
+      // The ONE perpetual breathe on this screen — the cookbook's "≤1 hero breathe per screen",
+      // which Home was quietly breaking. Two of them (PLAY + a ready DAILY BONUS) is the same as
+      // none: an idle pulse means "tap me", and the eye can only be sent to one place. It hands off
+      // from the entrance so the two scale animations never overlap on the same target.
       this.playBreathe = this.tweens.add({
         targets: play,
         scale: 1.04,
         duration: 800,
-        delay: landedAt(play),
+        delay: HERO_BEAT + ENTRANCE_MS,
         yoyo: true,
         repeat: -1,
         ease: 'Sine.easeInOut',
       })
       if (ready) {
+        // A ready daily still has to say "there's something here" — so it says it ONCE, in the
+        // ARRIVAL channel rather than the idle one: a single knock a beat after it has settled (far
+        // enough after that it reads as its own gesture, not entrance overshoot), then stillness.
+        // What carries the state from then on is static and always legible: the gold face against
+        // its spun GHOST twin, the label, and the free-spins badge with its own glow pulse.
         this.tweens.add({
           targets: daily,
           scale: 1.05,
-          duration: 650,
-          delay: landedAt(daily),
+          duration: 260,
+          delay: landedAt(daily) + 260,
           yoyo: true,
-          repeat: -1,
           ease: 'Sine.easeInOut',
         })
       }
@@ -500,8 +594,10 @@ export class HomeScene extends Phaser.Scene {
 
     // ── Growth celebrations (coronation, then friend-joined), queued AFTER the entrance settles —
     // and, on a true boot, after the whole power-on reveal has finished (never over it). The fetches
-    // are dormant-safe (both resolve null/empty offline), so scheduling this is always free.
-    const celebrateDelay = powerOn ? 2400 : reduced ? 300 : 800
+    // are dormant-safe (both resolve null/empty offline), so scheduling this is always free. The
+    // boot wait tracks the reveal: the last module now lands at ~1350ms (was 1744), so 1900 keeps
+    // the same ~150ms of quiet after it before a celebration can take the screen.
+    const celebrateDelay = powerOn ? 1900 : reduced ? 300 : 800
     this.time.delayedCall(celebrateDelay, () => {
       void this.runCelebrations(chipPill, refreshLivesHud)
     })

@@ -2,20 +2,21 @@ import Phaser from 'phaser'
 import { sfx } from '../audio/sfx'
 import { DESIGN_W, restScrollY } from '../config'
 import { endlessUnlocked } from '../core/endless'
+import { levelStanding } from '../core/leaderboard'
 import { LEVEL_COUNT } from '../core/levels'
 import { loadSave } from '../core/save'
 import { addCasinoBackdrop } from '../view/background'
-import { addLevelRaceStrip, addWeeklyRaceStrip } from '../view/leaderboardpanel'
+import { addLevelRaceStrip, addWeeklyRaceModule } from '../view/leaderboardpanel'
 import { D, E, OVERSHOOT, backOut } from '../view/motion'
 import { quality } from '../view/quality'
 import { getTheme, prefersReducedMotion, reduceFlashing } from '../view/theme'
-import { FONT, GHOST_PILL, ROSE_PILL, addMarquee, addMuteChip, addPillButton, applyEntrance, goldFace, startScene } from '../view/ui'
+import { FONT, GHOST_PILL, GOLD_PILL, addMuteChip, addPillButton, applyEntrance, goldFace, startScene } from '../view/ui'
 
 const GRID_COLS = 5
 const CHIP = 108
 const GAP = 18
 const ROW_H = CHIP + GAP
-const TOP_PAD = 32
+const TOP_PAD = 10
 /**
  * L6 · windowed grid. `LEVEL_COUNT` is 300, so building the whole ladder up front put ~1,400 Game
  * Objects on screen — 300 of them Graphics, and each Graphics breaks Phaser's sprite batch into its
@@ -71,6 +72,77 @@ const TRAIL_LIT_ALPHA = 0.5
 const TRAIL_DIM_ALPHA = 0.26
 const TRAIL_RETURN_BOW = 16
 
+/**
+ * L7 · CHAPTERS — the structure a 300-rung ladder needs.
+ *
+ * Sixty rows of numbered chips is a list, not a map: nothing told you where in three hundred levels
+ * you were standing. The game already speaks in decades — a milestone splash every 10th level, and
+ * `MILESTONE_FRAME`'s gilded chip marking each one — so the decade is the grouping that was already
+ * in the design's vocabulary, and it costs no new concept to promote it to a labelled chapter.
+ *
+ * The one structural gift: 10 levels ÷ `GRID_COLS` is exactly 2 rows, so a chapter boundary can only
+ * ever fall on a row boundary. That keeps the block pitch a CONSTANT `CHAP_H`, which is the whole
+ * reason the windowed grid's scroll→row inverse stays closed-form (see `rowIndexAt`) instead of
+ * turning into a search — the layout change costs the hot path two extra divisions, nothing more.
+ */
+const CHAPTER_LEVELS = 10
+const CHAPTER_ROWS = CHAPTER_LEVELS / GRID_COLS
+/** Ribbon plate height, and the band each chapter reserves above its first row for it. */
+const RIBBON_H = 32
+const CHAPTER_GAP = 48
+/** Block pitch: a chapter's ribbon band plus its rows. Constant — see the note above. */
+const CHAP_H = CHAPTER_ROWS * ROW_H + CHAPTER_GAP
+/** Ribbon width — the grid's own width, so the chapter reads as a header FOR these chips. */
+const GRID_W = GRID_COLS * CHIP + (GRID_COLS - 1) * GAP
+
+/** Baked-face padding: room for the down-cast contact shadow so `generateTexture` can't clip it. */
+const CHIP_PAD = 10
+/** Chip corner radius — shared by the fill and every stroke on a plate (cookbook §2b). */
+const CHIP_R = 20
+/** The current chip's plate is drawn this much bigger than a cell, so "you are here" wins on SIZE too. */
+const CURRENT_GROW = 8
+/** Gold frame band on the current chip — deliberately wider than `MILESTONE_FRAME` so the two differ. */
+const CURRENT_FRAME = 11
+
+/**
+ * Minimum interactive edge in DESIGN px (§E8 / cookbook §9) — 84 ≈ 44pt at this design scale. Mirrors
+ * `ui.ts`'s private `MIN_HIT`, which already grows every pill and chip zone to it; the shared
+ * standings strips are the one control that predates the rule (see `growTouchTarget`).
+ */
+const MIN_TOUCH = 84
+
+/** Which face a chip wears. One baked texture per kind, shared by every chip that wears it. */
+type ChipKind = 'cleared' | 'current' | 'milestone' | 'next' | 'locked' | 'lockedMilestone'
+
+/** Content-local y of chapter `c`'s ribbon band (its top edge). */
+function chapterTop(viewTop: number, chapter: number): number {
+  return viewTop + TOP_PAD + chapter * CHAP_H
+}
+
+/**
+ * Content-local y of row `row`'s TOP edge — the ONE source for row placement. The formula used to be
+ * copy-pasted into buildRow, drawTrail, syncWindow and create()'s open-scroll; adding the chapter band
+ * to four independent copies is exactly how a grid drifts out of step with its own hit areas.
+ */
+function rowTop(viewTop: number, row: number): number {
+  return chapterTop(viewTop, Math.floor(row / CHAPTER_ROWS)) + CHAPTER_GAP + (row % CHAPTER_ROWS) * ROW_H
+}
+
+/**
+ * Inverse of `rowTop`: the row whose BAND contains content-local `y`. A row's band runs from where it
+ * may start drawing to where the next row does — so the ribbon gap belongs to the chapter's first row,
+ * and the 18px gutter under a chip belongs to the chip above it. That makes the map monotone and
+ * total, and makes it CONSERVATIVE at both ends: a y in a gutter names the row above rather than the
+ * row below, so the span [rowIndexAt(top), rowIndexAt(bottom)] can never miss a visible row (it may
+ * name one extra, which `ROW_BUFFER` was already paying for). Closed-form — no loop, no search.
+ */
+function rowIndexAt(viewTop: number, y: number): number {
+  const rel = y - viewTop - TOP_PAD
+  const chapter = Math.floor(rel / CHAP_H)
+  const within = rel - chapter * CHAP_H
+  return chapter * CHAPTER_ROWS + (within < CHAPTER_GAP + ROW_H ? 0 : 1)
+}
+
 export class LevelSelectScene extends Phaser.Scene {
   /** Largest pointer travel during the current press — a tap on a chip only fires below this. */
   private dragMoved = 0
@@ -87,6 +159,8 @@ export class LevelSelectScene extends Phaser.Scene {
   private scrollVel = 0
   /** L5: in-flight edge snap-back / bounce tween — stopped the instant a new touch grabs the list. */
   private edgeSpring?: Phaser.Tweens.Tween | Phaser.Tweens.TweenChain
+  /** L8: in-flight RECALL glide (the "back to my level" tween) — likewise handed back on touch. */
+  private scrollTween?: Phaser.Tweens.Tween
   /** C4: rising-edge latch for `quality.idle()` — true once the current idle beat has fired; re-armed on activity. */
   private wasIdle = false
   /** C4: the current-level chip + its steady "you are here" breathe — the idle beat pauses it for one nudge. */
@@ -97,6 +171,19 @@ export class LevelSelectScene extends Phaser.Scene {
   /** L6: the row span currently built (inclusive), so syncWindow() early-outs on an unchanged window. */
   private winFirst = -1
   private winLast = -1
+  /** L8: the RECALL pill + its shown/hidden latch (see `updateScrollChrome`). */
+  private recall?: Phaser.GameObjects.Container
+  private recallShown = false
+  /** L8: the scroll offset that frames the current level — where RECALL glides back to. */
+  private homeScrollY = 0
+  /** L8: the current level's row, so the visibility test is two adds instead of a search. */
+  private currentRow = -1
+  /** L8: scroll-rail thumb + the travel it maps the scroll range onto (undefined when the list fits). */
+  private railThumb?: Phaser.GameObjects.Image
+  private railTop = 0
+  private railTravel = 0
+  /** L8: last content.y the scroll chrome was painted for — the whole update is skipped when it hasn't moved. */
+  private chromeY = Number.NaN
   /** L6: grid geometry + the save snapshot a row needs, captured once per create() for the row builder. */
   private grid?: {
     startX: number
@@ -130,32 +217,72 @@ export class LevelSelectScene extends Phaser.Scene {
     this.currentChip = undefined
     this.currentChipPulse = undefined
     this.edgeSpring = undefined // L5: stale tween refs die with the old grid — never resurrect one
+    this.scrollTween = undefined // L8: ditto for the RECALL glide
+    // L8: every scroll-chrome handle points at objects the previous visit's shutdown destroyed. Field
+    // initializers do NOT re-run on restart (§11), so they are cleared here or the first update() nudges
+    // a corpse; `chromeY` goes to NaN so the first frame always repaints rather than trusting a stale y.
+    this.recall = undefined
+    this.recallShown = false
+    this.railThumb = undefined
+    this.chromeY = Number.NaN
     // L6: the previous visit's rows died with its display list — drop the stale ledger so the first
     // syncWindow() rebuilds the window from scratch rather than trusting handles to destroyed rows.
     this.rowNodes.clear()
     this.winFirst = -1
     this.winLast = -1
     const save = loadSave()
+    const T = getTheme()
     addCasinoBackdrop(this, 'menu')
-    addMarquee(this, DESIGN_W / 2, 96)
     // Depth 50 puts the scene chrome above the scrolling grid for input as well as drawing — the same
     // rank addMuteChip already takes. The chip hit areas are clipped to the viewport (see buildChip),
     // so this is belt-and-braces: nothing in the list can outrank the way out of the screen.
     addPillButton(this, 64, 84, 84, 56, '‹', GHOST_PILL, () => startScene(this, 'home')).setDepth(50)
     addMuteChip(this, 676, 40)
 
-    const unlocked = endlessUnlocked(save)
-    const viewTop = 156
-    // 1060 when ENDLESS is offered (was 1092): the footer grew by the height of the weekly-race strip
-    // that replaced the old one-line caption, and it buys that back from the grid rather than from the
-    // bottom margin. Costs about a quarter of a row of chips. `viewBottom` is the single source for
-    // both the mask and the chip hit-area clip, so they stay in lockstep for free.
-    const viewBottom = unlocked ? 1060 : 1176
+    // ── Header ────────────────────────────────────────────────────────────────────────────────────
+    // The screen used to open under the VIVA MAYA marquee — Home's hero wordmark, repeated. It looked
+    // like the front door and told you nothing about the room, which is half of why sixty rows of
+    // numbered chips read as a settings list. A destination scene gets a destination TITLE here (the
+    // pattern StoreScene already ships: gold gradient wordmark, letterspaced, one soft drop shadow),
+    // and the word matches the button on Home that opens it, so the label carries across the transition.
+    this.add
+      .text(DESIGN_W / 2, 92, 'LEVELS', { fontFamily: FONT, fontSize: '50px', fontStyle: '900', color: '#ffffff' })
+      .setOrigin(0.5)
+      .setLetterSpacing(4)
+      .setShadow(0, 3, 'rgba(90,70,20,0.25)', 6, false, true)
+      .setTint(T.goldBright, T.goldBright, T.goldDeep, T.goldDeep)
+    // Total stars banked. The save has banked one on every win since launch and the all-time LEVEL RACE
+    // ladder ranks on them, yet nothing in the app ever showed the number — an accumulated resource with
+    // no read-out. It sits in the title row (right of the wordmark, clear of the mute chip's band) as a
+    // pure readout, never interactive, so it cannot compete with the ‹ back button for a tap.
+    this.addStarTally(596, 92, levelStanding(save).stars)
+
+    const endless = endlessUnlocked(save)
+    // 196 (was 156): the header now carries the title row AND the LEVEL RACE strip that used to be the
+    // lower of two identical pills at the bottom. It costs the grid ~40px — about a third of a row —
+    // and buys the screen a "where am I" band that is legible before you have scrolled anything.
+    const viewTop = 196
+    // 1072 when ENDLESS is offered: the footer is now the SAME weekly-race module Home seats its
+    // ENDLESS pill in (plate + pill + standings strip), so the strip is visibly PART of the endless
+    // block instead of a twin of the level strip. Without ENDLESS the footer is empty and the grid
+    // takes the whole box. `viewBottom` is the single source for both the mask and the chip hit-area
+    // clip, so they stay in lockstep for free.
+    const viewBottom = endless ? 1072 : 1232
+
+    // The LEVEL RACE strip, promoted out of the footer into the header. It measures THIS screen's
+    // subject — your campaign climb — so at the top it doubles as the "where am I" line, and the two
+    // standings strips stop being twins: they now differ in position, in neighbourhood and in what
+    // they sit on, without either being forked (they are one shared component, shared with Home).
+    // Grown to the §E8 touch floor, art untouched. Its taller target reaches up to y=108, which
+    // clips the bottom-left corner of the ‹ back button's own zone — deliberately the safe way round:
+    // the button is depth 50 and wins the overlap, which is the direction this screen's one real
+    // input bug (a chip stealing BACK) taught us to err in.
+    const climb = addLevelRaceStrip(this, DESIGN_W / 2, 150, save)
+    this.growTouchTarget(climb)
 
     // Scrollable grid of level chips.
     const content = this.add.container(0, 0)
-    const gridW = GRID_COLS * CHIP + (GRID_COLS - 1) * GAP
-    const startX = (DESIGN_W - gridW) / 2
+    const startX = (DESIGN_W - GRID_W) / 2
     // L4 · map "journey" trail — a faint dotted, winding line threading the chip centres in level
     // order, lit gold up to the current chip and muted beyond. Added FIRST so it sits UNDER every chip
     // (rows are only ever appended after it, so that ordering survives the L6 window churn); it lives
@@ -164,7 +291,7 @@ export class LevelSelectScene extends Phaser.Scene {
     const trail = this.add.graphics()
     content.add(trail)
     const rows = Math.ceil(LEVEL_COUNT / GRID_COLS)
-    const contentBottom = viewTop + TOP_PAD + rows * ROW_H + 24
+    const contentBottom = rowTop(viewTop, rows - 1) + CHIP + 24
 
     const maskG = this.make.graphics({ x: 0, y: 0 }, false)
     maskG.fillStyle(0xffffff)
@@ -178,10 +305,12 @@ export class LevelSelectScene extends Phaser.Scene {
     this.scrollVel = 0
     this.minScroll = Math.min(0, viewBottom - contentBottom)
     this.maxScroll = 0
-    // Open scrolled so the current level sits mid-viewport.
-    const curRow = Math.floor((Math.min(save.unlocked, LEVEL_COUNT) - 1) / GRID_COLS)
-    const curCy = viewTop + TOP_PAD + curRow * ROW_H + CHIP / 2
-    content.y = Phaser.Math.Clamp((viewTop + viewBottom) / 2 - curCy, this.minScroll, this.maxScroll)
+    // Open scrolled so the current level sits mid-viewport. L8 keeps that offset: it is exactly where
+    // RECALL puts you back, so "where the screen opened" and "where the button returns to" can't drift.
+    this.currentRow = Math.floor((Math.min(save.unlocked, LEVEL_COUNT) - 1) / GRID_COLS)
+    const curCy = rowTop(viewTop, this.currentRow) + CHIP / 2
+    this.homeScrollY = Phaser.Math.Clamp((viewTop + viewBottom) / 2 - curCy, this.minScroll, this.maxScroll)
+    content.y = this.homeScrollY
 
     // L6: everything a row needs to build itself, so syncWindow() can mint rows mid-scroll. Set AFTER
     // content.y is finalised, so the opening window (and its entrance cascade) tracks what the player
@@ -206,6 +335,8 @@ export class LevelSelectScene extends Phaser.Scene {
       this.scrollVel = 0 // touching the list halts any in-flight coast (native feel)
       this.edgeSpring?.stop() // L5: grabbing mid-bounce hands the grid straight back to the finger
       this.edgeSpring = undefined
+      this.scrollTween?.stop() // L8: …and grabbing mid-RECALL likewise — the finger always wins
+      this.scrollTween = undefined
       flickVel = 0
       lastMoveAt = this.time.now
     })
@@ -250,22 +381,23 @@ export class LevelSelectScene extends Phaser.Scene {
       }
     })
 
-    // Fixed footer. The weekly-race strip is the SAME component Home's module uses — one definition of
-    // what the standings row looks like, what it says, and what it does, so the board is reachable from
-    // both screens that offer ENDLESS. This slot used to be a dead caption ("weekly board · best N")
-    // that looked tappable next to Home's live one but wasn't wired to anything; the strip also
-    // upgrades the copy from save-local to the live standings when signed in.
-    if (unlocked) {
-      addPillButton(this, DESIGN_W / 2, 1104, 420, 68, 'ENDLESS', ROSE_PILL, () => startScene(this, 'game', { endless: true }))
-      addWeeklyRaceStrip(this, DESIGN_W / 2, 1176, save)
+    // L8 · the two pieces of scroll chrome, both OUTSIDE `content` (they don't scroll, they report on
+    // it) and both driven from one `updateScrollChrome` pass that early-outs when the grid hasn't moved.
+    this.addScrollRail(viewTop, viewBottom, contentBottom)
+    this.addRecallPill(viewBottom, Math.min(save.unlocked, LEVEL_COUNT))
+
+    // Fixed footer. This is the SAME module Home seats its ENDLESS block in — one definition of what
+    // the endless race looks like, what it says and what it does, so the board is reachable from both
+    // screens that offer ENDLESS and the two can never drift. Using the module rather than a bare pill
+    // plus a loose strip is also what stops the weekly strip reading as a twin of the level strip: on
+    // its own plate, under its own trophy, it is plainly the endless block's standings line.
+    if (endless) {
+      const module = addWeeklyRaceModule(this, DESIGN_W / 2, 1160, save, () => startScene(this, 'game', { endless: true }))
+      // §E8 floor for the strip inside it, biased DOWN by 12px: grown symmetrically its taller target
+      // would reach 10px into the ENDLESS pill's own (already 84px) zone directly above, and the pill
+      // is the hero of the block — the strip must not be able to swallow the bottom of it.
+      this.growTouchTarget(module, 12)
     }
-    // The LEVEL RACE strip takes the slot the static `BEST  N` caption held. That caption was the last
-    // dead text on this screen — the exact problem the weekly strip was introduced to fix here — and
-    // it was a DUPLICATE besides: HomeScene already prints `Level N · best X` from the same
-    // `save.best`. The ladder is the more relevant number on the level screen anyway, and unlike the
-    // weekly strip it renders whether or not ENDLESS is unlocked, because campaign progress is
-    // something every player has from level one.
-    addLevelRaceStrip(this, DESIGN_W / 2, 1240, save)
   }
 
   /**
@@ -284,6 +416,9 @@ export class LevelSelectScene extends Phaser.Scene {
     // early return because content.y also moves under the finger and under L5's edge springs, neither of
     // which sets scrollVel; syncWindow() is a few comparisons when the window hasn't turned over.
     this.syncWindow()
+    // L8 · and the scroll chrome (rail thumb + RECALL visibility) for the same reason — it must track
+    // the finger and the springs, not just the coast. One float compare when nothing has moved.
+    this.updateScrollChrome()
     // L1 flick inertia (unchanged) — coast the masked grid under friction after a release with momentum.
     if (this.scrollVel === 0 || !this.scrollContent) return
     const raw = this.scrollContent.y + this.scrollVel
@@ -319,15 +454,19 @@ export class LevelSelectScene extends Phaser.Scene {
    * equality test. `cascade` is the create() entry: it forces a build and gives the opening rows their
    * §L entrance ripple; rows minted later during a scroll appear at rest, since a chip popping in under
    * a moving finger would read as a stutter rather than a flourish.
+   *
+   * L7: the row span comes from `rowIndexAt` now that the chapter bands make the pitch non-uniform.
+   * It is still closed-form (the block pitch is constant) and still conservative at both edges, so the
+   * cost and the guarantee are exactly what they were.
    */
   private syncWindow(cascade = false): void {
     const grid = this.grid
     if (!grid) return
-    // Row `r` spans content-y [rowTop, rowTop + CHIP] where rowTop = viewTop + TOP_PAD + r*ROW_H; the
-    // mask shows content-y [viewTop - y, viewBottom - y]. Solve that overlap for r, then pad.
+    // The mask shows content-local y ∈ [viewTop - content.y, viewBottom - content.y]; ask which rows
+    // own those two y's and pad the span by the buffer either side.
     const y = grid.content.y
-    const first = Phaser.Math.Clamp(Math.ceil((-y - TOP_PAD - CHIP) / ROW_H) - ROW_BUFFER, 0, grid.rows - 1)
-    const last = Phaser.Math.Clamp(Math.floor((grid.viewBottom - grid.viewTop - TOP_PAD - y) / ROW_H) + ROW_BUFFER, 0, grid.rows - 1)
+    const first = Phaser.Math.Clamp(rowIndexAt(grid.viewTop, grid.viewTop - y) - ROW_BUFFER, 0, grid.rows - 1)
+    const last = Phaser.Math.Clamp(rowIndexAt(grid.viewTop, grid.viewBottom - y) + ROW_BUFFER, 0, grid.rows - 1)
     if (!cascade && first === this.winFirst && last === this.winLast) return
     this.winFirst = first
     this.winLast = last
@@ -347,16 +486,23 @@ export class LevelSelectScene extends Phaser.Scene {
    * rest. Either way the current "you are here" chip picks its breathe back up — after the pop when
    * there is one, immediately when there isn't — so scrolling the frontier off screen and back doesn't
    * leave it inert. Reduced motion (§E8) takes neither the pop nor the breathe.
+   *
+   * L7: a row that OPENS a chapter also carries that chapter's ribbon. Hanging it off the row keeps
+   * every per-chapter object inside the window's build/destroy ledger — nothing about the chapter
+   * layer is built for the 297 levels you can't see. A chapter is two rows, so its ribbon can only
+   * outlive its own visibility: for the ribbon's row to be retired while its partner row is still
+   * built, the partner must already be at least `ROW_BUFFER` rows above the viewport.
    */
   private buildRow(row: number, cascade: boolean): Phaser.GameObjects.Container {
     const grid = this.grid!
     const reduced = this.prefersReducedMotion()
     const node = this.add.container(0, 0)
+    if (row % CHAPTER_ROWS === 0) node.add(this.buildChapterRibbon(row / CHAPTER_ROWS))
     for (let col = 0; col < GRID_COLS; col++) {
       const n = row * GRID_COLS + col + 1
       if (n > LEVEL_COUNT) break
       const cx = grid.startX + col * (CHIP + GAP) + CHIP / 2
-      const cy = grid.viewTop + TOP_PAD + row * ROW_H + CHIP / 2
+      const cy = rowTop(grid.viewTop, row) + CHIP / 2
       const chip = this.buildChip(n, cx, cy)
       node.add(chip)
       const startPulse = n === grid.unlocked && !reduced ? () => this.startChipPulse(chip) : undefined
@@ -378,6 +524,54 @@ export class LevelSelectScene extends Phaser.Scene {
     }
     grid.content.add(node)
     return node
+  }
+
+  /**
+   * L7 · one chapter ribbon — the labelled gate between decades, seated in the band `rowTop` reserves
+   * above each chapter's first row. Three states, because a chapter is only ever one of three things
+   * to the player, and each answers a different question:
+   *   now    — the chapter you are standing in: the real-metal `goldFace` plate, so the eye lands on
+   *            your position the moment the screen paints, before you have read a single number.
+   *   done   — behind you: a quiet cream plate carrying the mastery you took out of it (★ earned/max),
+   *            which is the only reason to look back at a cleared decade.
+   *   ahead  — not reached: dimmed, and it shows the LEVEL RANGE instead of a 0/30 tally, because
+   *            "141–150" is what you want from a chapter flying past under a flick, and a zero score
+   *            for a decade you were never offered is just a scolding.
+   * One baked plate texture per (theme, state) — every ribbon on screen shares three of them — plus
+   * two Texts. Static: no tween, so reduced motion needs no branch here.
+   */
+  private buildChapterRibbon(chapter: number): Phaser.GameObjects.Container {
+    const grid = this.grid!
+    const T = getTheme()
+    const first = chapter * CHAPTER_LEVELS + 1
+    const last = Math.min(LEVEL_COUNT, first + CHAPTER_LEVELS - 1)
+    const state: 'now' | 'done' | 'ahead' = grid.unlocked > last ? 'done' : grid.unlocked >= first ? 'now' : 'ahead'
+    const container = this.add.container(DESIGN_W / 2, chapterTop(grid.viewTop, chapter) + 5 + RIBBON_H / 2)
+    const plate = this.add.image(0, 0, this.chapterPlate(state))
+    if (state === 'ahead') plate.setAlpha(0.7)
+    container.add(plate)
+    const ink = state === 'now' ? T.goldPillText : state === 'done' ? T.goldText : T.inkFaint
+    container.add(
+      this.add
+        .text(-GRID_W / 2 + 22, 0, `CHAPTER ${chapter + 1}`, { fontFamily: FONT, fontSize: '19px', fontStyle: '900', color: ink })
+        .setOrigin(0, 0.5)
+        .setLetterSpacing(2)
+    )
+    let earned = 0
+    if (state !== 'ahead') {
+      for (let n = first; n <= last; n++) earned += Math.min(3, grid.stars[n] ?? 0)
+    }
+    container.add(
+      this.add
+        .text(GRID_W / 2 - 22, 0, state === 'ahead' ? `${first}–${last}` : `★${earned}/${(last - first + 1) * 3}`, {
+          fontFamily: FONT,
+          fontSize: '19px',
+          fontStyle: '900',
+          color: ink,
+        })
+        .setOrigin(1, 0.5)
+    )
+    return container
   }
 
   /**
@@ -450,6 +644,307 @@ export class LevelSelectScene extends Phaser.Scene {
     this.currentChipPulse = this.tweens.add({ targets: container, scale: 1.06, duration: 600, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' })
   }
 
+  // ───────────────────────────────────────────────────────────────────────────────────────────────
+  // Baked plates. Prime directive #1 (cookbook §1): a Graphics is NOT baked — Phaser re-tessellates
+  // its whole command buffer every frame and hands it its own draw call, so the old one-Graphics-per-
+  // chip grid paid ~35 tessellations + ~35 batch breaks every frame for art that never changes. There
+  // are only six distinct chip faces and three ribbon faces on this screen, so each is drawn ONCE into
+  // the global TextureManager and every chip that wears it is an Image sharing that texture — the
+  // whole grid collapses into a handful of batched quads with zero per-frame geometry work.
+  // ───────────────────────────────────────────────────────────────────────────────────────────────
+
+  /** Bake `draw` into a cached texture (keyed by caller) and return the key. No-op once baked. */
+  private bakeTexture(key: string, w: number, h: number, draw: (g: Phaser.GameObjects.Graphics) => void): string {
+    if (this.textures.exists(key)) return key
+    const g = this.make.graphics({ x: 0, y: 0 }, false)
+    draw(g)
+    g.generateTexture(key, w, h)
+    g.destroy()
+    return key
+  }
+
+  /**
+   * One chip face. Every plate casts its contact shadow straight DOWN, because the whole UI has one
+   * key light (cookbook §4) — disagreeing shadow directions are the tell of cheap UI. Radii are shared
+   * between a plate's fill and its strokes (§2b): two stacked rounded shapes that meet at an edge must
+   * agree, or the darker one pokes past the lighter one as a "horn" at every corner on a DPR-3 screen.
+   */
+  private chipFace(kind: ChipKind): string {
+    const T = getTheme()
+    // The current chip's plate is drawn CURRENT_GROW bigger so "you are here" wins on size as well as
+    // colour; its hit zone deliberately stays one cell (the extra 4px a side is art overhang, and
+    // growing the zone would mean special-casing the viewport clip that keeps chips off the back button).
+    const w = CHIP + (kind === 'current' ? CURRENT_GROW : 0)
+    const size = w + CHIP_PAD * 2
+    return this.bakeTexture(`lvlchip:${T.id}:${kind}`, size, size, g => {
+      const x = CHIP_PAD
+      const y = CHIP_PAD
+      const r = CHIP_R
+      g.fillStyle(T.shadow, kind === 'locked' ? 0.07 : kind === 'current' ? 0.18 : 0.12)
+      g.fillRoundedRect(x + 2, y + 5, w, w, r)
+      if (kind === 'current') {
+        // L9 · "you are here". A cleared chip and the current chip used to be the same white card with
+        // a slightly thicker gold hairline — on a screen where every tenth chip already wears a full
+        // gold frame, the milestone next door read as the more important one. So the current level is
+        // the only GOLD-BODIED chip on the ladder: a real-metal frame (wider than MILESTONE_FRAME so
+        // the two can't be confused), a warm lit face rather than the flat white of a cleared level,
+        // and a bright inner rim. Size, colour and — with the halo and breathe buildChip adds — light
+        // and motion all point at it.
+        goldFace(g, x, y, w, w, T, r)
+        const f = CURRENT_FRAME
+        g.fillStyle(T.cardFillWarm, 1)
+        g.fillRoundedRect(x + f, y + f, w - f * 2, w - f * 2, r - 6)
+        g.fillStyle(T.glossHi, 0.5)
+        g.fillRoundedRect(x + f + 4, y + f + 3, w - f * 2 - 8, (w - f * 2) * 0.34, r - 10)
+        g.lineStyle(2.5, T.goldBright, 0.9)
+        g.strokeRoundedRect(x + f - 1.5, y + f - 1.5, w - f * 2 + 3, w - f * 2 + 3, r - 5)
+        g.lineStyle(4, T.goldDeep, 1)
+        g.strokeRoundedRect(x, y, w, w, r)
+      } else if (kind === 'milestone' || kind === 'lockedMilestone') {
+        // L2: gilded landmark face — a baked `goldFace` frame (E7 real-metal, brightest along the top
+        // crown) with a face inset so the gold reads as an ornamental border. A LOCKED landmark keeps
+        // the gold (muted by the instance alpha buildChip sets) so upcoming waypoints stay visible on
+        // the map — the "see where the journey leads" payoff. Static, theme-tokened.
+        goldFace(g, x, y, w, w, T, r)
+        g.fillStyle(kind === 'milestone' ? 0xffffff : 0xefe8da, 1)
+        g.fillRoundedRect(x + MILESTONE_FRAME, y + MILESTONE_FRAME, w - MILESTONE_FRAME * 2, w - MILESTONE_FRAME * 2, 14)
+        g.lineStyle(kind === 'milestone' ? 3 : 2, T.goldBezel, kind === 'milestone' ? 1 : 0.7)
+        g.strokeRoundedRect(x, y, w, w, r)
+      } else if (kind === 'cleared') {
+        g.fillStyle(0xffffff, 1)
+        g.fillRoundedRect(x, y, w, w, r)
+        g.lineStyle(2, T.border, 1)
+        g.strokeRoundedRect(x, y, w, w, r)
+      } else if (kind === 'next') {
+        // L9 · the ONE locked level you can actually reach next. It gets a warm, glossed, gold-bezelled
+        // face — most of the way to a real card — so the run ahead opens with an invitation instead of
+        // the wall of identical grey the rest of the locked ladder used to be.
+        g.fillStyle(T.cardFillWarm, 1)
+        g.fillRoundedRect(x, y, w, w, r)
+        g.fillStyle(T.glossHi, 0.45)
+        g.fillRoundedRect(x + 5, y + 4, w - 10, w * 0.32, r - 6)
+        g.lineStyle(2.5, T.goldBezel, 0.95)
+        g.strokeRoundedRect(x, y, w, w, r)
+      } else {
+        // L9 · locked: a RECESSED well rather than a dead flat square — a dark inner ring at the top
+        // edge and a light bounce along the bottom, the cookbook §3 inner-shadow recipe. It costs two
+        // strokes at bake time and it is the difference between "empty tile" and "socket waiting for a
+        // chip", which is the read a locked rung on a journey map wants.
+        g.fillStyle(0xefe8da, 1)
+        g.fillRoundedRect(x, y, w, w, r)
+        g.lineStyle(3, T.shadow, 0.1)
+        g.strokeRoundedRect(x + 1.5, y + 1.5, w - 3, w - 3, r - 1.5)
+        g.fillStyle(T.glossHi, 0.4)
+        g.fillRoundedRect(x + 9, y + w - 9, w - 18, 4, 2)
+        g.lineStyle(1.5, T.border, 0.9)
+        g.strokeRoundedRect(x, y, w, w, r)
+      }
+    })
+  }
+
+  /** One chapter-ribbon plate per state — see `buildChapterRibbon` for what each state means. */
+  private chapterPlate(state: 'now' | 'done' | 'ahead'): string {
+    const T = getTheme()
+    const r = RIBBON_H / 2 - 1 // §2c: never exactly half the smallest side
+    return this.bakeTexture(`lvlchap:${T.id}:${state}`, GRID_W + CHIP_PAD * 2, RIBBON_H + CHIP_PAD * 2, g => {
+      const x = CHIP_PAD
+      const y = CHIP_PAD
+      g.fillStyle(T.shadow, 0.09)
+      g.fillRoundedRect(x, y + 3, GRID_W, RIBBON_H, r)
+      if (state === 'now') {
+        goldFace(g, x, y, GRID_W, RIBBON_H, T, r)
+        g.lineStyle(2, T.goldDeep, 1)
+      } else {
+        g.fillStyle(state === 'done' ? T.cardFillWarm : T.cardFillAlt, 1)
+        g.fillRoundedRect(x, y, GRID_W, RIBBON_H, r)
+        g.fillStyle(T.glossHi, state === 'done' ? 0.45 : 0.25)
+        g.fillRoundedRect(x + 5, y + 3, GRID_W - 10, RIBBON_H * 0.34, r * 0.6)
+        g.lineStyle(1.5, state === 'done' ? T.goldBezel : T.border, 1)
+      }
+      g.strokeRoundedRect(x, y, GRID_W, RIBBON_H, r)
+    })
+  }
+
+  /**
+   * The banked-star read-out for the header — the cream/gold readout face the chip balance and streak
+   * badge already wear, so the two accumulated resources in the app look like siblings. Deliberately
+   * NOT interactive: it sits in the same band as the ‹ back button, and a readout that never claims a
+   * tap can never take one from it.
+   */
+  private addStarTally(x: number, y: number, stars: number): void {
+    const T = getTheme()
+    const w = 140
+    const h = 46
+    const key = this.bakeTexture(`lvlstars:${T.id}:${w}x${h}`, w + CHIP_PAD * 2, h + CHIP_PAD * 2, g => {
+      const px = CHIP_PAD
+      const py = CHIP_PAD
+      const r = h / 2 - 1
+      g.fillStyle(T.shadow, 0.1)
+      g.fillRoundedRect(px, py + 3, w, h, r)
+      g.fillStyle(T.cardFillWarm, 1)
+      g.fillRoundedRect(px, py, w, h, r)
+      g.fillStyle(T.glossHi, 0.5)
+      g.fillRoundedRect(px + 5, py + 3, w - 10, h * 0.34, r * 0.6)
+      g.lineStyle(2, T.goldBezel, 1)
+      g.strokeRoundedRect(px, py, w, h, r)
+    })
+    const container = this.add.container(x, y).setDepth(50)
+    container.add(this.add.image(0, 0, key))
+    container.add(this.add.image(-w / 2 + 28, 0, 'star').setDisplaySize(28, 28))
+    container.add(
+      this.add
+        .text(w / 2 - 18, 1, stars.toLocaleString(), { fontFamily: FONT, fontSize: '25px', fontStyle: '900', color: T.goldText })
+        .setOrigin(1, 0.5)
+    )
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────────────────────────
+  // L8 · scroll chrome — "how far through am I" and "put me back".
+  // ───────────────────────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * A slim rail + thumb pinned in the right margin (the grid is 612 wide in a 720 box, so this costs
+   * nothing anyone was using). Sixty rows scroll past with no sense of scale otherwise; the thumb is
+   * the only thing on the screen that answers "how much of three hundred levels is behind me". Two
+   * Images off two baked textures, and the only per-frame work is one `y` assignment — a Graphics
+   * would have re-tessellated a rounded rect every frame to draw six pixels of hairline.
+   */
+  private addScrollRail(viewTop: number, viewBottom: number, contentBottom: number): void {
+    const view = viewBottom - viewTop
+    const content = contentBottom - viewTop
+    if (content <= view) return // the whole ladder fits — no rail to draw
+    const T = getTheme()
+    const w = 7
+    const railH = view - 24
+    const thumbH = Math.max(56, Math.round((railH * view) / content))
+    const bake = (h: number): string =>
+      this.bakeTexture(`lvlrail:${T.id}:${w}x${h}`, w, h, g => {
+        g.fillStyle(0xffffff, 1)
+        g.fillRoundedRect(0, 0, w, h, w / 2 - 0.5)
+      })
+    const x = DESIGN_W - 26
+    this.railTop = viewTop + 12 + thumbH / 2
+    this.railTravel = railH - thumbH
+    this.add.image(x, viewTop + 12 + railH / 2, bake(railH)).setTint(T.border).setAlpha(0.55).setDepth(45)
+    this.railThumb = this.add.image(x, this.railTop, bake(thumbH)).setTint(T.gold).setAlpha(0.9).setDepth(45)
+  }
+
+  /**
+   * The RECALL pill — one tap back to where you actually are. Scrolling away from your level in a
+   * 300-rung list used to be a one-way trip: the only way back was to drag until you spotted the gold
+   * ring again, which on a fast flick means hunting through several chapters. It floats over the
+   * bottom of the grid and only exists while the current chip is off screen, so it is never furniture.
+   *
+   * Depth 50 puts it in the scene-chrome band, above the grid for drawing AND for input, and its zone
+   * comes from `addPillButton` already grown to the §E8 floor. While hidden it is `visible = false`,
+   * which takes it out of Phaser's hit test entirely — an invisible button that still eats taps over
+   * five level chips would be the same class of bug the chip hit-area clip exists to fix.
+   */
+  private addRecallPill(viewBottom: number, level: number): void {
+    const pill = addPillButton(this, DESIGN_W / 2, viewBottom - 56, 268, 62, `BACK TO ${level}`, GOLD_PILL, () =>
+      this.scrollToCurrent()
+    )
+    pill.setDepth(50).setVisible(false).setAlpha(0).setScale(0.8)
+    this.recall = pill
+    this.recallShown = false
+  }
+
+  /**
+   * L8 · repaint the scroll chrome for wherever the grid has landed. Early-outs on an unchanged
+   * `content.y`, which is the common frame (the list is at rest far more often than it is moving), so
+   * a still screen pays one float compare. Pure transform + a latched visibility toggle: no draws.
+   */
+  private updateScrollChrome(): void {
+    const grid = this.grid
+    if (!grid) return
+    const y = grid.content.y
+    if (y === this.chromeY) return
+    this.chromeY = y
+    if (this.railThumb) {
+      // content.y walks [minScroll, 0]; 0 is the top of the ladder, minScroll the bottom.
+      this.railThumb.y = this.railTop + this.railTravel * (this.minScroll < 0 ? Phaser.Math.Clamp(y / this.minScroll, 0, 1) : 0)
+    }
+    if (this.recall) {
+      // "Off screen" means the current chip's band has left the mask — the same [viewTop, viewBottom]
+      // the mask and the chip hit-area clip use, with a small margin so a chip peeking in by a few
+      // pixels doesn't flicker the button on and off at the edge.
+      const top = rowTop(grid.viewTop, this.currentRow) + y
+      this.setRecallVisible(top + CHIP < grid.viewTop + 24 || top > grid.viewBottom - 24)
+    }
+  }
+
+  /**
+   * Show/hide the RECALL pill, latched so the tween only fires on a real state change. It pops in with
+   * the house eager overshoot and leaves quietly; reduced motion (§E8) gets the same two states with
+   * no travel at all. Killing the previous tween first is what stops a fast flick past the frontier
+   * from stacking a show and a hide on the same target.
+   */
+  private setRecallVisible(show: boolean): void {
+    const pill = this.recall
+    if (!pill || show === this.recallShown) return
+    this.recallShown = show
+    this.tweens.killTweensOf(pill)
+    if (this.prefersReducedMotion()) {
+      pill.setVisible(show).setAlpha(show ? 1 : 0).setScale(show ? 1 : 0.8)
+      return
+    }
+    if (show) pill.setVisible(true)
+    this.tweens.add({
+      targets: pill,
+      alpha: show ? 1 : 0,
+      scale: show ? 1 : 0.8,
+      duration: show ? D.pop : D.quick,
+      ease: show ? backOut(OVERSHOOT.pop) : E.exit,
+      onComplete: () => {
+        if (!show) pill.setVisible(false)
+      },
+    })
+  }
+
+  /**
+   * Glide the grid back to the offset the screen opened at — the one that frames the current level.
+   * Both in-flight scroll animations are stopped first and the coast velocity is zeroed, so the glide
+   * is the only thing writing `content.y`; `pointerdown` stops this tween in turn, so the finger can
+   * always take the list back mid-flight. Reduced motion (§E8) jumps straight there.
+   */
+  private scrollToCurrent(): void {
+    const content = this.scrollContent
+    if (!content) return
+    this.scrollVel = 0
+    this.edgeSpring?.stop()
+    this.edgeSpring = undefined
+    this.scrollTween?.stop()
+    if (this.prefersReducedMotion()) {
+      content.y = this.homeScrollY
+      this.scrollTween = undefined
+      return
+    }
+    this.scrollTween = this.tweens.add({ targets: content, y: this.homeScrollY, duration: 420, ease: E.glide })
+  }
+
+  /**
+   * §E8 / cookbook §9 touch-target floor, applied at the CALL SITE. `ui.ts` grows every pill and chip
+   * zone to `MIN_HIT` (84 design px ≈ 44pt) when it builds them; the shared standings strips predate
+   * that rule and are authored at their 52px art height (~28pt). They are one component shared with
+   * Home, so the fix belongs on the handle they hand back rather than in a fork: walk the returned
+   * tree and REPLACE any interactive rectangle shorter than the floor with a taller one — the
+   * invisible hit rect grows, the art does not move a pixel (which is the whole recipe).
+   *
+   * A fresh `Geom.Rectangle` rather than an in-place edit, because a Shape's `input.hitArea` can be
+   * the same object as the geometry it renders from, and quietly resizing the drawn strip would be a
+   * very confusing bug to chase. `bias` pushes the grown rect down for a strip that sits under another
+   * control (see the ENDLESS module).
+   */
+  private growTouchTarget(root: Phaser.GameObjects.GameObject, bias = 0, min = MIN_TOUCH): void {
+    const input = root.input
+    const area = input?.hitArea as unknown
+    if (input && area instanceof Phaser.Geom.Rectangle && area.height < min) {
+      input.hitArea = new Phaser.Geom.Rectangle(area.x, area.y - (min - area.height) / 2 + bias, area.width, min)
+    }
+    const kids = (root as Phaser.GameObjects.Container).list
+    if (kids) for (const child of kids) this.growTouchTarget(child, bias, min)
+  }
+
   /**
    * L5 · selection acknowledgement — the moment a chip tap commits, it springs up past rest with an
    * eager overshoot (a hair bigger on the current "you are here" chip) and, unless flashing is
@@ -485,21 +980,27 @@ export class LevelSelectScene extends Phaser.Scene {
     // this chip ends the row (col 4), in which case it wraps down to the next row's start.
     const nextRight = (n - 1) % GRID_COLS < GRID_COLS - 1
     // A single chevron baked around local (0,0) so a 90° turn re-aims it from "right" to "down".
-    const pts = [new Phaser.Math.Vector2(-7, -12), new Phaser.Math.Vector2(9, 0), new Phaser.Math.Vector2(-7, 12)]
+    // Sized to CLEAR the gutter: stroke width included, the mark spans ~16px against an 18px gap. At
+    // the old (-7,±12)→(9,0) with an 8px backing it measured ~20px and could not fit whatever it was
+    // offset to, so some of it was always under the neighbouring chip.
+    const pts = [new Phaser.Math.Vector2(-5, -10), new Phaser.Math.Vector2(6, 0), new Phaser.Math.Vector2(-5, 10)]
     const chev = this.add.graphics()
-    chev.lineStyle(8, T.goldDarkest, 0.5) // soft dark backing so the cue stays legible on the cream face
+    chev.lineStyle(6, T.goldDarkest, 0.5) // soft dark backing so the cue stays legible on the cream face
     chev.strokePoints(pts, false)
-    chev.lineStyle(5, T.goldBright, 0.95)
+    chev.lineStyle(4, T.goldBright, 0.95)
     chev.strokePoints(pts, false)
-    if (nextRight) chev.setPosition(CHIP / 2 + 13, 0)
-    else chev.setPosition(0, CHIP / 2 + 13).setRotation(Math.PI / 2)
+    // Seated in the GUTTER between cells (half of GAP past the chip edge) and bobbing only 4px, so it
+    // reads as an arrow in clear air. At the old +13/+6 it started 4px inside the neighbouring chip and
+    // the bob pushed it further under it — the cue was half-hidden behind the thing it pointed at.
+    if (nextRight) chev.setPosition(CHIP / 2 + GAP / 2, 0)
+    else chev.setPosition(0, CHIP / 2 + GAP / 2).setRotation(Math.PI / 2)
     container.add(chev)
     // Gentle "keep going" nudge toward the next chip — gated OFF under reduced motion (static arrow).
     if (this.prefersReducedMotion()) return
     this.tweens.add({
       targets: chev,
-      x: chev.x + (nextRight ? 6 : 0),
-      y: chev.y + (nextRight ? 0 : 6),
+      x: chev.x + (nextRight ? 4 : 0),
+      y: chev.y + (nextRight ? 0 : 4),
       duration: 640,
       yoyo: true,
       repeat: -1,
@@ -520,6 +1021,9 @@ export class LevelSelectScene extends Phaser.Scene {
    * the window never arrives ahead of its path), and the whole thing is redrawn when the window turns
    * over. Stamping all 300 levels put ~2,400 filled circles in one Graphics — a single draw call, but
    * one whose geometry was re-tessellated every frame, and on its own about as costly as all 300 chips.
+   *
+   * L7: the wrap at a chapter boundary now falls the extra `CHAPTER_GAP`, and passes BEHIND the ribbon
+   * (rows are added after the trail) — the path ducks under the signpost, which is what a map does.
    */
   private drawTrail(firstRow: number, lastRow: number): void {
     const grid = this.grid
@@ -528,12 +1032,12 @@ export class LevelSelectScene extends Phaser.Scene {
     const g = grid.trail
     g.clear()
     const { startX, viewTop, unlocked } = grid
-    // Chip centre in content-local space — the exact cx/cy formula buildChip uses, so the trail threads
-    // the real grid geometry (GRID_COLS columns on a CHIP+GAP pitch, ROW_H rows).
+    // Chip centre in content-local space — the exact cx/cy buildChip uses (GRID_COLS columns on a
+    // CHIP+GAP pitch, rows placed by the shared `rowTop`), so the trail threads the real grid geometry.
     const centre = (n: number): Phaser.Math.Vector2 => {
       const row = Math.floor((n - 1) / GRID_COLS)
       const col = (n - 1) % GRID_COLS
-      return new Phaser.Math.Vector2(startX + col * (CHIP + GAP) + CHIP / 2, viewTop + TOP_PAD + row * ROW_H + CHIP / 2)
+      return new Phaser.Math.Vector2(startX + col * (CHIP + GAP) + CHIP / 2, rowTop(viewTop, row) + CHIP / 2)
     }
     // One faint dot; travelled dots glow gold, the rest sit muted (colour + alpha reset per stamp so a
     // single Graphics carries both tones). `fillEllipse` at TRAIL_DOT_SIDES rather than `fillCircle`,
@@ -578,48 +1082,47 @@ export class LevelSelectScene extends Phaser.Scene {
     const stars = this.grid!.stars[n] ?? 0
     const playable = n <= unlocked
     const current = n === unlocked
-    const milestone = n % 10 === 0 // L2: every 10th level is a gilded "landmark" on the journey map
+    const nextUp = n === unlocked + 1
+    const milestone = n % CHAPTER_LEVELS === 0 // L2: every 10th level closes a chapter — a gilded landmark
     const T = getTheme()
     const container = this.add.container(cx, cy)
-    const g = this.add.graphics()
-    if (playable) {
-      g.fillStyle(T.shadow, 0.12)
-      g.fillRoundedRect(-CHIP / 2 + 2, -CHIP / 2 + 5, CHIP, CHIP, 20)
-      if (milestone) {
-        // L2: gilded landmark face — a baked `goldFace` frame (E7 real-metal, brightest along the top
-        // crown) with a cream face inset so the gold reads as an ornamental border. Static, theme-tokened.
-        goldFace(g, -CHIP / 2, -CHIP / 2, CHIP, CHIP, T, 20)
-        g.fillStyle(0xffffff, 1)
-        g.fillRoundedRect(-CHIP / 2 + MILESTONE_FRAME, -CHIP / 2 + MILESTONE_FRAME, CHIP - MILESTONE_FRAME * 2, CHIP - MILESTONE_FRAME * 2, 14)
-        g.lineStyle(current ? 4 : 3, current ? T.gold : T.goldBezel, 1)
-      } else {
-        g.fillStyle(0xffffff, 1)
-        g.fillRoundedRect(-CHIP / 2, -CHIP / 2, CHIP, CHIP, 20)
-        g.lineStyle(current ? 4 : 2, current ? T.gold : T.border, 1)
-      }
-      g.strokeRoundedRect(-CHIP / 2, -CHIP / 2, CHIP, CHIP, 20)
-    } else if (milestone) {
-      // L2: a locked landmark still reads gold (muted) so upcoming waypoints are visible on the map —
-      // the "see where the journey leads" payoff. Cream face inset over a dimmed `goldFace` frame.
-      goldFace(g, -CHIP / 2, -CHIP / 2, CHIP, CHIP, T, 20)
-      g.fillStyle(0xefe8da, 1)
-      g.fillRoundedRect(-CHIP / 2 + MILESTONE_FRAME, -CHIP / 2 + MILESTONE_FRAME, CHIP - MILESTONE_FRAME * 2, CHIP - MILESTONE_FRAME * 2, 14)
-      g.lineStyle(2, T.goldBezel, 0.7)
-      g.strokeRoundedRect(-CHIP / 2, -CHIP / 2, CHIP, CHIP, 20)
-      g.setAlpha(0.75) // subordinate to the current chip — a landmark ahead, not yet reached
-    } else {
-      g.fillStyle(0xefe8da, 1)
-      g.fillRoundedRect(-CHIP / 2, -CHIP / 2, CHIP, CHIP, 20)
+    // L9: a warm halo UNDER the current chip. Light is the cue that survives being read at a glance on
+    // a field of 35 cream cards, and it costs one ADD quad off a texture the backdrop already baked.
+    // It rides inside the container, so the breathe scales it with the chip for free. Governor-gated:
+    // the low tier is the one place a full-size additive blend is worth skipping.
+    if (current && quality.tier() !== 'low' && this.textures.exists('bgglow')) {
+      container.add(
+        this.add
+          .image(0, 0, 'bgglow')
+          .setDisplaySize(CHIP * 2, CHIP * 2)
+          .setTint(T.gold)
+          .setBlendMode(Phaser.BlendModes.ADD)
+          .setAlpha(0.32)
+      )
     }
-    container.add(g)
+    const kind: ChipKind = current
+      ? 'current'
+      : milestone
+        ? playable
+          ? 'milestone'
+          : 'lockedMilestone'
+        : playable
+          ? 'cleared'
+          : nextUp
+            ? 'next'
+            : 'locked'
+    const face = this.add.image(0, 0, this.chipFace(kind))
+    if (kind === 'lockedMilestone') face.setAlpha(0.78) // subordinate to the current chip — a landmark ahead
+    container.add(face)
 
     if (playable) {
       const hasStars = stars > 0
       const numText = this.add
-        // Milestones always carry a tally below, so their number rides high like a starred chip's.
+        // Milestones always carry a tally below, so their number rides high like a starred chip's. The
+        // current chip has no stars yet and its number sits centred on the gold face.
         .text(0, milestone || hasStars ? -14 : 0, String(n), {
           fontFamily: FONT,
-          fontSize: '40px',
+          fontSize: current ? '42px' : '40px',
           fontStyle: '900',
           color: current ? T.goldText : T.ink,
         })
@@ -711,8 +1214,23 @@ export class LevelSelectScene extends Phaser.Scene {
       })
       container.add(zone)
     } else {
-      const lock = this.add.image(0, 0, 'lock').setAlpha(0.55)
-      lock.setDisplaySize(36, 36)
+      // L9 · a locked chip now says WHICH level it is. It never did: 250 of the 300 rungs were
+      // anonymous grey squares, so "how far is 63 from here" was unanswerable and the run ahead had
+      // nothing to aim at. The number is ghosted and the padlock shrinks under it — still plainly not
+      // playable, but now part of the map. The one level you can reach next (and every landmark) takes
+      // the gold ink, because those are the two things worth looking forward to.
+      const num = this.add
+        .text(0, -12, String(n), {
+          fontFamily: FONT,
+          fontSize: '34px',
+          fontStyle: '900',
+          color: nextUp || milestone ? T.goldText : T.inkFaint,
+        })
+        .setOrigin(0.5)
+        .setAlpha(nextUp ? 1 : 0.78)
+      container.add(num)
+      const lock = this.add.image(0, 28, 'lock').setAlpha(nextUp ? 0.5 : 0.42)
+      lock.setDisplaySize(24, 24)
       container.add(lock)
     }
     return container
