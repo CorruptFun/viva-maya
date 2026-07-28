@@ -118,10 +118,14 @@ async function flushPush(): Promise<void> {
       { user_id: session.userId, data, updated_at: new Date().toISOString() },
       { onConflict: 'user_id' }
     )
-    // Weekly-race mirror: after the save lands, mirror its endless best to the shared leaderboard
-    // (core/leaderboard.ts — no-ops unless this week has a score; lazy import keeps the dependency
-    // one-directional and out of the boot path). Fire-and-forget: the race must never block a save.
-    void import('./leaderboard').then(m => m.maybeSubmitEndless(data))
+    // Leaderboard mirrors: after the save lands, mirror BOTH boards from the same push — the weekly
+    // endless best and the all-time level ladder (core/leaderboard.ts — each no-ops unless it has
+    // something to say; lazy import keeps the dependency one-directional and out of the boot path).
+    // Fire-and-forget: a board must never block or fail a save.
+    void import('./leaderboard').then(m => {
+      void m.maybeSubmitEndless(data)
+      void m.maybeSubmitLevels(data)
+    })
     // Referral bookkeeping piggybacks the same beat: register a stashed invite, then (ordered —
     // a row minted this push must be visible to the qualify check) stamp qualification once the
     // save is past the qualify level. Both are session-memoized no-ops at steady state and obey

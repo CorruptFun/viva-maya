@@ -5,7 +5,7 @@ import { endlessUnlocked } from '../core/endless'
 import { LEVEL_COUNT } from '../core/levels'
 import { loadSave } from '../core/save'
 import { addCasinoBackdrop } from '../view/background'
-import { addWeeklyRaceStrip } from '../view/leaderboardpanel'
+import { addLevelRaceStrip, addWeeklyRaceStrip } from '../view/leaderboardpanel'
 import { D, E, OVERSHOOT, backOut } from '../view/motion'
 import { quality } from '../view/quality'
 import { getTheme, prefersReducedMotion, reduceFlashing } from '../view/theme'
@@ -259,15 +259,13 @@ export class LevelSelectScene extends Phaser.Scene {
       addPillButton(this, DESIGN_W / 2, 1104, 420, 68, 'ENDLESS', ROSE_PILL, () => startScene(this, 'game', { endless: true }))
       addWeeklyRaceStrip(this, DESIGN_W / 2, 1176, save)
     }
-    this.add
-      .text(DESIGN_W / 2, 1240, `BEST  ${save.best.toLocaleString()}`, {
-        fontFamily: FONT,
-        fontSize: '26px',
-        fontStyle: '900',
-        color: getTheme().goldText,
-      })
-      .setOrigin(0.5)
-      .setLetterSpacing(2)
+    // The LEVEL RACE strip takes the slot the static `BEST  N` caption held. That caption was the last
+    // dead text on this screen — the exact problem the weekly strip was introduced to fix here — and
+    // it was a DUPLICATE besides: HomeScene already prints `Level N · best X` from the same
+    // `save.best`. The ladder is the more relevant number on the level screen anyway, and unlike the
+    // weekly strip it renders whether or not ENDLESS is unlocked, because campaign progress is
+    // something every player has from level one.
+    addLevelRaceStrip(this, DESIGN_W / 2, 1240, save)
   }
 
   /**

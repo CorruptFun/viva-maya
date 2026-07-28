@@ -15,8 +15,10 @@ import { addCasinoBackdrop } from '../view/background'
 import {
   addWeeklyRaceLockedModule,
   addWeeklyRaceModule,
+  devLevelOpts,
   devRaceOpts,
   devSeedRaceLine,
+  openLevelRacePanel,
   openWeeklyRacePanel,
 } from '../view/leaderboardpanel'
 import { addScreenGloss } from '../view/fx'
@@ -159,6 +161,11 @@ export class HomeScene extends Phaser.Scene {
     }
     if (import.meta.env.DEV && new URLSearchParams(location.search).has('raceline')) {
       devSeedRaceLine(new URLSearchParams(location.search).get('raceline'))
+    }
+    // `?levels=<variant>` — the LEVEL RACE ladder, same fixture variants as `?race`. Separate knob
+    // because the two boards render through one panel and this is what proves the mode branch.
+    if (import.meta.env.DEV && new URLSearchParams(location.search).has('levels')) {
+      openLevelRacePanel(this, devLevelOpts(new URLSearchParams(location.search).get('levels')))
     }
 
     // §E14 first-run advertisement: pulse the ? help chip ONCE for a truly-new player (seenIntro

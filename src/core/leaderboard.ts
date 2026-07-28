@@ -31,12 +31,20 @@ import type { SaveData } from './save'
  * and the email local-part never reaches the table at all.
  */
 
-/** One leaderboard row, ready for display. `you` marks the signed-in player's row. */
+/**
+ * One leaderboard row, ready for display. `you` marks the signed-in player's row.
+ *
+ * `score` is the sort key and the default right-hand readout. `valueText` overrides only the
+ * READOUT — the level board ranks on a level number but wants to show "47 · ★118", and letting it
+ * supply the string keeps the panel from having to know which board it is rendering.
+ */
 export interface LeaderboardEntry {
   rank: number
   name: string
   score: number
   you: boolean
+  /** Display override for the right-hand value. Weekly rows leave it undefined (score formats itself). */
+  valueText?: string
 }
 
 /** Result of a weekly fetch: the top rows plus (when signed in) the player's own rank. */
@@ -47,6 +55,8 @@ export interface WeeklyBoard {
   myRank: number | null
   /** The signed-in player's mirrored score; null when they have no row this week. */
   myScore: number | null
+  /** Display override for the footer's own-rank readout — the row-level `valueText`'s counterpart. */
+  myValueText?: string
 }
 
 // Supabase client access is lazy + optional, exactly like core/cloud.ts: cloud.ts owns the
@@ -97,13 +107,24 @@ export function setHandle(raw: string | null): string | null {
   return clean
 }
 
-/** UPDATE display_name on all of the signed-in player's rows (RLS: own rows only). */
+/**
+ * UPDATE display_name on all of the signed-in player's rows (RLS: own rows only).
+ *
+ * EVERY board the player appears on, not just the weekly one — the whole point of the rename is that
+ * a real name can be scrubbed from history, and a name left behind on the level ladder (which never
+ * rolls over, so the row is permanent) would defeat that completely. Add a table here whenever a new
+ * board starts carrying `display_name`.
+ */
 async function renameEverywhere(): Promise<void> {
   try {
     const s = cloudSession()
     const c = await client()
     if (!s || !c) return
-    await c.from('endless_scores').update({ display_name: preferredName() }).eq('user_id', s.userId)
+    const name = preferredName()
+    await Promise.all([
+      c.from('endless_scores').update({ display_name: name }).eq('user_id', s.userId),
+      c.from('level_progress').update({ display_name: name }).eq('user_id', s.userId),
+    ])
   } catch {
     // offline / transient — the next score submission still carries the new name
   }
@@ -198,6 +219,158 @@ export async function fetchWeeklyBoard(limit = 25, now = new Date()): Promise<We
       }
     }
     return { week, entries, myRank, myScore }
+  } catch {
+    return empty
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LEVEL RACE — the all-time campaign ladder (public.level_progress, migration 0007).
+//
+// Same contract as the weekly board above: dormant until configured + signed in, the SAVE stays
+// authoritative, this only mirrors out and reads back, and submission piggybacks the cloud-save push
+// so there is no new traffic path.
+//
+// It reuses WeeklyBoard/LeaderboardEntry deliberately rather than growing a parallel pair of types:
+// the panel then renders either board with no branching, and the level rows just carry `valueText`.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The two numbers the level ladder ranks on, derived from a save. */
+export interface LevelStanding {
+  /** Highest level number CLEARED (0 when none). */
+  cleared: number
+  /** Total stars banked across every cleared level. */
+  stars: number
+}
+
+/**
+ * Derive the ladder position from a save. PURE — no network, no clock — so it is unit-testable and
+ * is the single definition of "how far have they got", shared by the submit path and the local
+ * strip readout.
+ *
+ * `unlocked` is the highest level the player MAY ATTEMPT, so the highest CLEARED is one below it
+ * (a fresh save sits at unlocked 1 → cleared 0). Stars are summed defensively: the record is a
+ * shape-tolerant `Record<number, number>` restored straight from storage, so a corrupt or
+ * hand-edited entry must not produce NaN and poison the submitted row.
+ */
+export function levelStanding(save: SaveData): LevelStanding {
+  const cleared = Math.max(0, Math.floor(save.unlocked) - 1)
+  let stars = 0
+  for (const [lvl, n] of Object.entries(save.stars ?? {})) {
+    // Ignore stars recorded above the cleared mark — the server clamps to 3×cleared anyway, and
+    // sending a row the guard has to correct just hides a real bug behind a silent fixup.
+    if (Number(lvl) > cleared) continue
+    if (typeof n === 'number' && Number.isFinite(n) && n > 0) stars += Math.min(3, Math.floor(n))
+  }
+  return { cleared, stars }
+}
+
+/** The right-hand readout for a level row: the rung, then the mastery that breaks ties on it. */
+export function formatStanding(s: LevelStanding): string {
+  return `${s.cleared} · ★${s.stars}`
+}
+
+// (cleared, stars) memo — same purpose as `lastSent` above: skip an upsert already sent this
+// page-load. The server trigger keeps both counters monotonic regardless.
+let lastLevels: LevelStanding | null = null
+
+/**
+ * Mirror the save's campaign progress to the level ladder — called by core/cloud.ts after each
+ * successful cloud-save push. No-ops when dormant, when nothing has been cleared yet, or when this
+ * exact standing was already sent. Never throws.
+ */
+export async function maybeSubmitLevels(save: SaveData): Promise<void> {
+  try {
+    const s = cloudSession()
+    if (!s) return
+    const stand = levelStanding(save)
+    if (stand.cleared <= 0) return // nothing to show on the ladder yet
+    if (lastLevels && lastLevels.cleared >= stand.cleared && lastLevels.stars >= stand.stars) return
+    const c = await client()
+    if (!c) return
+    const { error } = await c.from('level_progress').upsert(
+      {
+        user_id: s.userId,
+        cleared: stand.cleared,
+        stars: stand.stars,
+        display_name: preferredName(),
+      },
+      { onConflict: 'user_id' }
+    )
+    if (!error) lastLevels = stand
+  } catch {
+    // offline / transient — the next save push retries; the ladder loses only freshness
+  }
+}
+
+/**
+ * Fetch the level ladder: the top `limit` rows plus the signed-in player's own rank.
+ *
+ * Ordering mirrors the `level_progress_ladder` index exactly (cleared desc, stars desc, reached_at
+ * asc) — keep the two in step or the index stops being used.
+ *
+ * Own-rank when outside the top rows is a COMPOSITE comparison, not a single `.gt()`: a player is
+ * beaten by anyone on a higher rung, OR by anyone on the same rung with more stars. Collapsing that
+ * to "cleared >" would report every tied player as joint-first, which is exactly the pile-up the
+ * star tiebreak exists to prevent.
+ */
+export async function fetchLevelBoard(limit = 25): Promise<WeeklyBoard> {
+  const empty: WeeklyBoard = { week: 'ALL TIME', entries: [], myRank: null, myScore: null }
+  try {
+    const c = await client()
+    if (!c) return empty
+    const s = cloudSession()
+    const { data, error } = await c
+      .from('level_progress')
+      .select('user_id, display_name, cleared, stars')
+      .order('cleared', { ascending: false })
+      .order('stars', { ascending: false })
+      .order('reached_at', { ascending: true })
+      .limit(limit)
+    if (error || !data) return empty
+    const rows = data as Array<{ user_id: string; display_name: string; cleared: number; stars: number }>
+    const entries: LeaderboardEntry[] = rows.map((r, i) => ({
+      rank: i + 1,
+      name: sanitizeName(r.display_name),
+      score: r.cleared,
+      you: !!s && r.user_id === s.userId,
+      valueText: formatStanding({ cleared: r.cleared, stars: r.stars }),
+    }))
+    let myRank: number | null = null
+    let myScore: number | null = null
+    let myValueText: string | undefined
+    const mine = entries.find(e => e.you)
+    if (mine) {
+      myRank = mine.rank
+      myScore = mine.score
+      myValueText = mine.valueText
+    } else if (s) {
+      const own = await c
+        .from('level_progress')
+        .select('cleared, stars')
+        .eq('user_id', s.userId)
+        .maybeSingle()
+      const row = own.data as { cleared: number; stars: number } | null
+      if (row) {
+        myScore = row.cleared
+        myValueText = formatStanding(row)
+        // Strictly ahead on the rung...
+        const higher = await c
+          .from('level_progress')
+          .select('user_id', { count: 'exact', head: true })
+          .gt('cleared', row.cleared)
+        // ...or level with them and ahead on stars.
+        const tied = await c
+          .from('level_progress')
+          .select('user_id', { count: 'exact', head: true })
+          .eq('cleared', row.cleared)
+          .gt('stars', row.stars)
+        if (typeof higher.count === 'number' && typeof tied.count === 'number') {
+          myRank = higher.count + tied.count + 1
+        }
+      }
+    }
+    return { week: 'ALL TIME', entries, myRank, myScore, myValueText }
   } catch {
     return empty
   }

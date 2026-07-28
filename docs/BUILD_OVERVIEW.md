@@ -304,6 +304,36 @@ all-time `save.best`.
 > which is written against fixed UTC instants and fails on a local-time implementation.
 End card shows **NEW BEST!** / **TIME'S UP**.
 
+### Level race — `public.level_progress` (migration 0007), `core/leaderboard.ts`, `view/leaderboardpanel.ts`
+The campaign's own leaderboard: **who has got the farthest**, all-time. Ranked on highest level
+**cleared**, ties broken by **total stars**, then by who reached the rung first (`reached_at`).
+
+**The star tiebreak is not a nicety here.** Levels are a ladder, so ties are the NORMAL case — a
+friends-scale board will routinely have several players sitting on the same level. Ranking on
+`cleared` alone would render a pile of joint-firsts. Stars separate mastery from mere arrival.
+
+`levelStanding(save)` is the single, PURE definition of a player's position, shared by the submit
+path and the strip's offline readout. It reads `cleared` as `unlocked - 1` (a fresh save is
+"attempting level 1, cleared none"), sums stars defensively (the record is restored shape-tolerantly
+from `localStorage`, so a corrupt entry must not emit a NaN into a public row), and ignores stars
+above the cleared mark. `src/core/leaderboard.test.ts` pins all of it, including consistency with
+the server's `3 × cleared` ceiling.
+
+**One panel, two boards.** `openWeeklyRacePanel(scene, { mode })` renders either — same plates,
+medallions, shimmer, RETRY and own-rank footer — with `BOARDS[mode]` holding every string the two
+disagree on (title, subtitle, *and* the loading / signed-out / empty copy, which is easy to forget
+because those states look identical either way). `openLevelRacePanel` is the named entry.
+`addLevelRaceStrip` is the standings row, the same component as `addWeeklyRaceStrip`.
+
+Submission piggybacks the cloud-save push alongside the weekly mirror (`maybeSubmitLevels`), so
+there is no new traffic path. The rename sweep updates **both** tables — a name left behind on a
+ladder that never rolls over would defeat the point of the race-name scrub entirely.
+
+> **The migration is not applied by CI.** `supabase/migrations/0007_level_progress.sql` has to be
+> run by hand (`supabase db push`, or pasted into the SQL editor) exactly like 0006. Until then the
+> client is DORMANT, not broken: the fetch resolves empty, the panel shows its signed-out/empty
+> state, and the strip falls back to the save-local `your climb · level N · ★S` line.
+
 ### Slot-cabinet visuals — `GameScene.buildBackdrop`/`buildCabinet`, `view/background.ts`
 Board sits in a cream cabinet with a gold bezel and a rose "screen is on" glow behind
 it. A ring of alternating red/gold marquee **bulbs** runs a traveling chase around the
@@ -418,6 +448,7 @@ All gated behind `import.meta.env.DEV` (stripped from production). Appended to t
 |---|---|
 | `?level=N` | Boot straight into level N |
 | `?endless=1` | Boot the weekly endless race |
+| `?levels[=rich\|out\|empty\|loading\|error]` | LEVEL RACE ladder fixtures (mirrors `?race`; every variant forces levels mode) |
 | `?lives=N` | Force the life pool to N (test the gate) |
 | `?scene=daily\|home\|levelselect` | Boot a specific scene |
 | `?auto=MS` | Autoplay hinted moves every MS |
@@ -482,7 +513,7 @@ Last verified **2026-07-25**.
 | Check | Command | Result |
 |---|---|---|
 | Type check | `npx tsc --noEmit` | **PASS** — exit 0, no errors |
-| Unit tests | `npm test` | **PASS** — 114 tests across 12 files (`board`, `board.hazards`, `daily`, `endless`, `feasibility`, `hazards`, `leaderboard`, `levels`, `merge`, `plinko`, `plinko.rate`, `view3d/space`) |
+| Unit tests | `npm test` | **PASS** — 124 tests across 12 files (`board`, `board.hazards`, `daily`, `endless`, `feasibility`, `hazards`, `leaderboard`, `levels`, `merge`, `plinko`, `plinko.rate`, `view3d/space`) |
 | Production build | `npm run build` | **PASS** — exit 0; 90 modules transformed, `dist/` + SW written in ~3 s |
 
 Build output of note: the main JS chunk is **1,507.62 kB (gzip 425.19 kB)** — over
