@@ -1,0 +1,1 @@
+0009  referral links are circulating — tightening now would make an old cached client read a live code as dead and DESTROY the stashed referral. Release only after the 15c9cec client has propagated (owner call, ~2026-07-30).
