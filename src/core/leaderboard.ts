@@ -256,7 +256,7 @@ export async function fetchChampion(week: string = previousWeekKey()): Promise<C
 /**
  * Prize tiers for a closed week, ordered best-first — a DATA table so scaling the reward
  * structure as the player base grows (top-3 purses, percentile tiers, league brackets) is
- * adding rows here + UI, never new plumbing. Today: winner-takes-all (owner, 2026-07-21).
+ * adding rows here + UI, never new plumbing. Today: winner-takes-all (owner call, 2026-07-21).
  * The claim latch (save.championWeeks) is per-WEEK, not per-tier, so it already covers any
  * future shape: you claim whatever your rank earned, once per week.
  *
