@@ -12,6 +12,7 @@ import { LevelSelectScene } from './scenes/LevelSelectScene'
 import { StoreScene } from './scenes/StoreScene'
 import { installQualityGovernor } from './view/quality'
 import { applyPageChrome, getTheme } from './view/theme'
+import { attachStage, prepareStage } from './view3d/stage'
 
 // PWA updates: 'prompt' mode (vite.config) surfaces a visible "new version — refresh" toast the
 // player taps, instead of a silent update that lands a launch late. Progress lives in localStorage,
@@ -109,7 +110,11 @@ pushSafeTop(window.innerWidth)
 
 // Reconcile with the cloud BEFORE the first scene reads the save (bounded so a slow/offline network
 // can never stall boot), THEN start Phaser. Resolves instantly when cloud is unconfigured / signed out.
-void bootstrapCloud().then(startGame)
+// The 3D stage (view3d/stage.ts) prepares in parallel: it feature-detects WebGL2, dynamically imports
+// its own precached three.js chunk and stands the renderer up — or resolves inactive, in which case
+// background.ts paints the 2D backdrop exactly as before. Deciding BEFORE boot keeps every scene's
+// create() a simple synchronous branch (no mid-scene "the room just arrived" repaint case).
+void Promise.all([bootstrapCloud(), prepareStage()]).then(startGame)
 
 function startGame(): void {
   // --- Scaling: stock Phaser FIT --------------------------------------------
@@ -135,6 +140,13 @@ function startGame(): void {
     },
     scene: [BootScene, HomeScene, LevelSelectScene, DailyBonusScene, StoreScene, GameScene],
   })
+
+  // Stand the 3D room up on Phaser's OWN canvas + WebGL context (view3d/stage.ts): its sim ticks off
+  // POST_STEP and its draw runs inside each scene's display list via an Extern hook, so it sleeps
+  // with the game loop when the tab hides — the same anti-drain guarantee as everything else. No-op
+  // when three didn't load (Save-Data / import failure) or Phaser fell back to the Canvas renderer;
+  // the 2D backdrop then paints exactly as before.
+  attachStage(game)
 
   // Keep the flexible world height matched to the live viewport aspect: on a real resize / orientation
   // change, recompute worldH and (only if it changed) resize the game + re-centre every live scene's

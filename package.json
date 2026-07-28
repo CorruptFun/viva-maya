@@ -15,9 +15,11 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.110.7",
-    "phaser": "^3.90.0"
+    "phaser": "^3.90.0",
+    "three": "^0.162.0"
   },
   "devDependencies": {
+    "@types/three": "^0.162.0",
     "typescript": "~5.8.3",
     "vite": "^7.0.0",
     "vite-plugin-pwa": "^1.0.0",
