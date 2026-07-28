@@ -28,7 +28,7 @@ describe('sanitizeName', () => {
     expect(sanitizeName('  Neon_Ghost-77. ')).toBe('Neon_Ghost-77.')
   })
   it('takes only the local part of an email', () => {
-    expect(sanitizeName('171184762+CorruptFun@users.noreply.github.com')).toBe('corruptfun')
+    expect(sanitizeName('jane.doe@example.com')).toBe('jane.doe')
   })
   it('strips symbols and emoji', () => {
     expect(sanitizeName('n<e>o#n!👻ghost')).toBe('neonghost')

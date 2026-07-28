@@ -1215,7 +1215,7 @@ export function addWeeklyRaceLockedModule(scene: Phaser.Scene, cx: number, cy: n
 /** Build a fake ranked board: `youAt` marks a visible row as you; `myRank`/`myScore` place you outside. */
 function fixtureBoard(youAt: number | null, myRank: number | null, myScore: number | null): WeeklyBoard {
   const names = [
-    'goldrush', 'chipqueen', 'lucky.lou', 'marisol', 'owner', 'sunburst',
+    'goldrush', 'chipqueen', 'lucky.lou', 'marisol', 'dusty', 'sunburst',
     'cardshark', 'bellhop', 'renotwin', 'dulce', 'k-money', 'peachy',
   ]
   const entries: LeaderboardEntry[] = names.map((name, i) => ({
@@ -1235,7 +1235,7 @@ function fixtureBoard(youAt: number | null, myRank: number | null, myScore: numb
 
 /** A deterministic last-week champion for the crown-row fixtures. */
 function fixtureChampion(you: boolean): Champion {
-  return { week: previousWeekKey(), name: you ? 'owner' : 'marisol', score: 11240, you }
+  return { week: previousWeekKey(), name: you ? 'dusty' : 'marisol', score: 11240, you }
 }
 
 /**

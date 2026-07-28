@@ -11,10 +11,10 @@ This file is the canonical mechanics reference — keep it updated when rules ch
   purchases, NO cash-out, NO meta-building. The one spendable currency is CHIPS — earned only by
   winning, with no monetary value — spent on consumable boosts in the Gift Store (next level) and
   the in-level helper bar (this level; see "In-level helpers"). Lives still regenerate for free.
-  (Direction change 2026-07-17: the earlier "no energy systems" rule was reversed at owner's
+  (Direction change 2026-07-17: the earlier "no energy systems" rule was reversed at the owner's
   request — energy that forces a short break is now a wanted return hook.)
   (Direction change 2026-07-20: mid-level chip spending — the in-level helper bar — added at
-  owner's request. "No pay-to-win" now means "no PAY-WITH-CASH"; earned chips may buy help.)
+  the owner's request. "No pay-to-win" now means "no PAY-WITH-CASH"; earned chips may buy help.)
 - Warm "modern slot screen" look: off-white #f6f3ec, gold #f2b234/#c9930a, rose #d3304f,
   navy #26304d, system-emoji symbols. Heart motif = Maya tribute (name carries it; no
   explicit dedication text in product copy).
@@ -237,4 +237,4 @@ lives/energy (lose-only, 5-pool, 20-min regen, grace below L10 — src/core/live
 earned chips on +1/+5 moves or a targeted bomb for the current level — src/core/store.ts POWER_ITEMS).
 TODO: tune levelSpec from Maya's real play · optionally let the daily spin grant a bonus life.
 Still rejected: real-money purchases, cash-out, home-decorating meta. (Both lives/energy and mid-level
-chip spending were previously rejected but reintroduced at owner's request — 2026-07-17 and 2026-07-20.)
+chip spending were previously rejected but reintroduced at the owner's request — 2026-07-17 and 2026-07-20.)
