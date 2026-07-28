@@ -338,9 +338,48 @@ export function attachStage(g: Phaser.Game): void {
     const gl = (g.renderer as { gl?: WebGLRenderingContext }).gl
     if (!gl || !g.canvas) return
     game = g
+
+    // ── Constructor containment ──────────────────────────────────────────────
+    // three's WebGLState applies its OWN defaults to the shared context the
+    // moment the renderer is constructed: enable(DEPTH_TEST), enable(CULL_FACE)
+    // + cullFace(BACK), frontFace(CCW), clearColor(0,0,0,1), blend changes.
+    // Phaser disables depth/cull exactly ONCE, at its renderer init — which has
+    // already run — and only re-disables them inside pipelines.rebind(). This
+    // call site executes BEFORE BootScene bakes the emoji symbol textures, and
+    // a DynamicTexture bake under leftover CULL_FACE(BACK) silently culls the
+    // glyph quads (the render-to-texture projection flips winding), baking
+    // every symbol BLANK for the rest of the session — the shipped "invisible
+    // board" incident. So: snapshot the exact state families three's
+    // constructor touches, construct, restore, then let Phaser re-assert its
+    // pipeline state through its own official rebind.
+    const prevClear = gl.getParameter(gl.COLOR_CLEAR_VALUE) as Float32Array
+    const prevDepthTest = gl.isEnabled(gl.DEPTH_TEST)
+    const prevDepthFunc = gl.getParameter(gl.DEPTH_FUNC) as number
+    const prevDepthMask = gl.getParameter(gl.DEPTH_WRITEMASK) as boolean
+    const prevCull = gl.isEnabled(gl.CULL_FACE)
+    const prevCullMode = gl.getParameter(gl.CULL_FACE_MODE) as number
+    const prevFrontFace = gl.getParameter(gl.FRONT_FACE) as number
+    const prevBlend = gl.isEnabled(gl.BLEND)
+    const prevScissor = gl.isEnabled(gl.SCISSOR_TEST)
+    const prevUnit = gl.getParameter(gl.ACTIVE_TEXTURE) as number
+
     renderer = new T.WebGLRenderer({ canvas: g.canvas, context: gl })
     // Phaser owns the frame: it already cleared and painted the wash below us.
     renderer.autoClear = false
+
+    gl.clearColor(prevClear[0], prevClear[1], prevClear[2], prevClear[3])
+    ;(prevDepthTest ? gl.enable : gl.disable).call(gl, gl.DEPTH_TEST)
+    gl.depthFunc(prevDepthFunc)
+    gl.depthMask(prevDepthMask)
+    ;(prevCull ? gl.enable : gl.disable).call(gl, gl.CULL_FACE)
+    gl.cullFace(prevCullMode)
+    gl.frontFace(prevFrontFace)
+    ;(prevBlend ? gl.enable : gl.disable).call(gl, gl.BLEND)
+    ;(prevScissor ? gl.enable : gl.disable).call(gl, gl.SCISSOR_TEST)
+    gl.activeTexture(prevUnit)
+    // Belt over braces: have Phaser re-assert its pipeline + blend + depth/cull
+    // assumptions through the same path the Extern hook uses every frame.
+    ;(g.renderer as unknown as { pipelines?: { rebind: () => void } }).pipelines?.rebind()
     scene3 = new T.Scene()
     camera = new T.PerspectiveCamera(55, 1, 60, 3000)
     camera.rotation.set(0, 0, 0) // axis-aligned forever — the alignment contract
@@ -404,6 +443,15 @@ export function setStageMood(scene: Phaser.Scene, v: BackdropVariant): boolean {
     // pinned to it (cheap, and immune to any pipeline viewport changes).
     renderer.setViewport(0, 0, game.canvas.width, game.canvas.height)
     renderer.render(scene3, camera)
+    // Leave NO attribute state behind: three renders through a VAO (the OES
+    // extension on this WebGL1 context) and leaves its last geometry's VAO
+    // bound. Phaser predates VAOs — its attribute setup (screen draws AND
+    // DynamicTexture bakes) must land on the default attribute state, not
+    // inside three's VAO. Phaser's pipelines.rebind() runs after this hook but
+    // does not know about VAOs, so unbind here.
+    const gl = renderer.getContext()
+    const ext = gl.getExtension('OES_vertex_array_object')
+    if (ext) ext.bindVertexArrayOES(null)
   }
   return true
 }
