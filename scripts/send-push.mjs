@@ -34,13 +34,22 @@ import webpush from 'web-push'
 
 const DRY = process.argv.includes('--dry-run')
 
-const {
-  SUPABASE_URL,
-  SUPABASE_SERVICE_KEY,
-  VAPID_PUBLIC_KEY,
-  VAPID_PRIVATE_KEY,
-  VAPID_SUBJECT = 'mailto:hello@corrupt.fun',
-} = process.env
+const { SUPABASE_URL, SUPABASE_SERVICE_KEY, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY } = process.env
+
+/**
+ * ⚠️ `||`, not a destructuring default or `??`.
+ *
+ * GitHub Actions passes an UNSET repo variable as an EMPTY STRING, not as undefined — so
+ * `const { VAPID_SUBJECT = '...' } = process.env` (and `??`) both keep the empty string and the
+ * fallback never runs. web-push then dies with "No subject set in vapidDetails.subject", which reads
+ * like a missing secret rather than a defaulting bug. Cost one failed run to find.
+ *
+ * VAPID subject identifies the sender to push services so they can make contact about a
+ * misbehaving sender. It accepts an `https:` URL as well as `mailto:`, and the repo URL is the
+ * better default here: stable, real, and it keeps a personal address out of a repo variable.
+ */
+const VAPID_SUBJECT =
+  process.env.VAPID_SUBJECT?.trim() || 'https://github.com/CorruptFun/viva-maya'
 
 /**
  * Config validation lives in a function, NOT at module scope: this file is imported by
