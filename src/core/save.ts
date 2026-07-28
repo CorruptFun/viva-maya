@@ -65,6 +65,32 @@ export const FREE_SPIN_BANK_CAP = 12
 /** Most free spins earnable per local calendar day (keeps a marathon session from minting a hoard). */
 export const FREE_SPIN_DAILY_CAP = 6
 
+/**
+ * Who is trying to bank a spin — the two earners answer to DIFFERENT caps.
+ *
+ * - `'mega'` (default): a MEGA-grade cascade on a numbered level. Bounded by both caps; this is the
+ *   farmable source the daily cap exists to bound.
+ * - `'plinko'`: a SPIN well on the bonus board. **Bank cap only.** These two coexist badly under one
+ *   budget: a drop needs an x5+ chain, and that same chain has ALREADY banked its 'mega' award
+ *   (x4+ → 3, x6+ → 6) moments earlier in the same resolve. So the daily allowance is spent by the
+ *   very chain that earned the drop — an x6+ chain empties all 6 on its own — and the board it
+ *   bought would then have to restrike both SPIN wells as ×8, every single time. Exempting the
+ *   ticket is what keeps SPIN on the numbered-level board at all.
+ *
+ *   It stays honest because it is not a loophole worth farming: at most one drop per level, and the
+ *   ticket wells are 12 of 100 weight, so it adds ~0.02 spins per level played — and the bank cap
+ *   still hard-stops it. Endless never reaches here (its tickets are off by contract).
+ */
+export type FreeSpinSource = 'mega' | 'plinko'
+
+/** Headroom for one source. `save` must already have had the day rolled if it is being written. */
+function freeSpinHeadroom(save: SaveData, dayKey: string, source: FreeSpinSource): number {
+  const bankRoom = FREE_SPIN_BANK_CAP - save.freeSpins
+  if (source === 'plinko') return Math.max(0, bankRoom)
+  const earnedToday = save.freeSpinsDay === dayKey ? save.freeSpinsEarnedToday : 0
+  return Math.max(0, Math.min(FREE_SPIN_DAILY_CAP - earnedToday, bankRoom))
+}
+
 const KEY = 'viva-maya:v1'
 
 const DEFAULTS: SaveData = {
@@ -343,12 +369,16 @@ export function addPendingBoost(type: BoostType): void {
 }
 
 /**
- * Bank earned free spins under BOTH caps — at most FREE_SPIN_DAILY_CAP earned per local day and at
- * most FREE_SPIN_BANK_CAP held at once. `dayKey` is 'YYYY-MM-DD' (daily.todayKey()); a new day resets
- * the earn counter. Atomic load→cap→persist; returns how many spins were ACTUALLY granted (0..n) so
- * the caller can size the celebration honestly.
+ * Bank earned free spins under the caps that apply to `source` (see FreeSpinSource — 'mega' answers
+ * to the daily earn cap AND the bank cap, 'plinko' to the bank cap alone). `dayKey` is 'YYYY-MM-DD'
+ * (daily.todayKey()); a new day resets the earn counter. Atomic load→cap→persist; returns how many
+ * spins were ACTUALLY granted (0..n) so the caller can size the celebration honestly.
+ *
+ * Every grant is recorded in freeSpinsEarnedToday, clamped to the daily cap — so a plinko spin
+ * SPENDS the day's 'mega' allowance (the total daily flow stays bounded) without ever being blocked
+ * by it, and the persisted counter stays inside the range coerceSave enforces on load.
  */
-export function addFreeSpins(n: number, dayKey: string): number {
+export function addFreeSpins(n: number, dayKey: string, source: FreeSpinSource = 'mega'): number {
   const want = Math.max(0, Math.floor(n))
   if (want === 0) return 0
   const save = loadSave()
@@ -356,30 +386,25 @@ export function addFreeSpins(n: number, dayKey: string): number {
     save.freeSpinsDay = dayKey
     save.freeSpinsEarnedToday = 0
   }
-  const granted = Math.min(
-    want,
-    FREE_SPIN_DAILY_CAP - save.freeSpinsEarnedToday,
-    FREE_SPIN_BANK_CAP - save.freeSpins
-  )
+  const granted = Math.min(want, freeSpinHeadroom(save, dayKey, source))
   if (granted <= 0) return 0
   save.freeSpins += granted
-  save.freeSpinsEarnedToday += granted
+  save.freeSpinsEarnedToday = Math.min(FREE_SPIN_DAILY_CAP, save.freeSpinsEarnedToday + granted)
   persistSave(save)
   return granted
 }
 
 /**
- * How many free spins could be banked RIGHT NOW under both caps — a read-only peek at what
- * `addFreeSpins` would grant, with the same day-rollover rule. Nothing is written.
+ * How many free spins `source` could bank RIGHT NOW — a read-only peek at exactly what `addFreeSpins`
+ * would grant for the same source, with the same day-rollover rule. Nothing is written.
  *
  * Exists so a reward can decline to OFFER a free spin it couldn't pay: Plinko rolls its ticket slots
  * out of the pool when this is 0, rather than landing the ball on SPIN and awarding nothing. Same
- * honesty rule as the ticket celebration itself — a capped-out player is never lied to.
+ * honesty rule as the ticket celebration itself — a capped-out player is never lied to. Pass the
+ * SAME source the payment will use, or the board can advertise a well the banking then refuses.
  */
-export function freeSpinRoom(dayKey: string): number {
-  const save = loadSave()
-  const earnedToday = save.freeSpinsDay === dayKey ? save.freeSpinsEarnedToday : 0
-  return Math.max(0, Math.min(FREE_SPIN_DAILY_CAP - earnedToday, FREE_SPIN_BANK_CAP - save.freeSpins))
+export function freeSpinRoom(dayKey: string, source: FreeSpinSource = 'mega'): number {
+  return freeSpinHeadroom(loadSave(), dayKey, source)
 }
 
 /**

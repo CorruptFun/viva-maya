@@ -10,8 +10,9 @@ import { mulberry32 } from './rng'
  * the whole "the machine always pays what you see" contract is gone.
  *
  * The rest pin the table itself (weights are the odds, so a typo is a balance bug) and the
- * ticket-suppression path, which exists so a capped-out or endless player is never shown a prize
- * that can't be honoured.
+ * ticket-suppression path, which exists so an endless player — or one whose free-spin bank is full —
+ * is never shown a prize that can't be honoured. (Which caps actually suppress it is
+ * save.freeSpinRoom's business, guarded in save.freespins.test.ts.)
  */
 
 describe('the slot table', () => {
@@ -72,7 +73,7 @@ describe('rollSlotIndex', () => {
   })
 
   /**
-   * The wells that HELD tickets stay reachable — they were restruck as ×5, not switched off. This is
+   * The wells that HELD tickets stay reachable — they were restruck as ×8, not switched off. This is
    * the regression guard for the bug that motivated the substitution: zeroing their weight left the
    * view painting two "SPIN" faces the ball could never reach, so 2 of 9 wells advertised a prize
    * the player could not win. Reaching them is now the CORRECT behaviour, so pin it.

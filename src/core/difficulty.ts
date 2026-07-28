@@ -150,10 +150,22 @@ export const DIFFICULTY = {
   },
 } as const
 
-/** Levels that introduce a mechanic — they get `teachingLevelBonusMoves` and that band's floor density. */
+/**
+ * Levels that introduce a mechanic — they get `teachingLevelBonusMoves` and that band's floor density.
+ *
+ * §G12 — gated on the mechanic actually being SWITCHED ON. Before this, a held-back mechanic still
+ * bought its band-start level a +3 move bonus, so that level was ~5% easier than its neighbours to
+ * teach something that never appears: no hazard on the board, no intro card, and nothing on screen
+ * to explain the dip. With blockers still held back, L86 was exactly that.
+ */
 export function isTeachingLevel(level: number): boolean {
-  const b = DIFFICULTY.bands
-  return level === b.lockStart || level === b.coatStart || level === b.blockerStart
+  const { bands, hazards } = DIFFICULTY
+  if (!hazards.enabled) return false
+  return (
+    (hazards.lock && level === bands.lockStart) ||
+    (hazards.coat && level === bands.coatStart) ||
+    (hazards.blocker && level === bands.blockerStart)
+  )
 }
 
 /** True when `level` is below every hazard band (or hazards are off) — i.e. the protected early game. */

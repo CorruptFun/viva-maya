@@ -30,7 +30,7 @@ import { DIFFICULTY, type HazardKind } from '../core/difficulty'
 import { shouldOfferPlinko } from '../core/plinko'
 import { EVENTS, track } from '../core/analytics'
 import { devSetLives, formatCountdown, grantLife, refreshLives, spendLifeFor } from '../core/lives'
-import { maya, pendingOccasion, warmLoseLine, warmWinSubtitle } from '../core/maya'
+import { maya, pendingOccasion, warmLoseLine, warmWinSubtitle, wasNearMiss } from '../core/maya'
 import { mulberry32 } from '../core/rng'
 import { addChips, addFreeSpins, bumpJackpotMeter, freeSpinRoom, loadSave, markFinaleSeen, markOccasionSeen, persistSave, recordResult, recordScore, resetJackpotMeter, spendChips, takePendingBoosts } from '../core/save'
 import { LIFE_REFILL_PRICE, POWER_ITEMS } from '../core/store'
@@ -5041,6 +5041,17 @@ export class GameScene extends Phaser.Scene {
     return true
   }
 
+  /**
+   * §G13 — did this loss actually end within reach? Drives the lose card's copy, which used to
+   * assert a near miss on every single loss regardless (the line was seeded by SCORE, a number with
+   * no relationship at all to how much goal was left).
+   */
+  private wasCloseLoss(): boolean {
+    const owed = this.objectives.reduce((n, o) => n + Math.max(0, o.remaining), 0)
+    const total = this.objectives.reduce((n, o) => n + o.total, 0)
+    return wasNearMiss(owed, total)
+  }
+
   private finishLose(): void {
     this.log('finishLose')
     this.state = 'ended'
@@ -5292,7 +5303,12 @@ export class GameScene extends Phaser.Scene {
     // §E9 warm lose copy — a kind rotating line instead of the cold "OUT OF MOVES". Seeded by score
     // so it stays stable for this result. Navy (not the warn colour) reads as gentle, not an error.
     const loseTitle = this.add
-      .text(0, -160, warmLoseLine(this.score), { fontFamily: FONT, fontSize: '42px', fontStyle: '900', color: T.navyText })
+      .text(0, -160, warmLoseLine(this.score, this.wasCloseLoss()), {
+        fontFamily: FONT,
+        fontSize: '42px',
+        fontStyle: '900',
+        color: T.navyText,
+      })
       .setOrigin(0.5)
       .setShadow(0, 3, 'rgba(0,0,0,0.15)', 6, false, true)
     card.add(loseTitle)
@@ -6371,9 +6387,14 @@ export class GameScene extends Phaser.Scene {
       this.clearSelection()
       openPlinko(this, {
         chainPoints: stake,
-        // Endless has no wheel to spend a spin on, and a capped-out player can't be paid one — either
-        // way the ticket slots leave the pool so the ball can't land on a prize we can't honour.
-        allowTickets: !this.endless && freeSpinRoom(todayKey()) > 0,
+        // Endless has no wheel to spend a spin on, and a player whose BANK is full can't be paid one —
+        // either way the ticket slots leave the pool so the ball can't land on a prize we can't honour.
+        //
+        // 'plinko' room, not 'mega' room: the drop's own trigger chain (x5+) has just banked its MEGA
+        // award through maybeAwardFreeSpins, so the daily allowance is routinely gone by the time we
+        // ask — an x6+ chain spends all 6 of it on its own. Asking the daily cap here restruck both
+        // SPIN wells as ×8 on essentially every numbered-level drop. See save.FreeSpinSource.
+        allowTickets: !this.endless && freeSpinRoom(todayKey(), 'plinko') > 0,
         hitstop: ms => this.hitstop(ms),
         onClaim: result => {
           if (result.kind === 'mult' && result.points > 0) {

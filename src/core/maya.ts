@@ -115,12 +115,30 @@ export const WIN_SUBTITLES = [
 ]
 
 /** Rotating kind lines that replace the cold "out of moves" text on a loss. */
-export const LOSE_LINES = [
+/**
+ * §G13 · lose copy, split by whether the player was ACTUALLY close.
+ *
+ * Every line here used to claim nearness ("You were so close", "Almost had it") and the pick was
+ * seeded by SCORE — a number with no relationship whatsoever to how much of the goal was left. So a
+ * run that ended 40 pieces short was told it nearly won. Warmth that is not true reads as a form
+ * letter, and it spends the credibility that makes the genuinely-near message land.
+ *
+ * Both pools stay kind. The FAR pool simply does not assert a near miss.
+ */
+export const LOSE_LINES_NEAR = [
   'So close — one more?',
   'Almost had it!',
   'Nearly there.',
   'One more try?',
   'You were so close.',
+]
+
+export const LOSE_LINES_FAR = [
+  'Tough board.',
+  'That one bites.',
+  'Another go?',
+  'Shake it off.',
+  'Next run.',
 ]
 
 const pick = (arr: readonly string[], seed?: number): string => {
@@ -133,7 +151,20 @@ export function warmWinSubtitle(seed?: number): string {
   return pick(WIN_SUBTITLES, seed)
 }
 
-/** A kind lose line; pass a seed for stable-per-result rotation, else random. */
-export function warmLoseLine(seed?: number): string {
-  return pick(LOSE_LINES, seed)
+/**
+ * A kind lose line. `near` says whether the run genuinely ended within reach (see §G13 above) — the
+ * near-miss lines are reserved for when that is true. Pass a seed for stable-per-result rotation.
+ */
+export function warmLoseLine(seed?: number, near = true): string {
+  return pick(near ? LOSE_LINES_NEAR : LOSE_LINES_FAR, seed)
+}
+
+/**
+ * Was this loss a near miss? True when the goals still owed are a small enough slice of what the
+ * level asked for that "almost" is honest. 12% is the line: on a 3×55 level that is under 20 pieces,
+ * roughly the last four or five good moves — close enough that a player feels it slipping away.
+ */
+export function wasNearMiss(owed: number, total: number): boolean {
+  if (total <= 0) return false
+  return owed / total <= 0.12
 }

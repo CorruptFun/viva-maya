@@ -97,7 +97,16 @@ describe('levelSpec — the climb above the protected band', () => {
   })
 
   it('resumes the climb immediately after a teaching level', () => {
-    for (const L of [DIFFICULTY.bands.lockStart, DIFFICULTY.bands.coatStart, DIFFICULTY.bands.blockerStart]) {
+    // §G12 — derived from `isTeachingLevel`, not from the raw band list. A band whose mechanic is
+    // switched off no longer buys its start level the +3 teaching bonus (it had nothing to teach),
+    // so that level no longer DIPS and there is no dip to resume from: L86 and L87 now land on the
+    // same budget after integer rounding, which is the same rounding noise the monotonicity test
+    // above tolerates at 0.01. Asserting a strict climb there would be asserting rounding.
+    const teaching = [DIFFICULTY.bands.lockStart, DIFFICULTY.bands.coatStart, DIFFICULTY.bands.blockerStart].filter(
+      isTeachingLevel
+    )
+    expect(teaching.length).toBeGreaterThan(0) // a rollout with nothing live would make this vacuous
+    for (const L of teaching) {
       expect(required(L + 1)).toBeGreaterThan(required(L))
     }
   })

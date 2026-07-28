@@ -39,9 +39,10 @@ export const PLINKO_CHANCE = 0.5
  * precisely because the thing that made x4 too generous on numbered levels (~1-1.9 qualifying chains
  * per level) does not hold without hazards: endless yields ~0.36 passive, ~0.92 typical.
  *
- * Endless also pays BETTER per drop — `allowTickets` is false there, so the two SPIN slots leave the
- * pool and every landing is a multiplier (~3.4x on the triggering chain). That is the whole point:
- * the weekly race is scored on one number, so the drop has to be reachable to matter.
+ * Endless also pays BETTER per drop — `allowTickets` is false there, so the two SPIN wells are
+ * restruck as ×8 and every landing is a multiplier (~3.98x on the triggering chain, against ~3.44x
+ * once the ticket wells pay a spin instead). That is the whole point: the weekly race is scored on
+ * one number, so the drop has to be reachable to matter.
  *
  * Guarded by the endless half of plinko.rate.test.ts. Re-run it if you touch these.
  */
@@ -104,8 +105,9 @@ export const PLINKO_TICKET_SUBSTITUTE_MULT = 8
 /**
  * The EFFECTIVE slot table for one drop.
  *
- * When a ticket cannot be honoured — endless, or a player already at the daily/bank free-spin cap —
- * the two SPIN wells are not blanked, they are restruck as ×5 keeping their original weight. The
+ * When a ticket cannot be honoured — endless, or a player whose free-spin BANK is full (the daily
+ * earn cap does not gate this; see save.FreeSpinSource) — the two SPIN wells are not blanked, they
+ * are restruck as ×8 keeping their original weight. The
  * older behaviour zeroed their weight instead, which kept the ball out of them but left the view
  * painting two "SPIN" faces that were **physically unwinnable**: 2 of 9 wells advertising a prize
  * the player could never land, with nothing on screen saying so.

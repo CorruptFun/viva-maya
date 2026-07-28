@@ -63,8 +63,9 @@ export interface PlinkoOpenOpts {
   chainPoints: number
   /**
    * Whether a free-spin ticket can actually be honoured right now (false in endless, or when the
-   * daily/bank caps are full). When false the ticket slots are rolled out of the pool entirely, so
-   * the ball can never land on a prize the player won't be paid.
+   * spin BANK is full). When false the ticket slots are rolled out of the pool entirely, so the ball
+   * can never land on a prize the player won't be paid. The daily earn cap deliberately does NOT
+   * gate this — see save.FreeSpinSource for why plinko answers to the bank cap alone.
    */
   allowTickets: boolean
   /** Called once, on CLAIM, after the overlay has torn itself down. The host resumes play here. */
@@ -495,7 +496,9 @@ export function openPlinko(scene: Phaser.Scene, opts: PlinkoOpenOpts): void {
   // Tickets are persisted state, so they bank NOW; `granted` is what actually stuck under the caps,
   // so the celebration below is sized honestly (a capped player is never lied to). Points are scene
   // state and are paid by the host in onClaim, which is the same instant from the player's side.
-  const spins = prize.kind === 'ticket' ? addFreeSpins(prize.spins, todayKey()) : 0
+  // 'plinko' — the SAME source GameScene asked freeSpinRoom about when it set allowTickets, so a
+  // well the board painted as SPIN is always a well this can actually pay (see save.FreeSpinSource).
+  const spins = prize.kind === 'ticket' ? addFreeSpins(prize.spins, todayKey(), 'plinko') : 0
   const result: PlinkoResult = {
     kind: prize.kind,
     slot,
