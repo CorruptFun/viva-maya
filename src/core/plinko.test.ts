@@ -98,6 +98,32 @@ describe('rollSlotIndex', () => {
     })
   })
 
+  /**
+   * The substituted wells sit at index 1 and 7, between the ×5 slots and the ×10 edges, so their
+   * value has to land INSIDE that window or the board's outward ladder stops reading. Too low and
+   * the ramp dips on its way out; at ×10 or above the edges stop being the top tier (view `toneOf`
+   * only gives the premium rose plate to ≥10). Pins the constant against both mistakes.
+   */
+  it('keeps the outward value ramp monotonic, without stealing the top tier from the edges', () => {
+    const effective = plinkoSlots(false)
+    const multOf = (p: (typeof effective)[number]): number => (p.kind === 'mult' ? p.mult : 0)
+    const mid = (effective.length - 1) / 2
+
+    // Strictly non-decreasing from the centre outward, on both halves.
+    for (let i = Math.floor(mid); i > 0; i--) {
+      expect(multOf(effective[i - 1]), `left half dips at ${i - 1}`).toBeGreaterThanOrEqual(multOf(effective[i]))
+    }
+    for (let i = Math.ceil(mid); i < effective.length - 1; i++) {
+      expect(multOf(effective[i + 1]), `right half dips at ${i + 1}`).toBeGreaterThanOrEqual(multOf(effective[i]))
+    }
+
+    // The edges must remain strictly the richest slot on the board.
+    const edge = multOf(effective[0])
+    effective.slice(1, -1).forEach((p, i) => {
+      expect(multOf(p), `slot ${i + 1} matches or beats the ×${edge} edge`).toBeLessThan(edge)
+    })
+  })
+
   it('keeps the table summing to 100 in BOTH modes, so a weight still reads as a percentage', () => {
     for (const allow of [true, false]) {
       const total = plinkoSlots(allow).reduce((s, p) => s + p.weight, 0)

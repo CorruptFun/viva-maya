@@ -73,11 +73,12 @@ clears a RANDOM present color. Swap-combos (both consumed, epicenter = drag dest
 - Slots (l→r): x10 · SPIN · x5 · x3 · x2 · x3 · x5 · SPIN · x10, weights 2/6/10/17/30/17/10/6/2
   (sum 100). Symmetric, binomial-shaped — cheap+common in the middle, x10 a 2% thrill at each edge.
 - SUBSTITUTION when a spin can't be paid (endless, or the daily/bank cap is full): the two SPIN wells
-  are RESTRUCK as x5 keeping their weight — `plinkoSlots(allowTickets)` returns the effective table
+  are RESTRUCK as x8 keeping their weight — `plinkoSlots(allowTickets)` returns the effective table
   and paint/labels/payout all read from it. They used to be weight-zeroed instead, which kept the ball
   out but left the view painting two unwinnable "SPIN" faces — 2 of 9 wells advertising a prize the
-  player could never land. x5 keeps the outward ramp monotonic; the table still sums to 100 in both
-  modes (zeroing summed to 88), and multiplier EV goes ~3.44x → ~3.62x.
+  player could never land. Effective ramp x2·x3·x5·x8·x10 outward — x8 sits above its x5 neighbour so
+  the ramp climbs, and below the x10 edges so they keep the top plate tone. The table still sums to
+  100 in both modes (zeroing summed to 88), and multiplier EV goes ~3.44x → ~3.98x.
 - Multiplier slots pay THE TRIGGERING CHAIN'S POINTS x the multiplier, one-shot, via GameScene.addScore
   (so it composes with the doubleScore boost). SPIN slots bank one free wheel pull.
 - AWARD-FIRST: slot rolled + any ticket banked BEFORE the animation; dropPath then rigs the bounce to

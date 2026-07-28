@@ -89,11 +89,17 @@ export const PLINKO_SLOTS: PlinkoPrize[] = [
 ]
 
 /**
- * What a ticket well is RESTRUCK as when a free spin can't be paid. ×5 because it keeps the board's
- * outward ×2→×3→×5→×10 ramp monotonic — the ticket wells sit at index 1 and 7, just inside the ×10
- * edges, so anything below ×5 would dip the ramp on its way out.
+ * What a ticket well is RESTRUCK as when a free spin can't be paid.
+ *
+ * The ticket wells sit at index 1 and 7, immediately inside the ×10 edges, so the substitute has to
+ * be ≥ its ×5 neighbour or the ramp dips on its way out. ×8 fills that step and makes the whole
+ * outward ladder read ×2 → ×3 → ×5 → ×8 → ×10, which climbs more convincingly than repeating ×5.
+ *
+ * It stays below the ×10 edges deliberately: `toneOf` in view/plinko.ts gives ≥10 the premium
+ * rose-under-gold plate and ≥5 real gold, so ×8 lands as gold and the ×10 corners keep being the
+ * headline. Raise this to 10 and the board loses its top tier — the edges would no longer be special.
  */
-export const PLINKO_TICKET_SUBSTITUTE_MULT = 5
+export const PLINKO_TICKET_SUBSTITUTE_MULT = 8
 
 /**
  * The EFFECTIVE slot table for one drop.
@@ -106,7 +112,7 @@ export const PLINKO_TICKET_SUBSTITUTE_MULT = 5
  *
  * Substituting fixes that at the source — every well the player can see is a well they can win.
  * Weights are untouched, so the table still sums to 100 and each weight still reads directly as a
- * percentage (the zeroing version quietly summed to 88). Multiplier EV goes ~3.44x → ~3.62x.
+ * percentage (the zeroing version quietly summed to 88). Multiplier EV goes ~3.44x → ~3.98x.
  */
 export function plinkoSlots(allowTickets: boolean): PlinkoPrize[] {
   if (allowTickets) return PLINKO_SLOTS

@@ -194,14 +194,18 @@ difficulty-curve change ever makes either routine (or so rare nobody sees it).
 pixel moves, then `dropPath` synthesises the bounce. Quitting mid-drop cannot lose the prize.
 
 **When a ticket can't be honoured** (endless, or the daily/bank cap is full — see `freeSpinRoom`) the
-two SPIN wells are **restruck as ×5**, not switched off. `plinkoSlots(allowTickets)` returns the
+two SPIN wells are **restruck as ×8**, not switched off. `plinkoSlots(allowTickets)` returns the
 effective table and the cabinet paint, the slot labels and the payout all read from that one source,
 so they cannot disagree. The earlier behaviour zeroed their weight, which kept the ball out of them
 but left the view painting two **unwinnable "SPIN" faces** — 2 of 9 wells advertising a prize the
-player could never land, with nothing on screen saying so. ×5 keeps the outward ×2→×3→×5→×10 ramp
-monotonic (the ticket wells sit at index 1 and 7, just inside the ×10 edges), the table still sums to
-100 in **both** modes so a weight still reads as a percentage (the zeroing version summed to 88), and
-multiplier EV goes ~3.44× → ~3.62×.
+player could never land, with nothing on screen saying so.
+
+The substituted wells sit at index 1 and 7, between the ×5 slots and the ×10 edges, so the effective
+board reads **×10 · ×8 · ×5 · ×3 · ×2 · ×3 · ×5 · ×8 · ×10** — a ×2→×3→×5→×8→×10 ladder outward. ×8 is
+chosen to sit *above* its ×5 neighbour (so the ramp climbs rather than repeating) and *below* the
+edges (so `toneOf`'s premium rose plate, which needs ≥10, stays exclusive to the ×10 corners). A unit
+test pins both bounds. The table still sums to 100 in **both** modes so a weight still reads as a
+percentage (the zeroing version summed to 88), and multiplier EV goes ~3.44× → ~3.98×.
 
 **The fall is INTEGRATED, not tweened** (2026-07 rebuild — do not "simplify" it back). v1 replayed the
 rigged path as a tween chain, one `Quad.easeIn` per row; every ease-in starts from zero velocity, so
