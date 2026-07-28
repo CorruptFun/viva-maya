@@ -1935,6 +1935,46 @@ export function openHazardIntro(scene: Phaser.Scene, kind: HazardKind, onClose?:
   }
   scrim.on('pointerup', close)
 
+  paintTeachCard(scene, layer, close, {
+    cx,
+    cy,
+    cardW,
+    cardH,
+    reduced,
+    title: skin.label[kind],
+    // A real sample of the art, at board scale, so the card shows the thing itself.
+    texture: ensureHazardTexture(scene, kind, kind === 'blocker' ? 2 : 1),
+    blurb: skin.blurb[kind],
+    scrim,
+  })
+}
+
+/**
+ * §G11 · the shared body of a just-in-time teach card ("SOMETHING NEW" → title → a real sample of
+ * the art → one sentence → GOT IT).
+ *
+ * Extracted from `openHazardIntro` so the specials teach can use the identical card rather than a
+ * lookalike. Two teach cards that are ALMOST the same is worse than one shared definition: the
+ * player learns the shape of "the game is telling me a new rule" once, and it has to be the same
+ * shape every time or it reads as a different kind of message.
+ */
+function paintTeachCard(
+  scene: Phaser.Scene,
+  layer: Phaser.GameObjects.Container,
+  close: () => void,
+  o: {
+    cx: number
+    cy: number
+    cardW: number
+    cardH: number
+    reduced: boolean
+    title: string
+    texture: string
+    blurb: string
+    scrim: Phaser.GameObjects.Rectangle
+  }
+): void {
+  const { cx, cy, cardW, cardH } = o
   const g = scene.add.graphics()
   dropShadow(g, cx - cardW / 2, cy - cardH / 2, cardW, cardH, 30, getTheme().shadow, { alpha: 0.14, dist: 9 })
   g.fillStyle(getTheme().cardFill, 1)
@@ -1955,7 +1995,7 @@ export function openHazardIntro(scene: Phaser.Scene, kind: HazardKind, onClose?:
     .setOrigin(0.5)
     .setLetterSpacing(3)
   const title = scene.add
-    .text(cx, cy - cardH / 2 + 104, skin.label[kind], {
+    .text(cx, cy - cardH / 2 + 104, o.title, {
       fontFamily: FONT,
       fontSize: '46px',
       fontStyle: '900',
@@ -1964,13 +2004,10 @@ export function openHazardIntro(scene: Phaser.Scene, kind: HazardKind, onClose?:
     .setOrigin(0.5)
     .setLetterSpacing(1)
 
-  // A real sample of the art, at board scale, so the card shows the thing itself.
-  const swatch = scene.add
-    .image(cx, cy - 40, ensureHazardTexture(scene, kind, kind === 'blocker' ? 2 : 1))
-    .setDisplaySize(132, 132)
+  const swatch = scene.add.image(cx, cy - 40, o.texture).setDisplaySize(132, 132)
 
   const body = scene.add
-    .text(cx, cy + 92, skin.blurb[kind], {
+    .text(cx, cy + 92, o.blurb, {
       fontFamily: 'Arial, sans-serif',
       fontSize: '25px',
       color: getTheme().inkMuted,
@@ -1980,13 +2017,80 @@ export function openHazardIntro(scene: Phaser.Scene, kind: HazardKind, onClose?:
     })
     .setOrigin(0.5)
 
-  layer.add([scrim, g, block, kicker, title, swatch, body])
+  layer.add([o.scrim, g, block, kicker, title, swatch, body])
   layer.add(addPillButton(scene, cx, cy + cardH / 2 - 58, 240, 66, 'GOT IT', GOLD_PILL, close))
 
-  if (!reduced) {
+  if (!o.reduced) {
     layer.setScale(0.88).setAlpha(0)
     scene.tweens.add({ targets: layer, scale: 1, alpha: 1, duration: 260, ease: backOut(OVERSHOOT.pop) })
   }
+}
+
+/**
+ * §G11 · the teach-once card for a SPECIAL PIECE, fired the first time the player actually makes one.
+ *
+ * The specials — Wild Reel, Dice Bomb, Jackpot Chip — are the best thing about this board and the
+ * whole reason cascades get exciting, and the game explained them exactly nowhere: one line inside a
+ * passive "?" panel that a player has to go looking for. Every benchmark in the genre introduces its
+ * power pieces with a just-in-time card the first time one appears. The hazard system here already
+ * had precisely that machinery (`openHazardIntro`); the specials simply were not wired into it.
+ *
+ * Keyed on the SPECIAL that was made, not on a level number, so it always fires against something
+ * the player can see on their own board — and the copy says how to MAKE it as well as what it does,
+ * because "I got one by accident" is the state the player is in when this fires.
+ */
+const SPECIAL_TEACH: Record<string, { title: string; blurb: string }> = {
+  wildReel: {
+    title: 'WILD REEL',
+    blurb: 'You matched four in a row. Swap the Wild Reel to fire a beam across the whole line it points along.',
+  },
+  diceBomb: {
+    title: 'DICE BOMB',
+    blurb: 'You matched an L or a T. Swap the Dice Bomb to blow every piece in the 3×3 around it.',
+  },
+  jackpot: {
+    title: 'JACKPOT CHIP',
+    blurb: 'You matched five. Swap the Jackpot Chip onto any symbol to clear every one of that symbol on the board.',
+  },
+}
+
+/** The teach-card group a piece kind belongs to (both reel orientations share one card). */
+export function specialTeachKey(kind: string): keyof typeof SPECIAL_TEACH | null {
+  if (kind === 'wildReelRow' || kind === 'wildReelCol') return 'wildReel'
+  if (kind === 'diceBomb' || kind === 'jackpot') return kind
+  return null
+}
+
+export function openSpecialIntro(scene: Phaser.Scene, key: string, texture: string, onClose?: () => void): void {
+  const copy = SPECIAL_TEACH[key]
+  if (!copy) {
+    onClose?.()
+    return
+  }
+  const W = 720
+  const reduced = prefersReducedMotion()
+  const layer = scene.add.container(0, 0).setDepth(65)
+  const cx = W / 2
+  const cy = 560
+  const cardW = 600
+  const cardH = 520
+  const scrim = scene.add.rectangle(W / 2, viewportCenterY(), W, worldH(), 0x2a2417, 0.6).setInteractive()
+  const close = (): void => {
+    layer.destroy()
+    onClose?.()
+  }
+  scrim.on('pointerup', close)
+  paintTeachCard(scene, layer, close, {
+    cx,
+    cy,
+    cardW,
+    cardH,
+    reduced,
+    title: copy.title,
+    texture,
+    blurb: copy.blurb,
+    scrim,
+  })
 }
 
 export function openOnboarding(scene: Phaser.Scene, onClose?: () => void): void {

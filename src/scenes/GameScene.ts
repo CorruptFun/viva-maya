@@ -29,15 +29,15 @@ import { ensureHazardTexture } from '../view/textures'
 import { DIFFICULTY, type HazardKind } from '../core/difficulty'
 import { shouldOfferPlinko } from '../core/plinko'
 import { EVENTS, track } from '../core/analytics'
-import { devSetLives, formatCountdown, refreshLives, spendLifeFor } from '../core/lives'
+import { devSetLives, formatCountdown, grantLife, refreshLives, spendLifeFor } from '../core/lives'
 import { maya, pendingOccasion, warmLoseLine, warmWinSubtitle } from '../core/maya'
 import { mulberry32 } from '../core/rng'
 import { addChips, addFreeSpins, bumpJackpotMeter, freeSpinRoom, loadSave, markFinaleSeen, markOccasionSeen, persistSave, recordResult, recordScore, resetJackpotMeter, spendChips, takePendingBoosts } from '../core/save'
-import { POWER_ITEMS } from '../core/store'
+import { LIFE_REFILL_PRICE, POWER_ITEMS } from '../core/store'
 import type { PowerItem } from '../core/store'
 import { jackpotReady } from '../core/jackpot'
 import { SYMBOLS, key } from '../core/types'
-import type { BlastEvent, BoostType, ClearWave, Coord, FallMove, LevelSpec, Piece, Spawn, SymbolType } from '../core/types'
+import type { BlastEvent, BoostType, ClearWave, Coord, FallMove, LevelSpec, Piece, PieceKind, Spawn, SymbolType } from '../core/types'
 import { addCasinoBackdrop } from '../view/background'
 import { stageFlare, stagePulse } from '../view3d/stage'
 import { addJackpotMeter, openJackpotWheel } from '../view/jackpot'
@@ -63,6 +63,8 @@ import {
   openHazardIntro,
   openOnboarding,
   startScene,
+  openSpecialIntro,
+  specialTeachKey,
 } from '../view/ui'
 import type { ChipPill, SceneFocus } from '../view/ui'
 
@@ -335,6 +337,8 @@ export class GameScene extends Phaser.Scene {
   private bombArmed = false
   /** §G4 — purchased bombs DETONATED this level, against `DIFFICULTY.economy.maxBombsPerLevel`. */
   private bombsUsed = 0
+  /** §G11 — a first-ever special waiting for its teach card at the next idle handoff. */
+  private pendingSpecialTeach: { key: string; kind: PieceKind } | null = null
   /** The bomb-aim overlay (board-frame highlight + prompt + cancel); torn down on detonate/cancel. */
   private bombAimLayer?: Phaser.GameObjects.Container
   /** The looping pulse on the aim board-frame — killed explicitly (Phaser 3.90 won't sweep it on destroy). */
@@ -482,6 +486,7 @@ export class GameScene extends Phaser.Scene {
     this.powerItemsLayer = undefined
     this.powerToastText = undefined
     this.purchasedMoves = 0
+    this.pendingSpecialTeach = null // §G11 — never carry a queued card into the next level
     this.bombsUsed = 0 // §G4 — per-level cap, so it must reset with the level (field inits don't re-run)
     this.bombArmed = false
     this.bombAimLayer = undefined
@@ -715,6 +720,49 @@ export class GameScene extends Phaser.Scene {
    * persisted IMMEDIATELY, before the card renders — same discipline as `maybeOnboarding` — so
    * dismissing by tapping away cannot make it re-appear. Never in endless, which has no hazards.
    */
+  /**
+   * §G11 — record that the player has just MADE a special of this kind, if it is their first ever.
+   * Called from `playWave`; the card is deferred to the idle handoff by `maybeSpecialIntro`.
+   *
+   * The latch is persisted here, at the moment of the match, rather than when the card renders —
+   * same discipline as the hazard and onboarding cards, so quitting mid-cascade cannot make the
+   * card queue up again on the next level.
+   */
+  private noteSpecialMade(kind: PieceKind): void {
+    if (this.endless || this.pendingSpecialTeach) return
+    const teachKey = specialTeachKey(kind)
+    if (!teachKey) return
+    const save = loadSave()
+    if (save.specialIntros.includes(teachKey)) return
+    save.specialIntros.push(teachKey)
+    persistSave(save)
+    this.pendingSpecialTeach = { key: teachKey, kind }
+  }
+
+  /**
+   * §G11 — show the queued special-piece teach card, if one is waiting. Returns true if it took the
+   * screen (the caller must then leave the handoff to the card, exactly like `flushBookedSwap`).
+   *
+   * The Wild Reel, Dice Bomb and Jackpot Chip are the best thing about this board and the reason
+   * cascades are worth chasing, and the game explained them nowhere except one line in a passive
+   * help panel nobody opens. The hazard system already had a just-in-time teach card; the specials
+   * were simply never wired into it.
+   */
+  private maybeSpecialIntro(): boolean {
+    const pending = this.pendingSpecialTeach
+    if (!pending || this.introOpen || !this.scene.isActive()) return false
+    this.pendingSpecialTeach = null
+    this.introOpen = true
+    // The card shows the REAL art for the piece they just made, at board scale.
+    const texture = ensurePieceTexture(this, { id: -1, kind: pending.kind, symbol: SYMBOLS[0] })
+    openSpecialIntro(this, pending.key, texture, () => {
+      this.introOpen = false
+      this.scheduleAutoplay()
+      this.armHint()
+    })
+    return true
+  }
+
   private maybeHazardIntro(then: () => void): boolean {
     if (this.endless || this.introOpen) return false
     const present: HazardKind[] = []
@@ -776,12 +824,37 @@ export class GameScene extends Phaser.Scene {
       .setOrigin(0.5)
     let playBtn: Phaser.GameObjects.Container | null = null
 
+    // §G10 — a way THROUGH the wall, not just a clock. Every genre benchmark pairs an energy gate
+    // with an out (gems / an ad / asking a friend); this screen had none, so the only affordance on
+    // it was "close the app for up to 20 minutes". The currency and `grantLife` both already
+    // existed — `grantLife` had literally zero callers anywhere in the codebase.
+    //
+    // Shown only when it is actionable (affordable), for the same reason the continue offer is: with
+    // no cash purchase behind it, an offer the player cannot take is just a taunt.
+    let refillBtn: Phaser.GameObjects.Container | null = null
+    let priceRow: Phaser.GameObjects.Container | null = null
+    const clearRefill = (): void => {
+      refillBtn?.destroy()
+      priceRow?.destroy()
+      refillBtn = null
+      priceRow = null
+    }
+    const buyLife = (): void => {
+      if (spendChips(LIFE_REFILL_PRICE) === null) return
+      grantLife()
+      sfx.lifeRestored()
+      this.vibrate(30)
+      clearRefill()
+      tick() // re-render the HUD + surface PLAY immediately, rather than up to a second later
+    }
+
     const tick = (): void => {
       const st = refreshLives()
       hud.update(st)
       if (st.lives > 0) {
         nextText.setText('A life is ready!')
         fullText.setText('')
+        clearRefill() // a life arrived on its own — retire the offer rather than take chips for it
         if (!playBtn) {
           playBtn = addPillButton(this, DESIGN_W / 2, 924, 320, 88, 'PLAY', GOLD_PILL, () =>
             startScene(this,'game', { level: this.level })
@@ -793,6 +866,14 @@ export class GameScene extends Phaser.Scene {
       } else {
         nextText.setText(`Next life in  ${formatCountdown(st.nextInMs)}`)
         fullText.setText(`Full in  ${formatCountdown(st.fullInMs)}`)
+        if (!refillBtn && loadSave().chips >= LIFE_REFILL_PRICE) {
+          refillBtn = addPillButton(this, DESIGN_W / 2, 924, 320, 88, 'REFILL A HEART', GOLD_PILL, buyLife)
+          priceRow = this.add.container(DESIGN_W / 2, 1000)
+          const price = this.add
+            .text(14, 0, String(LIFE_REFILL_PRICE), { fontFamily: FONT, fontSize: '30px', fontStyle: '900', color: T.onBackdropInk })
+            .setOrigin(0, 0.5)
+          priceRow.add([this.add.image(-12, 0, 'chip').setDisplaySize(36, 36), price])
+        }
       }
     }
     tick()
@@ -1632,7 +1713,17 @@ export class GameScene extends Phaser.Scene {
     // grid — the dark floor peeking between tiles IS the 1px cell separator. Warm look untouched
     // otherwise. (§R3 depth pass: the warm floor drops a shade from 0xe4d8bd so the cushions sit
     // deeper IN the tray — still warm parchment, just recessed.)
-    const wellFloor = this.hc ? 0x241f18 : 0xddcfae
+    //
+    // §G9 FIGURE/GROUND. The default floor was 0xddcfae — about 14 L* below the cushions — and the
+    // cushions were drawn at the FULL cell size, so they butted edge to edge and the floor never
+    // showed between them at all. The result was a single continuous cream slab: cream pieces on
+    // cream cushions on a cream ground, with no visible grid. That was the largest single visual gap
+    // against Candy Crush and Royal Match, both of which sit their pieces on a distinctly darker
+    // board so the pieces read as objects rather than as pattern. The floor now drops to a deep
+    // warm tan (~35 L* below the cushions), which is where the separator becomes legible without
+    // leaving the warm casino palette. High-Contrast keeps its near-black extreme — this closes most
+    // of the gap between the two so the accessibility mode is a preference, not a bug fix.
+    const wellFloor = this.hc ? 0x241f18 : 0xa78c57
     g.fillStyle(wellFloor, 1)
     g.fillRoundedRect(wx, wy, ws, ws, wr)
     // Top inner-shadow (the recess): stacked dark bands from the top edge, rounded to the well.
@@ -1654,7 +1745,11 @@ export class GameScene extends Phaser.Scene {
     // tints are near-identical whispers), plus a 3px inset so the dark floor shows as cell separators.
     const TILE_A = this.hc ? T.tileHcA : T.tileA
     const TILE_B = this.hc ? T.tileHcB : T.tileB
-    const tileSize = this.hc ? CELL - 3 : CELL
+    // §G9 — the default gets an inset too (2px vs High-Contrast's 3px). Without one the cushions
+    // touch and the deepened floor above has nothing to show through; the inset IS the grid line.
+    // Kept a hair tighter than HC so the default still reads as a warm continuous felt tray rather
+    // than as 64 separate keys.
+    const tileSize = this.hc ? CELL - 3 : CELL - 2
     for (let r = 0; r < ROWS; r++) {
       for (let c = 0; c < COLS; c++) {
         const p = this.cellToXY({ row: r, col: c })
@@ -3087,6 +3182,9 @@ export class GameScene extends Phaser.Scene {
       // A flushed swap re-enters `resolveLoop`, which owns the next handoff; arming the hint here too
       // would fight it (and `armHint` on a board that is about to move is a wasted timer).
       if (this.flushBookedSwap()) return
+      // §G11 — a first-ever special earns its teach card here, on a settled board, so the card
+      // explains a piece the player can actually see sitting there. It owns the handoff too.
+      if (this.maybeSpecialIntro()) return
       this.scheduleAutoplay()
       this.armHint()
     } catch (err) {
@@ -3303,6 +3401,10 @@ export class GameScene extends Phaser.Scene {
     // Morph matched pieces into their earned specials.
     let births = 0
     for (const t of wave.transformed) {
+      // §G11 — latch the FIRST special of each kind the player ever makes. The card itself waits for
+      // the idle handoff (see resolveLoop): interrupting a live cascade to explain the thing that is
+      // currently detonating would bury the very moment it is teaching.
+      this.noteSpecialMade(t.to.kind)
       const old = this.sprites.get(t.from.id)
       if (old) {
         this.sprites.delete(t.from.id)
@@ -5267,7 +5369,25 @@ export class GameScene extends Phaser.Scene {
     refresh()
     this.time.addEvent({ delay: 1000, loop: true, callback: refresh })
 
-    const retryBtn = addPillButton(this, 0, 140, 300, 72, 'RETRY', GOLD_PILL, () => startScene(this,'game', { level: this.level }))
+    // §G10 — the loss that just spent the last heart used to leave RETRY as a gold PRIMARY button
+    // that walked straight into the lives wall: the app's strongest "do this next" style, promising
+    // something it could not deliver. When the pool is empty it now says so and offers the refill
+    // instead, which is the one action that actually leads anywhere from here.
+    // Same destination either way — `create()` already routes an empty pool to `showLivesGate`, so
+    // the restart lands there on its own. What changes is that the button stops lying about it.
+    // (Routing to `showLivesGate()` directly would draw the gate UNDER this card, which is still at
+    // depth 41 — the restart is what actually clears the screen.)
+    const outOfLives = refreshLives().lives <= 0
+    const retryBtn = addPillButton(
+      this,
+      0,
+      140,
+      300,
+      72,
+      outOfLives ? 'OUT OF HEARTS' : 'RETRY',
+      outOfLives ? GHOST_PILL : GOLD_PILL,
+      () => startScene(this, 'game', { level: this.level })
+    )
     const levelsBtn = addPillButton(this, 0, 140 + 84, 300, 60, 'LEVELS', GHOST_PILL, () => startScene(this,'levelselect'))
     card.add(retryBtn)
     card.add(levelsBtn)

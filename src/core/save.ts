@@ -34,6 +34,8 @@ export interface SaveData {
   occasionsSeen: string[]
   /** Hazard intro cards already shown, by kind — so each new rule is taught exactly once. */
   hazardIntros: string[]
+  /** §G11 teach-once latch per SPECIAL PIECE group ('wildReel' | 'diceBomb' | 'jackpot'). */
+  specialIntros: string[]
   /** Latch for the one-time ALL CLEAR (level 100) grand finale. */
   finaleSeen: boolean
   /** Latch for a future first-run onboarding intro. */
@@ -82,6 +84,7 @@ const DEFAULTS: SaveData = {
   lastOpenDate: null,
   occasionsSeen: [],
   hazardIntros: [],
+  specialIntros: [],
   finaleSeen: false,
   seenIntro: false,
   jackpotMeter: 0,
@@ -95,7 +98,7 @@ const DEFAULTS: SaveData = {
 
 function fresh(): SaveData {
   // Re-init every mutable reference type so a fresh save never aliases DEFAULTS' arrays/objects.
-  return { ...DEFAULTS, stars: {}, pendingBoosts: [], occasionsSeen: [], hazardIntros: [], championWeeks: [] }
+  return { ...DEFAULTS, stars: {}, pendingBoosts: [], occasionsSeen: [], hazardIntros: [], specialIntros: [], championWeeks: [] }
 }
 
 /**
@@ -131,6 +134,11 @@ export function coerceSave(raw: unknown): SaveData {
     // clean and a v9 save read back by a rolled-back build is simply ignored by coerceSave.
     base.hazardIntros = Array.isArray(data.hazardIntros)
       ? data.hazardIntros.filter((x): x is string => typeof x === 'string')
+      : []
+    // §G11 special-piece intro latches. Same shape-tolerant treatment as hazardIntros above, so an
+    // older save loads clean and a rolled-back build simply ignores the field.
+    base.specialIntros = Array.isArray(data.specialIntros)
+      ? data.specialIntros.filter((x): x is string => typeof x === 'string')
       : []
     base.occasionsSeen = Array.isArray(data.occasionsSeen)
       ? data.occasionsSeen.filter((x): x is string => typeof x === 'string')

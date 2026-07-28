@@ -58,6 +58,21 @@ export const POWER_ITEMS: PowerItem[] = [
   { type: 'bomb', label: 'BOMB', blurb: 'Blast a 3×3', price: 35 },
 ]
 
+/**
+ * §G10 · what one heart costs at the lives wall.
+ *
+ * The wall used to be a dead end: 0 lives showed a countdown and nothing else, so a player who
+ * wanted to keep playing had exactly one option — close the app for up to 20 minutes. That is the
+ * genre's standard shape too, but every benchmark pairs it with a way THROUGH (gems, an ad, or
+ * asking a friend), and this build already had the currency and an unused `grantLife` sitting
+ * there with zero callers.
+ *
+ * Priced ABOVE a single win's payout (a win banks ~25-45 chips) so a refill is a real decision and
+ * cannot outrun the faucet, but low enough that a couple of good levels buys one. The whole
+ * economy is closed-loop and earned-only — there is no cash purchase behind this.
+ */
+export const LIFE_REFILL_PRICE = 50
+
 export type PurchaseResult = { ok: true; balance: number } | { ok: false; reason: 'insufficient' }
 
 /**
