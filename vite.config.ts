@@ -12,8 +12,15 @@ export default defineConfig({
   // Split the (lazy, optional) Supabase client into its own named chunk so it can be excluded from the
   // PWA precache below — a LOCAL-ONLY build never downloads it; it's fetched on demand only if cloud
   // save is ever configured. See core/cloud.ts (dynamic import).
+  //
+  // three.js gets its own chunk too: it is dynamically imported by view3d/stage.ts (loaded in parallel
+  // with the cloud bootstrap, before Phaser boots), and a named chunk keeps it long-lived in the HTTP
+  // cache across app deploys that don't bump the three version. Unlike supabase it IS precached — the
+  // 3D room must work offline like the rest of the PWA.
   build: {
-    rollupOptions: { output: { manualChunks: { supabase: ['@supabase/supabase-js'] } } },
+    rollupOptions: {
+      output: { manualChunks: { supabase: ['@supabase/supabase-js'], three: ['three'] } },
+    },
   },
   plugins: [
     VitePWA({
