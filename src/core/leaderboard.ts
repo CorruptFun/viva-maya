@@ -22,7 +22,13 @@ import type { SaveData } from './save'
  *
  * Privacy: only user id, a sanitized display name, the ISO week key, and the score
  * ever leave the device. The display name defaults to the Google account's email
- * local-part; `preferredName()` is the single place a future name-picker overrides.
+ * local-part, and the RACE NAME picker (cloud modal → setHandle) overrides it: the
+ * chosen handle is persisted in its own shape-tolerant localStorage key (theme.ts's
+ * storage pattern — no save-schema coupling), wins inside `preferredName()`, and a
+ * rename immediately UPDATEs display_name on every leaderboard row the player owns
+ * (all weeks — RLS permits updating own rows), so a real name can be scrubbed from
+ * history, not just from future submissions. Set the handle BEFORE first sign-in
+ * and the email local-part never reaches the table at all.
  */
 
 /** One leaderboard row, ready for display. `you` marks the signed-in player's row. */
@@ -51,14 +57,61 @@ async function client(): Promise<SupabaseClient | null> {
 }
 
 /** Strip an email local-part / arbitrary text down to a friendly 24-char handle. */
-function sanitizeName(raw: string | null | undefined): string {
+export function sanitizeName(raw: string | null | undefined): string {
   const base = (raw ?? '').split('@')[0].replace(/[^\p{L}\p{N} _.\-]/gu, '').trim()
   return (base || 'player').slice(0, 24)
 }
 
-/** The display name submissions carry — email local-part today, name-picker override later. */
+// --- Race name (chosen handle) ----------------------------------------------
+// Own shape-tolerant localStorage key, mirroring theme.ts: decoupled from the
+// save schema (no migration, no merge semantics) and read synchronously.
+const HANDLE_KEY = 'viva-maya:handle'
+
+/** The persisted chosen handle (already sanitized), or null when none is set. */
+export function getHandle(): string | null {
+  try {
+    const raw = localStorage.getItem(HANDLE_KEY)
+    if (raw === null || raw.trim() === '') return null
+    return sanitizeName(raw)
+  } catch {
+    return null // storage blocked (private mode / no DOM) — behave as unset
+  }
+}
+
+/**
+ * Set (or clear, with null/empty) the chosen race name. Persists the sanitized
+ * handle, then — when signed in — immediately renames EVERY leaderboard row the
+ * player owns (all weeks, fire-and-forget), so the old name disappears from
+ * current and past boards without waiting for the next score submission.
+ * Returns the sanitized handle that was stored (null when cleared).
+ */
+export function setHandle(raw: string | null): string | null {
+  const clean = raw === null || raw.trim() === '' ? null : sanitizeName(raw)
+  try {
+    if (clean === null) localStorage.removeItem(HANDLE_KEY)
+    else localStorage.setItem(HANDLE_KEY, clean)
+  } catch {
+    // storage blocked — the rename below still applies for this session
+  }
+  void renameEverywhere()
+  return clean
+}
+
+/** UPDATE display_name on all of the signed-in player's rows (RLS: own rows only). */
+async function renameEverywhere(): Promise<void> {
+  try {
+    const s = cloudSession()
+    const c = await client()
+    if (!s || !c) return
+    await c.from('endless_scores').update({ display_name: preferredName() }).eq('user_id', s.userId)
+  } catch {
+    // offline / transient — the next score submission still carries the new name
+  }
+}
+
+/** The display name submissions carry — the chosen race name, else the email local-part. */
 export function preferredName(): string {
-  return sanitizeName(cloudSession()?.email)
+  return getHandle() ?? sanitizeName(cloudSession()?.email)
 }
 
 // (week, score) memo: skip an upsert we've already sent this page-load. The server-side

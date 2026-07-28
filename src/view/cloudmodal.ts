@@ -11,6 +11,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { cloudSession, isCloudConfigured, onCloudChange, signInWithGoogle, signOutCloud } from '../core/cloud'
+import { getHandle, sanitizeName, setHandle } from '../core/leaderboard'
 import { exportSave, importSave } from '../core/save'
 
 const MODAL_ID = 'vm-cloud-modal'
@@ -124,6 +125,7 @@ export function openCloudModal(): void {
   let authError = ''
   let restoreValue = ''
   let restoreError = ''
+  let nameValue = getHandle() ?? ''
   let unsub: (() => void) | null = null
 
   // ── Overlay (scrim) + card shell ──────────────────────────────────────────────────────────
@@ -231,6 +233,62 @@ export function openCloudModal(): void {
     ])
   }
 
+  // ── Race name block (shown whenever cloud is configured) ─────────────────────────────────
+  // The weekly-race leaderboard shows a display name with each score. It defaults to the
+  // email's local-part, which can be a REAL NAME — this picker overrides it (and, signed in,
+  // the rename is pushed to every board row the player owns, past weeks included, so the old
+  // name is scrubbed from history — core/leaderboard.setHandle). Deliberately visible while
+  // signed OUT too: set a handle first and the email name never reaches the board at all.
+  const buildRaceName = (): HTMLElement => {
+    const session = cloudSession()
+    const emailFallback = session?.email ? sanitizeName(session.email) : null
+
+    const input = mk('input', {
+      display: 'block', width: '100%', minHeight: '44px', padding: '11px 13px',
+      border: `2px solid ${BORDER}`, borderRadius: '12px', background: '#fffef9', color: INK,
+      fontFamily: SANS, fontSize: '16px', boxSizing: 'border-box', outline: 'none',
+    })
+    input.type = 'text'
+    input.maxLength = 24
+    input.autocomplete = 'off'
+    input.placeholder = emailFallback ?? 'e.g. neonghost'
+    input.value = nameValue
+    input.setAttribute('aria-label', 'Race name')
+    focusRing(input)
+
+    // Live preview of the sanitized handle — what the board will actually show.
+    const shows = (v: string): string => {
+      const clean = v.trim() === '' ? null : sanitizeName(v)
+      if (clean) return `Shows on the board as: ${clean}`
+      return emailFallback
+        ? `No name set — the board falls back to: ${emailFallback}`
+        : 'No name set yet.'
+    }
+    const preview = note(shows(nameValue))
+    input.addEventListener('input', () => {
+      nameValue = input.value
+      preview.textContent = shows(nameValue)
+    })
+
+    const saveBtn = ghostBtn('Save race name')
+    const save = (): void => {
+      const applied = setHandle(nameValue)
+      nameValue = applied ?? ''
+      input.value = nameValue
+      preview.textContent = shows(nameValue)
+      saveBtn.textContent = applied ? 'Saved ✓' : 'Name cleared ✓'
+      window.setTimeout(() => { saveBtn.textContent = 'Save race name' }, 1600)
+    }
+    saveBtn.addEventListener('click', save)
+    input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') save() })
+
+    const copy = session
+      ? 'Shown with your score on the weekly race — instead of your email name. Renaming also updates your past weeks.'
+      : 'Shown with your score on the weekly race once you sign in — set it now and your email name never appears.'
+
+    return stack([heading('Race name'), note(copy), input, preview, saveBtn])
+  }
+
   // ── Backup / restore block (always shown) ─────────────────────────────────────────────────
   const buildBackup = (): HTMLElement => {
     const copyBtn = ghostBtn('Copy backup code')
@@ -327,6 +385,10 @@ export function openCloudModal(): void {
     content.replaceChildren()
     content.append(buildAuth())
     if (authError) content.append(errorEl(authError))
+    if (isCloudConfigured()) {
+      content.append(divider())
+      content.append(buildRaceName())
+    }
     content.append(divider())
     content.append(buildBackup())
   }
