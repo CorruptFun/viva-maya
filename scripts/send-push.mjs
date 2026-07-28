@@ -167,7 +167,7 @@ async function main() {
 
   // The audience: opted in, and not a known corpse. Matches the partial index in 0011.
   const subsRes = await rest(
-    'push_subscriptions?select=endpoint,p256dh,auth,user_id,device_id&week_race=is.true&failure_count=lt.5'
+    'push_subscriptions?select=endpoint,p256dh,auth,user_id,device_id,created_at&week_race=is.true&failure_count=lt.5'
   )
   if (!subsRes.ok) {
     console.error(`could not read subscriptions: ${subsRes.status} ${await subsRes.text()}`)
@@ -195,7 +195,19 @@ async function main() {
     const payload = JSON.stringify({ title, body, tag: `week-${week}`, url: './' })
 
     if (DRY) {
-      console.log(`  [dry] ${sub.user_id ? sub.user_id.slice(0, 8) : 'anon'} → ${title} :: ${body}`)
+      // Identify the recipient well enough to audit the audience, WITHOUT printing the endpoint
+      // path: that path is a bearer capability (anyone holding it can notify the device) and this
+      // log is readable by anyone who can see the repo's Actions runs. Host + age + whether it is
+      // attached to an account is enough to tell a real subscriber from a leftover test row.
+      const host = (() => {
+        try {
+          return new URL(sub.endpoint).host
+        } catch {
+          return 'unparseable'
+        }
+      })()
+      const who = sub.user_id ? `user:${sub.user_id.slice(0, 8)}` : 'anon'
+      console.log(`  [dry] ${who} via ${host} (device ${String(sub.device_id).slice(0, 8)}) → ${title} :: ${body}`)
       sent++
       continue
     }
