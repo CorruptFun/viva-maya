@@ -3,7 +3,7 @@ import { DIFFICULTY } from './difficulty'
 import type { BoostType, PromoReward } from './types'
 
 export interface SaveData {
-  v: 11
+  v: 12
   best: number
   /** Highest level the player may attempt (1-based). */
   unlocked: number
@@ -51,6 +51,10 @@ export interface SaveData {
   /** Day keys ("YYYY-MM-DD") whose DAILY-winner purse has been claimed — championWeeks' per-day
    *  twin, same once-per-key gate and same cloud-synced double-award protection. */
   championDays: string[]
+  /** Day keys whose RESULT RECAP card has been shown. A "has seen" latch, not a claim: it grants
+   *  nothing, it just stops yesterday's result greeting you twice. Rides the synced save so a second
+   *  device doesn't re-show it either. */
+  raceRecapDays: string[]
   // --- Referral / free-spin fields. All default EMPTY/OFF; read shape-tolerantly below. ---
   /** The invite code this player arrived through — a UI mirror of the 'viva-maya:ref' stash
    *  (core/referrals.ts owns registration; the stash stays authoritative). Null when organic. */
@@ -108,7 +112,7 @@ function freeSpinHeadroom(save: SaveData, dayKey: string, source: FreeSpinSource
 const KEY = 'viva-maya:v1'
 
 const DEFAULTS: SaveData = {
-  v: 11,
+  v: 12,
   best: 0,
   unlocked: 1,
   stars: {},
@@ -129,6 +133,7 @@ const DEFAULTS: SaveData = {
   jackpotMeter: 0,
   championWeeks: [],
   championDays: [],
+  raceRecapDays: [],
   referredByCode: null,
   referralWelcomeClaimed: false,
   freeSpins: 0,
@@ -151,6 +156,7 @@ function fresh(): SaveData {
     specialIntros: [],
     championWeeks: [],
     championDays: [],
+    raceRecapDays: [],
     endlessDays: {},
     charms: [],
   }
@@ -167,7 +173,8 @@ export function coerceSave(raw: unknown): SaveData {
   const data = raw as Partial<SaveData> & { best?: number }
   // v1 {best}; v2 +unlocked/stars; v3 +daily-spin; v4 +endless race; v5 +lives/energy;
   // v9 +hazardIntros (the teach-once latch for each new board mechanic);
-  // v10 +Lucky Deal / charms; v11 endless goes DAILY (endlessWeek/endlessBest → endlessDays; +championDays).
+  // v10 +Lucky Deal / charms; v11 endless goes DAILY (endlessWeek/endlessBest → endlessDays;
+  // +championDays); v12 +raceRecapDays (the seen-latch for yesterday's result card).
   base.best = typeof data.best === 'number' ? data.best : 0
     base.unlocked = typeof data.unlocked === 'number' ? Math.max(1, data.unlocked) : 1
     base.stars = data.stars && typeof data.stars === 'object' ? data.stars : {}
@@ -221,6 +228,9 @@ export function coerceSave(raw: unknown): SaveData {
       : []
     base.championDays = Array.isArray(data.championDays)
       ? data.championDays.filter((x): x is string => typeof x === 'string')
+      : []
+    base.raceRecapDays = Array.isArray(data.raceRecapDays)
+      ? data.raceRecapDays.filter((x): x is string => typeof x === 'string')
       : []
     // Referral / free-spin fields — absent in older saves → the empty/off defaults.
     base.referredByCode = typeof data.referredByCode === 'string' ? data.referredByCode : null
@@ -367,6 +377,21 @@ export function claimDailyWin(day: string, purse: number): number | null {
   save.chips += Math.max(0, Math.floor(purse))
   persistSave(save)
   return save.chips
+}
+
+/**
+ * Latch yesterday's RESULT RECAP as shown, so it greets the player exactly once. Deliberately NOT a
+ * claim (nothing is granted), and deliberately marked BEFORE the card animates rather than after:
+ * a coronation that dies mid-ceremony should re-offer, because a purse is owed — a recap that dies
+ * mid-ceremony should not, because re-showing yesterday's result on the next open is just noise.
+ * Trimmed to a short tail; only the single most recently closed day is ever looked up.
+ */
+export function markRaceRecapSeen(day: string): void {
+  const save = loadSave()
+  if (save.raceRecapDays.includes(day)) return
+  save.raceRecapDays.push(day)
+  if (save.raceRecapDays.length > 14) save.raceRecapDays = save.raceRecapDays.slice(-14)
+  persistSave(save)
 }
 
 /**

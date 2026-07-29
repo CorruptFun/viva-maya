@@ -195,7 +195,15 @@ export async function maybeSubmitEndless(save: SaveData, now = new Date()): Prom
  * Returns an empty board when dormant — callers can render "sign in to join the race".
  */
 export async function fetchDailyBoard(limit = 25, now = new Date()): Promise<RaceBoard> {
-  const day = dayKey(now)
+  return fetchBoardForDay(dayKey(now), limit)
+}
+
+/**
+ * The same fetch for ANY day, open or closed. Split out so the result recap can read the board that
+ * just closed with the identical ranking rules the player watched all day — a recap that computed
+ * rank differently from the board would be worse than no recap.
+ */
+async function fetchBoardForDay(day: string, limit: number): Promise<RaceBoard> {
   const empty: RaceBoard = { key: day, entries: [], myRank: null, myScore: null }
   try {
     const c = await client()
@@ -715,6 +723,74 @@ export async function checkWeeklyPrize(
     const tier = prizeForRank(rank, PRIZE_TIERS)
     if (!tier) return null
     return { scope: 'week', key: week, rank, score: row.total, tier }
+  } catch {
+    return null
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RESULT RECAP — what the other players get.
+//
+// Only #1 earns a coronation, which means on a small board almost nobody sees anything at all when a
+// day closes. That is a hole in the format, not just a missing nicety: the game tells players "a new
+// board every day, each day crowns a winner" and then, for everyone who is not the winner, produces
+// no evidence that any of it happened. The daily rhythm has to be visible to the people living it.
+//
+// So everyone who RACED gets their result: where they finished, who took it, and how close the next
+// place up was. The gap is the part that does the work — "527 behind chipqueen" is a reason to open
+// today's board; "you came 4th" is a fact.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Yesterday's result for a player who raced it and didn't win it. */
+export interface RaceRecap {
+  /** The day key that closed. */
+  day: string
+  rank: number
+  /** Players on that board — a FLOOR, not a census: the fetch caps at `limit` rows. */
+  total: number
+  score: number
+  winnerName: string
+  winnerScore: number
+  /** The player one place above, when they were inside the fetched rows; null when out of reach. */
+  aheadName: string | null
+  /** How far behind `aheadName` — 0 when unknown. The most motivating number on the card. */
+  gap: number
+}
+
+/**
+ * Yesterday's result, or null when there is nothing to say: dormant, signed out, already shown,
+ * didn't race, or WON — the winner gets the coronation instead and must never get both. Never throws.
+ */
+export async function fetchRaceRecap(
+  seenDays: readonly string[],
+  now = new Date()
+): Promise<RaceRecap | null> {
+  try {
+    const day = previousDayKey(now)
+    if (seenDays.includes(day)) return null
+    const c = await client()
+    if (!c) return null
+    if (!cloudSession()) return null
+    const board = await fetchBoardForDay(day, 25)
+    if (board.myRank === null || board.myScore === null) return null // didn't race it
+    if (board.myRank === 1) return null // the crown, not the recap
+    const top = board.entries[0]
+    if (!top) return null
+    // The player directly above, when the player's own row was inside the fetched top. Outside it we
+    // know the rank (counted server-side) but not who is immediately ahead, so the gap is withheld
+    // rather than guessed — an invented "behind X" on the card would be a lie about a real person.
+    const mine = board.entries.findIndex(e => e.you)
+    const ahead = mine > 0 ? board.entries[mine - 1] : null
+    return {
+      day,
+      rank: board.myRank,
+      total: Math.max(board.entries.length, board.myRank),
+      score: board.myScore,
+      winnerName: top.name,
+      winnerScore: top.score,
+      aheadName: ahead ? ahead.name : null,
+      gap: ahead ? Math.max(0, ahead.score - board.myScore) : 0,
+    }
   } catch {
     return null
   }

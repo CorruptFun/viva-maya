@@ -65,7 +65,7 @@ Append to the URL: `?level=N` jump to level · `&auto=MS` autoplay hinted moves 
 bottom-left · `&turbo=N` scale tween/timer clocks (embedded panes starve the RAF clock).
 Round-4 additions: `?race[=rich|out|week|weekout|empty|loading|error|crownyou]` race panel
 fixtures · `?levels[=rich|out|empty|loading|error]` LEVEL RACE ladder fixtures ·
-`?raceline=rich|out|new` Home standings-line fixtures · `?coronation` / `?dailywin` /
+`?raceline=rich|out|new` Home standings-line fixtures · `?coronation` / `?dailywin` / `?recap` /
 `?friend[=n]` celebration previews · `?invite=in|minting|welcome` store invite fixtures ·
 `?wheel` fire the armed jackpot wheel · `?wedge=N` pin the winning wedge ·
 `?ticket=N` free-spin ticket beat · `?ref=CODE` referral capture (works in prod too) ·

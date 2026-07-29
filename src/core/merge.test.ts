@@ -121,13 +121,22 @@ describe('mergeSaves — latches are unioned, never lost', () => {
       unlocked: 10,
       championWeeks: ['2026-W30'],
       championDays: ['2026-07-28'],
+      raceRecapDays: ['2026-07-26'],
       referralWelcomeClaimed: true,
       finaleSeen: true,
     })
-    const cloud = save({ unlocked: 99, championWeeks: ['2026-W31'], championDays: ['2026-07-29'] })
+    const cloud = save({
+      unlocked: 99,
+      championWeeks: ['2026-W31'],
+      championDays: ['2026-07-29'],
+      raceRecapDays: ['2026-07-27'],
+    })
     const m = mergeSaves(local, cloud)
     expect([...m.championWeeks].sort()).toEqual(['2026-W30', '2026-W31'])
     expect([...m.championDays].sort()).toEqual(['2026-07-28', '2026-07-29'])
+    // Seen-latch, not a claim — but it unions for the same reason: a second device should not
+    // re-show yesterday's result just because it happens to be further along.
+    expect([...m.raceRecapDays].sort()).toEqual(['2026-07-26', '2026-07-27'])
     expect(m.referralWelcomeClaimed).toBe(true)
     expect(m.finaleSeen).toBe(true)
   })

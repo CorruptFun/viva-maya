@@ -2,15 +2,23 @@ import Phaser from 'phaser'
 import { sfx } from '../audio/sfx'
 import { DESIGN_W, restScrollY, viewportCenterY, worldH } from '../config'
 import { spinAvailable, todayKey } from '../core/daily'
-import { endlessUnlocked, previousDayKey, previousWeekKey } from '../core/endless'
-import { DAILY_PRIZE_TIERS, PRIZE_TIERS, checkDailyPrize, checkWeeklyPrize } from '../core/leaderboard'
-import type { RacePrizeWin } from '../core/leaderboard'
+import {
+  DAYS_PER_WEEK,
+  endlessUnlocked,
+  endlessWeekStanding,
+  previousDayKey,
+  previousWeekKey,
+  weekKey,
+  weekKeyOfDay,
+} from '../core/endless'
+import { DAILY_PRIZE_TIERS, PRIZE_TIERS, checkDailyPrize, checkWeeklyPrize, fetchRaceRecap } from '../core/leaderboard'
+import type { RacePrizeWin, RaceRecap } from '../core/leaderboard'
 import { LEVEL_COUNT } from '../core/levels'
 import { refreshLives } from '../core/lives'
 import { greeting, occasionFor, pendingOccasion, secretNote, withName } from '../core/maya'
 import { REFERRER_CHIPS, claimReferralRewards, fetchPendingRewards } from '../core/referrals'
 import type { PendingReferralReward } from '../core/referrals'
-import { claimChampionship, claimDailyWin, loadSave, markOccasionSeen, touchOpen } from '../core/save'
+import { claimChampionship, claimDailyWin, loadSave, markOccasionSeen, markRaceRecapSeen, touchOpen } from '../core/save'
 import { addCasinoBackdrop } from '../view/background'
 import {
   addRaceLockedModule,
@@ -34,6 +42,7 @@ import {
   FONT,
   GHOST_PILL,
   GOLD_PILL,
+  ROSE_PILL,
   addChipPill,
   addHelpChip,
   addLivesHud,
@@ -765,11 +774,11 @@ export class HomeScene extends Phaser.Scene {
 
   /**
    * Growth-celebration queue: CORONATIONS first — the weekly champion, then yesterday's daily
-   * winner — followed by up to two FRIEND-JOINED toasts. Strictly one at a time, never stacked,
-   * never over the power-on (the caller delays past it). Every data call is dormant-safe
-   * (null/empty offline), and a scene shutdown mid-queue simply stops the chain (`alive`).
-   * DEV: `?coronation` / `?dailywin` / `?friend[=n]` substitute deterministic fixtures for the
-   * network checks (mirrors the `?race` pattern).
+   * winner — then the RESULT RECAP for everyone who didn't win, followed by up to two FRIEND-JOINED
+   * toasts. Strictly one at a time, never stacked, never over the power-on (the caller delays past
+   * it). Every data call is dormant-safe (null/empty offline), and a scene shutdown mid-queue simply
+   * stops the chain (`alive`). DEV: `?coronation` / `?dailywin` / `?recap` / `?friend[=n]`
+   * substitute deterministic fixtures for the network checks (mirrors the `?race` pattern).
    *
    * WEEKLY BEFORE DAILY, and both can land on the same open: a Monday visit closes a season AND a
    * Sunday board. The season is the bigger moment and the one whose result the daily boards were
@@ -808,7 +817,30 @@ export class HomeScene extends Phaser.Scene {
       if (!alive.on) return
       if (day) await this.openCoronation(day, pill)
       if (!alive.on) return
-      // 3 · FRIEND-JOINED — referrer rewards, one toast each, max 2 per visit (the rest keep).
+      // 3 · RESULT RECAP — for everyone who raced yesterday and did NOT win it. Only reached when
+      // `day` is null, because the winner already had their ceremony and must never get both: the
+      // recap's whole job is to give the other players the closure the crown gives the winner.
+      if (!day) {
+        let recap: RaceRecap | null = null
+        if (q?.has('recap')) {
+          recap = {
+            day: previousDayKey(),
+            rank: 4,
+            total: 12,
+            score: 7744,
+            winnerName: 'marisol',
+            winnerScore: 9840,
+            aheadName: 'chipqueen',
+            gap: 527,
+          }
+        } else {
+          recap = await fetchRaceRecap(loadSave().raceRecapDays)
+        }
+        if (!alive.on) return
+        if (recap) await this.openRaceRecap(recap)
+        if (!alive.on) return
+      }
+      // 4 · FRIEND-JOINED — referrer rewards, one toast each, max 2 per visit (the rest keep).
       let rewards: Array<PendingReferralReward | null>
       if (q?.has('friend')) {
         rewards = new Array<null>(Math.min(2, Math.max(1, Number(q.get('friend') ?? '1') || 1))).fill(null)
@@ -1169,6 +1201,213 @@ export class HomeScene extends Phaser.Scene {
    * NOTE: the referrals schema deliberately carries no referee display name (privacy — see
    * migration 0004), so the live copy celebrates "a friend" rather than a name.
    */
+  /**
+   * The RESULT RECAP — yesterday's board, for the players who raced it and didn't win it.
+   *
+   * This exists because the crown was the only thing the format had to say when a day closed, and a
+   * crown speaks to exactly one person. Everyone else played a shared board, watched a leaderboard,
+   * and then got silence — no result, no confirmation the day had even ended. On a small board that
+   * is nearly the whole player base, and it quietly makes the daily rhythm look like it isn't
+   * happening.
+   *
+   * Deliberately NOT a celebration. No crown, no confetti, no purse, a lighter scrim: this is a
+   * RESULT, and dressing 4th place like a win would read as consolation. The card is built around
+   * the two numbers that make someone open today's board — how close the next place up was, and how
+   * much of the week they have banked — with the play button right there under them.
+   *
+   * Latched BEFORE it animates (see save.markRaceRecapSeen): unlike a coronation there is nothing
+   * owed, so a card interrupted halfway should not come back tomorrow to report the wrong day.
+   */
+  private openRaceRecap(recap: RaceRecap): Promise<void> {
+    return new Promise(resolve => {
+      markRaceRecapSeen(recap.day)
+      const reduced = this.prefersReducedMotion()
+      const T = getTheme()
+      const cx = DESIGN_W / 2
+      const cy = 560
+      const layer = this.add.container(0, 0).setDepth(78)
+      layer.once(Phaser.GameObjects.Events.DESTROY, () => resolve())
+
+      // The week the CLOSED day belonged to — not today's. On a Monday those differ, and reporting a
+      // fresh empty week under a Sunday result would read as the totals having been wiped.
+      const closedWeek = weekKeyOfDay(recap.day) ?? weekKey()
+      const weekLive = closedWeek === weekKey()
+      const wk = endlessWeekStanding(loadSave(), closedWeek)
+
+      const scrim = this.add.rectangle(cx, viewportCenterY(), DESIGN_W, worldH(), T.scrim, 0.45).setInteractive()
+      layer.add(scrim)
+
+      const cardW = 540
+      const cardH = 510
+      const cardRoot = this.add.container(cx, cy)
+      layer.add(cardRoot)
+      const g = this.add.graphics()
+      for (let i = 2; i >= 1; i--) {
+        g.fillStyle(T.shadow, 0.1)
+        g.fillRoundedRect(-cardW / 2, -cardH / 2 + i * 3, cardW, cardH, 30)
+      }
+      g.fillStyle(T.cardFill, 1)
+      g.fillRoundedRect(-cardW / 2, -cardH / 2, cardW, cardH, 30)
+      g.lineStyle(4, T.goldBezel, 1)
+      g.strokeRoundedRect(-cardW / 2, -cardH / 2, cardW, cardH, 30)
+      if (darkWash(T)) {
+        g.fillStyle(T.accent, 0.85)
+        g.fillRoundedRect(-cardW / 2 + 30, -cardH / 2 + 3, cardW - 60, 2, 1)
+      }
+      cardRoot.add(g)
+      // Blocker so a tap on the card never falls through to the dismissing scrim.
+      cardRoot.add(this.add.rectangle(0, 0, cardW, cardH, 0xffffff, 0.001).setInteractive())
+
+      cardRoot.add(
+        this.add
+          .text(0, -196, 'YESTERDAY’S BOARD', { fontFamily: FONT, fontSize: '19px', fontStyle: '900', color: T.inkFaint })
+          .setOrigin(0.5)
+          .setLetterSpacing(3)
+      )
+
+      // Where you finished — the hero number. Rank alone, big: "#4" is the answer to the question the
+      // player actually has, and everything else on the card is context for it.
+      cardRoot.add(
+        this.add
+          .text(0, -134, `#${recap.rank}`, { fontFamily: FONT, fontSize: '72px', fontStyle: '900', color: T.goldText })
+          .setOrigin(0.5)
+          .setShadow(0, 3, 'rgba(0,0,0,0.14)', 5, false, true)
+      )
+      cardRoot.add(
+        this.add
+          .text(0, -80, `of ${recap.total}  ·  ${recap.score.toLocaleString()}`, {
+            fontFamily: 'Arial, sans-serif',
+            fontSize: '21px',
+            color: T.inkMuted,
+          })
+          .setOrigin(0.5)
+      )
+
+      // Who took it — on the canonical gold plate, so the winner's line is visibly the same metal the
+      // leaderboard crowns them with.
+      const plateW = cardW - 76
+      const plate = this.add.graphics()
+      goldFace(plate, -plateW / 2, -26, plateW, 52, T, 16)
+      plate.lineStyle(2, T.goldDeep, 1)
+      plate.strokeRoundedRect(-plateW / 2, -26, plateW, 52, 16)
+      const winner = this.add.container(0, -18)
+      winner.add(plate)
+      // No crown glyph here, deliberately: 👑 is gold-on-gold against this plate and renders as a
+      // smudge. The plate IS the crown — it is the same struck-metal face the leaderboard gives #1.
+      winner.add(
+        this.add
+          .text(-plateW / 2 + 28, 0, `won by ${recap.winnerName}`, {
+            fontFamily: FONT,
+            fontSize: '21px',
+            fontStyle: '900',
+            color: T.goldPillText,
+          })
+          .setOrigin(0, 0.5)
+          .setShadow(0, 2, 'rgba(74,51,5,0.35)', 2, false, true)
+      )
+      winner.add(
+        this.add
+          .text(plateW / 2 - 24, 0, recap.winnerScore.toLocaleString(), {
+            fontFamily: FONT,
+            fontSize: '21px',
+            fontStyle: '900',
+            color: T.goldPillText,
+          })
+          .setOrigin(1, 0.5)
+          .setShadow(0, 2, 'rgba(74,51,5,0.35)', 2, false, true)
+      )
+      cardRoot.add(winner)
+
+      // The near-miss. This is the line that sends someone back to the board, so it gets the gap to
+      // the NEXT PLACE UP rather than to the winner — "527 behind" is catchable; "2,096 behind the
+      // leader" is a wall. Falls back to the winner's number when we couldn't see who was directly
+      // ahead (the player finished outside the fetched rows).
+      cardRoot.add(
+        this.add
+          .text(
+            0,
+            34,
+            recap.aheadName !== null && recap.gap > 0
+              ? `just ${recap.gap.toLocaleString()} behind ${recap.aheadName}`
+              : `${recap.winnerScore.toLocaleString()} was the score to beat`,
+            { fontFamily: FONT, fontSize: '22px', fontStyle: '900', color: T.ink, align: 'center', wordWrap: { width: cardW - 70 } }
+          )
+          .setOrigin(0.5)
+      )
+
+      // The week, and what is still on the table. The second half is the whole point of saying it:
+      // "3 boards left" is a plan, where a bare total is a scoreboard.
+      const left = Math.max(0, DAYS_PER_WEEK - wk.days)
+      cardRoot.add(
+        this.add
+          .text(
+            0,
+            84,
+            weekLive
+              ? `your week  ·  ${wk.total.toLocaleString()}  ·  ${wk.days} of ${DAYS_PER_WEEK} days`
+              : `that week finished  ·  ${wk.total.toLocaleString()}  ·  ${wk.days} of ${DAYS_PER_WEEK} days`,
+            { fontFamily: 'Arial, sans-serif', fontSize: '20px', color: T.inkMuted }
+          )
+          .setOrigin(0.5)
+      )
+      cardRoot.add(
+        this.add
+          .text(
+            0,
+            114,
+            weekLive
+              ? left > 0
+                ? `${left} more board${left === 1 ? '' : 's'} to add to it`
+                : 'every board raced — hold your total'
+              : 'a fresh week starts today',
+            { fontFamily: 'Arial, sans-serif', fontSize: '19px', color: T.inkFaint }
+          )
+          .setOrigin(0.5)
+      )
+
+      let gone = false
+      const dismiss = (then?: () => void): void => {
+        if (gone) return
+        gone = true
+        sfx.whoosh()
+        if (reduced) {
+          layer.destroy()
+          then?.()
+          return
+        }
+        this.tweens.add({
+          targets: layer,
+          alpha: 0,
+          duration: 160,
+          ease: E.exit,
+          onComplete: () => {
+            layer.destroy()
+            then?.()
+          },
+        })
+      }
+      scrim.on('pointerup', () => dismiss())
+
+      // The call to action, in the race's own rose so it reads as "the same thing you were playing".
+      // It starts today's board directly — the recap's job is finished the moment it hands over.
+      cardRoot.add(
+        addPillButton(this, 0, 172, 452, 72, 'PLAY TODAY’S BOARD', ROSE_PILL, () =>
+          dismiss(() => startScene(this, 'game', { endless: true }))
+        )
+      )
+      cardRoot.add(
+        this.add
+          .text(0, 228, 'tap anywhere to close', { fontFamily: 'Arial, sans-serif', fontSize: '17px', color: T.inkFaint })
+          .setOrigin(0.5)
+      )
+
+      if (reduced) return
+      cardRoot.setAlpha(0)
+      this.tweens.add({ targets: cardRoot, alpha: 1, duration: D.base, ease: E.settle })
+      popIn(this, cardRoot, { from: 0.92, duration: D.pop, overshoot: OVERSHOOT.gentle })
+    })
+  }
+
   private openFriendToast(
     reward: PendingReferralReward | null,
     pill: ChipPill,

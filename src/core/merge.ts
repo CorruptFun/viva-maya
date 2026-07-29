@@ -69,6 +69,7 @@ function unionLatches(a: SaveData, b: SaveData): Partial<SaveData> {
     occasionsSeen: both(a.occasionsSeen, b.occasionsSeen),
     championWeeks: both(a.championWeeks, b.championWeeks),
     championDays: both(a.championDays, b.championDays),
+    raceRecapDays: both(a.raceRecapDays, b.raceRecapDays),
     endlessDays: bestPerDay(a.endlessDays, b.endlessDays),
     ...mergeCharms(a, b),
   }

@@ -187,6 +187,14 @@ all week. Seven daily purses plus one champion is ~2,050 chips a week across up 
 different players — the same order as the single 1,000 purse it replaced, and still bounded
 by construction (fixed prizes, fixed cadence, no scaling with player count).
 
+**Everyone else gets a RESULT RECAP.** Only #1 earns a purse, which on a small board means almost
+nobody would see anything at all when a day closed — the game promising "each day crowns a winner"
+and then producing no evidence for the people who raced. So every non-winner who played gets their
+result on the next Home visit: where they finished, who took it, how close the next place up was, and
+what their week is standing at with boards still to play. It grants nothing (a seen-latch, not a
+claim — `save.raceRecapDays`), so it costs the economy nothing; it exists to make the daily rhythm
+visible to the people living it, and to hand them today's board.
+
 Prize structure is a DATA table (`PRIZE_TIERS` / `DAILY_PRIZE_TIERS`) — adding top-3/top-10
 tiers later is adding rows, not plumbing. If the player base ever outgrows tiers, the next
 step is league brackets (~30-player groups); the schema already supports it (everything is

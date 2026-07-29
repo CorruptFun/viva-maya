@@ -254,6 +254,11 @@ clears a RANDOM present color. Swap-combos (both consumed, epicenter = drag dest
   today's best, and the running week total with "N of 7 boards raced".
 - Panel: one card, TODAY / THIS WEEK tabs (view/leaderboardpanel.ts) + the all-time LEVEL ladder.
   Crown row is "yesterday's winner" on the daily tab, "last week's champion" on the weekly one.
+- RESULT RECAP (HomeScene.openRaceRecap): for everyone who raced the closed day and did NOT win it —
+  rank, score, who took it, the gap to the NEXT place up (catchable, unlike the gap to the leader),
+  the week total with boards remaining, and a rose PLAY TODAY'S BOARD button. Latched per day in
+  save.raceRecapDays BEFORE it animates (nothing is owed, unlike a coronation, so an interrupted card
+  must not come back reporting a stale day). Winners get the coronation instead and never both.
 - RULES (openRaceRulesPanel): the in-app explainer, reached from the race card's `?` chip and from
   how-to-play's RACE RULES button. Three numbered beats over a WEEK STRIP diagram — seven bars with
   a hole where a skipped day should be, summing to a total underneath. The diagram is the point: the
