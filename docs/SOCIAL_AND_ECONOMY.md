@@ -11,6 +11,7 @@ anywhere in this repo by policy.)
 level wins ──► chips ──► boosts/helpers (Gift Store, in-level power bar)
      │            ▲
      │            ├── jackpot wheel payouts (meter fills 1 notch/win)
+     │            ├── daily winner purse (150, one player/day)
      │            ├── weekly champion purse (1,000, one player/week)
      │            ├── referral rewards (300/friend · 150 welcome)
      │            ├── daily check-in (streak-scaled chips 10→150 + a boost / free-spin prize)
@@ -39,7 +40,7 @@ learn without stalling; scarcity begins once a player is invested). Old saves ho
 
 A MEGA WIN banks free spins of the daily-bonus cabinet: cascade ×4 → 3 spins, ×6+ → 6
 (`FREE_SPIN_AWARDS`, best-first). Earnable in **numbered levels only — never endless**:
-the endless board is deterministic (same weekly seed for everyone), so a memorized
+the endless board is deterministic (same daily seed for everyone), so a memorized
 cascade line would be an infinite-spin printer. Caps: 6 earned/day, 12 banked. Free
 spins bypass the daily latch and never touch the streak or `lastSpinDate`; the cabinet
 chains spins while the bank lasts (accelerating bulb chase per consecutive spin) and
@@ -142,32 +143,54 @@ fountain landing physically in the balance readout, marquee typography). The lan
 the paying wedge (`?wedge=N` DEV pin exists to prove it). Near-full meters (one win
 away) glow on the shared heartbeat clock — the "one more win" tease.
 
-## Weekly race (leaderboard)
+## The endless race: daily boards, weekly season (leaderboard)
 
-Everyone plays the SAME endless board each ISO week (seeded from the week key) with the
+Everyone plays the SAME endless board each UTC **day** (seeded from the day key) with the
 same 30-move budget and **no boosts allowed in endless** — that rule is the race's
-constitution; new boost features can never corrupt fairness while it holds. Weekly
-bests mirror to the shared `endless_scores` table automatically when a signed-in
-player's save syncs (no separate traffic path). The WEEKLY RACE panel (Home module →
-tap the standings line) shows the podium, your highlighted row, your rank when outside
-the top, and last week's champion crown row.
+constitution; new boost features can never corrupt fairness while it holds. Each day's
+best mirrors to the shared `endless_daily_scores` table automatically when a signed-in
+player's save syncs (no separate traffic path). The panel (Home module → tap the
+standings line) opens on TODAY and tabs to THIS WEEK: podium, your highlighted row,
+your rank when outside the top, and the previous board's winner in the crown row.
 
-- Privacy: only user id, sanitized display name, week key, and score ever leave the
+**A week's standing is the SUM of that player's daily bests inside it.** That is the whole
+design: one enormous run on Tuesday cannot beat someone who showed up six days out of
+seven, and a day you skip is a zero you can never make back. The rows show it out loud —
+`18,204 · 5d` — so the ranking explains itself. Totals are a VIEW
+(`endless_weekly_totals`) over the daily rows, never a stored second copy, so the total is
+by construction the sum of the scores that produced it.
+
+*Why it replaced the single weekly board (2026-07-29):* one frozen layout per week went
+stale by Thursday — the leaders had memorised a board that never moved, anyone arriving on
+Saturday was racing a week of other people's practice, and nothing at all asked you back
+tomorrow. Daily boards give the game a daily heartbeat; the weekly sum is what keeps that
+from being seven disconnected sprints, and it pays the habit rather than the lucky session.
+
+- Privacy: only user id, sanitized display name, day key, and score ever leave the
   device. Cloud saves themselves are owner-readable ONLY (RLS) — the leaderboard is a
   deliberate, minimal shared surface, never a window into saves.
-- Ties: competition ranking; a shared top score goes to whoever reached it FIRST
-  (`scored_at`, stamped only when a score rises — renames can't move standings).
+- Ties: competition ranking. On a day, a shared top score goes to whoever reached it FIRST
+  (`scored_at`, stamped only when a score rises — renames can't move standings). On a week,
+  a shared total goes to whoever spread it over MORE days, then to first-to-reach.
 
-## Weekly champion
+## Daily winner and weekly champion
 
-When a week closes, its #1 earns the champion tier: **1,000-chip purse** (~a month of
-level-win income; one winner/week ⇒ inflation-safe), a crown by their name all next
-week, and a coronation ceremony on Home (once, latched in the cloud-synced save so a
-second device can't double-award; award happens AFTER the ceremony, so a crash simply
-re-offers). Prize structure is a DATA table (`PRIZE_TIERS`) — adding top-3/top-10
-tiers later is adding rows, not plumbing. If the player base ever outgrows tiers, the
-next step is league brackets (~30-player groups); the schema already supports it
-(everything is rank-per-week queries).
+When a **day** closes, its #1 earns **150 chips**. When a **week** closes, its #1 earns the
+champion tier: **1,000 chips**, a crown by their name all next week. Both run the same
+coronation ceremony on Home (weekly first when a Monday closes both), each latched
+per-key in the cloud-synced save so a second device can't double-award; the award happens
+AFTER the ceremony, so a crash simply re-offers.
+
+Sizing: a great level win pays ~30–60 chips and the priciest boost is 120, so a day's crown
+is a real prize without being a windfall, and the season's stays the fat one worth chasing
+all week. Seven daily purses plus one champion is ~2,050 chips a week across up to eight
+different players — the same order as the single 1,000 purse it replaced, and still bounded
+by construction (fixed prizes, fixed cadence, no scaling with player count).
+
+Prize structure is a DATA table (`PRIZE_TIERS` / `DAILY_PRIZE_TIERS`) — adding top-3/top-10
+tiers later is adding rows, not plumbing. If the player base ever outgrows tiers, the next
+step is league brackets (~30-player groups); the schema already supports it (everything is
+rank-per-partition queries).
 
 ## Referrals
 
@@ -201,37 +224,54 @@ All submissions (scores, qualifications, claims) are self-reported by signed-in
 clients. RLS confines every writer to its own rows, and server triggers make scores
 monotonic and timestamps set-once — so nobody can touch anyone else's data.
 
-**The WEEK a score is filed under is now the server's decision, not the client's**
-(`0006_endless_week_guard.sql`). The trigger recomputes the current ISO week in UTC and
-rejects any `week_key` that isn't it, with a one-hour grace so a run that starts before
-the rollover and syncs after it still lands. That closes two holes at once:
+**The BOARD a score is filed under is the server's decision, not the client's**
+(`0006_endless_week_guard.sql`, carried forward per-day in `0012_endless_daily.sql`). The
+trigger recomputes the current UTC day and rejects any `day_key` that isn't it, with a
+one-hour grace so a run that starts before midnight and syncs after it still lands. That
+closes two holes at once:
 
-- **Clock tampering** — the week key seeds the board, so a device clock set forward
-  opened a future week's board early (play it unhurried, then arrive on that week with an
-  unchaseable score); set backward, it reopened a layout already known.
-- **Backfilling a closed week** — the champion is "top score of the week that just
-  closed", so a client could drop a score into a finished week and take a crown already
-  awarded. This one needed no malice at all: a player who raced and synced days later did
-  it by accident.
+- **Clock tampering** — the day key seeds the board, so a device clock set forward opened
+  tomorrow's board early (play it unhurried, then arrive on that day with an unchaseable
+  score); set backward, it reopened a layout already known.
+- **Backfilling a closed board** — the winner is "top score of the board that just
+  closed", so a client could drop a score into a finished day and take a crown already
+  awarded. This one needed no malice at all: a player who raced and synced late did it by
+  accident.
 
-That migration **refuses to apply** if the server's ISO week ever disagrees with
-`core/endless.ts weekKey()` — it self-checks against the same instants pinned in
-`core/endless.test.ts`, including a session-timezone probe. A silent drift would reject
-every honest score and empty the board, which is worse than the hole it closes.
+Migration 0012 **refuses to apply** if the server's idea of a day, or of which week a day
+rolls up into, ever disagrees with `core/endless.ts` — it self-checks `utc_day_key()` and
+`iso_week_of_day()` against the same instants pinned in `core/endless.test.ts`, including a
+session-timezone probe. A silent day-key drift would reject every honest score and empty
+the board; a silent week-rollup drift would be worse, because the daily boards would keep
+working perfectly while the season quietly ranked the wrong seven days.
 
 **Still open, deliberately:** the SCORE itself is self-reported, so a modified client can
 inflate its own number. Bounding *when* a score may be filed doesn't bound *what* it says.
-The endless race is fully deterministic (weekly seed + move list), so server-side replay
+The endless race is fully deterministic (daily seed + move list), so server-side replay
 validation — submit the moves, let the server replay the seeded board — remains the
 designed hardening path, and is the next thing to build if the game grows past a circle
-where nobody wants to cheat.
+where nobody wants to cheat. Going daily does soften it slightly: a forged score now buys
+one day's crown, not a whole week's.
 
 ## Multi-device notes
 
 `mergeSaves` keeps a WHOLE record (furthest-progressed wins) — never a field-wise
-merge. Claim latches (champion weeks, referral welcome, free-spin bank) ride the
-winning record. Worst case for a lost latch is a re-offered celebration or a purse
-that re-grants after having been overwritten — self-healing, never a permanent loss.
+merge. Claim latches (champion weeks, champion days, referral welcome, free-spin bank)
+are UNIONED across both saves rather than riding the winner.
+
+`endlessDays` joins them **per key**: each (player, day) best only ever rises, so taking
+the max per day can't lose a score, and no two numbers are ever blended. It has to work
+that way now that a week is the SUM of its days — play Tuesday on the phone and Wednesday
+on the tablet and a winner-takes-all merge would silently halve the week.
+
+`charms` is the exception that proves the rule: it holds the CURRENT album only and is
+EMPTIED when a series completes, so a blind union would resurrect a finished album and pay
+its purse twice. `mergeCharms` compares the SERIES first (it only climbs, so the higher one
+has already absorbed everything below) and unions ids only when both devices are on the
+same album; `charmsAllTime` takes the max because it never resets and is what LUCK reads.
+
+Worst case for a lost latch is a re-offered celebration or a purse that re-grants after
+having been overwritten — self-healing, never a permanent loss.
 
 ## Tuning table — every knob and where it lives
 
@@ -259,6 +299,7 @@ that re-grants after having been overwritten — self-healing, never a permanent
 | Win payout | stars×8 + leftover×2 | `src/scenes/GameScene.ts` |
 | Boost prices | 40–120 / helpers 8–35 | `src/core/store.ts` |
 | `ENDLESS_MOVES` / unlock | 30 / level 20 | `src/core/endless.ts` |
+| `DAILY_PURSE` / `CHAMPION_PURSE` | 150 / 1,000 | `src/core/leaderboard.ts` |
 
 ## Iron rules (do not bend without redesigning around them)
 
@@ -268,5 +309,7 @@ that re-grants after having been overwritten — self-healing, never a permanent
 3. **Free spins never come from endless.** Deterministic board ⇒ farmable.
 4. **Award after celebration, latch in the save.** Crashes re-offer; nothing
    double-grants.
-5. **Every cloud path honors the dormant contract** — unconfigured builds must run
+5. **The weekly total is derived, never stored.** It is a view over the daily rows, so the
+   total can never disagree with the days that made it.
+6. **Every cloud path honors the dormant contract** — unconfigured builds must run
    byte-identical to offline, and nothing may ever throw into the game.

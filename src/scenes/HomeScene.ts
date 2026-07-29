@@ -2,24 +2,24 @@ import Phaser from 'phaser'
 import { sfx } from '../audio/sfx'
 import { DESIGN_W, restScrollY, viewportCenterY, worldH } from '../config'
 import { spinAvailable, todayKey } from '../core/daily'
-import { endlessUnlocked } from '../core/endless'
-import { PRIZE_TIERS, checkWeeklyPrize, previousWeekKey } from '../core/leaderboard'
-import type { WeeklyPrizeWin } from '../core/leaderboard'
+import { endlessUnlocked, previousDayKey, previousWeekKey } from '../core/endless'
+import { DAILY_PRIZE_TIERS, PRIZE_TIERS, checkDailyPrize, checkWeeklyPrize } from '../core/leaderboard'
+import type { RacePrizeWin } from '../core/leaderboard'
 import { LEVEL_COUNT } from '../core/levels'
 import { refreshLives } from '../core/lives'
 import { greeting, occasionFor, pendingOccasion, secretNote, withName } from '../core/maya'
 import { REFERRER_CHIPS, claimReferralRewards, fetchPendingRewards } from '../core/referrals'
 import type { PendingReferralReward } from '../core/referrals'
-import { claimChampionship, loadSave, markOccasionSeen, touchOpen } from '../core/save'
+import { claimChampionship, claimDailyWin, loadSave, markOccasionSeen, touchOpen } from '../core/save'
 import { addCasinoBackdrop } from '../view/background'
 import {
-  addWeeklyRaceLockedModule,
-  addWeeklyRaceModule,
+  addRaceLockedModule,
+  addRaceModule,
   devLevelOpts,
   devRaceOpts,
   devSeedRaceLine,
   openLevelRacePanel,
-  openWeeklyRacePanel,
+  openRacePanel,
 } from '../view/leaderboardpanel'
 import { addScreenGloss } from '../view/fx'
 import { maybeShowInstallNudge } from '../view/installnudge'
@@ -212,7 +212,7 @@ export class HomeScene extends Phaser.Scene {
     // maps to the DEV fixture boards (rich / crownyou / out / empty / loading / error); bare `?race`
     // = live data. `?raceline=<variant>` seeds the Home standings-line cache (rich / out / new).
     if (import.meta.env.DEV && new URLSearchParams(location.search).has('race')) {
-      openWeeklyRacePanel(this, devRaceOpts(new URLSearchParams(location.search).get('race')))
+      openRacePanel(this, devRaceOpts(new URLSearchParams(location.search).get('race')))
     }
     if (import.meta.env.DEV && new URLSearchParams(location.search).has('raceline')) {
       devSeedRaceLine(new URLSearchParams(location.search).get('raceline'))
@@ -556,8 +556,8 @@ export class HomeScene extends Phaser.Scene {
       const raceY = seatRow()
       menuButtons.push(
         endlessUnlocked(save)
-          ? addWeeklyRaceModule(this, DESIGN_W / 2, raceY, save, () => startScene(this, 'game', { endless: true }))
-          : addWeeklyRaceLockedModule(this, DESIGN_W / 2, raceY)
+          ? addRaceModule(this, DESIGN_W / 2, raceY, save, () => startScene(this, 'game', { endless: true }))
+          : addRaceLockedModule(this, DESIGN_W / 2, raceY)
       )
     }
 
@@ -764,11 +764,19 @@ export class HomeScene extends Phaser.Scene {
   }
 
   /**
-   * Growth-celebration queue: CORONATION first (the fat weekly-champion moment), then up to two
-   * FRIEND-JOINED toasts — strictly one at a time, never stacked, never over the power-on (the
-   * caller delays past it). Every data call is dormant-safe (null/empty offline), and a scene
-   * shutdown mid-queue simply stops the chain (`alive`). DEV: `?coronation` / `?friend[=n]`
-   * substitute deterministic fixtures for the network checks (mirrors the `?race` pattern).
+   * Growth-celebration queue: CORONATIONS first — the weekly champion, then yesterday's daily
+   * winner — followed by up to two FRIEND-JOINED toasts. Strictly one at a time, never stacked,
+   * never over the power-on (the caller delays past it). Every data call is dormant-safe
+   * (null/empty offline), and a scene shutdown mid-queue simply stops the chain (`alive`).
+   * DEV: `?coronation` / `?dailywin` / `?friend[=n]` substitute deterministic fixtures for the
+   * network checks (mirrors the `?race` pattern).
+   *
+   * WEEKLY BEFORE DAILY, and both can land on the same open: a Monday visit closes a season AND a
+   * Sunday board. The season is the bigger moment and the one whose result the daily boards were
+   * building toward, so it goes first — a 1,000-chip crown landing after a 150-chip one would read
+   * as an anticlimax. They are separate ceremonies rather than a merged card because they are
+   * separate prizes with separate claim latches: if the app dies between them, the unclaimed one is
+   * simply re-offered on the next open.
    */
   private async runCelebrations(pill: ChipPill, refreshLives: () => void): Promise<void> {
     if (this.celebrating) return
@@ -779,17 +787,28 @@ export class HomeScene extends Phaser.Scene {
     })
     try {
       const q = import.meta.env.DEV ? new URLSearchParams(location.search) : null
-      // 1 · CORONATION — did the player win an unclaimed prize for the most recently closed week?
-      let win: WeeklyPrizeWin | null = null
+      // 1 · CORONATION — did the player win an unclaimed prize for the season that just closed?
+      let win: RacePrizeWin | null = null
       if (q?.has('coronation')) {
-        win = { week: previousWeekKey(), rank: 1, score: 9840, tier: PRIZE_TIERS[0] }
+        win = { scope: 'week', key: previousWeekKey(), rank: 1, score: 38420, tier: PRIZE_TIERS[0] }
       } else {
         win = await checkWeeklyPrize(loadSave().championWeeks)
       }
       if (!alive.on) return
       if (win) await this.openCoronation(win, pill)
       if (!alive.on) return
-      // 2 · FRIEND-JOINED — referrer rewards, one toast each, max 2 per visit (the rest keep).
+      // 2 · DAILY WIN — and did they take yesterday's board? Read AFTER the weekly ceremony, not
+      // before it: claiming the week writes the save, and this check reads the latches back.
+      let day: RacePrizeWin | null = null
+      if (q?.has('dailywin')) {
+        day = { scope: 'day', key: previousDayKey(), rank: 1, score: 9840, tier: DAILY_PRIZE_TIERS[0] }
+      } else {
+        day = await checkDailyPrize(loadSave().championDays)
+      }
+      if (!alive.on) return
+      if (day) await this.openCoronation(day, pill)
+      if (!alive.on) return
+      // 3 · FRIEND-JOINED — referrer rewards, one toast each, max 2 per visit (the rest keep).
       let rewards: Array<PendingReferralReward | null>
       if (q?.has('friend')) {
         rewards = new Array<null>(Math.min(2, Math.max(1, Number(q.get('friend') ?? '1') || 1))).fill(null)
@@ -806,16 +825,21 @@ export class HomeScene extends Phaser.Scene {
   }
 
   /**
-   * The CORONATION — Signature growth moment: scrim, a crown descending onto a marquee-grade
-   * "WEEKLY CHAMPION" card with a gold burst, governor-scaled heart+chip confetti, and the purse
-   * counting up before it lands in the chip pill. THEN the claim (save.claimChampionship) — so a
-   * crash mid-ceremony re-offers the crown, and the once-per-week latch makes any double call inert.
+   * The CORONATION — Signature growth moment: scrim, a crown descending onto a marquee-grade card
+   * carrying the tier's title ("WEEKLY CHAMPION" / "DAILY WINNER") with a gold burst, governor-scaled
+   * heart+chip confetti, and the purse counting up before it lands in the chip pill. THEN the claim —
+   * so a crash mid-ceremony re-offers the crown, and the once-per-key latch makes any double call inert.
+   *
+   * ONE ceremony for both cadences, deliberately. Everything that differs between them is already
+   * data — the tier's title, its purse, the winning number, and which latch the claim writes — so a
+   * second copy of 300 lines of choreography would exist only to change four strings, and would be a
+   * second place for the crown-landing beat to drift out of step with the confetti.
    *
    * Tap once mid-sequence → snap to the finished card (the award still happens, immediately); tap
    * again → dismiss. Reduced motion: the finished card appears at rest, the award is instant, one
    * tap dismisses. reduceFlashing: no bright burst/flash — a slow soft halo swell instead.
    */
-  private openCoronation(win: WeeklyPrizeWin, pill: ChipPill): Promise<void> {
+  private openCoronation(win: RacePrizeWin, pill: ChipPill): Promise<void> {
     return new Promise(resolve => {
       const reduced = this.prefersReducedMotion()
       const calmFlash = reduceFlashing()
@@ -839,12 +863,13 @@ export class HomeScene extends Phaser.Scene {
       const transients: Phaser.GameObjects.GameObject[] = []
 
       // Exactly-once award. The count-up landing fires it; tap-to-skip fires it early; the save's
-      // per-week championWeeks latch makes even a raced second call a no-op.
+      // per-key latch (championWeeks / championDays) makes even a raced second call a no-op.
       let awarded = false
       const award = (): void => {
         if (awarded) return
         awarded = true
-        const balance = claimChampionship(win.week, win.tier.chips)
+        const balance =
+          win.scope === 'week' ? claimChampionship(win.key, win.tier.chips) : claimDailyWin(win.key, win.tier.chips)
         if (balance !== null) pill.update(balance)
       }
 
@@ -915,8 +940,11 @@ export class HomeScene extends Phaser.Scene {
       if (title.width > 440) title.setScale(440 / title.width)
       cardRoot.add(reg(banner))
 
+      // The winning NUMBER means something different per cadence — a day is one run, a season is
+      // every day's best added together — and calling a week's total "your winning run" would read
+      // as a score the player knows they never hit in one sitting.
       const scoreLine = this.add
-        .text(0, 66, `your winning run  ·  ${win.score.toLocaleString()}`, {
+        .text(0, 66, `${win.scope === 'week' ? 'your week' : 'your winning run'}  ·  ${win.score.toLocaleString()}`, {
           fontFamily: 'Arial, sans-serif',
           fontSize: '22px',
           color: T.inkMuted,

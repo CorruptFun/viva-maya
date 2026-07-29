@@ -3,7 +3,7 @@ import { DIFFICULTY } from './difficulty'
 import type { BoostType, PromoReward } from './types'
 
 export interface SaveData {
-  v: 10
+  v: 11
   best: number
   /** Highest level the player may attempt (1-based). */
   unlocked: number
@@ -15,10 +15,12 @@ export interface SaveData {
   streak: number
   /** Prizes waiting to be applied to the next level started. */
   pendingBoosts: BoostType[]
-  /** Week key ("YYYY-Www") the endless best belongs to; null if never played. */
-  endlessWeek: string | null
-  /** Best endless score for endlessWeek's board; resets when the week rolls over. */
-  endlessBest: number
+  /**
+   * Best endless score per DAILY board, keyed by UTC day ("YYYY-MM-DD" — core/endless.ts dayKey).
+   * The week's standing is the sum of the entries inside it, so this map is the local half of both
+   * races at once. Pruned to the newest ~16 days by recordEndless; `{}` until the first run.
+   */
+  endlessDays: Record<string, number>
   /** Current lives in the energy pool. */
   lives: number
   /** Epoch ms the current life-regen cycle started (0 when the pool is full). */
@@ -46,6 +48,9 @@ export interface SaveData {
   /** Week keys ("YYYY-Www") whose weekly-race CHAMPION purse has been claimed (once-per-week gate;
    *  rides the cloud-synced save so a second device can never double-award). Absent in older saves → []. */
   championWeeks: string[]
+  /** Day keys ("YYYY-MM-DD") whose DAILY-winner purse has been claimed — championWeeks' per-day
+   *  twin, same once-per-key gate and same cloud-synced double-award protection. */
+  championDays: string[]
   // --- Referral / free-spin fields. All default EMPTY/OFF; read shape-tolerantly below. ---
   /** The invite code this player arrived through — a UI mirror of the 'viva-maya:ref' stash
    *  (core/referrals.ts owns registration; the stash stays authoritative). Null when organic. */
@@ -103,15 +108,14 @@ function freeSpinHeadroom(save: SaveData, dayKey: string, source: FreeSpinSource
 const KEY = 'viva-maya:v1'
 
 const DEFAULTS: SaveData = {
-  v: 10,
+  v: 11,
   best: 0,
   unlocked: 1,
   stars: {},
   lastSpinDate: null,
   streak: 0,
   pendingBoosts: [],
-  endlessWeek: null,
-  endlessBest: 0,
+  endlessDays: {},
   lives: LIVES_MAX,
   livesAnchor: 0,
   chips: 0,
@@ -124,6 +128,7 @@ const DEFAULTS: SaveData = {
   seenIntro: false,
   jackpotMeter: 0,
   championWeeks: [],
+  championDays: [],
   referredByCode: null,
   referralWelcomeClaimed: false,
   freeSpins: 0,
@@ -145,6 +150,8 @@ function fresh(): SaveData {
     hazardIntros: [],
     specialIntros: [],
     championWeeks: [],
+    championDays: [],
+    endlessDays: {},
     charms: [],
   }
 }
@@ -159,15 +166,28 @@ export function coerceSave(raw: unknown): SaveData {
   if (!raw || typeof raw !== 'object') return base
   const data = raw as Partial<SaveData> & { best?: number }
   // v1 {best}; v2 +unlocked/stars; v3 +daily-spin; v4 +endless race; v5 +lives/energy;
-  // v9 +hazardIntros (the teach-once latch for each new board mechanic).
+  // v9 +hazardIntros (the teach-once latch for each new board mechanic);
+  // v10 +Lucky Deal / charms; v11 endless goes DAILY (endlessWeek/endlessBest → endlessDays; +championDays).
   base.best = typeof data.best === 'number' ? data.best : 0
     base.unlocked = typeof data.unlocked === 'number' ? Math.max(1, data.unlocked) : 1
     base.stars = data.stars && typeof data.stars === 'object' ? data.stars : {}
     base.lastSpinDate = typeof data.lastSpinDate === 'string' ? data.lastSpinDate : null
     base.streak = typeof data.streak === 'number' ? data.streak : 0
     base.pendingBoosts = Array.isArray(data.pendingBoosts) ? data.pendingBoosts : []
-    base.endlessWeek = typeof data.endlessWeek === 'string' ? data.endlessWeek : null
-    base.endlessBest = typeof data.endlessBest === 'number' ? data.endlessBest : 0
+    // v11: per-DAY bests. Sanitised on the way in — every reader treats this map as trusted, and it
+    // is summed into a public weekly total, so a junk entry must never reach the sum.
+    //
+    // The pre-v11 pair (endlessWeek + endlessBest) is deliberately NOT carried across: it held a best
+    // for a WEEK-long board that no longer exists, and filing it under any day would credit a score
+    // nobody could have earned on that day's layout. Nothing is lost that matters — `best` (all-time)
+    // already absorbed it, and the leaderboard rows it produced stay in `endless_scores` as history.
+    base.endlessDays = {}
+    if (data.endlessDays && typeof data.endlessDays === 'object') {
+      for (const [day, n] of Object.entries(data.endlessDays as Record<string, unknown>)) {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) continue
+        if (typeof n === 'number' && Number.isFinite(n) && n > 0) base.endlessDays[day] = Math.floor(n)
+      }
+    }
     // Pre-v5 saves had no lives → start them full rather than locked out.
     base.lives =
       typeof data.lives === 'number' ? Math.max(0, Math.min(LIVES_MAX, Math.floor(data.lives))) : LIVES_MAX
@@ -195,9 +215,12 @@ export function coerceSave(raw: unknown): SaveData {
     base.seenIntro = data.seenIntro === true
     // v8 Jackpot Wheel meter — absent in pre-v8 saves → 0.
     base.jackpotMeter = typeof data.jackpotMeter === 'number' ? Math.max(0, Math.floor(data.jackpotMeter)) : 0
-    // Weekly-race champion claims — absent in older saves → none claimed.
+    // Race champion claims (weekly season + daily board) — absent in older saves → none claimed.
     base.championWeeks = Array.isArray(data.championWeeks)
       ? data.championWeeks.filter((x): x is string => typeof x === 'string')
+      : []
+    base.championDays = Array.isArray(data.championDays)
+      ? data.championDays.filter((x): x is string => typeof x === 'string')
       : []
     // Referral / free-spin fields — absent in older saves → the empty/off defaults.
     base.referredByCode = typeof data.referredByCode === 'string' ? data.referredByCode : null
@@ -313,9 +336,10 @@ export function addChips(n: number): number {
 }
 
 /**
- * Claim the weekly-race CHAMPION purse for a week — atomic load→check→award→persist. Returns the new
- * chip balance, or null when that week was already claimed (this device or any synced one), leaving
- * the save untouched. The claimed-week latch rides the save, so cloud sync makes the gate global.
+ * Claim the weekly-season CHAMPION purse for a week — atomic load→check→award→persist. Returns the
+ * new chip balance, or null when that week was already claimed (this device or any synced one),
+ * leaving the save untouched. The claimed-week latch rides the save, so cloud sync makes the gate
+ * global.
  */
 export function claimChampionship(week: string, purse: number): number | null {
   const save = loadSave()
@@ -324,6 +348,22 @@ export function claimChampionship(week: string, purse: number): number | null {
   // Only the most recently CLOSED week is ever checked, so the latch list needn't grow for
   // years — keep a generous tail (12 weeks) and let older entries age out of the save.
   if (save.championWeeks.length > 12) save.championWeeks = save.championWeeks.slice(-12)
+  save.chips += Math.max(0, Math.floor(purse))
+  persistSave(save)
+  return save.chips
+}
+
+/**
+ * Claim the DAILY-winner purse for a day — `claimChampionship`'s twin, with the same once-per-key
+ * atomicity and the same cloud-synced double-award gate. Returns the new chip balance, or null when
+ * that day was already claimed. The tail is longer than the weekly one only because days arrive
+ * seven times as fast: 14 still covers far more than the one closed day ever checked.
+ */
+export function claimDailyWin(day: string, purse: number): number | null {
+  const save = loadSave()
+  if (save.championDays.includes(day)) return null
+  save.championDays.push(day)
+  if (save.championDays.length > 14) save.championDays = save.championDays.slice(-14)
   save.chips += Math.max(0, Math.floor(purse))
   persistSave(save)
   return save.chips

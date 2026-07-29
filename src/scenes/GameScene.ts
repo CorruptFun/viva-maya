@@ -22,7 +22,8 @@ import {
 } from '../config'
 import { Board } from '../core/board'
 import { awardFreeSpinsFor, todayKey } from '../core/daily'
-import { ENDLESS_MOVES, endlessBestForWeek, endlessRngForWeek, recordEndless, weekKey } from '../core/endless'
+import { DAYS_PER_WEEK, ENDLESS_MOVES, dayKey, endlessBestForDay, endlessRngForDay, recordEndless } from '../core/endless'
+import type { WeekStanding } from '../core/endless'
 import { LEVEL_COUNT, levelSpec, starsFor } from '../core/levels'
 import { hazardPlan } from '../core/hazards'
 import { ensureHazardTexture } from '../view/textures'
@@ -354,7 +355,7 @@ export class GameScene extends Phaser.Scene {
   private scoreMult = 1
   private endless = false
   private endlessBest = 0
-  private endlessWeekKey = ''
+  private endlessDayKey = ''
   /** A move was consumed this level — so a mid-level quit costs a life (numbered levels only). */
   private moveMade = false
   private apSched = 0
@@ -402,16 +403,16 @@ export class GameScene extends Phaser.Scene {
       return
     }
 
-    // Endless: a fixed-budget score attack on this WEEK's shared, seeded board (same for
+    // Endless: a fixed-budget score attack on TODAY's shared, seeded board (same for
     // everyone). No objectives, no boosts (planting specials would change the board and
     // break the race's fairness). Otherwise: the numbered level with a fresh random board.
     if (this.endless) {
-      // Capture the week key ONCE so the run is scored against the board it was seeded from,
-      // even if the local week boundary is crossed mid-run.
-      this.endlessWeekKey = weekKey()
+      // Capture the day key ONCE so the run is scored against the board it was seeded from,
+      // even if midnight UTC passes mid-run.
+      this.endlessDayKey = dayKey()
       this.spec = { level: 0, moves: ENDLESS_MOVES, symbolCount: SYMBOLS.length, objectives: [] }
-      this.board = new Board(ROWS, COLS, SYMBOLS.length, endlessRngForWeek(this.endlessWeekKey))
-      this.endlessBest = endlessBestForWeek(loadSave(), this.endlessWeekKey)
+      this.board = new Board(ROWS, COLS, SYMBOLS.length, endlessRngForDay(this.endlessDayKey))
+      this.endlessBest = endlessBestForDay(loadSave(), this.endlessDayKey)
     } else {
       this.spec = levelSpec(this.level)
       this.board = new Board(ROWS, COLS, this.spec.symbolCount, mulberry32((Math.random() * 2 ** 31) | 0))
@@ -423,7 +424,7 @@ export class GameScene extends Phaser.Scene {
     this.movesLeft = this.spec.moves
     // Placed AFTER the lives gate returns, so a bounced entry is not counted as an attempt — a level
     // the player couldn't even get into must not drag down its own win rate.
-    if (this.endless) track(EVENTS.ENDLESS_START, { week: this.endlessWeekKey })
+    if (this.endless) track(EVENTS.ENDLESS_START, { day: this.endlessDayKey })
     else track(EVENTS.LEVEL_START, { level: this.level, moves: this.spec.moves })
     this.objectives = this.spec.objectives.map(o => ({ symbol: o.symbol, remaining: o.count, total: o.count }))
     this.score = 0
@@ -1991,7 +1992,7 @@ export class GameScene extends Phaser.Scene {
       .setOrigin(0.5)
 
     if (this.endless) {
-      // No objectives in endless — show this week's target (BEST to beat) instead.
+      // No objectives in endless — show today's target (BEST to beat) instead.
       const cardW = 290
       const bx = BOARD_X + BOARD_W - cardW
       g.fillStyle(T.shadow, 0.12)
@@ -2001,7 +2002,7 @@ export class GameScene extends Phaser.Scene {
       g.lineStyle(2, T.goldBezel, 0.9)
       g.strokeRoundedRect(bx, cardY - 52, cardW, 104, 20)
       this.add
-        .text(bx + cardW / 2, cardY - 28, "WEEK'S BEST", { fontFamily: FONT, fontSize: '18px', color: T.inkMuted })
+        .text(bx + cardW / 2, cardY - 28, "TODAY'S BEST", { fontFamily: FONT, fontSize: '18px', color: T.inkMuted })
         .setOrigin(0.5)
         .setLetterSpacing(2)
       this.add
@@ -2089,7 +2090,7 @@ export class GameScene extends Phaser.Scene {
       .text(
         DESIGN_W / 2,
         988,
-        this.endless ? "Biggest score wins this week's board" : 'Match the highlighted goal symbols before moves run out',
+        this.endless ? "Biggest score wins today's board" : 'Match the highlighted goal symbols before moves run out',
         { fontFamily: 'Arial, sans-serif', fontSize: '22px', color: T.onBackdropMuted }
       )
       .setOrigin(0.5)
@@ -5152,9 +5153,9 @@ export class GameScene extends Phaser.Scene {
     this.state = 'ended'
     this.clearBookedSwap() // §G1
     this.stopMovesPulse()
-    const { best, isRecord } = recordEndless(this.score, this.endlessWeekKey)
-    track(EVENTS.ENDLESS_END, { score: this.score, is_record: isRecord })
-    this.time.delayedCall(450, () => this.showEndlessOverlay(this.score, best, isRecord))
+    const { best, isRecord, week } = recordEndless(this.score, this.endlessDayKey)
+    track(EVENTS.ENDLESS_END, { score: this.score, is_record: isRecord, days: week.days })
+    this.time.delayedCall(450, () => this.showEndlessOverlay(this.score, best, isRecord, week))
   }
 
   /**
@@ -5965,9 +5966,17 @@ export class GameScene extends Phaser.Scene {
     return chip
   }
 
-  /** End-of-run card for the endless weekly race — a score attack, no stars. */
-  private showEndlessOverlay(score: number, best: number, isRecord: boolean): void {
-    this.log('showEndlessOverlay', 'score', score, 'best', best, 'isRecord', isRecord)
+  /**
+   * End-of-run card for the endless race — a score attack, no stars.
+   *
+   * Reads bottom-up as the two things a run now feeds: TODAY'S BEST (the board you were just racing,
+   * which closes at midnight UTC) and THIS WEEK (that best summed with every other day's, plus the
+   * turnout behind it). The week line is the whole reason the daily board exists, so it is on the
+   * card rather than a screen away — the run that just ended visibly moved a season total, and a
+   * player who has raced 2 of 7 days can see what the other five are worth.
+   */
+  private showEndlessOverlay(score: number, best: number, isRecord: boolean, week: WeekStanding): void {
+    this.log('showEndlessOverlay', 'score', score, 'best', best, 'isRecord', isRecord, 'week', week.total, week.days)
     this.overlayScrim()
     const cx = DESIGN_W / 2
     const cy = 590
@@ -5980,10 +5989,10 @@ export class GameScene extends Phaser.Scene {
       // "Time's up" is a finish line, not a failure — a gentle close, no lose-wah.
       sfx.starDing(0)
     }
-    this.overlayCard(cx, cy, 230)
+    this.overlayCard(cx, cy, 262)
 
     this.add
-      .text(cx, cy - 158, isRecord ? 'NEW BEST!' : "TIME'S UP", {
+      .text(cx, cy - 190, isRecord ? 'NEW BEST!' : "TIME'S UP", {
         fontFamily: FONT,
         fontSize: '48px',
         fontStyle: '900',
@@ -5994,12 +6003,12 @@ export class GameScene extends Phaser.Scene {
       .setShadow(0, 3, 'rgba(0,0,0,0.15)', 6, false, true)
 
     this.add
-      .text(cx, cy - 92, 'YOUR SCORE', { fontFamily: FONT, fontSize: '20px', color: getTheme().inkMuted })
+      .text(cx, cy - 126, 'YOUR SCORE', { fontFamily: FONT, fontSize: '20px', color: getTheme().inkMuted })
       .setOrigin(0.5)
       .setDepth(42)
       .setLetterSpacing(2)
     this.add
-      .text(cx, cy - 44, score.toLocaleString(), {
+      .text(cx, cy - 78, score.toLocaleString(), {
         fontFamily: FONT,
         fontSize: '58px',
         fontStyle: '900',
@@ -6010,12 +6019,12 @@ export class GameScene extends Phaser.Scene {
       .setShadow(0, 2, 'rgba(0,0,0,0.12)', 4, false, true)
 
     this.add
-      .text(cx, cy + 34, "THIS WEEK'S BEST", { fontFamily: FONT, fontSize: '20px', color: getTheme().inkMuted })
+      .text(cx, cy - 4, "TODAY'S BEST", { fontFamily: FONT, fontSize: '20px', color: getTheme().inkMuted })
       .setOrigin(0.5)
       .setDepth(42)
       .setLetterSpacing(2)
     this.add
-      .text(cx, cy + 74, best.toLocaleString(), {
+      .text(cx, cy + 34, best.toLocaleString(), {
         fontFamily: FONT,
         fontSize: '34px',
         fontStyle: '900',
@@ -6024,10 +6033,31 @@ export class GameScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setDepth(42)
 
-    addPillButton(this, cx, cy + 140, 300, 72, 'PLAY AGAIN', ROSE_PILL, () =>
+    // The season line. `days of DAYS_PER_WEEK` is the nudge: it names the boards still on the table
+    // this week without ever scolding a player for the ones they missed.
+    this.add
+      .text(cx, cy + 84, `THIS WEEK  ·  ${week.total.toLocaleString()}`, {
+        fontFamily: FONT,
+        fontSize: '22px',
+        fontStyle: '900',
+        color: getTheme().inkSoft,
+      })
+      .setOrigin(0.5)
+      .setDepth(42)
+      .setLetterSpacing(1)
+    this.add
+      .text(cx, cy + 116, `${week.days} of ${DAYS_PER_WEEK} boards raced`, {
+        fontFamily: 'Arial, sans-serif',
+        fontSize: '19px',
+        color: getTheme().inkFaint,
+      })
+      .setOrigin(0.5)
+      .setDepth(42)
+
+    addPillButton(this, cx, cy + 176, 300, 72, 'PLAY AGAIN', ROSE_PILL, () =>
       startScene(this,'game', { endless: true })
     ).setDepth(42)
-    addPillButton(this, cx, cy + 140 + 84, 300, 60, 'LEVELS', GHOST_PILL, () =>
+    addPillButton(this, cx, cy + 176 + 80, 300, 60, 'LEVELS', GHOST_PILL, () =>
       startScene(this,'levelselect')
     ).setDepth(42)
   }

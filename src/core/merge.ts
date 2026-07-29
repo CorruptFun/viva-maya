@@ -50,6 +50,13 @@ export function mergeSaves(a: SaveData, b: SaveData): SaveData {
  *
  * Union is always safe here because every one of these only ever grows. `finaleSeen` and the two
  * booleans OR together for the same reason.
+ *
+ * `endlessDays` joins them under the same rule, one level down: it is a map of per-day BESTS, and a
+ * given (player, day) best only ever rises, so taking the max per key can no more lose a score than
+ * unioning a latch can un-see a teach card. It is deliberately not the "field-wise Frankenstein" the
+ * doc above warns against — no two numbers are blended, each day keeps whichever save saw the better
+ * run. It has to work this way now that a WEEK's standing is the SUM of its days: play Tuesday on the
+ * phone and Wednesday on the tablet and a winner-takes-all merge would silently halve the week.
  */
 function unionLatches(a: SaveData, b: SaveData): Partial<SaveData> {
   const both = (x: string[] = [], y: string[] = []): string[] => Array.from(new Set([...x, ...y]))
@@ -61,8 +68,24 @@ function unionLatches(a: SaveData, b: SaveData): Partial<SaveData> {
     specialIntros: both(a.specialIntros, b.specialIntros),
     occasionsSeen: both(a.occasionsSeen, b.occasionsSeen),
     championWeeks: both(a.championWeeks, b.championWeeks),
+    championDays: both(a.championDays, b.championDays),
+    endlessDays: bestPerDay(a.endlessDays, b.endlessDays),
     ...mergeCharms(a, b),
   }
+}
+
+/** Per-key max of two daily-best maps — see the `endlessDays` note in `unionLatches`. */
+function bestPerDay(
+  a: Record<string, number> = {},
+  b: Record<string, number> = {}
+): Record<string, number> {
+  const out: Record<string, number> = { ...a }
+  for (const [day, n] of Object.entries(b)) {
+    if (typeof n !== 'number' || !Number.isFinite(n)) continue
+    const cur = out[day]
+    if (typeof cur !== 'number' || !Number.isFinite(cur) || n > cur) out[day] = n
+  }
+  return out
 }
 
 /**

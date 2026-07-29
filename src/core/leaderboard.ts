@@ -1,59 +1,69 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { cloudSession, isCloudConfigured, sbClient } from './cloud'
-import { weekKey } from './endless'
+import { dayKey, endlessBestForDay, formatWeekStanding, previousDayKey, previousWeekKey, weekKey } from './endless'
 import type { SaveData } from './save'
 
 /**
- * Weekly endless-race leaderboard client — the read/submit surface over
- * `public.endless_scores` (see supabase/migrations/0002_endless_leaderboard.sql).
+ * Endless-race leaderboard client — the read/submit surface over `public.endless_daily_scores` and
+ * the `public.endless_weekly_totals` view it rolls up into (see supabase/migrations/0012_endless_daily.sql).
+ *
+ * THREE BOARDS, ONE MODULE:
+ *   · DAILY   — today's shared board, ranked by score. Resets at 00:00 UTC; the day's #1 is crowned.
+ *   · WEEKLY  — the season. Ranked by the SUM of a player's daily bests, so it rewards turning up:
+ *               a missed day is a zero you cannot make back with one big run.
+ *   · LEVELS  — the all-time campaign ladder (public.level_progress, migration 0007).
  *
  * Design contract (mirrors core/cloud.ts exactly):
  *   - DORMANT until configured + signed in: every export no-ops / returns empty when
  *     VITE_SUPABASE_* is absent or the player is signed out. Nothing here may ever
  *     throw into the game.
- *   - The save stays AUTHORITATIVE for the player's own best (save.endlessWeek /
- *     save.endlessBest — see core/endless.ts). This module only MIRRORS that best
- *     out to the shared table (submit) and reads other players' mirrored bests
- *     (fetch). Losing the network loses nothing but freshness.
- *   - Submission piggybacks the cloud-save push (core/cloud.ts calls
- *     `maybeSubmitEndless` after each successful save upsert), so there is no new
- *     traffic path and no per-frame cost. A (week, score) memo skips redundant
- *     upserts; the server trigger keeps scores monotonic per (user, week) anyway.
+ *   - The save stays AUTHORITATIVE for the player's own bests (save.endlessDays — see
+ *     core/endless.ts). This module only MIRRORS today's best out to the shared table
+ *     (submit) and reads other players' mirrored rows (fetch). Losing the network loses
+ *     nothing but freshness.
+ *   - Submission piggybacks the cloud-save push (core/cloud.ts calls `maybeSubmitEndless`
+ *     after each successful save upsert), so there is no new traffic path and no per-frame
+ *     cost. A (day, score) memo skips redundant upserts; the server trigger keeps scores
+ *     monotonic per (user, day) anyway.
+ *   - The WEEKLY board is never submitted to. It is derived server-side from the daily rows,
+ *     so there is exactly one number to keep honest and the total can never disagree with the
+ *     days that made it.
  *
- * Privacy: only user id, a sanitized display name, the ISO week key, and the score
- * ever leave the device. The display name defaults to the Google account's email
- * local-part, and the RACE NAME picker (cloud modal → setHandle) overrides it: the
- * chosen handle is persisted in its own shape-tolerant localStorage key (theme.ts's
- * storage pattern — no save-schema coupling), wins inside `preferredName()`, and a
- * rename immediately UPDATEs display_name on every leaderboard row the player owns
- * (all weeks — RLS permits updating own rows), so a real name can be scrubbed from
- * history, not just from future submissions. Set the handle BEFORE first sign-in
- * and the email local-part never reaches the table at all.
+ * Privacy: only user id, a sanitized display name, the day key, and the score ever leave the
+ * device. The display name defaults to the Google account's email local-part, and the RACE
+ * NAME picker (cloud modal → setHandle) overrides it: the chosen handle is persisted in its own
+ * shape-tolerant localStorage key (theme.ts's storage pattern — no save-schema coupling), wins
+ * inside `preferredName()`, and a rename immediately UPDATEs display_name on every leaderboard
+ * row the player owns (all days — RLS permits updating own rows), so a real name can be scrubbed
+ * from history, not just from future submissions. Set the handle BEFORE first sign-in and the
+ * email local-part never reaches the table at all.
  */
 
 /**
  * One leaderboard row, ready for display. `you` marks the signed-in player's row.
  *
  * `score` is the sort key and the default right-hand readout. `valueText` overrides only the
- * READOUT — the level board ranks on a level number but wants to show "47 · ★118", and letting it
- * supply the string keeps the panel from having to know which board it is rendering.
+ * READOUT — the level board ranks on a level number but wants to show "47 · ★118", and the weekly
+ * board ranks on a total but wants to show "18,204 · 5d". Letting the row supply the string keeps
+ * the panel from having to know which board it is rendering.
  */
 export interface LeaderboardEntry {
   rank: number
   name: string
   score: number
   you: boolean
-  /** Display override for the right-hand value. Weekly rows leave it undefined (score formats itself). */
+  /** Display override for the right-hand value. Daily rows leave it undefined (score formats itself). */
   valueText?: string
 }
 
-/** Result of a weekly fetch: the top rows plus (when signed in) the player's own rank. */
-export interface WeeklyBoard {
-  week: string
+/** Result of a board fetch: the top rows plus (when signed in) the player's own rank. */
+export interface RaceBoard {
+  /** What this board IS — a day key, a week key, or 'ALL TIME'. Drives the panel's subtitle. */
+  key: string
   entries: LeaderboardEntry[]
   /** The signed-in player's rank (1-based) even when outside the top rows; null when absent/signed out. */
   myRank: number | null
-  /** The signed-in player's mirrored score; null when they have no row this week. */
+  /** The signed-in player's mirrored score; null when they have no row on this board. */
   myScore: number | null
   /** Display override for the footer's own-rank readout — the row-level `valueText`'s counterpart. */
   myValueText?: string
@@ -91,7 +101,7 @@ export function getHandle(): string | null {
 /**
  * Set (or clear, with null/empty) the chosen race name. Persists the sanitized
  * handle, then — when signed in — immediately renames EVERY leaderboard row the
- * player owns (all weeks, fire-and-forget), so the old name disappears from
+ * player owns (all days, fire-and-forget), so the old name disappears from
  * current and past boards without waiting for the next score submission.
  * Returns the sanitized handle that was stored (null when cleared).
  */
@@ -110,10 +120,14 @@ export function setHandle(raw: string | null): string | null {
 /**
  * UPDATE display_name on all of the signed-in player's rows (RLS: own rows only).
  *
- * EVERY board the player appears on, not just the weekly one — the whole point of the rename is that
- * a real name can be scrubbed from history, and a name left behind on the level ladder (which never
- * rolls over, so the row is permanent) would defeat that completely. Add a table here whenever a new
- * board starts carrying `display_name`.
+ * EVERY board the player appears on, not just today's — the whole point of the rename is that a real
+ * name can be scrubbed from history, and a name left behind on the level ladder (which never rolls
+ * over, so the row is permanent) would defeat that completely. Add a table here whenever a new board
+ * starts carrying `display_name`.
+ *
+ * The weekly board needs no entry: it is a VIEW over the daily rows, so renaming those renames it.
+ * `endless_scores` is the frozen weekly-board-era table (pre-0012) — still renamed, because rows a
+ * player left there are exactly the history this feature exists to scrub.
  */
 async function renameEverywhere(): Promise<void> {
   try {
@@ -122,6 +136,7 @@ async function renameEverywhere(): Promise<void> {
     if (!s || !c) return
     const name = preferredName()
     await Promise.all([
+      c.from('endless_daily_scores').update({ display_name: name }).eq('user_id', s.userId),
       c.from('endless_scores').update({ display_name: name }).eq('user_id', s.userId),
       c.from('level_progress').update({ display_name: name }).eq('user_id', s.userId),
     ])
@@ -135,55 +150,63 @@ export function preferredName(): string {
   return getHandle() ?? sanitizeName(cloudSession()?.email)
 }
 
-// (week, score) memo: skip an upsert we've already sent this page-load. The server-side
+// (day, score) memo: skip an upsert we've already sent this page-load. The server-side
 // monotonic trigger makes redundant sends harmless — this just avoids pointless requests.
-let lastSent: { week: string; score: number } | null = null
+let lastSent: { day: string; score: number } | null = null
 
 /**
- * Mirror the save's weekly best to the leaderboard — called by core/cloud.ts after each
- * successful cloud-save push (the save is already authoritative by then). No-ops when
- * dormant, when this week has no score yet, or when this exact (week, score) was already
- * sent. Never throws; a transient failure simply retries on the next save push.
+ * Mirror the save's best for TODAY'S board to the leaderboard — called by core/cloud.ts after each
+ * successful cloud-save push (the save is already authoritative by then). No-ops when dormant, when
+ * today has no score yet, or when this exact (day, score) was already sent. Never throws; a transient
+ * failure simply retries on the next save push.
+ *
+ * Only today is ever submitted, deliberately. The server refuses any other day (migration 0012's
+ * guard, one hour of grace past midnight), so walking the whole `endlessDays` map would just generate
+ * rejected requests — and every earlier day was already mirrored on the push that recorded it.
  */
-export async function maybeSubmitEndless(save: SaveData): Promise<void> {
+export async function maybeSubmitEndless(save: SaveData, now = new Date()): Promise<void> {
   try {
     const s = cloudSession()
-    if (!s || !save.endlessWeek || save.endlessBest <= 0) return
-    if (lastSent && lastSent.week === save.endlessWeek && lastSent.score >= save.endlessBest) return
+    if (!s) return
+    const day = dayKey(now)
+    const score = endlessBestForDay(save, day)
+    if (score <= 0) return
+    if (lastSent && lastSent.day === day && lastSent.score >= score) return
     const c = await client()
     if (!c) return
-    const { error } = await c.from('endless_scores').upsert(
+    const { error } = await c.from('endless_daily_scores').upsert(
       {
         user_id: s.userId,
-        week_key: save.endlessWeek,
-        score: save.endlessBest,
+        day_key: day,
+        score,
         display_name: preferredName(),
       },
-      { onConflict: 'user_id,week_key' }
+      { onConflict: 'user_id,day_key' }
     )
-    if (!error) lastSent = { week: save.endlessWeek, score: save.endlessBest }
+    if (!error) lastSent = { day, score }
   } catch {
     // offline / transient — the next save push retries; the race loses only freshness
   }
 }
 
 /**
- * Fetch this week's race: the top `limit` rows plus the signed-in player's own rank
- * (computed with a cheap count-greater-than query when they fall outside the top).
+ * Fetch a DAY's board: the top `limit` rows plus the signed-in player's own rank (computed with a
+ * cheap count-greater-than query when they fall outside the top). Defaults to today's board.
  * Returns an empty board when dormant — callers can render "sign in to join the race".
  */
-export async function fetchWeeklyBoard(limit = 25, now = new Date()): Promise<WeeklyBoard> {
-  const week = weekKey(now)
-  const empty: WeeklyBoard = { week, entries: [], myRank: null, myScore: null }
+export async function fetchDailyBoard(limit = 25, now = new Date()): Promise<RaceBoard> {
+  const day = dayKey(now)
+  const empty: RaceBoard = { key: day, entries: [], myRank: null, myScore: null }
   try {
     const c = await client()
     if (!c) return empty
     const s = cloudSession()
     const { data, error } = await c
-      .from('endless_scores')
+      .from('endless_daily_scores')
       .select('user_id, display_name, score')
-      .eq('week_key', week)
+      .eq('day_key', day)
       .order('score', { ascending: false })
+      .order('scored_at', { ascending: true })
       .limit(limit)
     if (error || !data) return empty
     const rows = data as Array<{ user_id: string; display_name: string; score: number }>
@@ -202,23 +225,110 @@ export async function fetchWeeklyBoard(limit = 25, now = new Date()): Promise<We
     } else if (s) {
       // Outside the top rows (or absent): read own row, then count how many beat it.
       const own = await c
-        .from('endless_scores')
+        .from('endless_daily_scores')
         .select('score')
-        .eq('week_key', week)
+        .eq('day_key', day)
         .eq('user_id', s.userId)
         .maybeSingle()
       const score = (own.data as { score: number } | null)?.score
       if (typeof score === 'number') {
         myScore = score
         const { count } = await c
-          .from('endless_scores')
+          .from('endless_daily_scores')
           .select('user_id', { count: 'exact', head: true })
-          .eq('week_key', week)
+          .eq('day_key', day)
           .gt('score', score)
         myRank = typeof count === 'number' ? count + 1 : null
       }
     }
-    return { week, entries, myRank, myScore }
+    return { key: day, entries, myRank, myScore }
+  } catch {
+    return empty
+  }
+}
+
+/** One row of the weekly-totals view — the season's grain. */
+interface WeeklyRow {
+  user_id: string
+  display_name: string
+  total: number
+  days_played: number
+}
+
+/**
+ * Fetch a WEEK's season standings from `public.endless_weekly_totals` — the summed daily bests.
+ * Defaults to the current week.
+ *
+ * Ordering is (total desc, days_played desc, last_scored_at asc). The middle term is the interesting
+ * one: when two players land on the same total, the one who spread it over MORE boards wins, because
+ * that is the behaviour this whole format exists to reward. The last term is the same
+ * first-to-reach-it tiebreak the daily board uses, so a dead heat still resolves deterministically.
+ *
+ * Own-rank when outside the top rows is therefore a COMPOSITE comparison, not a single `.gt()` —
+ * a player is beaten by anyone with a bigger total, OR by anyone level on the total with more days.
+ */
+export async function fetchWeeklyBoard(limit = 25, now = new Date()): Promise<RaceBoard> {
+  const week = weekKey(now)
+  const empty: RaceBoard = { key: week, entries: [], myRank: null, myScore: null }
+  try {
+    const c = await client()
+    if (!c) return empty
+    const s = cloudSession()
+    const { data, error } = await c
+      .from('endless_weekly_totals')
+      .select('user_id, display_name, total, days_played')
+      .eq('week_key', week)
+      .order('total', { ascending: false })
+      .order('days_played', { ascending: false })
+      .order('last_scored_at', { ascending: true })
+      .limit(limit)
+    if (error || !data) return empty
+    const rows = data as WeeklyRow[]
+    const entries: LeaderboardEntry[] = rows.map((r, i) => ({
+      rank: i + 1,
+      name: sanitizeName(r.display_name),
+      score: r.total,
+      you: !!s && r.user_id === s.userId,
+      valueText: formatWeekStanding({ total: r.total, days: r.days_played }),
+    }))
+    let myRank: number | null = null
+    let myScore: number | null = null
+    let myValueText: string | undefined
+    const mine = entries.find(e => e.you)
+    if (mine) {
+      myRank = mine.rank
+      myScore = mine.score
+      myValueText = mine.valueText
+    } else if (s) {
+      const own = await c
+        .from('endless_weekly_totals')
+        .select('total, days_played')
+        .eq('week_key', week)
+        .eq('user_id', s.userId)
+        .maybeSingle()
+      const row = own.data as { total: number; days_played: number } | null
+      if (row) {
+        myScore = row.total
+        myValueText = formatWeekStanding({ total: row.total, days: row.days_played })
+        // Strictly ahead on the total...
+        const higher = await c
+          .from('endless_weekly_totals')
+          .select('user_id', { count: 'exact', head: true })
+          .eq('week_key', week)
+          .gt('total', row.total)
+        // ...or level with them and ahead on turnout.
+        const tied = await c
+          .from('endless_weekly_totals')
+          .select('user_id', { count: 'exact', head: true })
+          .eq('week_key', week)
+          .eq('total', row.total)
+          .gt('days_played', row.days_played)
+        if (typeof higher.count === 'number' && typeof tied.count === 'number') {
+          myRank = higher.count + tied.count + 1
+        }
+      }
+    }
+    return { key: week, entries, myRank, myScore, myValueText }
   } catch {
     return empty
   }
@@ -227,12 +337,12 @@ export async function fetchWeeklyBoard(limit = 25, now = new Date()): Promise<We
 // ─────────────────────────────────────────────────────────────────────────────
 // LEVEL RACE — the all-time campaign ladder (public.level_progress, migration 0007).
 //
-// Same contract as the weekly board above: dormant until configured + signed in, the SAVE stays
+// Same contract as the race boards above: dormant until configured + signed in, the SAVE stays
 // authoritative, this only mirrors out and reads back, and submission piggybacks the cloud-save push
 // so there is no new traffic path.
 //
-// It reuses WeeklyBoard/LeaderboardEntry deliberately rather than growing a parallel pair of types:
-// the panel then renders either board with no branching, and the level rows just carry `valueText`.
+// It reuses RaceBoard/LeaderboardEntry deliberately rather than growing a parallel pair of types:
+// the panel then renders any board with no branching, and the level rows just carry `valueText`.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** The two numbers the level ladder ranks on, derived from a save. */
@@ -314,8 +424,8 @@ export async function maybeSubmitLevels(save: SaveData): Promise<void> {
  * to "cleared >" would report every tied player as joint-first, which is exactly the pile-up the
  * star tiebreak exists to prevent.
  */
-export async function fetchLevelBoard(limit = 25): Promise<WeeklyBoard> {
-  const empty: WeeklyBoard = { week: 'ALL TIME', entries: [], myRank: null, myScore: null }
+export async function fetchLevelBoard(limit = 25): Promise<RaceBoard> {
+  const empty: RaceBoard = { key: 'ALL TIME', entries: [], myRank: null, myScore: null }
   try {
     const c = await client()
     if (!c) return empty
@@ -370,68 +480,110 @@ export async function fetchLevelBoard(limit = 25): Promise<WeeklyBoard> {
         }
       }
     }
-    return { week: 'ALL TIME', entries, myRank, myScore, myValueText }
+    return { key: 'ALL TIME', entries, myRank, myScore, myValueText }
   } catch {
     return empty
   }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Weekly CHAMPION — the fat prize for winning a closed week's race.
-// The purse is deliberately huge relative to the economy (a great level win pays
-// ~30-60 chips; the priciest boost is 120): one champion per week keeps it from
-// inflating anything, and the size is what makes the race worth chasing.
+// CHAMPIONS — the prizes for winning a closed board.
+//
+// TWO CADENCES, DELIBERATELY DIFFERENT SIZES. The daily purse is the reason to come back tomorrow;
+// the weekly purse is the reason to come back every day. A great level win pays ~30-60 chips and the
+// priciest boost is 120, so one day's crown (150) is a real prize without being a windfall, and the
+// season's (1,000) stays the fat one worth chasing all week. Seven daily winners plus one champion is
+// ~2,050 chips a week entering the economy across up to eight different players — the same order as
+// the single 1,000 purse it replaces, and still bounded by construction: fixed prizes, fixed cadence,
+// no scaling with player count (docs/SOCIAL_AND_ECONOMY.md iron rule #1).
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Chip purse awarded to a closed week's #1. Tunable in one place. */
+/** Chip purse awarded to a closed week's #1 — the season crown. Tunable in one place. */
 export const CHAMPION_PURSE = 1000
 
-/** The week key for the week BEFORE `now` — i.e. the most recently CLOSED race. */
-export function previousWeekKey(now = new Date()): string {
-  return weekKey(new Date(now.getTime() - 7 * 86400000))
-}
+/** Chip purse awarded to a closed DAY's #1. Tunable in one place. */
+export const DAILY_PURSE = 150
 
-/** A closed week's winner, ready for display (crown row / coronation). */
+/** Which cadence a crown belongs to — the one thing every champion/prize path forks on. */
+export type RaceScope = 'day' | 'week'
+
+/** A closed board's winner, ready for display (crown row / coronation). */
 export interface Champion {
-  week: string
+  /** The day or week key that closed. */
+  key: string
   name: string
   score: number
   /** True when the signed-in player is the champion. */
   you: boolean
+  /** Right-hand readout override — the weekly crown shows "18,204 · 5d"; daily shows the score. */
+  valueText?: string
 }
 
 /**
- * Fetch the champion of a closed week — the top row by score, ties broken by who scored
- * FIRST (scored_at asc; see migration 0003). Null when dormant, the week had no rows,
- * or the network fails. Safe to call opportunistically; never throws.
+ * Fetch the winner of a closed DAY — the top row by score, ties broken by who scored FIRST
+ * (scored_at asc). Null when dormant, the day had no rows, or the network fails. Safe to call
+ * opportunistically; never throws.
  */
-export async function fetchChampion(week: string = previousWeekKey()): Promise<Champion | null> {
+export async function fetchDailyChampion(day: string = previousDayKey()): Promise<Champion | null> {
   try {
     const c = await client()
     if (!c) return null
     const s = cloudSession()
     const { data, error } = await c
-      .from('endless_scores')
+      .from('endless_daily_scores')
       .select('user_id, display_name, score')
-      .eq('week_key', week)
+      .eq('day_key', day)
       .order('score', { ascending: false })
       .order('scored_at', { ascending: true })
       .limit(1)
       .maybeSingle()
     if (error || !data) return null
     const row = data as { user_id: string; display_name: string; score: number }
-    return { week, name: sanitizeName(row.display_name), score: row.score, you: !!s && row.user_id === s.userId }
+    return { key: day, name: sanitizeName(row.display_name), score: row.score, you: !!s && row.user_id === s.userId }
   } catch {
     return null
   }
 }
 
 /**
- * Prize tiers for a closed week, ordered best-first — a DATA table so scaling the reward
- * structure as the player base grows (top-3 purses, percentile tiers, league brackets) is
- * adding rows here + UI, never new plumbing. Today: winner-takes-all (owner call, 2026-07-21).
- * The claim latch (save.championWeeks) is per-WEEK, not per-tier, so it already covers any
- * future shape: you claim whatever your rank earned, once per week.
+ * Fetch the champion of a closed WEEK — the top season total, ordered exactly as `fetchWeeklyBoard`
+ * ranks (total desc, days_played desc, last_scored_at asc), so the crown and the board can never
+ * disagree about who won. Null when dormant / empty / offline; never throws.
+ */
+export async function fetchWeeklyChampion(week: string = previousWeekKey()): Promise<Champion | null> {
+  try {
+    const c = await client()
+    if (!c) return null
+    const s = cloudSession()
+    const { data, error } = await c
+      .from('endless_weekly_totals')
+      .select('user_id, display_name, total, days_played')
+      .eq('week_key', week)
+      .order('total', { ascending: false })
+      .order('days_played', { ascending: false })
+      .order('last_scored_at', { ascending: true })
+      .limit(1)
+      .maybeSingle()
+    if (error || !data) return null
+    const row = data as WeeklyRow
+    return {
+      key: week,
+      name: sanitizeName(row.display_name),
+      score: row.total,
+      you: !!s && row.user_id === s.userId,
+      valueText: formatWeekStanding({ total: row.total, days: row.days_played }),
+    }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Prize tiers for a closed board, ordered best-first — a DATA table so scaling the reward structure
+ * as the player base grows (top-3 purses, percentile tiers, league brackets) is adding rows here + UI,
+ * never new plumbing. Today: winner-takes-all on both cadences (owner call, 2026-07-21).
+ * The claim latches (save.championWeeks / save.championDays) are per-KEY, not per-tier, so they
+ * already cover any future shape: you claim whatever your rank earned, once per board.
  *
  * Future-tier examples (commented until wanted):
  *   { maxRank: 3, chips: 250, title: 'PODIUM' },
@@ -448,33 +600,85 @@ export const PRIZE_TIERS: PrizeTier[] = [
   { maxRank: 1, chips: CHAMPION_PURSE, title: 'WEEKLY CHAMPION' },
 ]
 
-/** The tier a final rank earned, or null when it earned nothing. */
-export function prizeForRank(rank: number): PrizeTier | null {
-  for (const tier of PRIZE_TIERS) if (rank <= tier.maxRank) return tier
+export const DAILY_PRIZE_TIERS: PrizeTier[] = [
+  { maxRank: 1, chips: DAILY_PURSE, title: 'DAILY WINNER' },
+]
+
+/** The tier a final rank earned on a given ladder, or null when it earned nothing. */
+export function prizeForRank(rank: number, tiers: PrizeTier[] = PRIZE_TIERS): PrizeTier | null {
+  for (const tier of tiers) if (rank <= tier.maxRank) return tier
   return null
 }
 
-/** A pending, unclaimed weekly prize → the caller runs the celebration, then awards. */
-export interface WeeklyPrizeWin {
-  week: string
+/** A pending, unclaimed prize → the caller runs the celebration, then awards. */
+export interface RacePrizeWin {
+  /** Which cadence closed — picks the claim latch and the copy. */
+  scope: RaceScope
+  /** The day or week key that closed. */
+  key: string
   rank: number
+  /** The winning number: a day's best score, or a week's summed total. */
   score: number
   tier: PrizeTier
 }
 
 /**
- * Did the signed-in player earn an UNCLAIMED prize for the most recently closed week?
- * Reads the player's closed-week row, computes competition rank (1 + count of strictly
- * better scores), disambiguates a shared top score via `fetchChampion` (the scored_at
- * tiebreak — only the true first-scorer takes the champion tier; a tied runner-up falls
- * to rank 2), then looks the rank up in PRIZE_TIERS. Null when dormant / no row / rank
- * out of the money / already claimed. Read-only: awarding happens in
- * save.claimChampionship AFTER the celebration, so a crash mid-coronation re-offers it.
+ * Did the signed-in player earn an UNCLAIMED prize for the DAY that just closed? Reads their row for
+ * that day, computes competition rank (1 + count of strictly better scores), disambiguates a shared
+ * top score via `fetchDailyChampion` (the scored_at tiebreak — only the true first-scorer takes the
+ * crown; a tied runner-up falls to rank 2), then looks the rank up in DAILY_PRIZE_TIERS. Null when
+ * dormant / no row / out of the money / already claimed. Read-only: awarding happens in
+ * save.claimDailyWin AFTER the celebration, so a crash mid-ceremony re-offers it.
+ */
+export async function checkDailyPrize(
+  claimedDays: readonly string[],
+  now = new Date()
+): Promise<RacePrizeWin | null> {
+  try {
+    const day = previousDayKey(now)
+    if (claimedDays.includes(day)) return null
+    const c = await client()
+    if (!c) return null
+    const s = cloudSession()
+    if (!s) return null
+    const own = await c
+      .from('endless_daily_scores')
+      .select('score')
+      .eq('day_key', day)
+      .eq('user_id', s.userId)
+      .maybeSingle()
+    const score = (own.data as { score: number } | null)?.score
+    if (typeof score !== 'number' || score <= 0) return null
+    const { count } = await c
+      .from('endless_daily_scores')
+      .select('user_id', { count: 'exact', head: true })
+      .eq('day_key', day)
+      .gt('score', score)
+    if (typeof count !== 'number') return null
+    let rank = count + 1
+    // Shared top score → only the FIRST to reach it (scored_at) takes the day.
+    if (rank === 1) {
+      const champ = await fetchDailyChampion(day)
+      if (champ && !champ.you) rank = 2
+    }
+    const tier = prizeForRank(rank, DAILY_PRIZE_TIERS)
+    if (!tier) return null
+    return { scope: 'day', key: day, rank, score, tier }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * The season's counterpart to `checkDailyPrize`: did the player earn an UNCLAIMED prize for the WEEK
+ * that just closed? Same shape, one rung up — rank comes from the summed totals, and the tie is
+ * broken by turnout first (more days played) before falling back to the champion query's
+ * first-to-reach-it rule. Null when dormant / no row / out of the money / already claimed.
  */
 export async function checkWeeklyPrize(
   claimedWeeks: readonly string[],
   now = new Date()
-): Promise<WeeklyPrizeWin | null> {
+): Promise<RacePrizeWin | null> {
   try {
     const week = previousWeekKey(now)
     if (claimedWeeks.includes(week)) return null
@@ -483,28 +687,34 @@ export async function checkWeeklyPrize(
     const s = cloudSession()
     if (!s) return null
     const own = await c
-      .from('endless_scores')
-      .select('score')
+      .from('endless_weekly_totals')
+      .select('total, days_played')
       .eq('week_key', week)
       .eq('user_id', s.userId)
       .maybeSingle()
-    const score = (own.data as { score: number } | null)?.score
-    if (typeof score !== 'number' || score <= 0) return null
-    const { count } = await c
-      .from('endless_scores')
+    const row = own.data as { total: number; days_played: number } | null
+    if (!row || row.total <= 0) return null
+    const higher = await c
+      .from('endless_weekly_totals')
       .select('user_id', { count: 'exact', head: true })
       .eq('week_key', week)
-      .gt('score', score)
-    if (typeof count !== 'number') return null
-    let rank = count + 1
-    // Shared top score → only the FIRST to reach it (scored_at) wears the crown.
+      .gt('total', row.total)
+    const tied = await c
+      .from('endless_weekly_totals')
+      .select('user_id', { count: 'exact', head: true })
+      .eq('week_key', week)
+      .eq('total', row.total)
+      .gt('days_played', row.days_played)
+    if (typeof higher.count !== 'number' || typeof tied.count !== 'number') return null
+    let rank = higher.count + tied.count + 1
+    // Level on total AND on turnout → only the first to have got there wears the crown.
     if (rank === 1) {
-      const champ = await fetchChampion(week)
+      const champ = await fetchWeeklyChampion(week)
       if (champ && !champ.you) rank = 2
     }
-    const tier = prizeForRank(rank)
+    const tier = prizeForRank(rank, PRIZE_TIERS)
     if (!tier) return null
-    return { week, rank, score, tier }
+    return { scope: 'week', key: week, rank, score: row.total, tier }
   } catch {
     return null
   }

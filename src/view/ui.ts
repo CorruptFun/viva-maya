@@ -620,7 +620,7 @@ export const GOLD_PILL: PillStyle = { id: 'gold', fill: 0xffb01c, border: 0xd18a
 // (~3.4:1 — LEVELS / GIFT STORE all but vanished against the cream wash). Now a warm off-white cap
 // with a brand-brown label at ~6.5:1, so the secondary buttons read as buttons instead of ghosts.
 export const GHOST_PILL: PillStyle = { id: 'ghost', fill: 0xfffdf7, border: 0xf0dfb4, textColor: '#7a5a1f' }
-/** Rose "special mode" pill — sets the endless weekly race apart from the gold progression buttons. */
+/** Rose "special mode" pill — sets the endless race apart from the gold progression buttons. */
 export const ROSE_PILL: PillStyle = { id: 'rose', fill: 0xe61f4d, border: 0xb01536, textColor: '#ffffff' }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1367,7 +1367,10 @@ const HELP_SECTIONS: HelpSection[] = [
   // CONDITION: goals alone are no longer enough on a level that has any.
   { icon: 'clover', title: 'FELT', body: 'Some tables have green felt squares. Match on top of one to sweep it. Clear every one to win the level.' },
   // Same rule as LIVES above: the unlock level comes from core/endless, never a literal.
-  { icon: 'card', title: 'ENDLESS', body: `After Level ${ENDLESS_UNLOCK_LEVEL}, race the weekly board — same for everyone. Beat your best score!` },
+  { icon: 'card', title: 'ENDLESS', body: `After Level ${ENDLESS_UNLOCK_LEVEL}, race a new board every day — the same one for everyone. Each day crowns a winner.` },
+  // The weekly half is its own card: "your daily bests added up" is the rule players get wrong, and
+  // burying it in the ENDLESS blurb above is how it stayed invisible to anyone who plays twice a week.
+  { icon: 'card', title: 'WEEKLY RACE', body: 'Your best from each daily board adds up across the week. Miss a day and you miss its score — turning up is the strategy.' },
 ]
 
 /**

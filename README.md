@@ -35,15 +35,16 @@ input, and tweens live in `src/scenes/` and `src/view/`.
 - [x] **Phase 5 — audio & juice** — procedural WebAudio SFX (pitch-shifting cascades, sirens),
       MEGA WIN choreography, haptics, mute toggle, selectable move sounds
 - [x] **Return hooks** — lives/energy pool (lose-only, self-refilling), daily bonus spin with
-      streaks, star milestones every 10 levels, endless weekly-seed score race (unlocks at L20)
+      streaks, star milestones every 10 levels, endless daily-seed score race with a weekly
+      season on top (unlocks at L20)
 - [x] **Presentation** — slot-cabinet visuals + ambient casino backdrop, home screen,
       how-to-play panel
 - [x] **UI/animation overhaul (rounds 1–3)** — tactile pressables (tap-flash, release
       shine, hero sheen), directional transition light-wipes + launch bloom + screen
       gloss, board depth stack + squash-settle refill + level-intro build-in, score
       medallions, collect comets, special-piece drama, menu entrance choreography
-- [x] **Social & economy layer (round 4)** — weekly-race leaderboard + champion prize
-      tiers + coronation, referral program, free spins from MEGA WINs, jackpot-wheel
+- [x] **Social & economy layer (round 4)** — daily + weekly race leaderboards, daily-winner
+      and weekly-champion prize tiers + coronation, referral program, free spins from MEGA WINs, jackpot-wheel
       spectacle, lives tuning (5 / 20 min / grace below L10). See
       `docs/SOCIAL_AND_ECONOMY.md` and `docs/GO_LIVE_CHECKLIST.md`.
 - [x] **Lucky Deal & charms** — a card pick'em dealt by a three-win HOT STREAK: nine
@@ -62,9 +63,9 @@ input, and tweens live in `src/scenes/` and `src/view/`.
 Append to the URL: `?level=N` jump to level · `&auto=MS` autoplay hinted moves ·
 `&goal=N` / `&moves=N` override objectives/move budget · `&plant=1` seed specials
 bottom-left · `&turbo=N` scale tween/timer clocks (embedded panes starve the RAF clock).
-Round-4 additions: `?race[=rich|out|empty|loading|error|crownyou]` weekly-race panel
+Round-4 additions: `?race[=rich|out|week|weekout|empty|loading|error|crownyou]` race panel
 fixtures · `?levels[=rich|out|empty|loading|error]` LEVEL RACE ladder fixtures ·
-`?raceline=rich|out|new` Home standings-line fixtures · `?coronation` /
+`?raceline=rich|out|new` Home standings-line fixtures · `?coronation` / `?dailywin` /
 `?friend[=n]` celebration previews · `?invite=in|minting|welcome` store invite fixtures ·
 `?wheel` fire the armed jackpot wheel · `?wedge=N` pin the winning wedge ·
 `?ticket=N` free-spin ticket beat · `?ref=CODE` referral capture (works in prod too) ·

@@ -6,7 +6,7 @@ import { levelStanding } from '../core/leaderboard'
 import { LEVEL_COUNT } from '../core/levels'
 import { loadSave } from '../core/save'
 import { addCasinoBackdrop } from '../view/background'
-import { addLevelRaceStrip, addWeeklyRaceModule } from '../view/leaderboardpanel'
+import { addLevelRaceStrip, addRaceModule } from '../view/leaderboardpanel'
 import { D, E, OVERSHOOT, backOut } from '../view/motion'
 import { quality } from '../view/quality'
 import { getTheme, prefersReducedMotion, reduceFlashing } from '../view/theme'
@@ -262,7 +262,7 @@ export class LevelSelectScene extends Phaser.Scene {
     // lower of two identical pills at the bottom. It costs the grid ~40px — about a third of a row —
     // and buys the screen a "where am I" band that is legible before you have scrolled anything.
     const viewTop = 196
-    // 1072 when ENDLESS is offered: the footer is now the SAME weekly-race module Home seats its
+    // 1072 when ENDLESS is offered: the footer is now the SAME daily-race module Home seats its
     // ENDLESS pill in (plate + pill + standings strip), so the strip is visibly PART of the endless
     // block instead of a twin of the level strip. Without ENDLESS the footer is empty and the grid
     // takes the whole box. `viewBottom` is the single source for both the mask and the chip hit-area
@@ -389,10 +389,10 @@ export class LevelSelectScene extends Phaser.Scene {
     // Fixed footer. This is the SAME module Home seats its ENDLESS block in — one definition of what
     // the endless race looks like, what it says and what it does, so the board is reachable from both
     // screens that offer ENDLESS and the two can never drift. Using the module rather than a bare pill
-    // plus a loose strip is also what stops the weekly strip reading as a twin of the level strip: on
+    // plus a loose strip is also what stops the race strip reading as a twin of the level strip: on
     // its own plate, under its own trophy, it is plainly the endless block's standings line.
     if (endless) {
-      const module = addWeeklyRaceModule(this, DESIGN_W / 2, 1160, save, () => startScene(this, 'game', { endless: true }))
+      const module = addRaceModule(this, DESIGN_W / 2, 1160, save, () => startScene(this, 'game', { endless: true }))
       // §E8 floor for the strip inside it, biased DOWN by 12px: grown symmetrically its taller target
       // would reach 10px into the ENDLESS pill's own (already 84px) zone directly above, and the pill
       // is the hero of the block — the strip must not be able to swallow the bottom of it.

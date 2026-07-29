@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Weekly-race push sender.
+ * Endless-race push sender — DAILY board reminder and WEEKLY season reminder, one script.
  *
  * WHY THIS IS A SCRIPT AND NOT PART OF THE APP: the game is hosted on GitHub Pages, which is static —
  * there is no server to run a timer on. Web Push requires an authenticated application server to sign
@@ -10,14 +10,22 @@
  * (A Supabase Edge Function would also work; it was not chosen because it means Deno, a second deploy
  * path, and pg_cron enabled by hand — more moving parts for a job that runs once a week.)
  *
- * WHAT IT SENDS: one notification, a few hours before the endless race closes, personalised with the
- * player's current standing when it can be — "you're #3, 1,240 off #2" is a reason to open the game;
- * "the week is ending" is a fact. Signed-out subscribers get the impersonal version, which is why
- * user_id is nullable in 0011.
+ * WHAT IT SENDS: one notification, a few hours before a board closes, personalised with the player's
+ * current standing when it can be — "you're #3, 1,240 off #2" is a reason to open the game; "the day
+ * is ending" is a fact. Signed-out subscribers get the impersonal version, which is why user_id is
+ * nullable in 0011.
+ *
+ * TWO CADENCES, because the race has two (see supabase/migrations/0012_endless_daily.sql):
+ *   --daily   today's board, which closes at 00:00 UTC and crowns its own winner. Ranked on score.
+ *   (default) the weekly season, which closes Monday 00:00 UTC. Ranked on the SUM of daily bests,
+ *             read from the endless_weekly_totals view.
+ * Both share every line of plumbing below — audience, personalisation, retire-on-410, failure
+ * counting — because the only real differences are which partition to read and what to call it.
  *
  * USAGE
- *   node scripts/send-push.mjs --dry-run     # print exactly what would be sent, send nothing
- *   node scripts/send-push.mjs               # send
+ *   node scripts/send-push.mjs --dry-run          # weekly, print what would be sent
+ *   node scripts/send-push.mjs --daily --dry-run  # today's board, print what would be sent
+ *   node scripts/send-push.mjs                    # send
  *
  * ENV (all required unless noted)
  *   SUPABASE_URL           project URL
@@ -33,6 +41,7 @@
 import webpush from 'web-push'
 
 const DRY = process.argv.includes('--dry-run')
+const DAILY = process.argv.includes('--daily')
 
 const { SUPABASE_URL, SUPABASE_SERVICE_KEY, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY } = process.env
 
@@ -108,32 +117,66 @@ export function weekEndsAt(now = new Date()) {
   return d
 }
 
+/**
+ * UTC calendar day key.
+ *
+ * ⚠️ MUST STAY BYTE-IDENTICAL TO `dayKey()` IN src/core/endless.ts, for exactly the reason spelled
+ * out on weekKey above — it selects the daily leaderboard partition, so a sender computing a
+ * different key reads an EMPTY board and silently sends everyone the generic copy. Pinned against
+ * the app's own copy in src/core/analytics.test.ts.
+ */
+export function dayKey(now = new Date()) {
+  const p = n => String(n).padStart(2, '0')
+  return `${now.getUTCFullYear()}-${p(now.getUTCMonth() + 1)}-${p(now.getUTCDate())}`
+}
+
+/** The next 00:00 UTC — mirrors dayEndsAt() in src/core/endless.ts. */
+export function dayEndsAt(now = new Date()) {
+  const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()))
+  d.setUTCDate(d.getUTCDate() + 1)
+  return d
+}
+
 function hoursLeft(now = new Date()) {
-  return Math.max(0, Math.round((weekEndsAt(now).getTime() - now.getTime()) / 3600000))
+  const ends = DAILY ? dayEndsAt(now) : weekEndsAt(now)
+  return Math.max(0, Math.round((ends.getTime() - now.getTime()) / 3600000))
 }
 
 /**
  * Build the message for one subscriber.
  *
- * The personalised branches are the whole point of joining against the board: a bare "the week is
- * ending" is a fact, whereas a gap to the next player up is a goal. Ordered from most to least
- * motivating, and every branch falls back safely when the player has no row this week.
+ * The personalised branches are the whole point of joining against the board: a bare "the board is
+ * closing" is a fact, whereas a gap to the next player up is a goal. Ordered from most to least
+ * motivating, and every branch falls back safely when the player has no row on this board.
+ *
+ * The two cadences want different pressure. A DAILY board that closes tonight and can be taken with
+ * one good run says "still time"; a WEEKLY total made of seven boards cannot be caught in one run, so
+ * its copy points at the thing that can still move — the boards left to play.
  */
 function messageFor(sub, board, hrs) {
-  // The scheduled run is always ~6h out, but a manual/dry run can happen any day of the week, and
-  // "in 123 hours" is not something a person parses. Degrade to days past two days out.
+  // The scheduled run is always ~6h out, but a manual/dry run can happen any time, and "in 123 hours"
+  // is not something a person parses. Degrade to days past two days out.
   const when =
     hrs <= 1 ? 'in under an hour' : hrs < 48 ? `in ${hrs} hours` : `in ${Math.round(hrs / 24)} days`
   const idx = sub.user_id ? board.findIndex(r => r.user_id === sub.user_id) : -1
+  const race = DAILY ? `Today's board` : `The weekly race`
 
   if (idx === -1) {
-    // Never played this week (or signed out). The leader's score is the hook.
+    // Never played this board (or signed out). The leader's score is the hook.
     const top = board[0]
+    if (!top) {
+      return {
+        title: `${race} ends soon`,
+        body: DAILY
+          ? `Closes ${when}. Nobody has played today — one run could take it.`
+          : `Ends ${when}. The board is wide open — every day you play adds to your total.`,
+      }
+    }
     return {
-      title: 'The weekly race ends soon',
-      body: top
-        ? `Ends ${when} — ${top.display_name} is leading with ${top.score.toLocaleString('en-US')}. Still time for a run.`
-        : `Ends ${when}. The board is wide open — one run could take it.`,
+      title: `${race} ends soon`,
+      body: DAILY
+        ? `Closes ${when} — ${top.display_name} leads with ${top.score.toLocaleString('en-US')}. Still time for a run.`
+        : `Ends ${when} — ${top.display_name} leads on ${top.score.toLocaleString('en-US')}. A run today still counts.`,
     }
   }
 
@@ -146,8 +189,8 @@ function messageFor(sub, board, hrs) {
     return {
       title: `You're #1 — for now`,
       body: second
-        ? `Ends ${when}. ${second.display_name} is ${(me.score - second.score).toLocaleString('en-US')} behind. Hold the crown.`
-        : `Ends ${when}. You're top of the board with ${mine}.`,
+        ? `${DAILY ? 'Closes' : 'Ends'} ${when}. ${second.display_name} is ${(me.score - second.score).toLocaleString('en-US')} behind. Hold the crown.`
+        : `${DAILY ? 'Closes' : 'Ends'} ${when}. You're top of the board with ${mine}.`,
     }
   }
 
@@ -155,14 +198,16 @@ function messageFor(sub, board, hrs) {
   const gap = (ahead.score - me.score).toLocaleString('en-US')
   return {
     title: `You're #${rank} with ${mine}`,
-    body: `Ends ${when} — you're ${gap} behind ${ahead.display_name}. One good run could take the spot.`,
+    body: DAILY
+      ? `Closes ${when} — you're ${gap} behind ${ahead.display_name}. One good run could take the spot.`
+      : `Ends ${when} — you're ${gap} behind ${ahead.display_name}. Every board you play adds to your total.`,
   }
 }
 
 async function main() {
   requireConfig()
   const now = new Date()
-  const week = weekKey(now)
+  const key = DAILY ? dayKey(now) : weekKey(now)
   const hrs = hoursLeft(now)
 
   // The audience: opted in, and not a known corpse. Matches the partial index in 0011.
@@ -175,15 +220,25 @@ async function main() {
   }
   const subs = await subsRes.json()
 
-  // The standings, best first — the same ordering fetchWeeklyBoard uses, so a rank computed here
-  // matches the rank the player sees in the app. A disagreement between the two would be worse than
-  // sending nothing.
+  // The standings, best first — the SAME ordering the app's fetchDailyBoard / fetchWeeklyBoard use,
+  // so a rank computed here matches the rank the player sees in the app. A disagreement between the
+  // two would be worse than sending nothing.
+  //
+  // The weekly rows come from the endless_weekly_totals VIEW and rank on `total`, so they are
+  // normalised to `score` on the way in — everything downstream then treats one shape and the
+  // personalisation branches stay cadence-agnostic.
   const boardRes = await rest(
-    `endless_scores?select=user_id,display_name,score&week_key=eq.${week}&order=score.desc,scored_at.asc`
+    DAILY
+      ? `endless_daily_scores?select=user_id,display_name,score&day_key=eq.${key}&order=score.desc,scored_at.asc`
+      : `endless_weekly_totals?select=user_id,display_name,total,days_played&week_key=eq.${key}&order=total.desc,days_played.desc,last_scored_at.asc`
   )
-  const board = boardRes.ok ? await boardRes.json() : []
+  const raw = boardRes.ok ? await boardRes.json() : []
+  const board = DAILY ? raw : raw.map(r => ({ ...r, score: r.total }))
+  if (!boardRes.ok) console.warn(`could not read the board: ${boardRes.status} — sending the impersonal copy`)
 
-  console.log(`week ${week} · ends in ${hrs}h · ${subs.length} subscriber(s) · ${board.length} on the board`)
+  console.log(
+    `${DAILY ? 'day' : 'week'} ${key} · ends in ${hrs}h · ${subs.length} subscriber(s) · ${board.length} on the board`
+  )
   if (!subs.length) return
 
   let sent = 0
@@ -192,7 +247,9 @@ async function main() {
 
   for (const sub of subs) {
     const { title, body } = messageFor(sub, board, hrs)
-    const payload = JSON.stringify({ title, body, tag: `week-${week}`, url: './' })
+    // The tag collapses a re-send onto the same notification rather than stacking a second one; it
+    // is per-BOARD so the daily reminder can never overwrite the weekly one (or vice versa).
+    const payload = JSON.stringify({ title, body, tag: `${DAILY ? 'day' : 'week'}-${key}`, url: './' })
 
     if (DRY) {
       // Identify the recipient well enough to audit the audience, WITHOUT printing the endpoint

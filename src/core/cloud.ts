@@ -138,9 +138,10 @@ async function flushPush(): Promise<void> {
       { user_id: session.userId, data, updated_at: new Date().toISOString() },
       { onConflict: 'user_id' }
     )
-    // Leaderboard mirrors: after the save lands, mirror BOTH boards from the same push — the weekly
+    // Leaderboard mirrors: after the save lands, mirror BOTH boards from the same push — TODAY's
     // endless best and the all-time level ladder (core/leaderboard.ts — each no-ops unless it has
     // something to say; lazy import keeps the dependency one-directional and out of the boot path).
+    // The WEEKLY standings need no mirror of their own: the server derives them from the daily rows.
     // Fire-and-forget: a board must never block or fail a save.
     void import('./leaderboard').then(m => {
       void m.maybeSubmitEndless(data)

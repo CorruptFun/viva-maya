@@ -3,7 +3,7 @@ import { COLS, ROWS } from '../config'
 import { DIFFICULTY } from './difficulty'
 import { hazardPlan } from './hazards'
 import { buildLevelBoard, playLevel, sampleLevel } from './sim'
-import { endlessRngForWeek } from './endless'
+import { endlessRngForDay } from './endless'
 import { Board } from './board'
 import { SYMBOLS } from './types'
 
@@ -119,16 +119,16 @@ describe('the protected early game', () => {
 
 describe('endless is excluded', () => {
   /**
-   * The weekly race is a same-board-for-everyone fairness contract — the same reason boosts are
-   * kept out of it. Hazards would make one player's week harder than another's and break
-   * week-to-week score comparison, so they must never reach it. GameScene guards this by building
-   * the endless board in its own branch (it never calls levelSpec at all); this proves the model
-   * layer agrees, whatever the flags say.
+   * The daily race is a same-board-for-everyone fairness contract — the same reason boosts are
+   * kept out of it. Hazards would make one player's board harder than another's and break the
+   * score comparison the whole race rests on, so they must never reach it. GameScene guards this by
+   * building the endless board in its own branch (it never calls levelSpec at all); this proves the
+   * model layer agrees, whatever the flags say.
    */
-  it('builds the same board for a week key regardless of hazard flags or player level', () => {
-    const week = '2026-W30'
+  it('builds the same board for a day key regardless of hazard flags or player level', () => {
+    const day = '2026-07-29'
     const build = (): string => {
-      const b = new Board(ROWS, COLS, SYMBOLS.length, endlessRngForWeek(week))
+      const b = new Board(ROWS, COLS, SYMBOLS.length, endlessRngForDay(day))
       const cells: string[] = []
       for (let r = 0; r < ROWS; r++) {
         for (let c = 0; c < COLS; c++) {

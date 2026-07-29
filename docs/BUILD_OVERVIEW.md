@@ -89,7 +89,7 @@ data (`ClearWave`, `FallMove[]`, `Spawn[]`, `BlastEvent[]`). Tuning happens in
 | `src/core/levels.ts` | `LEVEL_COUNT=300`; deterministic `levelSpec(n)` — seeded per-level objectives, symbol count, and move budget |
 | `src/core/save.ts` | `localStorage` save (key `viva-maya:v1`, schema **v8**): load/persist, shape-tolerant migrations, `recordResult`/`recordScore`/`takePendingBoosts` |
 | `src/core/daily.ts` | Daily-spin logic: `todayKey`, streak math, weighted `PRIZES` table, `performSpin` (award-before-animate) |
-| `src/core/endless.ts` | Weekly endless race: `weekKey` (ISO-8601, **UTC**), `weekEndsAt`/`formatWeekRemaining`, `seedForWeek` (FNV-1a), shared seeded RNG, `recordEndless`, `endlessUnlocked` (after L20) |
+| `src/core/endless.ts` | Endless race: `dayKey`/`weekKey` (**UTC**), `dayEndsAt`/`weekEndsAt`/`formatRaceRemaining`, `weekKeyOfDay` (the daily→weekly rollup), `seedForKey` (FNV-1a), shared seeded RNG, `endlessWeekStanding` (daily bests summed), `recordEndless`, `endlessUnlocked` (after L20) |
 | `src/core/lives.ts` | Lives/energy pool: wall-clock regen banking, `spendLife`/`grantLife`/`refreshLives`, `devSetLives`, `formatCountdown` |
 
 **Scenes (Phaser)**
@@ -180,7 +180,7 @@ shipped: a drop in **~1 level in 7** played passively, **~1 in 5** played well.
 **Endless has its own constants** (`PLINKO_ENDLESS_MIN_CASCADE` x4, `PLINKO_ENDLESS_CHANCE` always).
 The numbered-level pair is calibrated against a board endless never plays: endless has **no hazards**
 (which deepen chains) and a flat `ENDLESS_MOVES` of 30, so x5/0.5 quietly halved the rate on the one
-mode scored purely on points and raced on a shared weekly board — **5.4%** of runs passive / **11.1%**
+mode scored purely on points and raced on a shared daily board — **5.4%** of runs passive / **11.1%**
 typical, against **~27%** / **~59%** now. The per-run latch is untouched, so it is still at most one
 drop per run. Endless also pays better per drop (`allowTickets` false → pure multiplier, ~3.4× EV).
 
@@ -282,22 +282,29 @@ at level start.
 Home shows a 🔥 flame pill "N DAY STREAK" when `streak > 0` (the flame is a separate
 text object — `letterSpacing` splits emoji surrogate pairs in Phaser's renderer).
 
-### Endless weekly race — `src/core/endless.ts`, `GameScene` endless mode
+### Endless race: daily boards, weekly season — `src/core/endless.ts`, `GameScene` endless mode
 Unlocks after **Level 20** (`endlessUnlocked` = `save.unlocked > ENDLESS_UNLOCK_LEVEL`,
 `ENDLESS_UNLOCK_LEVEL=20`). Entry via the rose ENDLESS pill on Home and Level Select.
-Everyone in the same week plays the **same** board (`seedForWeek` FNV-1a → `mulberry32`);
-a fixed budget (`ENDLESS_MOVES=30`), all 6 symbols, **no objectives, no boosts** (planting
-would change the shared board and break the race). Ends only on moves-out (`finishEndless`).
-`recordEndless` persists `endlessBest` per week key (captured at board creation, so a run
-crossing the rollover is still attributed correctly), resets on rollover, and also updates
-all-time `save.best`.
+Everyone on the same UTC **day** plays the **same** board (`seedForKey(dayKey)` FNV-1a →
+`mulberry32`); a fixed budget (`ENDLESS_MOVES=30`), all 6 symbols, **no objectives, no boosts**
+(planting would change the shared board and break the race). Ends only on moves-out
+(`finishEndless`). `recordEndless` keeps the max per day in `save.endlessDays` (keyed by the day
+captured at board creation, so a run crossing midnight is still attributed correctly) and also
+updates all-time `save.best`.
 
-> **The week is UTC, and that is load-bearing.** `weekKey` drives three things at once — the
-> board seed, the leaderboard partition scores are written to, and the partition read back to
-> build the standings. It read the device's LOCAL date until 2026-07-26, which silently split
-> the race in two: a player whose local date had already ticked to Monday sat on the next week
-> entirely — a different board layout, a leaderboard containing only themselves, and nothing on
-> screen to explain it. Two friends six timezones apart hit this for real. It also let a
+A **week's** standing is the SUM of that player's daily bests inside it (`endlessWeekStanding`,
+mirrored server-side by the `endless_weekly_totals` view). Miss a day and you bank a zero for it
+that no single run can make back — turning up is the strategy. Each day crowns a winner (150
+chips); each week crowns a champion (1,000).
+
+> **The keys are UTC, and that is load-bearing.** `dayKey` (and `weekKey` above it) drives three
+> things at once — the board seed, the leaderboard partition scores are written to, and the
+> partition read back to build the standings. It read the device's LOCAL date until 2026-07-26,
+> which silently split the race in two: a player whose local date had already ticked over sat on
+> a different board entirely — a different layout, a leaderboard containing only themselves, and
+> nothing on screen to explain it. Two friends six timezones apart hit this for real. Going daily
+> raised the stakes sevenfold: a timezone-sensitive key would now split the player base every
+> single night. It also let a
 > forward-set device clock into next week's board early. One instant now maps to one week
 > worldwide; the rollover is Monday 00:00 UTC (Sunday evening in the Americas). The panel shows
 > `ends in 2d 5h` beside the key so players can see it. Pinned by `src/core/endless.test.ts`,
@@ -407,8 +414,8 @@ interface SaveData {
   lastSpinDate: string | null  // 'YYYY-MM-DD' of last daily spin
   streak: number               // consecutive-day spin streak
   pendingBoosts: BoostType[]   // prizes queued for the next numbered level
-  endlessWeek: string | null   // week key the endless best belongs to
-  endlessBest: number          // best endless score for endlessWeek
+  endlessDays: Record<string, number> // best endless score per UTC day ('YYYY-MM-DD'); a
+                               //   week's standing is the sum of the days inside it
   lives: number                // current lives (0..LIVES_MAX)
   livesAnchor: number          // epoch ms the current regen cycle started (0 = full)
 }
@@ -425,6 +432,8 @@ Separate keys: **`viva-maya:muted`** (`'1'`/`'0'`) and **`viva-maya:swapSound`**
 | v2 | `unlocked`, `stars` |
 | v3 | daily spin (`lastSpinDate`, `streak`, `pendingBoosts`) |
 | v4 | endless race (`endlessWeek`, `endlessBest`) |
+| v9 | hazard teach-once latches (`hazardIntros`) |
+| **v10** | **Endless goes DAILY** — `endlessWeek`/`endlessBest` → `endlessDays` (per-UTC-day bests, pruned to ~16), plus `championDays` beside `championWeeks`. The old pair is NOT migrated: it held a best for a week-long board that no longer exists, and filing it under any day would credit a score nobody could earn on that layout |
 | v5 | lives/energy (`lives`, `livesAnchor`) — pre-v5 saves start full |
 | **v6** | **Grace refill** — the pool grew (3→10) and the break shortened; any save with stored `v < 6` is topped up to full (`lives = LIVES_MAX`, `livesAnchor = 0`) on load so no one is stranded at the old, stingier count |
 
@@ -618,8 +627,8 @@ and a v6 save that are both a generation behind). Re-verified against code 2026-
 5. **Endless unlock is L30** (`ENDLESS_UNLOCK_LEVEL` in `core/endless.ts`, independent of
    `LEVEL_COUNT`). `GAME_DESIGN.md` already states this correctly — the prior note here
    claiming otherwise was itself out of date. *(Superseded 2026-07-27: retuned to **L20** so
-   the weekly race is reachable sooner. The two copy surfaces that hardcoded "30" — the help
-   panel's ENDLESS blurb and the locked WEEKLY RACE module — now derive from the constant.)*
+   the race is reachable sooner. The two copy surfaces that hardcoded "30" — the help
+   panel's ENDLESS blurb and the locked race module — now derive from the constant.)*
 6. **`README.md` is no longer materially behind** — Phase 5 is checked and the round-4
    knobs are listed. Remaining gap was "100 levels" + "v6 save", now fixed. Its license
    section is current.

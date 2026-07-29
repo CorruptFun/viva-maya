@@ -117,10 +117,17 @@ describe('mergeSaves — latches are unioned, never lost', () => {
   })
 
   it('keeps CLAIM latches from the losing save, so a prize cannot be re-awarded', () => {
-    const local = save({ unlocked: 10, championWeeks: ['2026-W30'], referralWelcomeClaimed: true, finaleSeen: true })
-    const cloud = save({ unlocked: 99, championWeeks: ['2026-W31'] })
+    const local = save({
+      unlocked: 10,
+      championWeeks: ['2026-W30'],
+      championDays: ['2026-07-28'],
+      referralWelcomeClaimed: true,
+      finaleSeen: true,
+    })
+    const cloud = save({ unlocked: 99, championWeeks: ['2026-W31'], championDays: ['2026-07-29'] })
     const m = mergeSaves(local, cloud)
     expect([...m.championWeeks].sort()).toEqual(['2026-W30', '2026-W31'])
+    expect([...m.championDays].sort()).toEqual(['2026-07-28', '2026-07-29'])
     expect(m.referralWelcomeClaimed).toBe(true)
     expect(m.finaleSeen).toBe(true)
   })
@@ -140,5 +147,40 @@ describe('mergeSaves — latches are unioned, never lost', () => {
     const cloud = save({ unlocked: 40, chips: 999, best: 99999 })
     const m = mergeSaves(local, cloud)
     expect({ chips: m.chips, best: m.best }).toEqual({ chips: 0, best: 10 })
+  })
+})
+
+/**
+ * The DAILY BESTS map joins the latches, per key. It has to, now that a week's standing is the SUM of
+ * its days: play Tuesday on the phone and Wednesday on the tablet, and a winner-takes-all merge would
+ * discard one of them and silently halve the week. Each (player, day) best only ever rises, so a
+ * per-key max can no more lose a score than unioning a latch can un-see a teach card — and no two
+ * numbers are ever blended, which is the rule the merge actually guarantees.
+ */
+describe('mergeSaves — daily bests survive per day', () => {
+  it('keeps the better run for each day, from whichever save had it', () => {
+    const local = save({ unlocked: 10, endlessDays: { '2026-07-28': 5000, '2026-07-29': 1200 } })
+    const cloud = save({ unlocked: 99, endlessDays: { '2026-07-29': 4400, '2026-07-30': 3100 } })
+    const m = mergeSaves(local, cloud)
+    expect(m.unlocked).toBe(99) // progress still comes from the winner, whole
+    expect(m.endlessDays).toEqual({ '2026-07-28': 5000, '2026-07-29': 4400, '2026-07-30': 3100 })
+  })
+
+  it('never lowers a day — a further-progressed save with a worse run cannot clobber it', () => {
+    const local = save({ unlocked: 10, endlessDays: { '2026-07-29': 9000 } })
+    const cloud = save({ unlocked: 99, endlessDays: { '2026-07-29': 100 } })
+    expect(mergeSaves(local, cloud).endlessDays['2026-07-29']).toBe(9000)
+  })
+
+  it('is symmetric — argument order never decides which day survives', () => {
+    const a = save({ unlocked: 10, endlessDays: { '2026-07-28': 5000, '2026-07-29': 1200 } })
+    const b = save({ unlocked: 99, endlessDays: { '2026-07-29': 4400 } })
+    expect(mergeSaves(a, b).endlessDays).toEqual(mergeSaves(b, a).endlessDays)
+  })
+
+  it('tolerates a save with no map at all', () => {
+    const bare = { unlocked: 5 } as unknown as SaveData
+    expect(() => mergeSaves(bare, save({ endlessDays: { '2026-07-29': 10 } }))).not.toThrow()
+    expect(mergeSaves(bare, save({ endlessDays: { '2026-07-29': 10 } })).endlessDays).toEqual({ '2026-07-29': 10 })
   })
 })

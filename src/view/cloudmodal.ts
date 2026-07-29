@@ -240,9 +240,9 @@ export function openCloudModal(): void {
   }
 
   // ── Race name block (shown whenever cloud is configured) ─────────────────────────────────
-  // The weekly-race leaderboard shows a display name with each score. It defaults to the
+  // The race leaderboards show a display name with each score. It defaults to the
   // email's local-part, which can be a REAL NAME — this picker overrides it (and, signed in,
-  // the rename is pushed to every board row the player owns, past weeks included, so the old
+  // the rename is pushed to every board row the player owns, past days included, so the old
   // name is scrubbed from history — core/leaderboard.setHandle). Deliberately visible while
   // signed OUT too: set a handle first and the email name never reaches the board at all.
   const buildRaceName = (): HTMLElement => {
@@ -289,16 +289,16 @@ export function openCloudModal(): void {
     input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') save() })
 
     const copy = session
-      ? 'Shown with your score on the weekly race — instead of your email name. Renaming also updates your past weeks.'
-      : 'Shown with your score on the weekly race once you sign in — set it now and your email name never appears.'
+      ? 'Shown with your score on the daily and weekly boards — instead of your email name. Renaming also updates every board you are already on.'
+      : 'Shown with your score on the race boards once you sign in — set it now and your email name never appears.'
 
     return stack([heading('Race name'), note(copy), input, preview, saveBtn])
   }
 
-  // ── Weekly race notifications ─────────────────────────────────────────────────────────────
-  // The endless race resets Monday 00:00 UTC and nothing has ever told anyone, so the reset — the
-  // one built-in reason to come back — passes most players by. This is the opt-in for a single
-  // reminder before it closes.
+  // ── Race notifications ────────────────────────────────────────────────────────────────────
+  // The race resets and nothing has ever told anyone, so the reset — the one built-in reason to come
+  // back — passes most players by. Since the board went DAILY that is a reason to return every
+  // evening, not once a week. This is the opt-in for a single reminder before a board closes.
   //
   // Rendered as an explicit BUTTON rather than an auto-prompt on load, because a denied
   // Notification permission is effectively permanent: the browser will not ask twice and the player
@@ -311,30 +311,30 @@ export function openCloudModal(): void {
       // iOS supports Web Push ONLY in an installed PWA. Saying so converts; a disabled button that
       // silently does nothing on iPhone would just read as broken.
       return stack([
-        heading('Weekly race reminder'),
+        heading('Race reminder'),
         note(
-          'Add Viva Maya to your Home Screen first (tap Share, then “Add to Home Screen”), then come back here to turn on a reminder before the weekly race ends.'
+          'Add Viva Maya to your Home Screen first (tap Share, then “Add to Home Screen”), then come back here to turn on a reminder before a board closes.'
         ),
       ])
     }
     if (support === 'unsupported') {
       return stack([
-        heading('Weekly race reminder'),
+        heading('Race reminder'),
         note('This browser can’t show notifications. Everything else works normally.'),
       ])
     }
 
     const status = note('')
-    const btn = ghostBtn('Remind me before the week ends')
+    const btn = ghostBtn('Remind me before a board closes')
     let enabled = false
 
     const paint = (): void => {
-      btn.textContent = enabled ? 'Turn off reminders' : 'Remind me before the week ends'
+      btn.textContent = enabled ? 'Turn off reminders' : 'Remind me before a board closes'
       status.textContent = enabled
-        ? 'On — you’ll get one nudge a few hours before the week closes.'
+        ? 'On — you’ll get one nudge a few hours before a board closes.'
         : Notification.permission === 'denied'
           ? 'Notifications are blocked for this site in your browser settings.'
-          : 'One notification a week, before the race resets. Nothing else.'
+          : 'One notification before a board closes. Nothing else.'
       // A permanent browser-level denial can't be undone from here, so don't offer a button that
       // cannot succeed.
       btn.disabled = !enabled && Notification.permission === 'denied'
@@ -371,7 +371,7 @@ export function openCloudModal(): void {
       })
     })
 
-    return stack([heading('Weekly race reminder'), status, btn])
+    return stack([heading('Race reminder'), status, btn])
   }
 
   // ── Anonymous gameplay events ─────────────────────────────────────────────────────────────

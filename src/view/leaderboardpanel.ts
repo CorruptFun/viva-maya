@@ -1,5 +1,10 @@
 /**
- * WEEKLY RACE leaderboard panel (Round 3) — the display surface over `core/leaderboard.ts`.
+ * RACE leaderboard panel — the display surface over `core/leaderboard.ts`.
+ *
+ * Renders THREE boards through one card: TODAY (the daily board, which closes at midnight UTC),
+ * THIS WEEK (the season — every day's best added up), and the all-time LEVEL ladder. The first two
+ * are TABS of one another, because the second is literally the first summed across seven boards and
+ * a player has to be able to see both to understand either.
  *
  * Visually a sibling of the ui.ts overlays (openHelpPanel / openSettingsPanel): same warm scrim,
  * same cream card with the gold bezel, same depth band (60+), same tap-outside / CLOSE dismissal.
@@ -18,10 +23,10 @@
  *     to one draw), transients (the sweep) destroy themselves, tweens are killed before their
  *     targets are destroyed on every state swap, and the only per-frame work is one heartbeat read.
  *
- * Data contract: `core/leaderboard.ts` is read-only API — `fetchWeeklyBoard` never throws and
- * returns an EMPTY board when dormant, so the states resolve as:
+ * Data contract: `core/leaderboard.ts` is read-only API — every fetch never throws and returns an
+ * EMPTY board when dormant, so the states resolve as:
  *   signed out (no cloudSession)         → warm "sign in to join" invite
- *   signed in + empty entries            → "be the first on this week's board"
+ *   signed in + empty entries            → "be the first on today's board"
  *   fetch slower than the patience window → quiet error card with RETRY
  *   entries                              → the podium + ranked rows
  * `opts.boardOverride` short-circuits straight to the board state with caller data (screenshots /
@@ -31,9 +36,28 @@ import Phaser from 'phaser'
 import { DESIGN_W, viewportCenterY, worldH } from '../config'
 import { sfx } from '../audio/sfx'
 import { cloudSession } from '../core/cloud'
-import { ENDLESS_UNLOCK_LEVEL, endlessBestThisWeek, formatWeekRemaining, weekEndsAt, weekKey } from '../core/endless'
-import { fetchChampion, fetchLevelBoard, fetchWeeklyBoard, levelStanding, previousWeekKey } from '../core/leaderboard'
-import type { Champion, LeaderboardEntry, WeeklyBoard } from '../core/leaderboard'
+import {
+  DAYS_PER_WEEK,
+  ENDLESS_UNLOCK_LEVEL,
+  dayEndsAt,
+  dayKey,
+  endlessBestToday,
+  endlessWeekStanding,
+  formatRaceRemaining,
+  previousDayKey,
+  previousWeekKey,
+  weekKey,
+  weekEndsAt,
+} from '../core/endless'
+import {
+  fetchDailyBoard,
+  fetchDailyChampion,
+  fetchLevelBoard,
+  fetchWeeklyBoard,
+  fetchWeeklyChampion,
+  levelStanding,
+} from '../core/leaderboard'
+import type { Champion, LeaderboardEntry, RaceBoard } from '../core/leaderboard'
 import type { SaveData } from '../core/save'
 import { openCloudModal } from './cloudmodal'
 import { D, E, OVERSHOOT, backOut, fadeRise, heartbeat, popIn } from './motion'
@@ -66,58 +90,103 @@ const FETCH_PATIENCE = 8000
 /** Texture-bake padding so baked drop shadows aren't clipped. */
 const PAD = 10
 
-export interface WeeklyRacePanelOpts {
+export interface RacePanelOpts {
   /** Render THIS board instead of fetching — deterministic rich data for screenshots/audits. */
-  boardOverride?: WeeklyBoard
-  /** With boardOverride: the crown-row champion (null = the closed week had none). Live opens fetch it. */
+  boardOverride?: RaceBoard
+  /** With boardOverride: the crown-row champion (null = the closed board had none). Live opens fetch it. */
   championOverride?: Champion | null
   /** DEV/testing hook: hold the loading shimmer forever, or open straight onto the error card. */
   simulate?: 'loading' | 'error'
   /**
-   * WHICH board to show. Both render through this one panel — same plates, medals, medallions,
-   * loading shimmer, error/RETRY and own-rank footer — because the only real differences are the
-   * heading, the subtitle, where the rows come from, and whether a crown row applies. Forking a
-   * second thousand-line panel to change four things would guarantee the two drift apart.
+   * WHICH board to open on. All three render through this one panel — same plates, medals,
+   * medallions, loading shimmer, error/RETRY and own-rank footer — because the only real differences
+   * are the heading, the subtitle, where the rows come from, and whether a crown row applies. Forking
+   * a second thousand-line panel to change four things would guarantee the two drift apart.
    */
   mode?: BoardMode
 }
 
-/** The two boards this panel can render. */
-export type BoardMode = 'weekly' | 'levels'
+/** The three boards this panel can render. TODAY and THIS WEEK are tabs of one another. */
+export type BoardMode = 'daily' | 'weekly' | 'levels'
+
+/** The tabbed pair — the two halves of the endless race. The level ladder is reached its own way. */
+const RACE_TABS: BoardMode[] = ['daily', 'weekly']
 
 /**
- * Per-board copy + data source. The crown belongs to the weekly race only — the level ladder never
- * closes, so it has no champion to crown.
+ * Per-board copy + data source. The crown belongs to boards that CLOSE — today's board hands over at
+ * midnight and the season on Monday, so both crown a winner; the level ladder never closes, so it has
+ * none.
  *
- * EVERY player-visible string the two boards disagree on lives here, including the ones on the
- * loading / signed-out / empty states. Those are easy to forget because they render identically
- * either way, and a level board that says "sign in to join the weekly race" is worse than one with
- * no copy at all.
+ * EVERY player-visible string the boards disagree on lives here, including the ones on the loading /
+ * signed-out / empty states. Those are easy to forget because they render identically either way, and
+ * a level board that says "sign in to join the daily race" is worse than one with no copy at all.
+ * Same for the data source: `fetch` and `champion` sit here so `load()` has no idea which board it is
+ * resolving, which is what stops a new board needing new plumbing.
  */
-const BOARDS: Record<
-  BoardMode,
-  { title: string; subtitle: (b: WeeklyBoard) => string; crown: boolean; loading: string; signedOut: string; empty: string }
-> = {
+interface BoardSpec {
+  /** Heading — used only by boards outside the tabbed pair (the tabs are their own heading). */
+  title: string
+  tab: string
+  subtitle: (b: RaceBoard) => string
+  /** Crown-row lead-in ("yesterday's winner"), or null for a board that never closes. */
+  crownLabel: string | null
+  loading: string
+  signedOut: string
+  signedOutSub: string
+  empty: string
+  emptySub: string
+  fetch: (limit: number) => Promise<RaceBoard>
+  champion: () => Promise<Champion | null>
+}
+
+const BOARDS: Record<BoardMode, BoardSpec> = {
+  daily: {
+    title: 'DAILY RACE',
+    tab: 'TODAY',
+    // The date key stays (it is what let us spot two friends on DIFFERENT boards from two
+    // screenshots) but the half a player actually wants is when this board hands over.
+    subtitle: b => `${b.key}  ·  ends in ${formatRaceRemaining(dayEndsAt().getTime() - Date.now())}`,
+    crownLabel: 'yesterday’s winner',
+    loading: 'fetching today’s board…',
+    signedOut: 'sign in to join today’s race',
+    signedOutSub: 'a new shared board every day —\neveryone gets the same deal.',
+    empty: 'be the first on today’s board',
+    emptySub: 'finish an endless run and your best lands here.',
+    fetch: limit => fetchDailyBoard(limit),
+    champion: () => fetchDailyChampion(previousDayKey()),
+  },
   weekly: {
     title: 'WEEKLY RACE',
-    // The ISO key stays (it is what let us spot two friends on DIFFERENT weeks from two screenshots)
-    // but the half a player actually wants is when the board resets.
-    subtitle: b => `${b.week}  ·  ends in ${formatWeekRemaining(weekEndsAt().getTime() - Date.now())}`,
-    crown: true,
-    loading: 'fetching this week’s race…',
+    tab: 'THIS WEEK',
+    // Says the ranking rule out loud, because it is not guessable from the numbers: this board is
+    // every day's best ADDED UP, so a player looking at a total bigger than any run they have ever
+    // had should be able to see why without asking.
+    subtitle: b =>
+      `${b.key}  ·  daily bests added up  ·  ${formatRaceRemaining(weekEndsAt().getTime() - Date.now())} left`,
+    crownLabel: 'last week’s champion',
+    loading: 'adding up this week’s boards…',
     signedOut: 'sign in to join the weekly race',
+    signedOutSub: `every day’s best, added up across ${DAYS_PER_WEEK} boards —\nturning up is the strategy.`,
     empty: 'be the first on this week’s board',
+    emptySub: 'race a daily board and your week starts here.',
+    fetch: limit => fetchWeeklyBoard(limit),
+    champion: () => fetchWeeklyChampion(previousWeekKey()),
   },
   levels: {
     // Named for what it measures, not for the screen it opens from — this is the campaign ladder.
     title: 'LEVEL RACE',
+    tab: 'LEVELS',
     // Says the ranking rule out loud: ties on a rung are the NORMAL case here, so a player who sees
     // themselves below someone on the same level should be able to tell why without asking.
     subtitle: () => 'all time  ·  stars break ties',
-    crown: false,
+    crownLabel: null,
     loading: 'fetching the ladder…',
     signedOut: 'sign in to join the level race',
+    signedOutSub: 'one ladder, all time —\nhow far has everyone got?',
     empty: 'be the first onto the ladder',
+    emptySub: 'clear a level and your climb lands here.',
+    fetch: limit => fetchLevelBoard(limit),
+    champion: () => Promise.resolve(null),
   },
 }
 
@@ -343,12 +412,12 @@ function makeYouTag(scene: Phaser.Scene): Phaser.GameObjects.Container {
 /** Double-open latch (module-scoped, mirrors HomeScene's `noteOpen` guard). */
 let raceOpen = false
 
-/** Open the all-time LEVEL RACE ladder — `openWeeklyRacePanel` in levels mode, one panel, one latch. */
-export function openLevelRacePanel(scene: Phaser.Scene, opts: WeeklyRacePanelOpts = {}): void {
-  openWeeklyRacePanel(scene, { ...opts, mode: 'levels' })
+/** Open the all-time LEVEL RACE ladder — `openRacePanel` in levels mode, one panel, one latch. */
+export function openLevelRacePanel(scene: Phaser.Scene, opts: RacePanelOpts = {}): void {
+  openRacePanel(scene, { ...opts, mode: 'levels' })
 }
 
-export function openWeeklyRacePanel(scene: Phaser.Scene, opts: WeeklyRacePanelOpts = {}): void {
+export function openRacePanel(scene: Phaser.Scene, opts: RacePanelOpts = {}): void {
   if (raceOpen) return
   raceOpen = true
   const T = getTheme()
@@ -399,22 +468,73 @@ export function openWeeklyRacePanel(scene: Phaser.Scene, opts: WeeklyRacePanelOp
   // Blocker so taps on the card never fall through to the scrim (which closes).
   cardRoot.add(scene.add.rectangle(0, 0, CARD_W, CARD_H, 0xffffff, 0.001).setInteractive())
 
-  const mode: BoardMode = opts.mode ?? 'weekly'
-  const board = BOARDS[mode]
+  let mode: BoardMode = opts.mode ?? 'daily'
+  let spec = BOARDS[mode]
 
-  const title = scene.add
-    .text(0, cy + 58, board.title, { fontFamily: FONT, fontSize: '46px', fontStyle: '900', color: T.goldText })
+  /** The key a board is showing right now — its own partition, or the ladder's stand-in label. */
+  const currentKey = (m: BoardMode): string =>
+    m === 'levels' ? 'ALL TIME' : m === 'weekly' ? weekKey() : dayKey()
+
+  // Header + subtitle. The header is either a plain heading (the level ladder) or the TODAY /
+  // THIS WEEK tab pair, and it lives in ONE container that is rebuilt in place on a switch — so the
+  // card's child order, and therefore the index every body state is inserted at, never moves.
+  const header = scene.add.container(0, 0)
+  const subtitle = scene.add
+    .text(0, cy + 112, '', { fontFamily: 'Arial, sans-serif', fontSize: '22px', color: T.inkMuted })
     .setOrigin(0.5)
-    .setLetterSpacing(2)
-    .setShadow(0, 2, 'rgba(0,0,0,0.12)', 4, false, true)
-  const weekLabel = scene.add
-    .text(0, cy + 104, '', { fontFamily: 'Arial, sans-serif', fontSize: '22px', color: T.inkMuted })
-    .setOrigin(0.5)
-  cardRoot.add([title, weekLabel])
-  const setWeek = (wk: string): void => {
-    weekLabel.setText(board.subtitle({ week: wk, entries: [], myRank: null, myScore: null }))
+  cardRoot.add([header, subtitle])
+  const setKey = (key: string): void => {
+    subtitle.setText(spec.subtitle({ key, entries: [], myRank: null, myScore: null }))
   }
-  setWeek(opts.boardOverride?.week ?? (mode === 'levels' ? 'ALL TIME' : weekKey()))
+
+  /**
+   * The two halves of the endless race are TABS, not two panels. A player has to be able to answer
+   * "am I winning today?" and "am I winning the week?" in the same breath — the second is the sum of
+   * the first across seven boards, and splitting them across two entry points would hide exactly the
+   * relationship the format is built on. The active tab wears the gold cap; the other is a ghost.
+   * The level ladder keeps a plain heading: it is a different race, not a third tab of this one.
+   */
+  const renderHeader = (): void => {
+    header.removeAll(true)
+    if (!RACE_TABS.includes(mode)) {
+      header.add(
+        scene.add
+          .text(0, cy + 58, spec.title, { fontFamily: FONT, fontSize: '46px', fontStyle: '900', color: T.goldText })
+          .setOrigin(0.5)
+          .setLetterSpacing(2)
+          .setShadow(0, 2, 'rgba(0,0,0,0.12)', 4, false, true)
+      )
+      return
+    }
+    RACE_TABS.forEach((m, i) => {
+      const active = m === mode
+      const tab = addPillButton(
+        scene,
+        i === 0 ? -120 : 120,
+        cy + 62,
+        228,
+        60,
+        BOARDS[m].tab,
+        active ? GOLD_PILL : GHOST_PILL,
+        () => {
+          if (m !== mode) switchTo(m)
+        }
+      )
+      header.add(tab)
+    })
+  }
+
+  /** Flip to the other race board: re-dress the header, re-label, re-resolve. */
+  const switchTo = (m: BoardMode): void => {
+    mode = m
+    spec = BOARDS[m]
+    renderHeader()
+    setKey(currentKey(m))
+    resolve(false)
+  }
+
+  renderHeader()
+  setKey(opts.boardOverride?.key ?? currentKey(mode))
 
   // Bottom controls: the growth hook (a ghost "invite friends to race" chip — the invite row itself
   // lives in the Gift Store) beside CLOSE. Tracked so newBody() can insert every state UNDER them.
@@ -471,9 +591,9 @@ export function openWeeklyRacePanel(scene: Phaser.Scene, opts: WeeklyRacePanelOp
   let youGlow: Phaser.GameObjects.Image | null = null
 
   // ── State: the ranked board ────────────────────────────────────────────────────────────────
-  const showBoard = (board: WeeklyBoard, champ: Champion | null = null): void => {
+  const showBoard = (board: RaceBoard, champ: Champion | null = null): void => {
     const b = newBody()
-    setWeek(board.week)
+    setKey(board.key)
     const fancy = !still && quality.tier() !== 'low'
     const champYou = champ?.you === true
 
@@ -564,7 +684,8 @@ export function openWeeklyRacePanel(scene: Phaser.Scene, opts: WeeklyRacePanelOp
       row.add(
         scene.add
           // `valueText` lets a board render its own readout (the level ladder shows "47 · ★118"
-          // where the weekly race shows a score). Undefined on weekly rows → unchanged behaviour.
+          // and the season "18,204 · 5d", where the daily board shows a bare score). Undefined on
+          // daily rows → the score formats itself.
           .text(ROW_W / 2 - 26, 0, e.valueText ?? e.score.toLocaleString(), {
             fontFamily: FONT,
             fontSize: `${kind === 'gold' ? 30 : kind === 'podium' ? 25 : 22}px`,
@@ -581,8 +702,9 @@ export function openWeeklyRacePanel(scene: Phaser.Scene, opts: WeeklyRacePanelOp
     // `y` walks the TOP edge of each row; a row is centred at y + h/2 and advances y by h + gap.
     let y = CONTENT_TOP
 
-    // Crown row — "last week's champion · NAME" above the podium. A quiet honour strip on the warm
-    // podium plate; when the champion is YOU it lands on the full gold plate with an embossed YOU.
+    // Crown row — "yesterday's winner · NAME" (or last week's champion) above the podium. A quiet
+    // honour strip on the warm podium plate; when the winner is YOU it lands on the full gold plate
+    // with an embossed YOU.
     if (champ) {
       const crownRow = scene.add.container(0, y + CROWN_H / 2)
       crownRow.add(scene.add.image(0, 0, ensurePlate(scene, champYou ? 'gold' : 'podium', ROW_W, CROWN_H)))
@@ -592,7 +714,7 @@ export function openWeeklyRacePanel(scene: Phaser.Scene, opts: WeeklyRacePanelOp
       crownRow.add(glyph)
       crownRow.add(
         scene.add
-          .text(-ROW_W / 2 + 68, 0, 'last week’s champion', {
+          .text(-ROW_W / 2 + 68, 0, spec.crownLabel ?? 'champion', {
             fontFamily: 'Arial, sans-serif',
             fontSize: '20px',
             color: champYou ? T.goldPillText : T.inkMuted,
@@ -804,7 +926,7 @@ export function openWeeklyRacePanel(scene: Phaser.Scene, opts: WeeklyRacePanelOp
       y += h + gaps[i]
     })
     const cap = scene.add
-      .text(0, y + 34, board.loading, { fontFamily: 'Arial, sans-serif', fontSize: '21px', color: T.inkFaint })
+      .text(0, y + 34, spec.loading, { fontFamily: 'Arial, sans-serif', fontSize: '21px', color: T.inkFaint })
       .setOrigin(0.5)
     b.add(cap)
     tw(fadeRise(scene, cap, { delay: D.base }))
@@ -835,7 +957,7 @@ export function openWeeklyRacePanel(scene: Phaser.Scene, opts: WeeklyRacePanelOp
       tw(scene.tweens.add({ targets: trophy, scale: 1.05, duration: D.breath, delay: D.pop + D.base, yoyo: true, repeat: -1, ease: E.hero }))
     }
     const head = scene.add
-      .text(0, -10, board.signedOut, {
+      .text(0, -10, spec.signedOut, {
         fontFamily: FONT,
         fontSize: '30px',
         fontStyle: '900',
@@ -845,7 +967,7 @@ export function openWeeklyRacePanel(scene: Phaser.Scene, opts: WeeklyRacePanelOp
       })
       .setOrigin(0.5)
     const sub = scene.add
-      .text(0, 52, 'one shared board every week —\neveryone gets the same deal.', {
+      .text(0, 52, spec.signedOutSub, {
         fontFamily: 'Arial, sans-serif',
         fontSize: '22px',
         color: T.inkMuted,
@@ -893,7 +1015,7 @@ export function openWeeklyRacePanel(scene: Phaser.Scene, opts: WeeklyRacePanelOp
     b.add(star)
     tw(popIn(scene, star, { from: 0.4, delay: D.base + 160, overshoot: OVERSHOOT.pop }))
     const head = scene.add
-      .text(0, 92, board.empty, {
+      .text(0, 92, spec.empty, {
         fontFamily: FONT,
         fontSize: '29px',
         fontStyle: '900',
@@ -903,11 +1025,12 @@ export function openWeeklyRacePanel(scene: Phaser.Scene, opts: WeeklyRacePanelOp
       })
       .setOrigin(0.5)
     const sub = scene.add
-      .text(0, 148, 'finish an endless run and your best lands here.', {
+      .text(0, 148, spec.emptySub, {
         fontFamily: 'Arial, sans-serif',
         fontSize: '22px',
         color: T.inkMuted,
         align: 'center',
+        wordWrap: { width: CARD_W - 120 },
       })
       .setOrigin(0.5)
     b.add([head, sub])
@@ -944,48 +1067,66 @@ export function openWeeklyRacePanel(scene: Phaser.Scene, opts: WeeklyRacePanelOp
   }
 
   // ── Resolve: override → instant board; signed out → invite; otherwise fetch with patience ──
+  //
+  // `loadSeq` is what makes the tabs safe. Two taps in quick succession leave two fetches in flight,
+  // and without a generation counter the SLOWER one wins whenever it lands second — so a player who
+  // tapped TODAY last could sit looking at the weekly board. Only the newest load may paint.
+  let loadSeq = 0
   const load = (): void => {
+    const seq = ++loadSeq
+    const fresh = (): boolean => alive && seq === loadSeq
     showLoading()
     const timeout = new Promise<'timeout'>(resolve => {
       scene.time.delayedCall(FETCH_PATIENCE, () => resolve('timeout'))
     })
-    // The crown row's champion rides the same patience window as the board (both never throw and
+    // The crown row's winner rides the same patience window as the board (both never throw and
     // resolve null/empty when dormant), so the card composes ONCE with everything it will show.
     // The level ladder has no champion — it never closes — so it resolves null and skips the row.
-    const fetches: Promise<[WeeklyBoard, Champion | null]> =
-      mode === 'levels'
-        ? fetchLevelBoard(25).then(b => [b, null])
-        : Promise.all([fetchWeeklyBoard(25), fetchChampion(previousWeekKey())])
+    const at = spec // pin the spec this load is for; the tabs can move `spec` under us
+    const fetches: Promise<[RaceBoard, Champion | null]> = Promise.all([at.fetch(25), at.champion()])
     void Promise.race([fetches, timeout])
       .then(result => {
-        if (!alive) return
+        if (!fresh()) return
         if (result === 'timeout') showError()
-        else if (result[0].entries.length > 0) showBoard(result[0], board.crown ? result[1] : null)
+        else if (result[0].entries.length > 0) showBoard(result[0], at.crownLabel ? result[1] : null)
         else showEmpty()
       })
       .catch(() => {
-        if (alive) showError() // the fetches never throw; this guards the race plumbing itself
+        if (fresh()) showError() // the fetches never throw; this guards the race plumbing itself
       })
   }
 
-  if (opts.boardOverride) {
-    if (opts.boardOverride.entries.length > 0) showBoard(opts.boardOverride, opts.championOverride ?? null)
-    else showEmpty()
-  } else if (opts.simulate === 'loading') {
-    showLoading() // DEV: held forever, so the shimmer can be inspected/screenshotted
-  } else if (opts.simulate === 'error') {
-    showError()
-  } else if (!cloudSession()) {
-    showSignedOut() // dormant/signed-out is knowable synchronously — no loading flicker
-  } else {
-    load()
+  /**
+   * Pick the state a board should open in. Used for the FIRST paint and for every tab switch, which
+   * is the point: without it a signed-out player who tapped THIS WEEK would leave the warm "sign in
+   * to join" invite and land on "be the first on this week's board" — an empty board they are not
+   * even eligible to be on, with the sign-in button gone.
+   *
+   * `boardOverride` / `simulate` deliberately apply to the FIRST paint only: they are one fixture for
+   * one board, so a tab switch away from them goes to live data rather than re-rendering the daily
+   * fixture under a weekly heading.
+   */
+  const resolve = (first: boolean): void => {
+    if (first && opts.boardOverride) {
+      if (opts.boardOverride.entries.length > 0) showBoard(opts.boardOverride, opts.championOverride ?? null)
+      else showEmpty()
+    } else if (first && opts.simulate === 'loading') {
+      showLoading() // DEV: held forever, so the shimmer can be inspected/screenshotted
+    } else if (first && opts.simulate === 'error') {
+      showError()
+    } else if (!cloudSession()) {
+      showSignedOut() // dormant/signed-out is knowable synchronously — no loading flicker
+    } else {
+      load()
+    }
   }
+  resolve(true)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// The Home WEEKLY RACE module — the full-width block that seats the ENDLESS play pill over a live
-// standings line ("this week · #R of M · best N"), replacing the v1 trophy chip. One baked cream
-// plate (cards stay light on every theme) so the race reads as a first-class destination on Home.
+// The Home DAILY RACE module — the full-width block that seats the ENDLESS play pill over a live
+// standings line ("today #R of M · week N"), replacing the v1 trophy chip. One baked cream plate
+// (cards stay light on every theme) so the race reads as a first-class destination on Home.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Module plate geometry (design px) — full-width like the overlay cards (40px side gutters). */
@@ -1068,29 +1209,39 @@ function ensureRaceStrip(scene: Phaser.Scene): string {
 }
 
 // Module-level standings cache: the last live board summary, so a return to Home paints the live
-// line instantly and a fetch only refreshes it. Keyed by week — a rolled-over week falls back.
+// line instantly and a fetch only refreshes it. Keyed by DAY — a rolled-over board falls back.
 interface RaceLineData {
-  week: string
+  day: string
   myRank: number | null
   myScore: number | null
-  /** Players on this week's board (the fetched top rows — the whole board at friends scale). */
+  /** Players on today's board (the fetched top rows — the whole board at friends scale). */
   total: number
 }
 let raceLineCache: RaceLineData | null = null
 
 /** DEV: seed the standings-line cache with a deterministic fixture (`?raceline=<variant>`). */
 export function devSeedRaceLine(variant: string | null): void {
-  const wk = weekKey()
-  if (variant === 'out') raceLineCache = { week: wk, myRank: 14, myScore: 1310, total: 25 }
-  else if (variant === 'new') raceLineCache = { week: wk, myRank: null, myScore: null, total: 7 }
-  else raceLineCache = { week: wk, myRank: 3, myScore: 7300, total: 12 }
+  const d = dayKey()
+  if (variant === 'out') raceLineCache = { day: d, myRank: 14, myScore: 1310, total: 25 }
+  else if (variant === 'new') raceLineCache = { day: d, myRank: null, myScore: null, total: 7 }
+  else raceLineCache = { day: d, myRank: 3, myScore: 7300, total: 12 }
 }
 
 /**
- * The live standings row — `this week · #R of M · best N` on its own strip, with a chevron — and the
- * WHOLE strip is a pressable that opens the WEEKLY RACE panel. Paints from the module cache instantly,
- * refreshes from `fetchWeeklyBoard` when signed in, and falls back to the save-local line (best this
- * week / "set the pace") when offline, dormant or the board is still empty — never blank, never a spinner.
+ * The live standings row — `today #R of M · week N` on its own strip, with a chevron — and the WHOLE
+ * strip is a pressable that opens the race panel. Paints from the module cache instantly, refreshes
+ * from `fetchDailyBoard` when signed in, and falls back to the save-local line when offline, dormant
+ * or the board is still empty — never blank, never a spinner.
+ *
+ * BOTH halves of the race in one line, deliberately. The rank is today's, because that is the thing
+ * that expires tonight; the `week` figure behind it is the season total the run just fed. Show only
+ * the daily rank and the weekly board becomes invisible from Home — and the weekly board is the
+ * reason to come back tomorrow rather than only today.
+ *
+ * The weekly figure is read from the SAVE (`endlessWeekStanding` — the player's own daily bests,
+ * summed) rather than fetched. It is the same number the server would return, it is free, and it
+ * survives being offline. A second device's runs are the one case it can lag, and the panel's THIS
+ * WEEK tab shows the authoritative total a tap away.
  *
  * This used to be bare text with a small `›` glued on the end, and players did not read it as something
  * you could tap — it looked like a caption for the ENDLESS button above it. Three things fix that, in
@@ -1099,28 +1250,31 @@ export function devSeedRaceLine(variant: string | null): void {
  * and the press moves the strip itself rather than only fading the text. The label stays on body ink —
  * see the note at its declaration for why it deliberately did NOT move to the interactive gold.
  */
-export function addWeeklyRaceStrip(scene: Phaser.Scene, x: number, y: number, save: SaveData): Phaser.GameObjects.Container {
+export function addDailyRaceStrip(scene: Phaser.Scene, x: number, y: number, save: SaveData): Phaser.GameObjects.Container {
+  const week = endlessWeekStanding(save)
+  /** The season tail — omitted entirely on a week with nothing in it, so a new player sees one idea. */
+  const weekTail = week.total > 0 ? `  ·  week ${week.total.toLocaleString()}` : ''
   const lineFor = (data: RaceLineData | null): string => {
     if (data && data.myRank !== null) {
       const total = Math.max(data.total, data.myRank)
-      const best = data.myScore !== null ? ` · best ${data.myScore.toLocaleString()}` : ''
-      return `this week · #${data.myRank} of ${total}${best}`
+      return `today #${data.myRank} of ${total}${weekTail}`
     }
-    if (data && data.total > 0) return `this week · ${data.total} racing · set the pace`
+    if (data && data.total > 0) return `today · ${data.total} racing${weekTail || '  ·  set the pace'}`
     // Offline / dormant / empty board — the save-local line the module replaced (never blank).
-    const wkBest = endlessBestThisWeek(save)
-    return wkBest > 0 ? `this week’s board · best ${wkBest.toLocaleString()}` : `new weekly board · set the pace`
+    const best = endlessBestToday(save)
+    if (best > 0) return `today’s best ${best.toLocaleString()}${weekTail}`
+    return week.total > 0 ? `new board today${weekTail}` : `new board today  ·  set the pace`
   }
-  const cached = raceLineCache && raceLineCache.week === weekKey() ? raceLineCache : null
+  const cached = raceLineCache && raceLineCache.day === dayKey() ? raceLineCache : null
   return addRaceStrip(scene, x, y, {
     initial: lineFor(cached),
     refresh: async () => {
-      const board = await fetchWeeklyBoard(25)
+      const board = await fetchDailyBoard(25)
       if (board.entries.length === 0) return null // dormant/empty → keep the fallback line + stale cache
-      raceLineCache = { week: board.week, myRank: board.myRank, myScore: board.myScore, total: board.entries.length }
+      raceLineCache = { day: board.key, myRank: board.myRank, myScore: board.myScore, total: board.entries.length }
       return lineFor(raceLineCache)
     },
-    open: () => openWeeklyRacePanel(scene),
+    open: () => openRacePanel(scene),
   })
 }
 
@@ -1249,11 +1403,16 @@ function addRaceStrip(scene: Phaser.Scene, x: number, y: number, spec: StripSpec
 }
 
 /**
- * Full-width WEEKLY RACE module for Home's ENDLESS block: the baked cream plate, the rose ENDLESS
- * play pill (via `onPlay` — Home owns the navigation), a trophy + "WEEKLY RACE" side dressing, and
+ * Full-width DAILY RACE module for Home's ENDLESS block: the baked cream plate, the rose ENDLESS
+ * play pill (via `onPlay` — Home owns the navigation), a trophy + "DAILY RACE" side dressing, and
  * the live tappable standings line underneath. Returns the container (joins Home's entrance stagger).
+ *
+ * "DAILY", not "WEEKLY", because the thing behind the pill is a board that expires tonight — that is
+ * the promise the block has to make for a player to tap it today rather than on Sunday. The week is
+ * still right there: the standings line carries its running total, and the panel opens on a TODAY /
+ * THIS WEEK tab pair.
  */
-export function addWeeklyRaceModule(
+export function addRaceModule(
   scene: Phaser.Scene,
   cx: number,
   cy: number,
@@ -1273,7 +1432,7 @@ export function addWeeklyRaceModule(
   }
   container.add(
     scene.add
-      .text(232, -32, 'WEEKLY\nRACE', {
+      .text(232, -32, 'DAILY\nRACE', {
         fontFamily: FONT,
         fontSize: '17px',
         fontStyle: '900',
@@ -1289,15 +1448,15 @@ export function addWeeklyRaceModule(
   // On the 152-tall plate (-76..76) the pill row sits at -32 → spans -68..4 with an 8px top margin,
   // and the strip at 42 → spans 16..68 with a matching 8px below: a 12px gutter between the two.
   container.add(addPillButton(scene, 0, -32, 340, 72, 'ENDLESS', ROSE_PILL, onPlay))
-  container.add(addWeeklyRaceStrip(scene, 0, 42, save))
+  container.add(addDailyRaceStrip(scene, 0, 42, save))
   return container
 }
 
 /**
- * The locked WEEKLY RACE module (unlocked < 30): the same silhouette, dimmed and inert — a quiet
- * signpost ("something is coming right here"), deliberately non-interactive and flourish-free.
+ * The locked DAILY RACE module (below ENDLESS_UNLOCK_LEVEL): the same silhouette, dimmed and inert —
+ * a quiet signpost ("something is coming right here"), deliberately non-interactive and flourish-free.
  */
-export function addWeeklyRaceLockedModule(scene: Phaser.Scene, cx: number, cy: number): Phaser.GameObjects.Container {
+export function addRaceLockedModule(scene: Phaser.Scene, cx: number, cy: number): Phaser.GameObjects.Container {
   const T = getTheme()
   const container = scene.add.container(cx, cy)
   container.add(scene.add.image(0, 0, ensureModulePlate(scene)).setAlpha(0.5))
@@ -1307,7 +1466,7 @@ export function addWeeklyRaceLockedModule(scene: Phaser.Scene, cx: number, cy: n
   container.add(lock)
   container.add(
     scene.add
-      .text(16, -16, 'WEEKLY RACE', { fontFamily: FONT, fontSize: '26px', fontStyle: '900', color: T.inkFaint })
+      .text(16, -16, 'DAILY RACE', { fontFamily: FONT, fontSize: '26px', fontStyle: '900', color: T.inkFaint })
       .setOrigin(0.5)
       .setLetterSpacing(2)
       .setAlpha(0.8)
@@ -1328,7 +1487,7 @@ export function addWeeklyRaceLockedModule(scene: Phaser.Scene, cx: number, cy: n
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Build a fake ranked board: `youAt` marks a visible row as you; `myRank`/`myScore` place you outside. */
-function fixtureBoard(youAt: number | null, myRank: number | null, myScore: number | null): WeeklyBoard {
+function fixtureBoard(youAt: number | null, myRank: number | null, myScore: number | null): RaceBoard {
   const names = [
     'goldrush', 'chipqueen', 'lucky.lou', 'marisol', 'dusty', 'sunburst',
     'cardshark', 'bellhop', 'renotwin', 'dulce', 'k-money', 'peachy',
@@ -1341,28 +1500,61 @@ function fixtureBoard(youAt: number | null, myRank: number | null, myScore: numb
   }))
   const mine = entries.find(e => e.you)
   return {
-    week: weekKey(),
+    key: dayKey(),
     entries,
     myRank: mine ? mine.rank : myRank,
     myScore: mine ? mine.score : myScore,
   }
 }
 
-/** A deterministic last-week champion for the crown-row fixtures. */
+/**
+ * A fake SEASON board — the same 12 names carrying weekly totals and a turnout count, so the
+ * `valueText` readout ("18,204 · 5d") and the rows it produces can be screenshotted. The turnout
+ * deliberately does NOT descend in step with the total: #4 played all seven boards and still sits
+ * behind #3 who played four, which is the exact shape a player needs to be able to read off the
+ * board before they trust what the week is asking of them.
+ */
+function fixtureWeekBoard(youAt: number | null, myRank: number | null): RaceBoard {
+  const rows: Array<[string, number, number]> = [
+    ['goldrush', 42180, 7], ['chipqueen', 39640, 6], ['lucky.lou', 31220, 4],
+    ['marisol', 30870, 7], ['dusty', 28450, 5], ['sunburst', 24110, 5],
+    ['cardshark', 19980, 3], ['bellhop', 17640, 4], ['renotwin', 14300, 2],
+    ['dulce', 11250, 3], ['k-money', 8120, 2], ['peachy', 4410, 1],
+  ]
+  const entries: LeaderboardEntry[] = rows.map(([name, total, days], i) => ({
+    rank: i + 1,
+    name,
+    score: total,
+    you: youAt !== null && i + 1 === youAt,
+    valueText: `${total.toLocaleString()} · ${days}d`,
+  }))
+  const mine = entries.find(e => e.you)
+  return {
+    key: weekKey(),
+    entries,
+    myRank: mine ? mine.rank : myRank,
+    myScore: mine ? mine.score : 9260,
+    myValueText: mine ? mine.valueText : '9,260 · 2d',
+  }
+}
+
+/** A deterministic crown-row winner for the fixtures — yesterday's, since the fixtures open on TODAY. */
 function fixtureChampion(you: boolean): Champion {
-  return { week: previousWeekKey(), name: you ? 'dusty' : 'marisol', score: 11240, you }
+  return { key: previousDayKey(), name: you ? 'dusty' : 'marisol', score: 11240, you }
 }
 
 /**
  * Map a `?race=<variant>` value to panel opts (DEV only). '' / unknown → live data path.
- *   rich     → 12 names, you at #5, last week's champion crown row (someone else)
- *   crownyou → 12 names, you at #2 — and YOU are last week's champion (gold crown row + row crown)
+ *   rich     → 12 names, you at #5, yesterday's winner crown row (someone else)
+ *   crownyou → 12 names, you at #2 — and YOU won yesterday (gold crown row + row crown)
  *   out      → 12 names, you at #14 (the pinned "your rank" footer), crown row present
- *   empty    → a played-but-empty week ("be the first")
+ *   week     → the SEASON board: weekly totals with the "· 5d" turnout readout, you at #4
+ *   weekout  → the season board with you at #19, outside the shown rows (footer in week units)
+ *   empty    → a played-but-empty day ("be the first")
  *   loading  → the shimmer, held forever
  *   error    → the quiet RETRY card
  */
-export function devRaceOpts(variant: string | null): WeeklyRacePanelOpts {
+export function devRaceOpts(variant: string | null): RacePanelOpts {
   switch (variant) {
     case 'rich':
       return { boardOverride: fixtureBoard(5, null, null), championOverride: fixtureChampion(false) }
@@ -1370,8 +1562,16 @@ export function devRaceOpts(variant: string | null): WeeklyRacePanelOpts {
       return { boardOverride: fixtureBoard(2, null, null), championOverride: fixtureChampion(true) }
     case 'out':
       return { boardOverride: fixtureBoard(null, 14, 1310), championOverride: fixtureChampion(false) }
+    case 'week':
+      return {
+        mode: 'weekly',
+        boardOverride: fixtureWeekBoard(4, null),
+        championOverride: { key: previousWeekKey(), name: 'marisol', score: 51330, you: false, valueText: '51,330 · 7d' },
+      }
+    case 'weekout':
+      return { mode: 'weekly', boardOverride: fixtureWeekBoard(null, 19) }
     case 'empty':
-      return { boardOverride: { week: weekKey(), entries: [], myRank: null, myScore: null } }
+      return { boardOverride: { key: dayKey(), entries: [], myRank: null, myScore: null } }
     case 'loading':
       return { simulate: 'loading' }
     case 'error':
@@ -1386,7 +1586,7 @@ export function devRaceOpts(variant: string | null): WeeklyRacePanelOpts {
  * the same level, separated only by stars — because that is the normal shape of a level board and
  * the one case a fixture built from strictly-descending numbers would never show.
  */
-function fixtureLevelBoard(youAt: number | null, myRank: number | null): WeeklyBoard {
+function fixtureLevelBoard(youAt: number | null, myRank: number | null): RaceBoard {
   const rows: Array<[string, number, number]> = [
     ['goldrush', 300, 871], ['chipqueen', 300, 844], ['lucky.lou', 288, 802],
     ['marisol', 288, 771], ['dusty', 288, 749], ['sunburst', 241, 690],
@@ -1402,7 +1602,7 @@ function fixtureLevelBoard(youAt: number | null, myRank: number | null): WeeklyB
   }))
   const mine = entries.find(e => e.you)
   return {
-    week: 'ALL TIME',
+    key: 'ALL TIME',
     entries,
     myRank: mine ? mine.rank : myRank,
     myScore: mine ? mine.score : 37,
@@ -1419,14 +1619,14 @@ function fixtureLevelBoard(youAt: number | null, myRank: number | null): WeeklyB
  *   empty   → nobody on the ladder yet
  *   loading / error → the shared shimmer + RETRY states
  */
-export function devLevelOpts(variant: string | null): WeeklyRacePanelOpts {
+export function devLevelOpts(variant: string | null): RacePanelOpts {
   switch (variant) {
     case 'rich':
       return { mode: 'levels', boardOverride: fixtureLevelBoard(4, null) }
     case 'out':
       return { mode: 'levels', boardOverride: fixtureLevelBoard(null, 17) }
     case 'empty':
-      return { mode: 'levels', boardOverride: { week: 'ALL TIME', entries: [], myRank: null, myScore: null } }
+      return { mode: 'levels', boardOverride: { key: 'ALL TIME', entries: [], myRank: null, myScore: null } }
     case 'loading':
       return { mode: 'levels', simulate: 'loading' }
     case 'error':

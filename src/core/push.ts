@@ -1,9 +1,10 @@
 /**
- * Web Push opt-in — the client half of the weekly-race callback.
+ * Web Push opt-in — the client half of the endless-race callback.
  *
- * WHY: the endless race resets Monday 00:00 UTC and nothing tells anyone. The one measured churn so
- * far (a W30 player absent from W31) crossed exactly that boundary. A reset nobody is told about is a
- * reset most players sleep through.
+ * WHY: the race resets and nothing tells anyone. The one measured churn so far (a W30 player absent
+ * from W31) crossed exactly that boundary. A reset nobody is told about is a reset most players
+ * sleep through — and since the board went DAILY there are now seven of those a week, so the
+ * reminder went from a nice-to-have to the main thing carrying the format's rhythm.
  *
  * Design contract, matching core/cloud.ts and core/analytics.ts:
  *   - DORMANT until configured. No VAPID key or no Supabase env → every export reports unsupported

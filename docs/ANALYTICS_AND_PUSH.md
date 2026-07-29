@@ -58,16 +58,16 @@ select cron.schedule('prune-events','0 4 * * *',$$select public.prune_events(90)
 | --- | --- |
 | Subscription table | `supabase/migrations/0011_push_subscriptions.sql` |
 | Service-worker handlers | `public/push-sw.js` (via `workbox.importScripts` in `vite.config.ts`) |
-| Client opt-in | `src/core/push.ts` + `src/view/cloudmodal.ts` → "Weekly race reminder" |
+| Client opt-in | `src/core/push.ts` + `src/view/cloudmodal.ts` → "Race reminder" |
 | Sender | `scripts/send-push.mjs` |
-| Schedule | `.github/workflows/weekly-push.yml` — Sunday 18:00 UTC |
+| Schedule | `.github/workflows/endless-push.yml` — Mon–Sat 18:00 UTC (today's board, `--daily`), Sunday 18:00 UTC (the weekly season). The two never overlap: the daily cron is `1-6`, so Sunday's slot belongs to the season alone |
 
 **Why a GitHub Actions cron:** GitHub Pages is static, so there is no server to run a timer on, and
 Web Push needs an authenticated application server to sign each message. Actions already deploys this
 repo, so it adds no new infrastructure and holds the VAPID private key as a secret. Its scheduler can
 run 10–30 min late, which is irrelevant — the message says "in N hours", computed at run time.
 
-**⚠️ `weekKey()` is duplicated** in `scripts/send-push.mjs` (it runs as bare Node in CI and cannot
+**⚠️ `dayKey()` and `weekKey()` are duplicated** in `scripts/send-push.mjs` (it runs as bare Node in CI and cannot
 import from `src/`). A drift there is silent and total: a wrong key reads an empty board and sends
 everyone the generic copy while nothing errors. `src/core/analytics.test.ts` pins the two together
 across three years of dates plus the rollover and ISO-year edges. **Do not delete that test.**
@@ -146,7 +146,7 @@ The private key must be the pair of it — a mismatch makes every send fail 403.
 
 ### 3. Deploy, then dry-run the sender
 
-Push to `main` as usual. Then, from the Actions tab, run **Weekly race reminder** manually with
+Push to `main` as usual. Then, from the Actions tab, run **Endless race reminders** manually with
 `dry_run: true` — it prints exactly what each subscriber would receive and sends nothing.
 
 ### Local testing

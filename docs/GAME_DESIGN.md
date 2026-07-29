@@ -222,24 +222,38 @@ clears a RANDOM present color. Swap-combos (both consumed, epicenter = drag dest
 - Star milestone: clearing a level where n%10===0 plays a full-screen "LEVEL n! · N STARS
   EARNED" splash (heart shower + fanfare) before the normal result card (GameScene.milestoneSplash).
 
-## Endless weekly race (src/core/endless.ts + GameScene endless mode)
+## Endless race — daily boards, weekly season (src/core/endless.ts + GameScene endless mode)
 - Unlocks after ENDLESS_UNLOCK_LEVEL=20 (fixed, independent of LEVEL_COUNT — save.unlocked > 20).
   Entry: rose ENDLESS pill on Home and LevelSelect.
-- weekKey(now) = ISO-8601 week "YYYY-Www" in **UTC** (Thursday-anchored). The race opens and closes
-  at Monday 00:00 UTC for EVERYONE at once — that is Sunday evening in the Americas. It was local
-  time until 2026-07-26, which silently split the race: the key drives the board SEED, the
-  leaderboard partition written to AND the one read back, so a player whose local date had already
-  reached Monday sat on a different week — different board, a leaderboard containing only
-  themselves, and no way to tell why (hit for real by two friends 6 timezones apart). A forward-set
-  device clock could also jump into next week's board early. The panel now shows "ends in 2d 5h"
-  beside the key (formatWeekRemaining + weekEndsAt) so the reset is legible without decoding it.
-  seedForWeek() = FNV-1a →
-  endlessRng() = mulberry32(seed): EVERYONE gets the SAME board that week; every attempt that
-  week replays the identical starting board (a BEST-score race, not per-attempt random).
+- **A NEW BOARD EVERY DAY.** dayKey(now) = "YYYY-MM-DD" in **UTC**. The board opens and closes at
+  00:00 UTC for EVERYONE at once, and the day's top score is crowned (DAILY_PURSE = 150 chips).
+  seedForKey(dayKey) = FNV-1a → endlessRngForDay = mulberry32(seed): everyone gets the SAME board
+  that day; every attempt that day replays the identical starting board (a BEST-score race, not
+  per-attempt random).
+- **THE WEEK IS THE SEASON.** weekKey(now) = ISO-8601 "YYYY-Www" in **UTC** (Thursday-anchored),
+  rolling over Monday 00:00 UTC. A week's standing is the SUM of that player's daily bests inside
+  it (endlessWeekStanding), so a missed day is a zero you cannot make back with one big run —
+  turning up IS the strategy. Ranked on total, ties broken by MORE days played, then first-to-reach.
+  The season's #1 takes CHAMPION_PURSE = 1,000 chips.
+- Why it changed (2026-07-29): a single frozen weekly board went stale by Thursday — the leaders had
+  memorised a layout that never moved, anyone arriving on Saturday was racing a week of other
+  people's practice, and there was no reason at all to come back TOMORROW. Daily boards give the
+  game a daily heartbeat; the weekly sum is what stops that heartbeat being seven disconnected
+  sprints, and it rewards the habit rather than one lucky session.
+- UTC, not local time, for BOTH keys. It was local until 2026-07-26, which silently split the race:
+  the key drives the board SEED, the leaderboard partition written to AND the one read back, so a
+  player whose local date had already ticked over sat on a different board — a leaderboard
+  containing only themselves, and no way to tell why (hit for real by two friends 6 timezones
+  apart). A forward-set device clock could also jump into tomorrow's board early. The stakes went UP
+  when the race went daily: a timezone-sensitive key would now split the player base every night.
+  Panels show "ends in 5h 12m" beside the key (formatRaceRemaining + dayEndsAt/weekEndsAt).
 - Score attack: ENDLESS_MOVES=30, all 6 symbols, NO objectives, NO boosts applied (planting
   specials would change the board and break fairness). Ends only on moves-out → finishEndless.
-- recordEndless persists endlessBest per week (resets when weekKey rolls over); also flows into
-  all-time save.best. HUD shows a "WEEK'S BEST" card; end card shows NEW BEST! / TIME'S UP.
+- recordEndless keeps the max per day in save.endlessDays (pruned to ~16 days); also flows into
+  all-time save.best. HUD shows a "TODAY'S BEST" card; the end card shows NEW BEST! / TIME'S UP,
+  today's best, and the running week total with "N of 7 boards raced".
+- Panel: one card, TODAY / THIS WEEK tabs (view/leaderboardpanel.ts) + the all-time LEVEL ladder.
+  Crown row is "yesterday's winner" on the daily tab, "last week's champion" on the weekly one.
 
 ## Lives / energy (src/core/lives.ts + GameScene gate)
 - Pool: LIVES_MAX=5, LIFE_REGEN_MS=20 min, LIVES_GRACE_LEVELS=10 (config.ts). Originally 3/30min,
@@ -291,16 +305,19 @@ clears a RANDOM present color. Swap-combos (both consumed, epicenter = drag dest
 - Buys are idle-only (the bar dims mid-resolve, hides on level end); reduced-motion / haptics / mute aware.
 
 ## Save (src/core/save.ts — localStorage key 'viva-maya:v1', all access try/catch)
-v10: { v:10, best, unlocked, stars{level:1..3}, lastSpinDate|null, streak, pendingBoosts[],
-      endlessWeek|null, endlessBest, lives, livesAnchor, chips, + v7 personal-warmth fields,
-      + v8 jackpot-wheel meter, champion claims, referral/free-spin fields,
-      + v10 charms[] (current series), charmSeries, charmsAllTime, winStreak }
+v11: { v:11, best, unlocked, stars{level:1..3}, lastSpinDate|null, streak, pendingBoosts[],
+      endlessDays{"YYYY-MM-DD": score}, lives, livesAnchor, chips, + v7 personal-warmth fields,
+      + v8 jackpot-wheel meter, champion claims (championWeeks + championDays), referral/free-spin
+      fields, + v10 charms[] (current series), charmSeries, charmsAllTime, winStreak }
 Migrations: v1 {best} → v2 (+unlocked/stars) → v3 (+daily) → v4 (+endless: endlessWeek
 "YYYY-Www", endlessBest) → v5 (+lives/energy: lives, livesAnchor — pre-v5 saves start full)
 → v6 (grace refill: tops every save to full — lives=LIVES_MAX, livesAnchor=0 — on upgrade)
 → v7 (+personal-warmth fields, §E9) → v8 (+jackpot-wheel meter; absent in older saves → 0)
 → v9 (+hazard/special teach latches) → v10 (+Lucky Deal & charms: charms[], charmSeries, charmsAllTime,
-winStreak — absent in older saves → an empty Series I album and a cold streak).
+winStreak — absent in older saves → an empty Series I album and a cold streak)
+→ v11 (endless goes DAILY: endlessWeek/endlessBest → endlessDays, +championDays).
+The pre-v11 endless pair is deliberately NOT carried across — it held a best for a week-long board that
+no longer exists, and filing it under any day would credit a score nobody could earn on that layout.
 Loader is shape-tolerant (old saves default new fields). Mute flag is separate: 'viva-maya:muted'.
 Charm ids are NOT validated against the CHARMS catalogue on load: core/save.ts stays dependency-free
 (charms.ts imports IT, not the reverse) and every reader looks charms up BY catalogue, so an unknown
@@ -343,7 +360,7 @@ icon.html → 5×5 emoji board + VIVA MAYA banner (checkerboard = (row+col)%2). 
 `npm run icons` regenerates all of public/. favicon.svg is hand-authored.
 
 ## Dev/test knobs (DEV builds only; see GameScene/BootScene/DailyBonusScene create)
-?level=N jump · ?endless=1 boot the weekly race · ?lives=N set the life pool (test the gate) ·
+?level=N jump · ?endless=1 boot today's race · ?lives=N set the life pool (test the gate) ·
 ?scene=daily|home|levelselect · ?auto=MS autoplay hinted moves · ?turbo=N scale tween/timer
 clocks · ?goal=N ?moves=N override level · ?plant=1 seed specials · ?spin=1 force spin ·
 ?autospin=1 auto-trigger spin · ?plinko[=PTS] open the bonus drop · ?slot=N pin its landing slot ·
@@ -365,7 +382,7 @@ Deploy: GitHub Pages. With workflow scope: push to main → .github/workflows/de
 builds and deploys automatically. Legacy fallback: publish dist/ to gh-pages branch.
 
 ## Roadmap (agreed direction)
-DONE: streak flame on Home (addStreakBadge) · endless weekly-seed race after L20 (shared board,
+DONE: streak flame on Home (addStreakBadge) · endless daily-seed race after L20 (shared board,
 BEST race — src/core/endless.ts) · star-milestone celebration every 10 levels (milestoneSplash) ·
 lives/energy (lose-only, 5-pool, 20-min regen, grace below L10 — src/core/lives.ts) · in-level helper bar (spend
 earned chips on +1/+5 moves or a targeted bomb for the current level — src/core/store.ts POWER_ITEMS).
