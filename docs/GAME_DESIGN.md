@@ -118,10 +118,15 @@ clears a RANDOM present color. Swap-combos (both consumed, epicenter = drag dest
 - Faces (l→r cheapest→richest) and weights at LUCK 0 / LUCK 9: 🍒 CHERRY 25 chips 26/14 · 🍀 CLOVER 40
   chips 22/18 · 🔔 BELL 1 free spin 16/16 · BAR 60 chips 14/16 · 💎 DIAMOND a boost 12/14 · 7 SEVEN
   120 chips 7/14 · ❤️ HEART a CHARM 3/8. Both columns sum to 100, so every weight reads as a percentage.
-- SUBSTITUTION when a spin can't be paid (the bank is full): the BELL is restruck as BELL_SUBSTITUTE_CHIPS
-  (50) keeping its weight — the same rule plinko's ticket wells answer to, for the same reason (a face
-  the player can see must be a face they can win). `dealFaces(allowSpins)` is the effective table and
-  the paytable strip paints from it, so the board never advertises a prize it can't honour.
+- SUBSTITUTION when a spin can't be paid: the BELL is restruck as BELL_SUBSTITUTE_CHIPS (50) keeping
+  its weight — the same rule plinko's ticket wells answer to, for the same reason (a face the player
+  can see must be a face they can win). `dealFaces(allowSpins)` is the effective table and the
+  paytable strip paints from it, so the board never advertises a prize it can't honour.
+  - The Deal asks the 'mega' (DEFAULT) free-spin source — BOTH the daily earn cap and the bank cap.
+    It does NOT take plinko's bank-cap-only exemption: that exists because a drop's own x5+ trigger
+    chain has already spent the daily allowance in the same resolve, and a win streak banks nothing,
+    so the Deal has no claim on it. `freeSpinRoom` and `addFreeSpins` are called with the same source,
+    which is the invariant save.freespins.test.ts guards.
 - PACE: three winners among nine cards ⇒ the third lands on the 7.5th flip on average (guarded in
   deal.test.ts), so a round is ~7 taps and a few seconds. PAIR GLOW is the beat that carries it — when
   a face reaches two, both its cards ring and breathe. Because no loser can reach three, a ring means

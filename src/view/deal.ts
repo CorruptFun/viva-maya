@@ -275,7 +275,15 @@ export function openDeal(scene: Phaser.Scene, opts: DealOpenOpts): void {
   const save = loadSave()
   const rng = mulberry32((Math.random() * 2 ** 31) | 0)
   const luck = Math.max(0, Math.min(9, save.charmsAllTime))
-  const allowSpins = freeSpinRoom(todayKey(), 'plinko') > 0
+  // 'mega' — the DEFAULT source, answering to BOTH the daily earn cap and the bank cap.
+  //
+  // Deliberately not plinko's exemption. That one exists for a specific self-collision: a drop needs
+  // an x5+ chain, and that same chain has already banked its MEGA award moments earlier in the same
+  // resolve, so under one budget the drop's own trigger routinely emptied the allowance it then
+  // needed. Nothing like that happens here — a win streak banks no spins — so the Deal has no claim
+  // on the exemption, and taking it anyway would quietly widen a narrowly-argued hole to a second
+  // consumer. The flow is tiny either way (BELL is 16% of a hand dealt every third win).
+  const allowSpins = freeSpinRoom(todayKey()) > 0
   const faces = dealFaces(allowSpins)
   const faceOf = (id: DealFaceId): DealFace => faces.find(f => f.id === id) ?? faces[0]
   let hand: DealHand = dealHand(rng, allowSpins, luck)
@@ -585,7 +593,10 @@ export function openDeal(scene: Phaser.Scene, opts: DealOpenOpts): void {
     // `addChips` below then adds the hand's own chips on top of that fresh balance rather than on top
     // of a stale one. `newTotal` is therefore the true balance whatever combination paid out.
     const charm = payout.charm ? grantCharm(rng) : null
-    const spins = payout.spins > 0 ? addFreeSpins(payout.spins, todayKey(), 'plinko') : 0
+    // The SAME source `allowSpins` asked about above — what freeSpinRoom promised is what this grants,
+    // so a BELL the paytable painted as a SPIN is always a BELL this can pay (save.freespins.test.ts
+    // guards that the two agree per source).
+    const spins = payout.spins > 0 ? addFreeSpins(payout.spins, todayKey()) : 0
     if (payout.boost) addPendingBoost(payout.boost)
     const newTotal = payout.chips > 0 ? addChips(payout.chips) : loadSave().chips
 
