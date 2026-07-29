@@ -1,5 +1,6 @@
+import { LIVES_MAX } from '../config'
 import type { SaveData } from './save'
-import { loadSave, persistSave } from './save'
+import { addFreeSpins, freeSpinRoom, loadSave, persistSave } from './save'
 
 /**
  * CHARMS — the collectible. Pure logic (no Phaser), mirroring core/daily.ts and core/store.ts.
@@ -100,6 +101,113 @@ export const SERIES_PURSE = 500
  * completes — a milestone the player can see coming, rather than an invisible plateau.
  */
 export const LUCK_CAP = SERIES_SIZE
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE EXCHANGE — spending charms.
+//
+// The album on its own gives a charm one payoff (LUCK) and one goal (the ninth slot), both of them
+// slow. The exchange adds a near-term one: charms are a CURRENCY, and there is a small shelf you can
+// dip into any time. That turns a collection you passively watch fill into a thing you make decisions
+// about — bank a reward now, or hold the set for the purse.
+//
+// ── What it sells, and why not chips ─────────────────────────────────────────
+// Only things the CHIP economy cannot sell: a bonus-wheel pull, an instant heart refill, and a Deal
+// on demand. Chips already have a shop (the Gift Store) and a completed series already pays chips, so
+// putting chips on this shelf too would put the exchange in direct competition with completing the
+// album — the player would just be picking the better chips-per-charm rate, and one of the two would
+// always be strictly wrong. Selling a different KIND of thing keeps both worth doing: the exchange is
+// "I want something now", completing is "I want the payday and a fresh album".
+//
+// ── Spending never costs you luck ────────────────────────────────────────────
+// Prices come out of the CURRENT album (`save.charms`), never out of `charmsAllTime` — so LUCK, which
+// reads all-time, is untouched by anything you spend. That is the property that makes the shelf safe
+// to use: the worst a purchase can do is set back the ninth slot, and it can never make the Deal
+// stingier than it was this morning. The panel says so out loud.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** What an exchange slot hands over. 'deal' is the only one the caller (not this module) fulfils. */
+export type CharmExchangeKind = 'spin' | 'hearts' | 'deal'
+
+export interface CharmExchangeItem {
+  kind: CharmExchangeKind
+  label: string
+  blurb: string
+  /** Charms it costs, taken from the current album. */
+  price: number
+}
+
+/**
+ * The shelf, cheapest → priciest.
+ *
+ * Priced against how fast charms actually arrive (~2.5 per 100 wins — see the HEART note in
+ * core/deal.ts): one charm is a couple of hours of play, so a 1–3 charm ladder is a shelf you can
+ * reach within a session or two rather than a wall. Deliberately shallow — nine charms buy the
+ * SERIES_PURSE, so nothing here may cost enough to make completing an album feel like the mug's game.
+ */
+export const CHARM_EXCHANGE: CharmExchangeItem[] = [
+  { kind: 'spin', label: 'FREE SPIN', blurb: 'One pull of the bonus wheel', price: 1 },
+  { kind: 'hearts', label: 'FULL HEARTS', blurb: 'Refill your lives right now', price: 2 },
+  { kind: 'deal', label: 'DEAL NOW', blurb: 'Play a Lucky Deal — no streak needed', price: 3 },
+]
+
+/** What a redemption actually did, so the caller can celebrate it honestly. */
+export interface CharmRedemption {
+  item: CharmExchangeItem
+  /** Charm ids taken out of the album — the slots the panel should empty. */
+  spent: string[]
+  /** Charms left in the album afterwards. */
+  charmsLeft: number
+  /** Free spins ACTUALLY banked (0 for every other kind). */
+  spins: number
+}
+
+/** True when the album can currently afford this item. Cheap enough to call while painting. */
+export function canAfford(save: SaveData, item: CharmExchangeItem): boolean {
+  return save.charms.length >= item.price
+}
+
+/**
+ * Redeem an exchange item: take its price out of the album and hand over the goods.
+ *
+ * `dayKey` is daily.todayKey() — passed IN rather than imported so this module stays dependency-light
+ * (charms.ts is imported by core/deal.ts, and reaching back into daily.ts from here would tangle the
+ * three for one string).
+ *
+ * Returns null and leaves the save completely untouched when the album can't afford it, or when the
+ * reward can't be honoured — a spin whose bank is already full REFUSES rather than quietly eating the
+ * charms, the same "never advertise what you can't pay" rule the BELL and the plinko wells follow.
+ *
+ * ORDERING: the reward is granted BEFORE the charms are taken. Each call re-reads the save so they
+ * compose, and doing it this way means the only crash window leaves the player holding the reward AND
+ * the charms rather than neither — the same direction of error the champion purse and the free-spin
+ * bank already choose (worst case a player is over-paid; never under-paid).
+ *
+ * Charms are spent NEWEST-FIRST (`slice(-price)` over the acquisition-ordered array), so the ones you
+ * have held longest are the ones that survive.
+ */
+export function redeemCharms(item: CharmExchangeItem, dayKey: string): CharmRedemption | null {
+  if (!canAfford(loadSave(), item)) return null
+  if (item.kind === 'spin' && freeSpinRoom(dayKey) <= 0) return null
+
+  let spins = 0
+  if (item.kind === 'spin') {
+    spins = addFreeSpins(1, dayKey)
+    if (spins <= 0) return null // the bank filled between the check and the grant — charge nothing
+  }
+
+  const save = loadSave()
+  // Re-check after the grant: `addFreeSpins` re-read the save, so this is the one place a concurrent
+  // write could have moved the album underneath us.
+  if (save.charms.length < item.price) return null
+  const spent = save.charms.slice(save.charms.length - item.price)
+  save.charms = save.charms.slice(0, save.charms.length - item.price)
+  if (item.kind === 'hearts') {
+    save.lives = LIVES_MAX
+    save.livesAnchor = 0
+  }
+  persistSave(save)
+  return { item, spent, charmsLeft: save.charms.length, spins }
+}
 
 /** Charms owned in the CURRENT series, in album order (locked slots omitted). */
 export function ownedCharms(save: SaveData): Charm[] {

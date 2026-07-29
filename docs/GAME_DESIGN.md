@@ -115,9 +115,14 @@ clears a RANDOM present color. Swap-combos (both consumed, epicenter = drag dest
   a presentation PROVABLY consistent with it. `buildDeck` guarantees the ≤2 invariant for every seed
   (the "more slots left than decoy faces left ⇒ take a pair" guard is load-bearing); deal.test.ts
   fuzzes both the invariant and order-independence across every winner.
-- Faces (l→r cheapest→richest) and weights at LUCK 0 / LUCK 9: 🍒 CHERRY 25 chips 26/14 · 🍀 CLOVER 40
-  chips 22/18 · 🔔 BELL 1 free spin 16/16 · BAR 60 chips 14/16 · 💎 DIAMOND a boost 12/14 · 7 SEVEN
-  120 chips 7/14 · ❤️ HEART a CHARM 3/8. Both columns sum to 100, so every weight reads as a percentage.
+- Faces (l→r cheapest→richest) and weights at LUCK 0 / LUCK 9: 🍒 CHERRY 25 chips 19/9 · 🍀 CLOVER 40
+  chips 22/16 · 🔔 BELL 1 free spin 16/16 · BAR 60 chips 14/16 · 💎 DIAMOND a boost 12/13 · 7 SEVEN
+  120 chips 7/12 · ❤️ HEART a CHARM 10/18. Both columns sum to 100, so every weight reads as a percentage.
+  - The HEART shipped at 3/8 and was raised when charms became SPENDABLE (the exchange, below). At 3%
+    a Deal every 3–4 wins yields well under one charm per 100 wins, so a shelf whose cheapest item
+    costs a charm would have been unreachable for weeks. 10% lands near 2.5 charms/100 wins — an
+    exchange item every couple of hours, a first album over a few weeks. The weight came off the
+    CHERRY (the cheapest card), so chip EV barely moves. Guarded by a floor in deal.test.ts.
 - SUBSTITUTION when a spin can't be paid: the BELL is restruck as BELL_SUBSTITUTE_CHIPS (50) keeping
   its weight — the same rule plinko's ticket wells answer to, for the same reason (a face the player
   can see must be a face they can win). `dealFaces(allowSpins)` is the effective table and the
@@ -165,9 +170,36 @@ clears a RANDOM present color. Swap-combos (both consumed, epicenter = drag dest
 - MERGE: `charms` resets per series, so mergeSaves compares `charmSeries` FIRST and unions the ids only
   when both devices sit on the same album — a blind union would hand a Series-II device all nine of the
   Series-I album it already cashed, i.e. a second purse. `charmsAllTime` takes the max (it never resets).
-- Album: Home top-bar chip (x=532) with a live "N/9" collar, opening a read-only panel — owned charms
-  lit, missing ones in silhouette (so you can see WHICH one you still need), the luck readout, and the
-  line naming where charms come from. Nothing there is claimable; it is a shelf, not a faucet.
+- Album: Home top-bar chip (x=532) with a live "N/9" collar, opening the panel — owned charms lit,
+  missing ones in silhouette (so you can see WHICH one you still need; any charm added to CHARMS must
+  survive that flat-tint treatment, which is why 🧿 was swapped for 🍄 — a nazar silhouettes to a
+  featureless circle), the luck readout, and the line naming where charms come from.
+
+## The charm exchange (core/charms.ts CHARM_EXCHANGE + the album panel)
+- Charms are a CURRENCY, not only a keepsake. A shelf under the album grid spends them:
+  **FREE SPIN 1 · FULL HEARTS 2 · DEAL NOW 3**. That gives the collection a near-term payoff next to
+  the two slow ones (luck, and the ninth slot), and turns a thing you watch fill into a thing you make
+  decisions about — bank a reward now, or hold the set for the purse.
+- It sells ONLY what the chip economy can't: a wheel pull, an instant heart refill, a Deal on demand.
+  Chips are deliberately absent — the Gift Store already sells for chips and a completed series already
+  PAYS chips, so a chips slot here would compete with completing the album on the same axis and one of
+  the two would always be strictly the wrong choice. Different KIND of good ⇒ both stay worth doing.
+- SPENDING NEVER COSTS LUCK. Prices come out of `save.charms` (the current album); `charmsAllTime`,
+  which luck reads, is never touched. The worst a purchase can do is set back the ninth slot — it can
+  never make the Deal stingier than it was before you shopped. The panel says so under the heading.
+- `redeemCharms(item, dayKey)` is atomic and REFUSES rather than half-paying: it returns null (save
+  untouched) when the album can't afford it, or when a FREE SPIN's bank is full — same "never
+  advertise a prize you can't pay" rule the BELL and the plinko wells follow, and it matters more here
+  because the player is handing over a collectible. The reward is granted BEFORE the charms are taken,
+  so the only crash window leaves them holding both rather than neither.
+- Charms are spent NEWEST-FIRST, so the ones held longest survive. Spent slots re-open for future draws.
+- Every purchase needs TWO taps (the pill arms to "TAP TO CONFIRM" for 2.6s). Charms are the one thing
+  in the game that can't be re-earned quickly, so a mis-tap spending two of them is the worst accident
+  the UI could allow; a second deliberate tap removes the whole class of regret.
+- The panel STAYS OPEN after a buy (it repaints in place — cookbook §7) and the host is refreshed on
+  CLOSE, never per purchase: the host's refresh is a scene restart, which would throw the player out
+  of the album mid-shop and, for DEAL NOW, destroy the Deal overlay on the frame it opened. DEAL NOW
+  fires `onChanged` from the Deal's own CLAIM instead, which covers the spend and the winnings at once.
 
 ## Scoring
 - 20 pts/piece × cascade number (wave 1 ×1, wave 2 ×2, …). Specials count as their symbol.

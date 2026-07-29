@@ -53,7 +53,9 @@ input, and tweens live in `src/scenes/` and `src/view/`.
       two of anything else, so the outcome is settled up front and the finished table can be
       counted. The ❤️ card pays a **CHARM**: nine to a series in a 3×3 album, duplicates pay
       chips, a completed series pays a purse, and every charm is +1 **LUCK**, which reweights
-      the Deal's own table toward the richer cards.
+      the Deal's own table toward the richer cards. Charms are also **spendable** — an exchange
+      under the album trades them for things chips can't buy (a wheel pull, a heart refill, a
+      Deal on demand), and spending never costs you luck.
 
 ## Dev / test knobs (DEV builds only)
 

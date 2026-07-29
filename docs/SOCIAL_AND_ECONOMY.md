@@ -18,7 +18,9 @@ level wins ──► chips ──► boosts/helpers (Gift Store, in-level power 
      │
      ├──► jackpot meter ──► wheel fires after the win that fills it
      ├──► HOT STREAK (3 wins in a row) ──► LUCKY DEAL ──► chips / spin / boost / a CHARM
-     │                                                        └──► charms ──► LUCK ──► richer Deal
+     │                                                        │
+     │                       charms ──► LUCK (richer Deal) ───┤
+     │                              └─► THE EXCHANGE ─────────┘  spin 1 · hearts 2 · deal 3
      └──► MEGA WIN (cascade ≥4) ──► free spins (3 or 6) ──► daily-cabinet prizes
 ```
 
@@ -99,6 +101,30 @@ keep it honest:
 not the level curve, not scoring, not endless. So iron rule #2 holds without an argument: a collection
 that buffed the board would have to be re-defended against the leaderboard's fairness every time it
 grew, and one that buffs only its own mini game never does.
+
+**The exchange — charms as a currency.** A shelf under the album spends charms: FREE SPIN (1), FULL
+HEARTS (2), DEAL NOW (3). It sells only what chips *cannot*, and that restriction is the whole design:
+the Gift Store already sells for chips and a completed series already pays chips, so a chips slot here
+would put the shelf in direct competition with completing the album — the player would just compare
+chips-per-charm and one of the two would always be strictly wrong. Selling a different *kind* of good
+keeps both worth doing.
+
+It is a **sink, not a faucet** — the only new value it creates is the FREE SPIN and the heart refill,
+both already-bounded goods (the spin answers to the same bank cap as every other spin and refuses
+rather than eating the charm when full; hearts regenerate free anyway). DEAL NOW creates nothing at
+all: it front-loads a Deal the player would otherwise have earned with three wins. So the exchange
+moves the economy's *timing*, never its total.
+
+Prices are shallow on purpose. Nine charms buy the 500 purse, so nothing on the shelf may cost enough
+to make completing an album feel like the mug's game — and **spending never costs LUCK**, because
+prices come out of the current album while luck reads `charmsAllTime`. That single property is what
+makes the shelf safe to use: the worst a purchase can do is set back the ninth slot.
+
+**The ❤️ rate moved for this.** The HEART card shipped at 3% (8% lucky), priced as a lottery — correct
+while a charm was only a keepsake. A *spendable* charm at that rate arrives under once per 100 wins,
+which would have made the shelf decoration for weeks. It is now 10% / 18%, ≈2.5 charms per 100 wins:
+an exchange item every couple of hours of play, a first album over a few weeks. The weight came off
+the CHERRY, the cheapest card on the table, so the chip EV of a hand barely moved.
 
 **Multi-device.** `charms` empties when a series completes, so it is a latch that RESETS and plain
 union is wrong: `mergeSaves` compares `charmSeries` first and unions ids only when both devices sit on
@@ -225,6 +251,7 @@ that re-grants after having been overwritten — self-healing, never a permanent
 | `BELL_SUBSTITUTE_CHIPS` | 50 (when a spin can't be paid) | `src/core/deal.ts` |
 | `SERIES_SIZE` / `SERIES_PURSE` | 9 / 500 | `src/core/charms.ts` |
 | `DUPLICATE_CHIPS` / `LUCK_CAP` | 40 / 9 | `src/core/charms.ts` |
+| `CHARM_EXCHANGE` | spin 1 · hearts 2 · deal 3 (charms) | `src/core/charms.ts` |
 | `QUALIFY_LEVEL` | 5 | `src/core/referrals.ts` |
 | `REFERRER_CHIPS` / `REFEREE_CHIPS` | 300 / 150 | `src/core/referrals.ts` |
 | `REFERRAL_CAP` | 20 lifetime | `src/core/referrals.ts` |

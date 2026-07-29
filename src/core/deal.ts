@@ -74,14 +74,36 @@ export interface DealFace {
  * the rare ones pay several, and the HEART pays the only thing in the game you keep.
  */
 export const DEAL_FACES: DealFace[] = [
-  { id: 'cherry', label: 'CHERRY', pip: 1, prize: { kind: 'chips', chips: 25 }, weight: 26, luckyWeight: 14 },
-  { id: 'clover', label: 'CLOVER', pip: 1, prize: { kind: 'chips', chips: 40 }, weight: 22, luckyWeight: 18 },
+  { id: 'cherry', label: 'CHERRY', pip: 1, prize: { kind: 'chips', chips: 25 }, weight: 19, luckyWeight: 9 },
+  { id: 'clover', label: 'CLOVER', pip: 1, prize: { kind: 'chips', chips: 40 }, weight: 22, luckyWeight: 16 },
   { id: 'bell', label: 'BELL', pip: 2, prize: { kind: 'spin', spins: 1 }, weight: 16, luckyWeight: 16 },
   { id: 'bar', label: 'BAR', pip: 2, prize: { kind: 'chips', chips: 60 }, weight: 14, luckyWeight: 16 },
-  { id: 'diamond', label: 'DIAMOND', pip: 2, prize: { kind: 'boost' }, weight: 12, luckyWeight: 14 },
-  { id: 'seven', label: 'SEVEN', pip: 3, prize: { kind: 'chips', chips: 120 }, weight: 7, luckyWeight: 14 },
-  { id: 'heart', label: 'HEART', pip: 4, prize: { kind: 'charm' }, weight: 3, luckyWeight: 8 },
+  { id: 'diamond', label: 'DIAMOND', pip: 2, prize: { kind: 'boost' }, weight: 12, luckyWeight: 13 },
+  { id: 'seven', label: 'SEVEN', pip: 3, prize: { kind: 'chips', chips: 120 }, weight: 7, luckyWeight: 12 },
+  { id: 'heart', label: 'HEART', pip: 4, prize: { kind: 'charm' }, weight: 10, luckyWeight: 18 },
 ]
+
+/**
+ * ── Why the HEART is 10% and not the 3% it shipped at ────────────────────────
+ *
+ * At 3% the card was priced as a lottery, which was right when a charm was only a keepsake with a
+ * passive luck bonus attached — rare, delightful, no hurry. Charms are now a SPENDABLE currency (the
+ * exchange in core/charms.ts), and a currency has to arrive at a rate you can plan around or the shop
+ * it buys from is decoration.
+ *
+ * The arithmetic: a Deal needs three consecutive wins, so a player winning steadily sees roughly one
+ * Deal per 3–4 wins, call it ~25 Deals per 100 levels cleared once losses are taken into account. At
+ * 3% that is well under one charm per 100 wins — several hours of play per charm, and a nine-charm
+ * album measured in months. An exchange whose cheapest item costs a charm would have been unreachable
+ * for weeks, which is worse than not shipping one.
+ *
+ * At 10% (18% at full luck) it lands near 2.5 charms per 100 wins: an exchange item every couple of
+ * hours of play, a first album over a few weeks. Still the rarest thing the Deal can pay — the SEVEN
+ * at 7% is the only card below it — and still the top of the value ladder.
+ *
+ * The weight came off the CHERRY (26 → 19), the cheapest card on the table, so the chip EV of a hand
+ * barely moves and the change costs the economy nothing.
+ */
 
 /** Cards on the table — a 3×3 grid, the same shape as the charm album so the two screens rhyme. */
 export const DEAL_CARDS = 9

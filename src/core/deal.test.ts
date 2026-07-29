@@ -89,13 +89,26 @@ describe('luck', () => {
     }
     const cold = count(0)
     const lucky = count(LUCK_CAP)
-    // 3% → 8% of rolls. Assert the direction and a loose band, not the exact count, so the test
+    // 10% → 18% of rolls. Assert the direction and a loose band, not the exact count, so the test
     // guards the tuning intent without breaking on an unrelated table nudge.
-    expect(cold / 40000).toBeGreaterThan(0.02)
-    expect(cold / 40000).toBeLessThan(0.045)
-    expect(lucky / 40000).toBeGreaterThan(0.065)
-    expect(lucky / 40000).toBeLessThan(0.1)
-    expect(lucky).toBeGreaterThan(cold * 1.8)
+    expect(cold / 40000).toBeGreaterThan(0.085)
+    expect(cold / 40000).toBeLessThan(0.115)
+    expect(lucky / 40000).toBeGreaterThan(0.16)
+    expect(lucky / 40000).toBeLessThan(0.2)
+    expect(lucky).toBeGreaterThan(cold * 1.5)
+  })
+
+  it('keeps the HEART reachable enough to be a CURRENCY, not just a lottery', () => {
+    // The rate guard for the exchange (core/charms.ts CHARM_EXCHANGE). Charms are spendable, and a
+    // spendable thing that arrives once per several hours of play makes the shelf decoration. The
+    // HEART sat at 3% when it was only a keepsake; if a future tuning pass pushes it back down there,
+    // the exchange quietly stops working and nothing else would have caught it.
+    const heart = DEAL_FACES.find(f => f.id === 'heart')!
+    expect(heart.weight).toBeGreaterThanOrEqual(8)
+    expect(heart.luckyWeight).toBeGreaterThan(heart.weight)
+    // …but still the top of the ladder: nothing above it may be commoner than the cheap cards.
+    const cherry = DEAL_FACES.find(f => f.id === 'cherry')!
+    expect(heart.weight).toBeLessThan(cherry.weight)
   })
 })
 

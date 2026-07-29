@@ -1,19 +1,23 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
   CHARMS,
+  CHARM_EXCHANGE,
   DUPLICATE_CHIPS,
   LUCK_CAP,
   SERIES_PURSE,
   SERIES_SIZE,
+  canAfford,
   grantCharm,
   hasCharm,
   luckOf,
   missingCharms,
   ownedCharms,
+  redeemCharms,
   rollCharm,
   seriesComplete,
   seriesLabel,
 } from './charms'
+import { LIVES_MAX } from '../config'
 import { loadSave, persistSave } from './save'
 import { mergeSaves } from './merge'
 import { mulberry32 } from './rng'
@@ -181,6 +185,97 @@ describe('album readouts', () => {
     expect(seriesLabel(14)).toBe('XIV')
     expect(seriesLabel(0)).toBe('I') // defensive: a save can never hold series 0
     expect(seriesLabel(40)).toBe('40') // past the numeral table, fall back to digits
+  })
+})
+
+describe('the exchange', () => {
+  const DAY = '2026-07-29'
+  const item = (kind: string) => CHARM_EXCHANGE.find(i => i.kind === kind)!
+
+  it('prices everything within reach of one album, so completing never becomes the mug\'s game', () => {
+    for (const i of CHARM_EXCHANGE) {
+      expect(i.price).toBeGreaterThan(0)
+      expect(i.price).toBeLessThan(SERIES_SIZE)
+    }
+  })
+
+  it('sells nothing the CHIP economy already sells — the two must not compete', () => {
+    // A chips option here would put the shelf in direct competition with the SERIES_PURSE and one of
+    // the two would always be strictly the wrong choice. Every slot pays a different KIND of thing.
+    for (const i of CHARM_EXCHANGE) expect(['spin', 'hearts', 'deal']).toContain(i.kind)
+  })
+
+  it('refuses when the album cannot afford it, leaving the save untouched', () => {
+    setAlbum([CHARMS[0].id])
+    expect(redeemCharms(item('hearts'), DAY)).toBeNull()
+    expect(loadSave().charms).toEqual([CHARMS[0].id])
+  })
+
+  it('takes the price NEWEST-first and hands over the goods', () => {
+    setAlbum([CHARMS[0].id, CHARMS[1].id, CHARMS[2].id])
+    const out = redeemCharms(item('hearts'), DAY)!
+    expect(out.spent).toEqual([CHARMS[1].id, CHARMS[2].id]) // the two most recently won
+    expect(out.charmsLeft).toBe(1)
+    expect(loadSave().charms).toEqual([CHARMS[0].id]) // the longest-held one survives
+  })
+
+  it('refills the pool for FULL HEARTS', () => {
+    setAlbum([CHARMS[0].id, CHARMS[1].id])
+    const save = loadSave()
+    save.lives = 0
+    save.livesAnchor = 12345
+    persistSave(save)
+    redeemCharms(item('hearts'), DAY)
+    expect(loadSave().lives).toBe(LIVES_MAX)
+    expect(loadSave().livesAnchor).toBe(0)
+  })
+
+  it('banks a real spin for FREE SPIN', () => {
+    setAlbum([CHARMS[0].id])
+    const out = redeemCharms(item('spin'), DAY)!
+    expect(out.spins).toBe(1)
+    expect(loadSave().freeSpins).toBe(1)
+    expect(loadSave().charms).toEqual([])
+  })
+
+  it('REFUSES a spin the bank cannot hold rather than eating the charm', () => {
+    // The same "never advertise a prize you can't pay" rule the BELL and the plinko wells follow —
+    // and here it matters more, because the player would be handing over a collectible for nothing.
+    setAlbum([CHARMS[0].id, CHARMS[1].id])
+    const save = loadSave()
+    save.freeSpins = 12 // FREE_SPIN_BANK_CAP
+    persistSave(save)
+    expect(redeemCharms(item('spin'), DAY)).toBeNull()
+    expect(loadSave().charms).toHaveLength(2) // untouched
+  })
+
+  it('never touches charmsAllTime, so spending can never cost you LUCK', () => {
+    // The property that makes the shelf safe to use at all: the worst a purchase can do is set back
+    // the ninth slot. It can never make the Deal stingier than it was before you shopped.
+    setAlbum([CHARMS[0].id, CHARMS[1].id, CHARMS[2].id], 2, 11)
+    const before = luckOf(loadSave())
+    redeemCharms(item('deal'), DAY)
+    expect(loadSave().charmsAllTime).toBe(11)
+    expect(luckOf(loadSave())).toBe(before)
+    expect(loadSave().charms).toEqual([]) // …but the album really was charged
+  })
+
+  it('re-opens the spent slots for future draws', () => {
+    setAlbum(CHARMS.slice(0, 3).map(c => c.id))
+    redeemCharms(item('hearts'), DAY)
+    const gaps = missingCharms(loadSave()).map(c => c.id)
+    expect(gaps).toContain(CHARMS[1].id)
+    expect(gaps).toContain(CHARMS[2].id)
+    expect(gaps).not.toContain(CHARMS[0].id)
+  })
+
+  it('reports affordability without writing anything', () => {
+    setAlbum([CHARMS[0].id, CHARMS[1].id])
+    const save = loadSave()
+    expect(canAfford(save, item('spin'))).toBe(true)
+    expect(canAfford(save, item('hearts'))).toBe(true)
+    expect(canAfford(save, item('deal'))).toBe(false)
+    expect(loadSave().charms).toHaveLength(2)
   })
 })
 

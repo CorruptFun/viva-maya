@@ -197,8 +197,16 @@ export class HomeScene extends Phaser.Scene {
     // The chip pill self-sizes around its count and tops out near x=440 even at six digits, so 532
     // clears it. NOT in the stack under PLAY — that band is budgeted to the pixel (840→1210 fits the
     // full LEVELS/DAILY/RACE set exactly), so a tenth row there would push the race plate off-screen.
-    addCharmChip(this, 532, 44)
-    if (import.meta.env.DEV && new URLSearchParams(location.search).has('charms')) openCharmAlbum(this)
+    // `onChanged` fires after a charm EXCHANGE (spending charms on a spin / hearts / an instant Deal).
+    // A purchase can move the chip collar, the hearts pool, the free-spin badge and the chip balance
+    // at once, so Home repaints wholesale rather than reaching into four widgets — the same
+    // "apply by repaint, not live re-tint" rule the theme picker follows (UI_COOKBOOK §7). Deferred a
+    // frame so the restart can never land while the panel that triggered it is still tearing down.
+    const refreshHome = (): void => void this.time.delayedCall(0, () => this.scene.restart())
+    addCharmChip(this, 532, 44, 52, { onChanged: refreshHome })
+    if (import.meta.env.DEV && new URLSearchParams(location.search).has('charms')) {
+      openCharmAlbum(this, { onChanged: refreshHome })
+    }
 
     // Weekly-race panel, opened directly for testing (mirrors the ?help pattern). `?race=<variant>`
     // maps to the DEV fixture boards (rich / crownyou / out / empty / loading / error); bare `?race`
