@@ -254,6 +254,12 @@ clears a RANDOM present color. Swap-combos (both consumed, epicenter = drag dest
   today's best, and the running week total with "N of 7 boards raced".
 - Panel: one card, TODAY / THIS WEEK tabs (view/leaderboardpanel.ts) + the all-time LEVEL ladder.
   Crown row is "yesterday's winner" on the daily tab, "last week's champion" on the weekly one.
+- RULES (openRaceRulesPanel): the in-app explainer, reached from the race card's `?` chip and from
+  how-to-play's RACE RULES button. Three numbered beats over a WEEK STRIP diagram — seven bars with
+  a hole where a skipped day should be, summing to a total underneath. The diagram is the point: the
+  weekly rule ("your daily bests added up") is the one thing no screen shows on its own, and the
+  missing bar teaches the cost of a skipped day without a sentence. Every number in it reads from the
+  constant (ENDLESS_MOVES, DAILY_PURSE, CHAMPION_PURSE, DAYS_PER_WEEK), never a literal.
 
 ## Lives / energy (src/core/lives.ts + GameScene gate)
 - Pool: LIVES_MAX=5, LIFE_REGEN_MS=20 min, LIVES_GRACE_LEVELS=10 (config.ts). Originally 3/30min,

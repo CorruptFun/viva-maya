@@ -38,6 +38,7 @@ import { sfx } from '../audio/sfx'
 import { cloudSession } from '../core/cloud'
 import {
   DAYS_PER_WEEK,
+  ENDLESS_MOVES,
   ENDLESS_UNLOCK_LEVEL,
   dayEndsAt,
   dayKey,
@@ -50,6 +51,8 @@ import {
   weekEndsAt,
 } from '../core/endless'
 import {
+  CHAMPION_PURSE,
+  DAILY_PURSE,
   fetchDailyBoard,
   fetchDailyChampion,
   fetchLevelBoard,
@@ -64,7 +67,7 @@ import { D, E, OVERSHOOT, backOut, fadeRise, heartbeat, popIn } from './motion'
 import { quality } from './quality'
 import { getTheme, prefersReducedMotion, reduceFlashing } from './theme'
 import type { Theme } from './theme'
-import { FONT, GHOST_PILL, GOLD_PILL, ROSE_PILL, addPillButton, goldFace, startScene } from './ui'
+import { FONT, GHOST_PILL, GOLD_PILL, ROSE_PILL, addPillButton, addRoundChip, goldFace, startScene } from './ui'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Geometry — one fixed, generous card so EVERY state (board, invite, empty, loading, error) lives
@@ -547,6 +550,23 @@ export function openRacePanel(scene: Phaser.Scene, opts: RacePanelOpts = {}): vo
   const closePill = addPillButton(scene, 160, CARD_H / 2 - 70, 240, 68, 'CLOSE', GOLD_PILL, close)
   cardRoot.add(closePill)
   controls.push(closePill)
+
+  // The `?` chip — the explainer, one tap from the board it explains. Deliberately HERE rather than
+  // only in how-to-play: a player who is confused about the race is looking AT the race, and the
+  // weekly board is the one screen where the numbers make no sense until someone says "these are
+  // seven days added together". Pinned to the card's top-left, clear of the tabs and the subtitle.
+  const rules = addRoundChip(
+    scene,
+    cx + 46,
+    cy + 46,
+    46,
+    '?',
+    { fontFamily: FONT, fontSize: '26px', fontStyle: '900', color: T.goldText },
+    () => openRaceRulesPanel(scene)
+  )
+  rules.container.setDepth(0) // rides the card's own stacking, not addRoundChip's default 50
+  cardRoot.add(rules.container)
+  controls.push(rules.container)
 
   // Card entrance: pop in from a dealt-card 0.92 with a gentle spring + a quick fade. Reduced
   // motion → popIn collapses instantly and the alpha is simply set.
@@ -1633,5 +1653,297 @@ export function devLevelOpts(variant: string | null): RacePanelOpts {
       return { mode: 'levels', simulate: 'error' }
     default:
       return { mode: 'levels' }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HOW THE RACE WORKS — the in-app explainer.
+//
+// The format asks players to hold two ideas at once: today's board is its own contest, AND every
+// day's best feeds a weekly total. That second half is the part nobody guesses. It is not visible in
+// any single number on any screen — you only see it if you already know to look for it — and a player
+// who doesn't know it reads the weekly board as "someone had an enormous run" rather than "someone
+// showed up six days out of seven". Get that wrong and the whole reason to come back tomorrow is
+// invisible.
+//
+// So this is a DIAGRAM, not a paragraph. The week strip below is the entire mental model in one
+// glance: seven bars, one of them a hole where Wednesday should be, and a total underneath that is
+// visibly the sum of the rest. The missing bar does the teaching — you can see the cost of a skipped
+// day without a sentence explaining it, which is the only way this lands for someone who is skimming.
+// The three numbered beats above it are the words for what the picture already showed.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Card geometry — its own, narrower than the board card: this is prose + a diagram, not a list of rows. */
+const RULES_W = 640
+const RULES_H = 1010
+
+/**
+ * The worked example. Deliberately a REALISTIC week, not a tidy one: the scores wobble, Thursday is
+ * the best single day yet Thursday's player is not the story, and WEDNESDAY IS MISSING. A strip of
+ * seven equal full bars would illustrate the arithmetic and none of the point.
+ */
+const WEEK_EXAMPLE: Array<{ day: string; score: number }> = [
+  { day: 'M', score: 3150 },
+  { day: 'T', score: 2980 },
+  { day: 'W', score: 0 }, // skipped — the hole that does the teaching
+  { day: 'T', score: 3400 },
+  { day: 'F', score: 2760 },
+  { day: 'S', score: 3010 },
+  { day: 'S', score: 2904 },
+]
+
+/** One numbered beat: a struck rank coin, a heading, and one sentence. */
+interface RuleBeat {
+  n: number
+  title: string
+  body: string
+}
+
+/**
+ * Every player-visible number here is READ FROM THE CONSTANT, never typed as a literal — the move
+ * budget, both purses, the days in a week. A help screen that quietly disagrees with the game is
+ * worse than no help screen, and this is exactly the copy that rots when a purse is retuned.
+ */
+function ruleBeats(): RuleBeat[] {
+  return [
+    {
+      n: 1,
+      title: 'A NEW BOARD EVERY DAY',
+      body: `Everyone in the world plays the SAME board each day — ${ENDLESS_MOVES} moves, no goals, no boosts. Play it as many times as you like; your best score for the day is the one that counts.`,
+    },
+    {
+      n: 2,
+      title: 'THE TOP SCORE WINS THE DAY',
+      body: `At midnight UTC the board closes and the highest score takes ${DAILY_PURSE.toLocaleString()} chips. Then a brand-new board opens and everyone starts level again.`,
+    },
+    {
+      n: 3,
+      title: 'YOUR DAYS ADD UP',
+      body: `Each day's best is added to your week. Miss a day and you bank nothing for it — no single run can make that back. The biggest total when the week closes on Monday takes ${CHAMPION_PURSE.toLocaleString()} chips.`,
+    },
+  ]
+}
+
+/**
+ * The week strip: seven bars on their own tracks, the skipped day left as an empty track, and the
+ * running total underneath. Bars are drawn to scale against the best day so the wobble is real.
+ *
+ * Returns a container so the caller can stagger it in; the bars grow from the baseline under motion,
+ * which is the one flourish here that carries meaning — you watch the total being built out of days.
+ */
+function buildWeekStrip(scene: Phaser.Scene, still: boolean): Phaser.GameObjects.Container {
+  const T = getTheme()
+  const c = scene.add.container(0, 0)
+  const COL = 62
+  const GAP = 12
+  const TRACK_H = 104
+  const total = WEEK_EXAMPLE.reduce((n, d) => n + d.score, 0)
+  const played = WEEK_EXAMPLE.filter(d => d.score > 0).length
+  const best = Math.max(...WEEK_EXAMPLE.map(d => d.score))
+  const stripW = WEEK_EXAMPLE.length * COL + (WEEK_EXAMPLE.length - 1) * GAP
+  const x0 = -stripW / 2 + COL / 2
+
+  WEEK_EXAMPLE.forEach((d, i) => {
+    const x = x0 + i * (COL + GAP)
+    const g = scene.add.graphics()
+    // The empty track behind every column — so a skipped day reads as a HOLE in something, rather
+    // than as nothing at all. Without it Wednesday is just blank space and the eye skips it.
+    g.fillStyle(T.cardFillAlt, 1)
+    g.fillRoundedRect(x - COL / 2, -TRACK_H, COL, TRACK_H, 10)
+    g.lineStyle(2, T.border, 0.8)
+    g.strokeRoundedRect(x - COL / 2, -TRACK_H, COL, TRACK_H, 10)
+    c.add(g)
+
+    if (d.score > 0) {
+      const h = Math.round(TRACK_H * (0.34 + 0.62 * (d.score / best)))
+      const bar = scene.add.graphics()
+      goldFace(bar, x - COL / 2 + 4, -h + 2, COL - 8, h - 4, T, 8)
+      bar.lineStyle(2, T.goldDeep, 0.9)
+      bar.strokeRoundedRect(x - COL / 2 + 4, -h + 2, COL - 8, h - 4, 8)
+      const holder = scene.add.container(0, 0)
+      holder.add(bar)
+      c.add(holder)
+      if (!still) {
+        // Grow from the baseline: the bars ARE the days arriving, so they land left to right.
+        holder.setScale(1, 0)
+        holder.y = 0
+        scene.tweens.add({ targets: holder, scaleY: 1, duration: D.settle, delay: D.base + 260 + i * 55, ease: E.settle })
+      }
+      c.add(
+        scene.add
+          .text(x, -h - 16, d.score.toLocaleString(), {
+            fontFamily: FONT,
+            fontSize: '15px',
+            fontStyle: '900',
+            color: T.inkSoft,
+          })
+          .setOrigin(0.5)
+      )
+    } else {
+      // The hole, named. A bare gap reads as a rendering bug; "SKIPPED" reads as a decision.
+      c.add(
+        scene.add
+          .text(x, -TRACK_H / 2, '—', { fontFamily: FONT, fontSize: '28px', fontStyle: '900', color: T.inkFaint })
+          .setOrigin(0.5)
+      )
+      c.add(
+        scene.add
+          .text(x, -TRACK_H - 16, 'skipped', { fontFamily: 'Arial, sans-serif', fontSize: '14px', color: T.inkFaint })
+          .setOrigin(0.5)
+      )
+    }
+
+    c.add(
+      scene.add
+        .text(x, 20, d.day, {
+          fontFamily: FONT,
+          fontSize: '20px',
+          fontStyle: '900',
+          color: d.score > 0 ? T.inkMuted : T.inkFaint,
+        })
+        .setOrigin(0.5)
+    )
+  })
+
+  // The sum, stated as a sum. "= 18,204 · 6 days" is the sentence the picture was making.
+  c.add(
+    scene.add
+      .text(0, 58, `=  ${total.toLocaleString()}  ·  ${played} of ${DAYS_PER_WEEK} days`, {
+        fontFamily: FONT,
+        fontSize: '26px',
+        fontStyle: '900',
+        color: T.goldText,
+      })
+      .setOrigin(0.5)
+      .setLetterSpacing(1)
+  )
+  return c
+}
+
+/** Double-open latch — its own, so the rules can open OVER the board panel without fighting its latch. */
+let rulesOpen = false
+
+/**
+ * Open the HOW THE RACE WORKS explainer. Reachable from the race panel's `?` chip and from the
+ * how-to-play panel's RACE RULES button, because the two audiences arrive from opposite directions:
+ * one is already looking at a leaderboard they don't understand, the other is reading the manual.
+ */
+export function openRaceRulesPanel(scene: Phaser.Scene): void {
+  if (rulesOpen) return
+  rulesOpen = true
+  const T = getTheme()
+  const still = prefersReducedMotion()
+  const layer = scene.add.container(0, 0).setDepth(70) // above the board panel (60) — it opens on top
+  const close = (): void => {
+    rulesOpen = false
+    sfx.whoosh()
+    layer.destroy()
+  }
+  layer.once(Phaser.GameObjects.Events.DESTROY, () => {
+    rulesOpen = false
+  })
+
+  const scrim = scene.add.rectangle(W / 2, viewportCenterY(), W, worldH(), T.scrim, 0.62).setInteractive()
+  scrim.on('pointerup', close)
+  layer.add(scrim)
+
+  const root = scene.add.container(W / 2, H / 2)
+  layer.add(root)
+  const cx = -RULES_W / 2
+  const cy = -RULES_H / 2
+  const g = scene.add.graphics()
+  for (let i = 3; i >= 1; i--) {
+    g.fillStyle(T.shadow, 0.08)
+    g.fillRoundedRect(cx, cy + i * 3, RULES_W, RULES_H, 30)
+  }
+  g.fillStyle(T.cardFill, 1)
+  g.fillRoundedRect(cx, cy, RULES_W, RULES_H, 30)
+  g.lineStyle(4, T.goldBezel, 1)
+  g.strokeRoundedRect(cx, cy, RULES_W, RULES_H, 30)
+  if (isDarkWash(T)) {
+    g.fillStyle(T.accent, 0.85)
+    g.fillRoundedRect(cx + 30, cy + 3, RULES_W - 60, 2, 1)
+  }
+  root.add(g)
+  root.add(scene.add.rectangle(0, 0, RULES_W, RULES_H, 0xffffff, 0.001).setInteractive())
+
+  root.add(
+    scene.add
+      .text(0, cy + 58, 'HOW THE RACE WORKS', { fontFamily: FONT, fontSize: '38px', fontStyle: '900', color: T.goldText })
+      .setOrigin(0.5)
+      .setLetterSpacing(2)
+      .setShadow(0, 2, 'rgba(0,0,0,0.12)', 4, false, true)
+  )
+  root.add(
+    scene.add
+      .text(0, cy + 100, 'two races, one run', { fontFamily: 'Arial, sans-serif', fontSize: '21px', color: T.inkMuted })
+      .setOrigin(0.5)
+  )
+
+  // The three beats. The coin numerals are the board's own rank medallions at a small radius — the
+  // same struck-metal language, so the explainer reads as part of the race rather than as a document
+  // about it.
+  const beats = ruleBeats()
+  let y = cy + 152
+  const textX = cx + 104
+  beats.forEach((b, i) => {
+    const coin = makeMedal(scene, b.n, 24)
+    coin.setPosition(cx + 56, y + 26)
+    root.add(coin)
+    const title = scene.add
+      .text(textX, y, b.title, { fontFamily: FONT, fontSize: '23px', fontStyle: '900', color: T.ink })
+      .setOrigin(0, 0)
+      .setLetterSpacing(1)
+    const body = scene.add
+      .text(textX, y + 32, b.body, {
+        fontFamily: 'Arial, sans-serif',
+        fontSize: '19px',
+        color: T.inkMuted,
+        wordWrap: { width: RULES_W - (textX - cx) - 44 },
+        lineSpacing: 5,
+      })
+      .setOrigin(0, 0)
+    root.add([title, body])
+    if (!still) {
+      fadeRise(scene, title, { delay: D.base + i * 70, rise: 10 })
+      fadeRise(scene, body, { delay: D.base + i * 70 + 30, rise: 10 })
+      popIn(scene, coin, { from: 0.4, delay: D.base + i * 70, overshoot: OVERSHOOT.pop })
+    }
+    y += 42 + body.height + 26
+  })
+
+  // The diagram, on its own warm shelf so it reads as an exhibit rather than more page.
+  const shelfTop = y + 4
+  const shelfBottom = cy + RULES_H - 118
+  const shelf = scene.add.graphics()
+  shelf.fillStyle(T.cardFillWarm, 1)
+  shelf.fillRoundedRect(cx + 24, shelfTop, RULES_W - 48, shelfBottom - shelfTop, 22)
+  shelf.lineStyle(2, T.goldBezel, 0.85)
+  shelf.strokeRoundedRect(cx + 24, shelfTop, RULES_W - 48, shelfBottom - shelfTop, 22)
+  root.add(shelf)
+  root.add(
+    scene.add
+      .text(0, shelfTop + 26, 'A WEEK THAT MISSED A DAY', {
+        fontFamily: FONT,
+        fontSize: '17px',
+        fontStyle: '900',
+        color: T.inkFaint,
+      })
+      .setOrigin(0.5)
+      .setLetterSpacing(2)
+  )
+  const strip = buildWeekStrip(scene, still)
+  // Baseline sits above the day letters and the total, both of which hang below it.
+  strip.setPosition(0, shelfBottom - 96)
+  root.add(strip)
+
+  root.add(addPillButton(scene, 0, cy + RULES_H - 62, 260, 68, 'GOT IT', GOLD_PILL, close))
+
+  if (still) {
+    root.setAlpha(1)
+  } else {
+    root.setAlpha(0)
+    scene.tweens.add({ targets: root, alpha: 1, duration: D.base, ease: E.settle })
+    popIn(scene, root, { from: 0.94, duration: D.pop, overshoot: OVERSHOOT.gentle })
   }
 }

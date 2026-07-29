@@ -1367,10 +1367,13 @@ const HELP_SECTIONS: HelpSection[] = [
   // CONDITION: goals alone are no longer enough on a level that has any.
   { icon: 'clover', title: 'FELT', body: 'Some tables have green felt squares. Match on top of one to sweep it. Clear every one to win the level.' },
   // Same rule as LIVES above: the unlock level comes from core/endless, never a literal.
-  { icon: 'card', title: 'ENDLESS', body: `After Level ${ENDLESS_UNLOCK_LEVEL}, race a new board every day — the same one for everyone. Each day crowns a winner.` },
-  // The weekly half is its own card: "your daily bests added up" is the rule players get wrong, and
-  // burying it in the ENDLESS blurb above is how it stayed invisible to anyone who plays twice a week.
-  { icon: 'card', title: 'WEEKLY RACE', body: 'Your best from each daily board adds up across the week. Miss a day and you miss its score — turning up is the strategy.' },
+  // ⚠️ TWO LINES MAX PER BODY (~95 chars at this wrap). `rowH` in openHelpPanel is UNIFORM and floors
+  // at 88px, so a three-line body overruns its row — and on the LAST section it runs under the footer
+  // buttons and is clipped outright. Both happened here: this started as two rows (ENDLESS + WEEKLY
+  // RACE) with a three-line body, and the weekly rule — the one players actually get wrong — was the
+  // half that got cut off. It does not belong in a list anyway: it gets the illustrated RACE RULES
+  // panel the footer button opens, and this row's job is only to point at it.
+  { icon: 'card', title: 'ENDLESS', body: `After Level ${ENDLESS_UNLOCK_LEVEL}, race a new board every day. Each day crowns a winner — tap RACE RULES.` },
 ]
 
 /**
@@ -1442,7 +1445,18 @@ export function openHelpPanel(scene: Phaser.Scene): void {
     y += rowH
   }
 
-  layer.add(addPillButton(scene, W / 2, pyTop + ph - 72, 240, 68, 'GOT IT', GOLD_PILL, () => { sfx.whoosh(); layer.destroy() }))
+  // Two footer buttons, not one. The race is the only system in the game whose RULES are not
+  // visible from playing it — a weekly total is seven days added together, and nothing on any board
+  // says so — while everything else here (match 3, stars, lives) teaches itself on contact. So it
+  // gets a door of its own out of the manual, rather than a paragraph in a list nobody scrolls to.
+  // Lazy import: ui.ts is imported by leaderboardpanel.ts, so a static one would be a cycle.
+  layer.add(
+    addPillButton(scene, W / 2 - 132, pyTop + ph - 72, 236, 64, 'RACE RULES', GHOST_PILL, () => {
+      sfx.whoosh()
+      void import('./leaderboardpanel').then(m => m.openRaceRulesPanel(scene))
+    })
+  )
+  layer.add(addPillButton(scene, W / 2 + 132, pyTop + ph - 72, 236, 68, 'GOT IT', GOLD_PILL, () => { sfx.whoosh(); layer.destroy() }))
   layer.add(
     scene.add
       .text(W / 2, pyTop + ph - 26, '© 2026 CorruptFun LLC · All rights reserved', {
