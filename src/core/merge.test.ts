@@ -5,9 +5,15 @@ import { coerceSave, type SaveData } from './save'
 /**
  * mergeSaves is the heart of "never lose Maya's progress": when the local and cloud saves disagree, it
  * must keep the FURTHEST-progressed one — compared lexicographically by [unlocked, best, totalStars,
- * chips] — and return it as a WHOLE record (never a field-wise blend). Callers pass LOCAL first, so a
- * dead tie must keep local (an identical cloud can never clobber it). These tests pin exactly that,
- * because a bug here is the one thing that could actually lose her progress.
+ * chips] — and take its PROGRESS as a whole (never a field-wise blend of two saves' numbers). Callers
+ * pass LOCAL first, so a dead tie must keep local (an identical cloud can never clobber it). These
+ * tests pin exactly that, because a bug here is the one thing that could actually lose her progress.
+ *
+ * §G14 — the LATCHES are the deliberate exception, and the assertions below moved from `toBe` to
+ * `toEqual` to make room for it: every "has seen / has claimed" flag is unioned across BOTH saves
+ * regardless of who wins, so the result is the winner's record plus the union. See `unionLatches`
+ * in merge.ts for why (teach cards were coming back, and claim latches could be spent twice).
+ * The progress guarantee is unchanged — no magnitude is ever blended.
  */
 
 // Build a valid, full v7 SaveData from a partial via the REAL coercion path, so fixtures can never drift
@@ -18,8 +24,8 @@ describe('mergeSaves — furthest-progressed wins', () => {
   it('keeps the higher unlocked level (the primary metric), regardless of argument order', () => {
     const local = save({ unlocked: 40 })
     const remote = save({ unlocked: 50 })
-    expect(mergeSaves(local, remote)).toBe(remote)
-    expect(mergeSaves(remote, local)).toBe(remote)
+    expect(mergeSaves(local, remote)).toEqual(remote)
+    expect(mergeSaves(remote, local)).toEqual(remote)
   })
 
   it('a fresh device does NOT overwrite real cloud progress — it adopts the cloud save', () => {
@@ -28,37 +34,37 @@ describe('mergeSaves — furthest-progressed wins', () => {
     // progress back — not the empty default. If this ever returned `local`, a reinstall would wipe her.
     const freshLocal = coerceSave({}) // brand-new device: unlocked 1, best 0
     const cloud = save({ unlocked: 47, best: 9000, stars: { 1: 3, 2: 3 }, chips: 120 })
-    expect(mergeSaves(freshLocal, cloud)).toBe(cloud)
+    expect(mergeSaves(freshLocal, cloud)).toEqual(cloud)
   })
 
   it('on a dead tie, keeps LOCAL (the first arg) so an identical cloud never clobbers it', () => {
     const local = save({ unlocked: 30, best: 500, stars: { 1: 3 }, chips: 10 })
     const remoteEqual = save({ unlocked: 30, best: 500, stars: { 1: 3 }, chips: 10 })
-    expect(mergeSaves(local, remoteEqual)).toBe(local)
+    expect(mergeSaves(local, remoteEqual)).toEqual(local)
   })
 
   it('breaks ties by best, then total stars, then chips — in that order', () => {
     // unlocked equal → higher best wins
     const bestLo = save({ unlocked: 10, best: 100 })
     const bestHi = save({ unlocked: 10, best: 200 })
-    expect(mergeSaves(bestLo, bestHi)).toBe(bestHi)
+    expect(mergeSaves(bestLo, bestHi)).toEqual(bestHi)
 
     // unlocked + best equal → more total stars wins (1 star vs 6)
     const starsLo = save({ unlocked: 10, best: 100, stars: { 1: 1 } })
     const starsHi = save({ unlocked: 10, best: 100, stars: { 1: 3, 2: 3 } })
-    expect(mergeSaves(starsLo, starsHi)).toBe(starsHi)
+    expect(mergeSaves(starsLo, starsHi)).toEqual(starsHi)
 
     // unlocked + best + stars equal → more chips wins
     const chipsLo = save({ unlocked: 10, best: 100, stars: { 1: 3 }, chips: 10 })
     const chipsHi = save({ unlocked: 10, best: 100, stars: { 1: 3 }, chips: 20 })
-    expect(mergeSaves(chipsLo, chipsHi)).toBe(chipsHi)
+    expect(mergeSaves(chipsLo, chipsHi)).toEqual(chipsHi)
   })
 
   it('lets unlocked dominate: a higher level wins even against a far higher best score', () => {
     const further = save({ unlocked: 50, best: 0 })
     const higherScore = save({ unlocked: 40, best: 99999 })
-    expect(mergeSaves(further, higherScore)).toBe(further)
-    expect(mergeSaves(higherScore, further)).toBe(further)
+    expect(mergeSaves(further, higherScore)).toEqual(further)
+    expect(mergeSaves(higherScore, further)).toEqual(further)
   })
 
   it('returns a WHOLE record, never a field-wise blend (documents the known single-player tradeoff)', () => {
@@ -68,7 +74,7 @@ describe('mergeSaves — furthest-progressed wins', () => {
     const local = save({ unlocked: 50, chips: 0 })
     const cloud = save({ unlocked: 40, chips: 999 })
     const winner = mergeSaves(local, cloud)
-    expect(winner).toBe(local)
+    expect(winner).toEqual(local)
     expect(winner.chips).toBe(0)
   })
 })
@@ -80,13 +86,59 @@ describe('mergeSaves — robustness', () => {
     const a = { unlocked: 5 } as unknown as SaveData
     const b = { unlocked: 3 } as unknown as SaveData
     expect(() => mergeSaves(a, b)).not.toThrow()
-    expect(mergeSaves(a, b)).toBe(a) // 5 > 3
+    expect(mergeSaves(a, b).unlocked).toBe(5) // 5 > 3
   })
 
   it('treats a fully empty/default save as the lowest progress', () => {
     const empty = coerceSave({})
     const some = save({ unlocked: 2 })
-    expect(mergeSaves(empty, some)).toBe(some)
-    expect(mergeSaves(some, empty)).toBe(some)
+    expect(mergeSaves(empty, some)).toEqual(some)
+    expect(mergeSaves(some, empty)).toEqual(some)
+  })
+})
+
+/**
+ * §G14 — the latches survive a merge they would otherwise have lost.
+ *
+ * The bug these pin: `mergeSaves` returned one WHOLE record, so every "has seen / has claimed" flag
+ * on the losing save was discarded. Pull a cloud save that happens to be further along and the game
+ * re-taught you the Wild Reel you learned last week — and, worse, re-opened claim latches that exist
+ * specifically to stop a second device double-awarding a prize.
+ */
+describe('mergeSaves — latches are unioned, never lost', () => {
+  it('keeps teach-card latches from the LOSING save', () => {
+    const local = save({ unlocked: 10, seenIntro: true, hazardIntros: ['lock'], specialIntros: ['wildReel'] })
+    const cloud = save({ unlocked: 99, specialIntros: ['diceBomb'] }) // further along, but taught less
+    const m = mergeSaves(local, cloud)
+    expect(m.unlocked).toBe(99) // progress still comes from the winner, whole
+    expect(m.seenIntro).toBe(true) // ...but "you already saw this" cannot be undone by progress
+    expect(m.hazardIntros).toEqual(['lock'])
+    expect([...m.specialIntros].sort()).toEqual(['diceBomb', 'wildReel'])
+  })
+
+  it('keeps CLAIM latches from the losing save, so a prize cannot be re-awarded', () => {
+    const local = save({ unlocked: 10, championWeeks: ['2026-W30'], referralWelcomeClaimed: true, finaleSeen: true })
+    const cloud = save({ unlocked: 99, championWeeks: ['2026-W31'] })
+    const m = mergeSaves(local, cloud)
+    expect([...m.championWeeks].sort()).toEqual(['2026-W30', '2026-W31'])
+    expect(m.referralWelcomeClaimed).toBe(true)
+    expect(m.finaleSeen).toBe(true)
+  })
+
+  it('is symmetric — argument order never decides which latches survive', () => {
+    const a = save({ unlocked: 10, hazardIntros: ['lock'], occasionsSeen: ['2026-02-14'] })
+    const b = save({ unlocked: 99, hazardIntros: ['coat'] })
+    const ab = mergeSaves(a, b)
+    const ba = mergeSaves(b, a)
+    expect([...ab.hazardIntros].sort()).toEqual([...ba.hazardIntros].sort())
+    expect(ab.occasionsSeen).toEqual(ba.occasionsSeen)
+    expect(ab.occasionsSeen).toEqual(['2026-02-14'])
+  })
+
+  it('still never blends a MAGNITUDE — only the latches cross records', () => {
+    const local = save({ unlocked: 50, chips: 0, best: 10 })
+    const cloud = save({ unlocked: 40, chips: 999, best: 99999 })
+    const m = mergeSaves(local, cloud)
+    expect({ chips: m.chips, best: m.best }).toEqual({ chips: 0, best: 10 })
   })
 })

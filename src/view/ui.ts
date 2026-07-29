@@ -1,6 +1,7 @@
 import Phaser from 'phaser'
 import { SWAP_SOUNDS, SWAP_SOUND_LABELS, sfx } from '../audio/sfx'
 import { DESIGN_W, LIFE_REGEN_MS, LIVES_MAX, restScrollY, viewportCenterY, worldH } from '../config'
+import { LIFE_REFILL_PRICE } from '../core/store'
 import { ENDLESS_UNLOCK_LEVEL } from '../core/endless'
 import type { HazardKind } from '../core/difficulty'
 import { hazardSkin } from './hazardskins'
@@ -1325,15 +1326,33 @@ interface HelpSection {
   body: string
 }
 
+/**
+ * §G15 — KEEP EVERY `body` TO TWO WRAPPED LINES.
+ *
+ * `openHelpPanel` derives its row pitch from the section count against the available height, and at
+ * the current count on the SHORT world (1280, i.e. a non-notched phone) that lands at ~100px — which
+ * fits a title plus two body lines with room to spare, and a third line NOT at all. A three-line
+ * body is silently overlapped by the next section's heading, which is exactly what the added lives
+ * copy did on first write: it read fine on a tall phone and collided on a short one. If a section
+ * genuinely needs three lines, the panel needs to become scrollable first.
+ */
 const HELP_SECTIONS: HelpSection[] = [
   { icon: 'clover', title: 'THE GOAL', body: 'Match 3+ of the same symbol in a row. Collect the goal symbols up top before your moves run out.' },
   { icon: 'diamond', title: 'MAKE A MOVE', body: 'Swipe a symbol into a neighbour, or tap two that touch, to swap. A swap only sticks if it makes a match.' },
   { icon: 'jackpot', title: 'POWER-UPS', body: 'Match 4 → Wild Reel (clears a line). L or T → Dice Bomb (3×3). Match 5 → Jackpot Chip (clears a colour).' },
   // Regen minutes come from config, never a literal: this line said "8 minutes" for months after
   // LIFE_REGEN_MS was retuned to 20, so the help panel was actively lying to players.
-  { icon: 'heart', title: 'LIVES', body: `Losing a level costs a heart — winning is free. Out of hearts? One returns every ${Math.round(LIFE_REGEN_MS / 60000)} minutes.` },
+  { icon: 'heart', title: 'LIVES', body: `Losing costs a heart — winning is free. Wait ${Math.round(LIFE_REGEN_MS / 60000)} minutes for one, or refill for ${LIFE_REFILL_PRICE} chips.` },
+  // §G15 — chips gate three different things now (the helper shelf, the out-of-moves continue, and a
+  // heart refill) and the panel described none of them. A player who never reads this has to
+  // reverse-engineer the only currency in the game.
+  { icon: 'chip', title: 'CHIPS', body: 'Won from levels. Spend them mid-level on helpers, on more moves when you run out, or on a heart.' },
   { icon: 'chip', title: 'DAILY BONUS', body: 'Spin once a day for a free boost. Come back daily to grow your streak.' },
-  { icon: 'star', title: 'STARS', body: 'Finish with moves to spare for up to 3 stars. Every 10th level is a milestone.' },
+  { icon: 'star', title: 'STARS', body: 'The fewer moves you use, the more stars — up to 3. Every 10th level is a milestone.' },
+  // §G15 — felt went live at L56 in the 2026-07-28 rollout. There is a just-in-time card the first
+  // time it appears, but this panel is the reference a player comes back to, and it is a WIN
+  // CONDITION: goals alone are no longer enough on a level that has any.
+  { icon: 'clover', title: 'FELT', body: 'Some tables have green felt squares. Match on top of one to sweep it. Clear every one to win the level.' },
   // Same rule as LIVES above: the unlock level comes from core/endless, never a literal.
   { icon: 'card', title: 'ENDLESS', body: `After Level ${ENDLESS_UNLOCK_LEVEL}, race the weekly board — same for everyone. Beat your best score!` },
 ]
@@ -1353,7 +1372,17 @@ export function openHelpPanel(scene: Phaser.Scene): void {
   const px = 40
   const pw = W - 80
   const pyTop = 118
-  const ph = 1046
+  // §G15 — the panel used a hardcoded ph=1046 with a hardcoded rowH=118, which fitted exactly the
+  // seven sections it had and silently overflowed the moment an eighth was added. Both are derived
+  // now: the rows take whatever is left after the header and the footer, clamped so a long list
+  // tightens up rather than running off the card, and so a short one never stretches into a sparse
+  // one. `worldH()` is the real ceiling — it is DESIGN_H (1280) on a short screen and taller on a
+  // notched phone, so deriving from it keeps the card on-screen at both ends.
+  const HEAD = 116 // title block above the first row
+  const FOOT = 104 // GOT IT + the copyright line below the last row
+  const phMax = Math.max(0, worldH() - pyTop - 40)
+  const rowH = Math.max(88, Math.min(118, Math.floor((phMax - HEAD - FOOT) / HELP_SECTIONS.length)))
+  const ph = Math.min(phMax, HEAD + rowH * HELP_SECTIONS.length + FOOT)
   const g = scene.add.graphics()
   dropShadow(g, px, pyTop, pw, ph, 30, getTheme().shadow, { alpha: 0.12, dist: 9 })
   g.fillStyle(getTheme().cardFill, 1)
@@ -1374,8 +1403,7 @@ export function openHelpPanel(scene: Phaser.Scene): void {
 
   const textX = px + 116
   const wrap = pw - (textX - px) - 34
-  let y = pyTop + 116
-  const rowH = 118
+  let y = pyTop + HEAD
   for (const s of HELP_SECTIONS) {
     layer.add(scene.add.image(px + 66, y + 32, s.icon).setDisplaySize(52, 52))
     layer.add(
