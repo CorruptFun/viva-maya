@@ -1,5 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { formatStanding, getHandle, levelStanding, preferredName, sanitizeName, setHandle } from './leaderboard'
+import {
+  LEGACY_WEEK_CUTOVER,
+  formatStanding,
+  getHandle,
+  isLegacyWeek,
+  levelStanding,
+  preferredName,
+  sanitizeName,
+  setHandle,
+} from './leaderboard'
 import type { SaveData } from './save'
 
 /**
@@ -145,5 +154,37 @@ describe('formatStanding', () => {
   it('shows the rung first, then the mastery that breaks ties on it', () => {
     expect(formatStanding({ cleared: 47, stars: 118 })).toBe('47 · ★118')
     expect(formatStanding({ cleared: 0, stars: 0 })).toBe('0 · ★0')
+  })
+})
+
+/**
+ * The TRANSITION CUTOVER. The daily format shipped mid-week into a weekly race that was already
+ * being run, so every week up to the cutover is still settled on the old shared board — otherwise
+ * that week's crown goes to whoever won the days AFTER the switch and the players who spent it
+ * battling get nothing. This is the one line that decides which source pays out, so it gets pinned:
+ * an off-by-one week here silently pays the wrong player 1,000 chips.
+ */
+describe('isLegacyWeek — which weeks the old board still settles', () => {
+  it('settles the cutover week and everything before it', () => {
+    expect(isLegacyWeek(LEGACY_WEEK_CUTOVER)).toBe(true)
+    expect(isLegacyWeek('2026-W30')).toBe(true)
+    expect(isLegacyWeek('2026-W01')).toBe(true)
+    expect(isLegacyWeek('2025-W52')).toBe(true)
+  })
+
+  it('hands the very next week to the summed-daily season', () => {
+    expect(isLegacyWeek('2026-W32')).toBe(false)
+    expect(isLegacyWeek('2026-W52')).toBe(false)
+  })
+
+  it('orders correctly across a year boundary — the trap in comparing week keys as strings', () => {
+    // Zero-padded 'YYYY-Www' sorts chronologically, so a plain <= is safe. If the format ever loses
+    // its padding this breaks silently, which is exactly why it is asserted rather than assumed.
+    expect(isLegacyWeek('2027-W01')).toBe(false)
+    expect(LEGACY_WEEK_CUTOVER).toMatch(/^\d{4}-W\d{2}$/)
+  })
+
+  it('is set to the week the switch actually landed in', () => {
+    expect(LEGACY_WEEK_CUTOVER).toBe('2026-W31')
   })
 })

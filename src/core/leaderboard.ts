@@ -263,6 +263,113 @@ interface WeeklyRow {
   days_played: number
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// THE TRANSITION WEEK — settling a race that was already being run.
+//
+// The daily format shipped MID-WEEK, on Wednesday 2026-07-29, into a 2026-W31 weekly race that had
+// been running since Monday. That was a mistake in the rollout, not in the format: players had spent
+// two and a half days battling a single shared weekly board, and the moment the new code went live
+// their scores stopped counting toward the week they were earned in. `endless_weekly_totals` is built
+// from the DAILY rows, and the first daily board did not exist until Wednesday — so W31's champion
+// would have been decided by the five days after the switch, with the battle everyone actually
+// fought excluded from its own week. Nobody would have been told; the crown would just have gone to
+// the wrong player, and the people who raced Monday to Wednesday would have got nothing for it.
+//
+// So every week up to and including the cutover is settled the OLD way: top score on the shared
+// weekly board, straight out of `endless_scores`, exactly as those players were promised when they
+// set the score. The summed-daily season starts clean at the next week boundary. Daily boards and
+// daily purses are unaffected and run from the switch onward — they take nothing from anyone.
+//
+// This is a DATED, SELF-EXPIRING branch. Once the cutover week is in the past it only serves the
+// crown row and any late claim, and it can be deleted outright when `endless_scores` is retired.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The last week decided by the pre-daily weekly board. Weeks at or before this read `endless_scores`;
+ * later weeks read the summed-daily view. Week keys are zero-padded 'YYYY-Www', so they compare
+ * lexicographically in true chronological order, across year boundaries included.
+ */
+export const LEGACY_WEEK_CUTOVER = '2026-W31'
+
+/** Is this week one the old single-board rules still settle? */
+export function isLegacyWeek(week: string): boolean {
+  return week <= LEGACY_WEEK_CUTOVER
+}
+
+/** One week's standings off the frozen weekly board — the pre-0012 ranking, unchanged. */
+async function fetchLegacyWeekBoard(week: string, limit: number): Promise<RaceBoard> {
+  const empty: RaceBoard = { key: week, entries: [], myRank: null, myScore: null }
+  try {
+    const c = await client()
+    if (!c) return empty
+    const s = cloudSession()
+    const { data, error } = await c
+      .from('endless_scores')
+      .select('user_id, display_name, score')
+      .eq('week_key', week)
+      .order('score', { ascending: false })
+      .order('scored_at', { ascending: true })
+      .limit(limit)
+    if (error || !data) return empty
+    const rows = data as Array<{ user_id: string; display_name: string; score: number }>
+    const entries: LeaderboardEntry[] = rows.map((r, i) => ({
+      rank: i + 1,
+      name: sanitizeName(r.display_name),
+      score: r.score,
+      you: !!s && r.user_id === s.userId,
+    }))
+    let myRank: number | null = null
+    let myScore: number | null = null
+    const mine = entries.find(e => e.you)
+    if (mine) {
+      myRank = mine.rank
+      myScore = mine.score
+    } else if (s) {
+      const own = await c
+        .from('endless_scores')
+        .select('score')
+        .eq('week_key', week)
+        .eq('user_id', s.userId)
+        .maybeSingle()
+      const score = (own.data as { score: number } | null)?.score
+      if (typeof score === 'number') {
+        myScore = score
+        const { count } = await c
+          .from('endless_scores')
+          .select('user_id', { count: 'exact', head: true })
+          .eq('week_key', week)
+          .gt('score', score)
+        myRank = typeof count === 'number' ? count + 1 : null
+      }
+    }
+    return { key: week, entries, myRank, myScore }
+  } catch {
+    return empty
+  }
+}
+
+/** The champion of a legacy week — top score, earliest to reach it. */
+async function fetchLegacyWeekChampion(week: string): Promise<Champion | null> {
+  try {
+    const c = await client()
+    if (!c) return null
+    const s = cloudSession()
+    const { data, error } = await c
+      .from('endless_scores')
+      .select('user_id, display_name, score')
+      .eq('week_key', week)
+      .order('score', { ascending: false })
+      .order('scored_at', { ascending: true })
+      .limit(1)
+      .maybeSingle()
+    if (error || !data) return null
+    const row = data as { user_id: string; display_name: string; score: number }
+    return { key: week, name: sanitizeName(row.display_name), score: row.score, you: !!s && row.user_id === s.userId }
+  } catch {
+    return null
+  }
+}
+
 /**
  * Fetch a WEEK's season standings from `public.endless_weekly_totals` — the summed daily bests.
  * Defaults to the current week.
@@ -277,6 +384,7 @@ interface WeeklyRow {
  */
 export async function fetchWeeklyBoard(limit = 25, now = new Date()): Promise<RaceBoard> {
   const week = weekKey(now)
+  if (isLegacyWeek(week)) return fetchLegacyWeekBoard(week, limit)
   const empty: RaceBoard = { key: week, entries: [], myRank: null, myScore: null }
   try {
     const c = await client()
@@ -559,6 +667,7 @@ export async function fetchDailyChampion(day: string = previousDayKey()): Promis
  * disagree about who won. Null when dormant / empty / offline; never throws.
  */
 export async function fetchWeeklyChampion(week: string = previousWeekKey()): Promise<Champion | null> {
+  if (isLegacyWeek(week)) return fetchLegacyWeekChampion(week)
   try {
     const c = await client()
     if (!c) return null
@@ -694,6 +803,10 @@ export async function checkWeeklyPrize(
     if (!c) return null
     const s = cloudSession()
     if (!s) return null
+    // The transition weeks pay out on the board they were actually raced on. Without this the crown
+    // for the week the switch landed in goes to whoever won the days AFTER it, and the players who
+    // spent that week battling the old shared board are simply skipped.
+    if (isLegacyWeek(week)) return checkLegacyWeekPrize(week, s.userId, c)
     const own = await c
       .from('endless_weekly_totals')
       .select('total, days_played')
@@ -726,6 +839,40 @@ export async function checkWeeklyPrize(
   } catch {
     return null
   }
+}
+
+/**
+ * The legacy weekly payout: competition rank on the shared weekly board, ties to whoever reached the
+ * score FIRST — byte-for-byte the rule those players were racing under before the format changed.
+ * Takes the already-resolved client + user id so the caller's dormancy checks are not repeated.
+ */
+async function checkLegacyWeekPrize(
+  week: string,
+  userId: string,
+  c: SupabaseClient
+): Promise<RacePrizeWin | null> {
+  const own = await c
+    .from('endless_scores')
+    .select('score')
+    .eq('week_key', week)
+    .eq('user_id', userId)
+    .maybeSingle()
+  const score = (own.data as { score: number } | null)?.score
+  if (typeof score !== 'number' || score <= 0) return null
+  const { count } = await c
+    .from('endless_scores')
+    .select('user_id', { count: 'exact', head: true })
+    .eq('week_key', week)
+    .gt('score', score)
+  if (typeof count !== 'number') return null
+  let rank = count + 1
+  if (rank === 1) {
+    const champ = await fetchLegacyWeekChampion(week)
+    if (champ && !champ.you) rank = 2
+  }
+  const tier = prizeForRank(rank, PRIZE_TIERS)
+  if (!tier) return null
+  return { scope: 'week', key: week, rank, score, tier }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

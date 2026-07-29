@@ -226,6 +226,28 @@ account**. `max_redemptions` gives an optional global lifetime cap. This keeps c
 **owner-controlled, inflation-safe faucet** (they're granted, never purchased — iron rule #1 holds),
 and dormant-safe: cloud-off / signed-out / offline all degrade to a friendly message, never a throw.
 
+## The transition week (2026-W31)
+
+The daily format shipped **mid-week**, on Wednesday 2026-07-29, into a W31 weekly race that had been
+running since Monday. That was a rollout mistake, not a design one, and it had a silent victim: the
+weekly standings are derived from DAILY rows, the first daily board did not exist until Wednesday, so
+W31's crown would have gone to whoever won the five days *after* the switch while the two and a half
+days everyone actually battled were excluded from their own week.
+
+So `LEGACY_WEEK_CUTOVER = '2026-W31'` (`src/core/leaderboard.ts`): every week at or before it is read
+and paid from `endless_scores` on the old top-score rules — the exact promise those players raced
+under — and the summed-daily season starts clean at W32. Daily boards and daily purses run from the
+switch onward regardless; they take nothing from anyone. The race panel's THIS WEEK tab says "the
+shared weekly board" rather than "daily bests added up" for those weeks, because for them it is.
+
+Dated and self-expiring: once the cutover is in the past the branch only serves the crown row and any
+late claim, and it can be deleted with `endless_scores` itself.
+
+**The lesson, for the next format change:** a competitive season is a promise with a deadline in it.
+Change the rules mid-race and someone loses a contest they were winning, whether or not anyone
+notices. Ship this kind of change at a week boundary, or carry the old rules to the end of the race
+they governed.
+
 ## Trust model and the hardening path
 
 All submissions (scores, qualifications, claims) are self-reported by signed-in
