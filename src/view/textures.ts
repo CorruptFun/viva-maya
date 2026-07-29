@@ -785,6 +785,21 @@ export function hazardTextureKey(kind: HazardKind, variant = 1): string {
 }
 
 /**
+ * Bake an emoji glyph texture on FIRST USE — the lazy sibling of the `makeGlyphTexture` calls in
+ * `createAllTextures`, for glyph sets that are too large or too rarely seen to bake at boot.
+ *
+ * The charm catalogue (core/charms.ts) is the motivating case: nine trinket emoji that only the Lucky
+ * Deal's charm reveal and the album panel ever draw, and which a player may not reach for days. Baking
+ * all nine into every cold boot would cost every player the hitch to serve the few on that screen.
+ * Same lazy-and-idempotent contract as `ensureHazardTexture` / `ensurePieceTexture`: safe to call on
+ * every render, returns the key either way.
+ */
+export function ensureGlyphTexture(scene: Phaser.Scene, key: string, glyph: string, fontSize = 96, size = 128): string {
+  if (!scene.textures.exists(key)) makeGlyphTexture(scene, key, glyph, fontSize, size)
+  return key
+}
+
+/**
  * Bake a hazard's art on first use.
  *
  * Deliberately NOT part of `createAllTextures`: boot textures are never re-baked when the theme

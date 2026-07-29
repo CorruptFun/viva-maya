@@ -61,5 +61,35 @@ function unionLatches(a: SaveData, b: SaveData): Partial<SaveData> {
     specialIntros: both(a.specialIntros, b.specialIntros),
     occasionsSeen: both(a.occasionsSeen, b.occasionsSeen),
     championWeeks: both(a.championWeeks, b.championWeeks),
+    ...mergeCharms(a, b),
   }
+}
+
+/**
+ * CHARMS across two devices — a latch that resets, so plain union is wrong.
+ *
+ * `charms` holds the CURRENT album only and is emptied when a series completes, which means the ids
+ * in it are monotone *within a series* and meaningless across one. Unioning blindly would resurrect a
+ * finished album: a device sitting on Series II with two charms, merged against one still on Series I
+ * with eight, would come back holding all nine of a series whose purse was already paid — a
+ * completion the player gets to bank twice.
+ *
+ * So compare the SERIES first (it only ever climbs, so the higher one has already absorbed everything
+ * below it) and union the ids only when both devices are on the same album. `charmsAllTime` takes the
+ * max because it never resets — and because it is what LUCK reads, so losing it would visibly nerf the
+ * Deal for a player whose only mistake was owning two phones.
+ */
+function mergeCharms(a: SaveData, b: SaveData): Partial<SaveData> {
+  const seriesA = a.charmSeries || 1
+  const seriesB = b.charmSeries || 1
+  const charmsAllTime = Math.max(a.charmsAllTime || 0, b.charmsAllTime || 0)
+  if (seriesA === seriesB) {
+    return {
+      charmSeries: seriesA,
+      charms: Array.from(new Set([...(a.charms || []), ...(b.charms || [])])),
+      charmsAllTime,
+    }
+  }
+  const ahead = seriesA > seriesB ? a : b
+  return { charmSeries: ahead.charmSeries, charms: [...(ahead.charms || [])], charmsAllTime }
 }

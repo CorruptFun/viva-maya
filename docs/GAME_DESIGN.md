@@ -92,6 +92,78 @@ clears a RANDOM present color. Swap-combos (both consumed, epicenter = drag dest
 - The fall is a ballistic PHYSICS integrator, not a tween chain — see BUILD_OVERVIEW for why that
   distinction is load-bearing. Skipping mid-fall always snaps the chip to its slot at rest.
 
+## Lucky Deal — the card pick'em (src/core/deal.ts + src/view/deal.ts + GameScene.offerDeal)
+- WHY it exists: the daily slot cabinet, the jackpot wheel and the plinko drop are all things you
+  WATCH — arm them by playing, press one button, the machine performs. Nothing in the build let the
+  player CHOOSE anything for a reward. The Deal is that, and it is the only reward surface whose pace
+  and order the player sets.
+- Trigger: HOT STREAK — every DEAL_STREAK (3) consecutive numbered-level WINS (save.winStreak). Fires
+  from the win card via continueAfterWin, like the wheel. A LOSS or a mid-level quit-after-a-move
+  breaks the streak (the same two events that spend a life, so there is one rule, not two). A REPLAY
+  neither advances nor breaks it — advancing would make the Deal farmable by re-clearing level 1 on a
+  loop (the jackpot meter's §G4 rule), and breaking it would punish star-chasing, which the game wants.
+- A new trigger AXIS on purpose: plinko keys off cascade depth, the wheel off total wins, the daily
+  spin off the calendar. None of them care whether you keep winning, so nothing ever rode on the NEXT
+  level. A streak is the only thing a loss can take — and it takes momentum, never anything earned, so
+  the mercy rule ("wins are free") is untouched.
+- Board: 9 cards, 3×3, face-down. Tap to turn one. Every card pays a small chip PIP (1–4 by face), so
+  there are no dead taps; the third card of a matching face ENDS the round and pays that face's prize.
+- THE RIG: the deck holds EXACTLY 3 of the rolled winning face and AT MOST 2 of every other, so the
+  winner is the only face that CAN reach three. Whatever order the player turns cards in, the first
+  face to hit three is the face rolled before they touched anything — no reveal is ever rewritten
+  mid-round to steer the result. Same discipline as plinko's dropPath: settle the outcome, then build
+  a presentation PROVABLY consistent with it. `buildDeck` guarantees the ≤2 invariant for every seed
+  (the "more slots left than decoy faces left ⇒ take a pair" guard is load-bearing); deal.test.ts
+  fuzzes both the invariant and order-independence across every winner.
+- Faces (l→r cheapest→richest) and weights at LUCK 0 / LUCK 9: 🍒 CHERRY 25 chips 26/14 · 🍀 CLOVER 40
+  chips 22/18 · 🔔 BELL 1 free spin 16/16 · BAR 60 chips 14/16 · 💎 DIAMOND a boost 12/14 · 7 SEVEN
+  120 chips 7/14 · ❤️ HEART a CHARM 3/8. Both columns sum to 100, so every weight reads as a percentage.
+- SUBSTITUTION when a spin can't be paid (the bank is full): the BELL is restruck as BELL_SUBSTITUTE_CHIPS
+  (50) keeping its weight — the same rule plinko's ticket wells answer to, for the same reason (a face
+  the player can see must be a face they can win). `dealFaces(allowSpins)` is the effective table and
+  the paytable strip paints from it, so the board never advertises a prize it can't honour.
+- PACE: three winners among nine cards ⇒ the third lands on the 7.5th flip on average (guarded in
+  deal.test.ts), so a round is ~7 taps and a few seconds. PAIR GLOW is the beat that carries it — when
+  a face reaches two, both its cards ring and breathe. Because no loser can reach three, a ring means
+  "one card from being the answer, or already dead", and the player cannot tell which.
+- FAST DEAL: match in ≤4 flips → +50 chips. C(4,3)/C(9,3) = 4/84 ≈ 4.8% of rounds, ~2.4 chips of EV —
+  pure luck, unplayable-for, the table's own applause.
+- AWARD-FIRST: the hand is rolled before the cabinet is on screen, and the prize is BANKED the instant
+  the third card turns — before a frame of celebration. Quitting mid-payoff can't lose it.
+- THE PROOF: on the match, every card the player never turned flips face-up, so the finished table
+  shows three of the winner and no more than two of anything else. The prize plate lands in the
+  PAYTABLE's slot (not over the cabinet) precisely so the nine cards stay countable to CLAIM.
+- CLAIM is the only exit; it runs the win card's own continuation, so the level flow is identical
+  whether the Deal fired or not. If both bonuses arm on the same win (~1 in 15), they QUEUE:
+  wheel → Deal → continue, and the win card crowns both banners in that order.
+
+## Charms — the collection (src/core/charms.ts + src/view/charmalbum.ts)
+- Everything else the game gives out is CONSUMED (chips spent, boosts burnt, spins pulled). A charm
+  just stays. Nine to a SERIES, shown in a 3×3 album (the same shape as the Deal's grid).
+- ONE source: the HEART card in the Lucky Deal. One source, one rarity weight, nothing else to audit.
+- rollCharm draws uniformly from the charms you are MISSING, never blind over all nine — a blind roll
+  makes the last slot take ~9 hearts (coupon-collector), so the closer you got the worse the game
+  would treat you. Every heart is progress; the ninth is as reachable as the first.
+- DUPLICATES (album already full) pay DUPLICATE_CHIPS (40) — about a level win. A collectible whose
+  duplicate is a blank turns the rarest card in the deck into the worst feeling in the game.
+- COMPLETING a series pays SERIES_PURSE (500), empties the album and bumps `charmSeries` — one atomic
+  write, so a crash can never bank half a completion. `charmsAllTime` is NEVER reset.
+- What a charm DOES: **LUCK**. luckOf(save) = min(LUCK_CAP=9, charmsAllTime), and core/deal.ts
+  `luckWeights` lerps the face table from its base column to its lucky column by luck/LUCK_CAP. At full
+  luck the HEART goes 3% → 8% and the CHERRY 26% → 14%. Collecting makes the game that hands out
+  charms better — a compounding loop.
+  - Luck reads ALL-TIME (not the current album) so completing a series can never lower it, and is
+    CAPPED at one series' worth so it plateaus at a legible milestone instead of running away — an
+    uncapped table would quietly turn a fixed-size faucet into a growing one.
+  - It touches the Deal's prize roll and NOTHING else — not the board, not the level curve, not
+    scoring, not endless. So it can't drift difficulty and can't reach the weekly race (iron rule #2).
+- MERGE: `charms` resets per series, so mergeSaves compares `charmSeries` FIRST and unions the ids only
+  when both devices sit on the same album — a blind union would hand a Series-II device all nine of the
+  Series-I album it already cashed, i.e. a second purse. `charmsAllTime` takes the max (it never resets).
+- Album: Home top-bar chip (x=532) with a live "N/9" collar, opening a read-only panel — owned charms
+  lit, missing ones in silhouette (so you can see WHICH one you still need), the luck readout, and the
+  line naming where charms come from. Nothing there is claimable; it is a shelf, not a faucet.
+
 ## Scoring
 - 20 pts/piece × cascade number (wave 1 ×1, wave 2 ×2, …). Specials count as their symbol.
 - COMBO popup at cascade ≥2; MEGA WIN at ≥4 (siren + big vibrate).
@@ -182,14 +254,20 @@ clears a RANDOM present color. Swap-combos (both consumed, epicenter = drag dest
 - Buys are idle-only (the bar dims mid-resolve, hides on level end); reduced-motion / haptics / mute aware.
 
 ## Save (src/core/save.ts — localStorage key 'viva-maya:v1', all access try/catch)
-v8: { v:8, best, unlocked, stars{level:1..3}, lastSpinDate|null, streak, pendingBoosts[],
+v10: { v:10, best, unlocked, stars{level:1..3}, lastSpinDate|null, streak, pendingBoosts[],
       endlessWeek|null, endlessBest, lives, livesAnchor, chips, + v7 personal-warmth fields,
-      + v8 jackpot-wheel meter, champion claims, referral/free-spin fields }
+      + v8 jackpot-wheel meter, champion claims, referral/free-spin fields,
+      + v10 charms[] (current series), charmSeries, charmsAllTime, winStreak }
 Migrations: v1 {best} → v2 (+unlocked/stars) → v3 (+daily) → v4 (+endless: endlessWeek
 "YYYY-Www", endlessBest) → v5 (+lives/energy: lives, livesAnchor — pre-v5 saves start full)
 → v6 (grace refill: tops every save to full — lives=LIVES_MAX, livesAnchor=0 — on upgrade)
-→ v7 (+personal-warmth fields, §E9) → v8 (+jackpot-wheel meter; absent in older saves → 0).
+→ v7 (+personal-warmth fields, §E9) → v8 (+jackpot-wheel meter; absent in older saves → 0)
+→ v9 (+hazard/special teach latches) → v10 (+Lucky Deal & charms: charms[], charmSeries, charmsAllTime,
+winStreak — absent in older saves → an empty Series I album and a cold streak).
 Loader is shape-tolerant (old saves default new fields). Mute flag is separate: 'viva-maya:muted'.
+Charm ids are NOT validated against the CHARMS catalogue on load: core/save.ts stays dependency-free
+(charms.ts imports IT, not the reverse) and every reader looks charms up BY catalogue, so an unknown
+id simply never renders.
 
 ## Audio (src/audio/sfx.ts — procedural WebAudio, zero assets)
 Singleton, lazy AudioContext, unlocked on first pointerdown (iOS), master gain 0.5 →
@@ -231,7 +309,12 @@ icon.html → 5×5 emoji board + VIVA MAYA banner (checkerboard = (row+col)%2). 
 ?level=N jump · ?endless=1 boot the weekly race · ?lives=N set the life pool (test the gate) ·
 ?scene=daily|home|levelselect · ?auto=MS autoplay hinted moves · ?turbo=N scale tween/timer
 clocks · ?goal=N ?moves=N override level · ?plant=1 seed specials · ?spin=1 force spin ·
-?autospin=1 auto-trigger spin · ?plinko[=PTS] open the bonus drop · ?slot=N pin its landing slot · ?repro=upgrade|upgrade-col plant the "special swallowed by its
+?autospin=1 auto-trigger spin · ?plinko[=PTS] open the bonus drop · ?slot=N pin its landing slot ·
+?deal open the Lucky Deal · ?face=cherry|clover|bell|bar|diamond|seven|heart pin its winning face
+(the only way to reach the CHARM / SERIES COMPLETE payoffs without grinding a 3% card; the deck is
+still built by the REAL buildDeck, so a pinned hand keeps the ≤2 invariant) ·
+?charms open the charm album from Home ·
+?repro=upgrade|upgrade-col plant the "special swallowed by its
 own upgrade" case (gapped column + a reel at (3,4); swipe it LEFT into the gap → match-4).
 DEV strip (top-left) mirrors model state (level/state/moves/score/objectives/hint) — the
 Claude browser pane starves the RAF clock and drops clicks while hidden; screenshots are

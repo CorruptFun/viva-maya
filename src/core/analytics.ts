@@ -98,6 +98,18 @@ export const EVENTS = {
   PLINKO_PLAYED: 'plinko_played',
 
   /**
+   * The Lucky Deal. {level, streak} on offer → {face, chips, flips, fast, charm} on the match.
+   *
+   * `streak` is the one worth watching: the Deal fires every third consecutive win, so the DISTRIBUTION
+   * of streaks at which it fires answers the question the trigger was chosen to test — whether players
+   * actually string wins together, or whether a loss resets almost everyone at 3 and the Deal ends up
+   * a once-an-evening event instead of a rhythm. `flips` measures the pace claim (the model says ~7.5),
+   * and `face` is the only field check on the luck-weighted table.
+   */
+  DEAL_OFFERED: 'deal_offered',
+  DEAL_WON: 'deal_won',
+
+  /**
    * §G2 the out-of-moves continue funnel: {level, price, chips, near} shown → {level, price} taken.
    * `shown` minus `taken` is the decline rate, and `near` (goal pieces still owed) is what makes the
    * pair readable — a high decline rate on near=1 means the price is wrong, while a high decline on

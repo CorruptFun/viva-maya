@@ -28,11 +28,12 @@ import { hazardPlan } from '../core/hazards'
 import { ensureHazardTexture } from '../view/textures'
 import { DIFFICULTY, type HazardKind } from '../core/difficulty'
 import { shouldOfferPlinko } from '../core/plinko'
+import { dealReady, winsToDeal } from '../core/deal'
 import { EVENTS, track } from '../core/analytics'
 import { devSetLives, formatCountdown, grantLife, refreshLives, spendLifeFor } from '../core/lives'
 import { maya, pendingOccasion, warmLoseLine, warmWinSubtitle, wasNearMiss } from '../core/maya'
 import { mulberry32 } from '../core/rng'
-import { addChips, addFreeSpins, bumpJackpotMeter, freeSpinRoom, loadSave, markFinaleSeen, markOccasionSeen, persistSave, recordResult, recordScore, resetJackpotMeter, spendChips, takePendingBoosts } from '../core/save'
+import { addChips, addFreeSpins, bumpJackpotMeter, bumpWinStreak, freeSpinRoom, loadSave, markFinaleSeen, markOccasionSeen, persistSave, recordResult, recordScore, resetJackpotMeter, resetWinStreak, spendChips, takePendingBoosts } from '../core/save'
 import { LIFE_REFILL_PRICE, POWER_ITEMS } from '../core/store'
 import type { PowerItem } from '../core/store'
 import { jackpotReady } from '../core/jackpot'
@@ -42,6 +43,7 @@ import { addCasinoBackdrop } from '../view/background'
 import { stageFlare, stagePulse } from '../view3d/stage'
 import { addJackpotMeter, openJackpotWheel } from '../view/jackpot'
 import { openPlinko } from '../view/plinko'
+import { openDeal } from '../view/deal'
 import type { JackpotMeter } from '../view/jackpot'
 import { D, E, OVERSHOOT, backOut, heartbeat } from '../view/motion'
 import { quality } from '../view/quality'
@@ -310,6 +312,8 @@ export class GameScene extends Phaser.Scene {
   private jackpotHud?: JackpotMeter
   /** True once this win charged the meter to full — the win-card Continue then fires the wheel. */
   private jackpotArmed = false
+  /** True once this win completed a HOT STREAK — the win-card Continue then deals the Lucky Deal. */
+  private dealArmed = false
 
   /** R4 · lazy "FREE SPINS ×N" corner counter — minted the first time a ticket flies (numbered levels). */
   private freeSpinBadge?: { root: Phaser.GameObjects.Container; label: Phaser.GameObjects.Text }
@@ -462,6 +466,7 @@ export class GameScene extends Phaser.Scene {
     this.comboPeakTier = 0
     this.chainPoints = 0
     this.plinkoUsedThisLevel = false // a fresh level re-arms the bonus drop
+    this.dealArmed = false // §11 — a restart re-runs create() but NOT the field initializers
     this.freeSpinBadge = undefined // scene GameObject from a prior round — died with that scene
     // §R3 score-medallion pool: its slots' GameObjects (Text/Image/Container) were destroyed with the
     // prior scene, so drop the stale refs and let takeMedallion rebuild. A restart re-runs create() but
@@ -580,6 +585,16 @@ export class GameScene extends Phaser.Scene {
           this.offerPlinko(99, true)
         }
         this.time.delayedCall(900, fire)
+      }
+      // ?deal — open the Lucky Deal on demand (mirrors ?wheel / ?plinko), through the real offer path
+      // so the award-first banking, the rigged deck and the win-card handback are all exercised as in
+      // production. Pair with ?face=ID (read inside view/deal.ts) to pin the winning face, which is
+      // the only way to reach the CHARM and SERIES COMPLETE payoffs without grinding for a 3% card.
+      if (params.has('deal')) {
+        this.time.delayedCall(600, () => {
+          this.dealArmed = true
+          this.continueAfterWin(() => {})
+        })
       }
     }
 
@@ -887,7 +902,12 @@ export class GameScene extends Phaser.Scene {
    * (wins are free) or double-charge one that's about to lose.
    */
   private exitToLevels(): void {
-    if (!this.endless && this.state === 'idle' && this.moveMade) spendLifeFor(this.level)
+    if (!this.endless && this.state === 'idle' && this.moveMade) {
+      spendLifeFor(this.level)
+      // Same two events, same two costs: whatever spends a life also breaks the streak, so "what
+      // broke my streak" never needs a second rule to explain — and quitting can't dodge it.
+      resetWinStreak()
+    }
     // Tracked separately from level_fail: walking away reads very differently from being beaten, and
     // a level with a high QUIT rate but a normal loss rate is a boredom/confusion problem, not a
     // difficulty one. Lumping them together would hide that distinction entirely.
@@ -4402,6 +4422,13 @@ export class GameScene extends Phaser.Scene {
     const meter = isReplay ? prev.jackpotMeter : bumpJackpotMeter()
     this.jackpotHud?.update(meter)
     this.jackpotArmed = jackpotReady(meter)
+    // HOT STREAK — every third consecutive win deals the Lucky Deal (core/deal.ts dealReady). Like
+    // the jackpot meter directly above, a REPLAY leaves it alone: charging it on replays would make
+    // the Deal farmable by re-clearing level 1 on a loop, which is a far better rate than playing
+    // the game. A replay does not BREAK the streak either — chasing stars on an old level is
+    // something the game wants, so it must not cost you a run of wins you already have.
+    const streak = isReplay ? prev.winStreak : bumpWinStreak()
+    this.dealArmed = !isReplay && dealReady(streak)
     const totalStars = Object.values(save.stars).reduce((sum, s) => sum + s, 0)
     const showCard = (): void => {
       this.showOverlay(true, stars, bonus, chipReward, false, true)
@@ -4433,8 +4460,15 @@ export class GameScene extends Phaser.Scene {
    * win branch (normal / milestone / all-clear all funnel to this card).
    */
   private continueAfterWin(go: () => void): void {
+    // Two bonus surfaces can arm off the same win, so they QUEUE rather than race: the wheel fires
+    // first (it is the bigger, more automatic spectacle), and the Deal is handed the wheel's own
+    // continuation so it opens on the wheel's CLAIM. Both are per-win latches cleared as they fire,
+    // so neither can double-open. The collision is rare by construction — the wheel arms every 5th
+    // win and the Deal every 3rd, so they coincide once every 15 — and when it happens the player
+    // gets a genuine double payday rather than one of the two being silently dropped.
+    const afterWheel = this.dealArmed ? () => this.offerDeal(go) : go
     if (!this.jackpotArmed) {
-      go()
+      afterWheel()
       return
     }
     this.jackpotArmed = false
@@ -4462,9 +4496,48 @@ export class GameScene extends Phaser.Scene {
         pill?.container.setDepth(50) // back to the ChipPill's native HUD depth
         this.chipHud?.update(result.newTotal)
         this.chipBanked = result.newTotal
-        go()
+        afterWheel() // the Deal when this win armed one too, otherwise the caller's own transition
       },
     })
+  }
+
+  /**
+   * THE LUCKY DEAL — a card pick'em dealt by a three-win HOT STREAK (core/deal.ts).
+   *
+   * Opens as an in-scene overlay over the win card, exactly like the wheel and the plinko board, and
+   * runs the win-card's own continuation on CLAIM so the level flow is unchanged whether it fired or
+   * not. The overlay banks everything itself, award-first, the instant the third card turns; all this
+   * has to do afterwards is refresh the HUD readouts from the returned totals.
+   *
+   * Wrapped in try/catch for the same reason `offerPlinko` is (UI_COOKBOOK §11): a throw on the path
+   * out of a win would strand the player on a result card with a dead Continue and no way back. If
+   * anything here fails, the level advances as though the streak had never armed — the player loses a
+   * bonus round they did not know was coming, rather than their session.
+   */
+  private offerDeal(go: () => void): void {
+    this.dealArmed = false
+    try {
+      track(EVENTS.DEAL_OFFERED, { level: this.level, streak: loadSave().winStreak })
+      openDeal(this, {
+        hitstop: ms => this.hitstop(ms),
+        onClaim: result => {
+          this.chipHud?.update(result.newTotal)
+          this.chipBanked = result.newTotal
+          if (result.spins > 0) this.freeSpinTicket(result.spins) // reuse the golden-ticket beat
+          track(EVENTS.DEAL_WON, {
+            face: result.face,
+            chips: result.chips,
+            flips: result.flips,
+            fast: result.fast,
+            charm: result.charm?.kind ?? 'none',
+          })
+          go()
+        },
+      })
+    } catch (err) {
+      this.log('offerDeal ERROR', err)
+      go() // never strand the win card
+    }
   }
 
   /** Reduced-motion (OS query OR in-app override) — delegates to the shared theme authority (§E8). */
@@ -5059,6 +5132,16 @@ export class GameScene extends Phaser.Scene {
     this.stopMovesPulse()
     this.powerBar?.setVisible(false) // retire the helper shelf — the result card takes the screen
     spendLifeFor(this.level) // a loss costs a life (grace below level 10; numbered levels only reach finishLose)
+    // …and it breaks the HOT STREAK. This is the only thing in the game a loss can take away, and it
+    // is deliberately momentum rather than property: no chips, stars or charms are touched, so the
+    // mercy rule holds and the cost is entirely "you were two wins from a Deal and now you are three".
+    //
+    // Silently, on purpose. The streak is shown as FORWARD progress on the win card and on Home, and
+    // never as a loss on the lose card: a player who just ran out of moves is being told something
+    // kind by `warmLoseLine` right above, and "you also lost your streak of 4" is the one line that
+    // would undo it. Home's HOT STREAK clause simply stops being there next time they look, which
+    // says the same thing without making the loss screen the one that says it.
+    resetWinStreak()
     recordScore(this.score)
     track(EVENTS.LEVEL_FAIL, { level: this.level, reason: 'out_of_moves' })
     this.time.delayedCall(400, () => this.showOverlay(false, 0, 0))
@@ -5624,25 +5707,52 @@ export class GameScene extends Phaser.Scene {
       )
     )
 
-    // §Jackpot — when the meter just filled, a glowing "JACKPOT READY" banner crowns the card (above
-    // the top edge, clear of the LEVEL tab) to telegraph that the wheel explodes in on Continue.
-    if (this.jackpotArmed) {
-      const ready = this.add.container(0, -halfH - 50)
-      const rt = this.add
-        .text(0, 0, '🎰  JACKPOT READY!', { fontFamily: FONT, fontSize: '22px', fontStyle: '900', color: T.onRose })
-        .setOrigin(0.5)
+    // §Jackpot / §Deal — a bonus armed by this win crowns the card with a glowing banner (above the
+    // top edge, clear of the LEVEL tab) telegraphing what explodes in on Continue.
+    //
+    // BOTH can arm on the same win (the wheel every 5th, the Deal every 3rd — so once every 15), and
+    // `continueAfterWin` queues them wheel-then-Deal. The banners stack in that same order reading
+    // downward, so the crown shows the running order rather than one prize hiding the other.
+    const crown = (text: string, fill: number, y: number): void => {
+      const ready = this.add.container(0, y)
+      const rt = this.add.text(0, 0, text, { fontFamily: FONT, fontSize: '22px', fontStyle: '900', color: T.onRose }).setOrigin(0.5)
       const rw = rt.width + 44
       const rg = this.add.graphics()
       rg.fillStyle(T.shadow, 0.25)
       rg.fillRoundedRect(-rw / 2 + 2, -21 + 3, rw, 42, 21)
-      rg.fillStyle(T.rose, 1)
+      rg.fillStyle(fill, 1)
       rg.fillRoundedRect(-rw / 2, -21, rw, 42, 21)
       rg.lineStyle(3, T.goldBright, 1)
       rg.strokeRoundedRect(-rw / 2, -21, rw, 42, 21)
-      const rglow = this.add.image(0, 0, 'bgglow').setTint(T.rose).setBlendMode(Phaser.BlendModes.ADD).setDisplaySize(rw + 60, 90).setAlpha(this.reducedMotion ? 0.3 : 0.2)
+      const rglow = this.add.image(0, 0, 'bgglow').setTint(fill).setBlendMode(Phaser.BlendModes.ADD).setDisplaySize(rw + 60, 90).setAlpha(this.reducedMotion ? 0.3 : 0.2)
       ready.add([rglow, rg, rt])
       card.add(ready)
       if (!this.reducedMotion) this.tweens.add({ targets: rglow, alpha: 0.5, duration: 700, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' })
+    }
+    const bothArmed = this.jackpotArmed && this.dealArmed
+    if (this.jackpotArmed) crown('🎰  JACKPOT READY!', T.rose, -halfH - (bothArmed ? 98 : 50))
+    if (this.dealArmed) crown('🃏  LUCKY DEAL READY!', T.navy, -halfH - 50)
+
+    // …and when nothing is armed, the STREAK ITSELF, as forward progress. This line is the whole
+    // reason a three-win trigger works: without it a streak is invisible state and the Deal arrives
+    // as a surprise every time, which is pleasant but creates no anticipation and gives the next
+    // level nothing riding on it. With it, the second win of a run ends on "1 MORE WIN".
+    if (!this.dealArmed) {
+      const streak = loadSave().winStreak
+      if (streak > 0) {
+        const left = winsToDeal(streak)
+        card.add(
+          this.add
+            .text(0, 128, `HOT STREAK ${streak}  ·  ${left === 1 ? '1 MORE WIN' : `${left} MORE WINS`} TO A DEAL`, {
+              fontFamily: FONT,
+              fontSize: '18px',
+              fontStyle: '900',
+              color: T.goldText,
+            })
+            .setOrigin(0.5)
+            .setLetterSpacing(1)
+        )
+      }
     }
 
     // Rose skip/close chip (top-right) — a tap jumps straight to the settled card. It's the one

@@ -3,7 +3,7 @@ import { DIFFICULTY } from './difficulty'
 import type { BoostType, PromoReward } from './types'
 
 export interface SaveData {
-  v: 9
+  v: 10
   best: number
   /** Highest level the player may attempt (1-based). */
   unlocked: number
@@ -58,6 +58,15 @@ export interface SaveData {
   freeSpinsDay: string | null
   /** Free spins earned on freeSpinsDay — enforces the per-day earn cap. */
   freeSpinsEarnedToday: number
+  // --- v10 Lucky Deal / charms fields. All default EMPTY/OFF; read shape-tolerantly below. ---
+  /** Charm ids collected in the CURRENT series (core/charms.ts CHARMS); emptied when a series completes. */
+  charms: string[]
+  /** 1-based series number — bumps each time an album is completed. */
+  charmSeries: number
+  /** All-time charms collected across every series. Never reset; drives LUCK (core/charms.ts luckOf). */
+  charmsAllTime: number
+  /** Consecutive numbered-level WINS. Every DEAL_STREAK of them deals the Lucky Deal; a loss resets it. */
+  winStreak: number
 }
 
 /** Most free spins the bank ever holds — earning past this is quietly forfeited. */
@@ -94,7 +103,7 @@ function freeSpinHeadroom(save: SaveData, dayKey: string, source: FreeSpinSource
 const KEY = 'viva-maya:v1'
 
 const DEFAULTS: SaveData = {
-  v: 9,
+  v: 10,
   best: 0,
   unlocked: 1,
   stars: {},
@@ -120,11 +129,24 @@ const DEFAULTS: SaveData = {
   freeSpins: 0,
   freeSpinsDay: null,
   freeSpinsEarnedToday: 0,
+  charms: [],
+  charmSeries: 1,
+  charmsAllTime: 0,
+  winStreak: 0,
 }
 
 function fresh(): SaveData {
   // Re-init every mutable reference type so a fresh save never aliases DEFAULTS' arrays/objects.
-  return { ...DEFAULTS, stars: {}, pendingBoosts: [], occasionsSeen: [], hazardIntros: [], specialIntros: [], championWeeks: [] }
+  return {
+    ...DEFAULTS,
+    stars: {},
+    pendingBoosts: [],
+    occasionsSeen: [],
+    hazardIntros: [],
+    specialIntros: [],
+    championWeeks: [],
+    charms: [],
+  }
 }
 
 /**
@@ -189,6 +211,14 @@ export function coerceSave(raw: unknown): SaveData {
       typeof data.freeSpinsEarnedToday === 'number'
         ? Math.max(0, Math.min(FREE_SPIN_DAILY_CAP, Math.floor(data.freeSpinsEarnedToday)))
         : 0
+    // v10 Lucky Deal / charms — absent in older saves → an empty first album and a cold streak.
+    // Charm ids are filtered to strings but deliberately NOT validated against the CHARMS catalogue:
+    // this module stays dependency-free (core/charms.ts imports IT, not the reverse), and an unknown
+    // id is harmless — every reader looks charms up BY catalogue, so a stale id simply never renders.
+    base.charms = Array.isArray(data.charms) ? data.charms.filter((x): x is string => typeof x === 'string') : []
+    base.charmSeries = typeof data.charmSeries === 'number' ? Math.max(1, Math.floor(data.charmSeries)) : 1
+    base.charmsAllTime = typeof data.charmsAllTime === 'number' ? Math.max(0, Math.floor(data.charmsAllTime)) : 0
+    base.winStreak = typeof data.winStreak === 'number' ? Math.max(0, Math.floor(data.winStreak)) : 0
     // v6 grace refill: the pool grew (3→10) and the break got much shorter — top EVERYONE up to
     // full on upgrade so nobody is left stranded at the old, stingier count (e.g. mid-session).
     const storedVersion = typeof data.v === 'number' ? (data.v as number) : 1
@@ -329,6 +359,37 @@ export function resetJackpotMeter(): void {
     save.jackpotMeter = 0
     persistSave(save)
   }
+}
+
+/**
+ * Advance the HOT STREAK by one win; persists and returns the new streak. Called only for a
+ * FIRST clear — replays deliberately leave it alone (see GameScene.finishWin), for the same reason the
+ * jackpot meter only charges on progress: a streak you can build by re-clearing level 1 in ten seconds
+ * measures patience with the retry button, not a run of wins.
+ */
+export function bumpWinStreak(): number {
+  const save = loadSave()
+  save.winStreak += 1
+  persistSave(save)
+  return save.winStreak
+}
+
+/**
+ * Break the streak — a loss, or a mid-level quit after ≥1 move (the same two events that cost a life,
+ * so "what broke my streak" never needs a second rule to explain).
+ *
+ * Returns the streak that was BROKEN (0 when there was nothing to lose), so the caller can decide
+ * whether the moment is worth showing: silently zeroing a streak of 1 is noise, but a player who just
+ * dropped a run of four has earned being told.
+ */
+export function resetWinStreak(): number {
+  const save = loadSave()
+  const had = save.winStreak
+  if (had !== 0) {
+    save.winStreak = 0
+    persistSave(save)
+  }
+  return had
 }
 
 /**

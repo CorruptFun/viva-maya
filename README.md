@@ -46,6 +46,14 @@ input, and tweens live in `src/scenes/` and `src/view/`.
       tiers + coronation, referral program, free spins from MEGA WINs, jackpot-wheel
       spectacle, lives tuning (5 / 20 min / grace below L10). See
       `docs/SOCIAL_AND_ECONOMY.md` and `docs/GO_LIVE_CHECKLIST.md`.
+- [x] **Lucky Deal & charms** — a card pick'em dealt by a three-win HOT STREAK: nine
+      face-down cards, turn them until three match. The first reward surface in the game
+      the player *chooses* their way through (the slot, wheel and plinko are all watched),
+      and the rig is provable — the deck holds exactly three of the rolled face and at most
+      two of anything else, so the outcome is settled up front and the finished table can be
+      counted. The ❤️ card pays a **CHARM**: nine to a series in a 3×3 album, duplicates pay
+      chips, a completed series pays a purse, and every charm is +1 **LUCK**, which reweights
+      the Deal's own table toward the richer cards.
 
 ## Dev / test knobs (DEV builds only)
 
@@ -59,6 +67,9 @@ fixtures · `?levels[=rich|out|empty|loading|error]` LEVEL RACE ladder fixtures 
 `?wheel` fire the armed jackpot wheel · `?wedge=N` pin the winning wedge ·
 `?ticket=N` free-spin ticket beat · `?ref=CODE` referral capture (works in prod too) ·
 `?plinko[=PTS]` open the Plinko bonus drop · `?slot=N` pin its landing slot ·
+`?deal` open the Lucky Deal · `?face=cherry|clover|bell|bar|diamond|seven|heart` pin its winning
+card (the only way to reach the CHARM / SERIES COMPLETE payoffs without grinding a 3% card) ·
+`?charms` open the charm album from Home ·
 `?repro=upgrade` plant the "special swallowed by its own upgrade" regression case ·
 `?lives=N` · `?endless=1` · `?scene=daily|home|levelselect` · `?spin=1` · `?autospin=1` ·
 `?help` / `?sound` auto-open those panels.

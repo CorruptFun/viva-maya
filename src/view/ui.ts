@@ -3,6 +3,7 @@ import { SWAP_SOUNDS, SWAP_SOUND_LABELS, sfx } from '../audio/sfx'
 import { DESIGN_W, LIFE_REGEN_MS, LIVES_MAX, restScrollY, viewportCenterY, worldH } from '../config'
 import { LIFE_REFILL_PRICE } from '../core/store'
 import { ENDLESS_UNLOCK_LEVEL } from '../core/endless'
+import { DEAL_STREAK } from '../core/deal'
 import type { HazardKind } from '../core/difficulty'
 import { hazardSkin } from './hazardskins'
 import { ensureHazardTexture } from './textures'
@@ -1264,7 +1265,13 @@ export function addPillButton(
  * cap on a pedestal, same press/depress). A round chip is literally a square pill (w = h = size),
  * so it reuses the exact bake path; the glyph is seated in the moving `face` so it sinks on press.
  */
-function addRoundChip(
+/**
+ * The shared round corner-chip primitive (mute / help / settings / theme / sound / charms). Exported
+ * so a chip can live in the module that owns the panel it opens — the charms chip belongs beside its
+ * album (view/charmalbum.ts), and having it here instead would make ui.ts import the album while the
+ * album imports ui.ts, for one 12-line function.
+ */
+export function addRoundChip(
   scene: Phaser.Scene,
   x: number,
   y: number,
@@ -1348,6 +1355,12 @@ const HELP_SECTIONS: HelpSection[] = [
   // reverse-engineer the only currency in the game.
   { icon: 'chip', title: 'CHIPS', body: 'Won from levels. Spend them mid-level on helpers, on more moves when you run out, or on a heart.' },
   { icon: 'chip', title: 'DAILY BONUS', body: 'Spin once a day for a free boost. Come back daily to grow your streak.' },
+  // §G15 — ONE section, not two, and the trigger and the charm source are both crammed into its two
+  // lines on purpose. At 10 sections the derived row pitch lands at 90px and the card closes at
+  // exactly its ceiling on the SHORT world (1280); an eleventh drops the pitch under the 88px floor,
+  // at which point the rows need 968px of an available 902 and the last body runs under the GOT IT
+  // button. If this ever genuinely needs splitting, the panel has to become scrollable first.
+  { icon: 'card', title: 'LUCKY DEAL', body: `Win ${DEAL_STREAK} levels in a row to deal 9 cards. Match 3 of a kind to win — 3 HEARTS wins a charm for your album.` },
   { icon: 'star', title: 'STARS', body: 'The fewer moves you use, the more stars — up to 3. Every 10th level is a milestone.' },
   // §G15 — felt went live at L56 in the 2026-07-28 rollout. There is a just-in-time card the first
   // time it appears, but this panel is the reference a player comes back to, and it is a WIN

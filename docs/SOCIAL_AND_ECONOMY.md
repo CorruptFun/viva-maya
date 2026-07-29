@@ -13,9 +13,12 @@ level wins ──► chips ──► boosts/helpers (Gift Store, in-level power 
      │            ├── jackpot wheel payouts (meter fills 1 notch/win)
      │            ├── weekly champion purse (1,000, one player/week)
      │            ├── referral rewards (300/friend · 150 welcome)
-     │            └── daily check-in (streak-scaled chips 10→150 + a boost / free-spin prize)
+     │            ├── daily check-in (streak-scaled chips 10→150 + a boost / free-spin prize)
+     │            └── Lucky Deal (card prize + pips; 500 purse on a completed charm series)
      │
      ├──► jackpot meter ──► wheel fires after the win that fills it
+     ├──► HOT STREAK (3 wins in a row) ──► LUCKY DEAL ──► chips / spin / boost / a CHARM
+     │                                                        └──► charms ──► LUCK ──► richer Deal
      └──► MEGA WIN (cascade ≥4) ──► free spins (3 or 6) ──► daily-cabinet prizes
 ```
 
@@ -57,6 +60,50 @@ the weekly reset keeps the exciting 150 "payday" while holding the average to a 
 income (~33/day) — real pull, inflation-safe by construction (a fixed per-day faucet). The whole curve
 is that one array. A banked **free spin never pays check-in chips** (it bypasses the daily latch/streak,
 so a hoard of free spins can't farm them).
+
+## Lucky Deal & charms
+
+A three-win **HOT STREAK** deals nine face-down cards; turn them until three match. Full mechanics
+live in `docs/GAME_DESIGN.md` — what matters here is the money and the fairness.
+
+**Why the streak.** Every other trigger in the build measures something already spent: cascade depth
+(plinko), total wins (the wheel), the calendar (the daily spin). None of them care whether you keep
+winning, so nothing ever rode on the *next* level. A streak is the one thing a loss can take — and it
+takes **momentum, never property**. No chips, stars, hearts or charms are touched, so the signature
+mercy rule survives intact; the cost is entirely "you were one win away and now you are three". A
+replay neither advances nor breaks it (advancing would make the Deal farmable off level 1, the same
+§G4 rule the jackpot meter answers to; breaking it would punish star-chasing, which the game wants).
+
+**Inflation.** The Deal is a fixed-size faucet behind a three-win wall: a headline prize (25–120 chips,
+or a spin / a boost / a charm), a chip pip per card turned (~14/hand), and a 4.8% FAST DEAL bonus of 50.
+Chip EV is roughly one level win per Deal, i.e. about **+11 chips per win** for a player on a streak —
+a supplement to level income (~33/win), never a replacement. It cannot be farmed: one Deal per three
+first-clears, and the prize table is a data constant.
+
+**The charm series purse (500)** sits deliberately between the referral reward (300) and the champion
+purse (1,000): completing an album is a real payday without displacing the champion as the biggest
+single prize. It is gated behind nine HEART cards at 3–8% each, so it arrives rarely and at a fixed
+size regardless of player count.
+
+**LUCK, and why it is capped.** Each all-time charm is +1 luck, and luck lerps the Deal's face table
+from its base column toward its lucky column (HEART 3% → 8%, CHERRY 26% → 14% at the cap). Two rules
+keep it honest:
+
+- It reads **all-time** charms, not the current album, so completing a series can never *lower* your
+  luck — otherwise the biggest moment in the collection would be followed by an immediate nerf.
+- It is **hard-capped at one series' worth (9)**. Uncapped, a long-term player's table would drift
+  until the cheap cards effectively vanished, which quietly converts a fixed-size faucet into a
+  growing one — exactly what iron rule #1 exists to prevent.
+
+**It cannot reach the race.** Luck touches the Deal's own prize roll and nothing else — not the board,
+not the level curve, not scoring, not endless. So iron rule #2 holds without an argument: a collection
+that buffed the board would have to be re-defended against the leaderboard's fairness every time it
+grew, and one that buffs only its own mini game never does.
+
+**Multi-device.** `charms` empties when a series completes, so it is a latch that RESETS and plain
+union is wrong: `mergeSaves` compares `charmSeries` first and unions ids only when both devices sit on
+the same album. Otherwise a Series-II device merged against a Series-I one would come back holding all
+nine of an album whose 500 purse was already paid. `charmsAllTime` takes the max (it never resets).
 
 ## Jackpot meter & wheel
 
@@ -172,6 +219,12 @@ that re-grants after having been overwritten — self-healing, never a permanent
 | `FREE_SPIN_AWARDS` | ×4→3 · ×6+→6 | `src/core/daily.ts` |
 | `CHECKIN_CHIPS` | 10·15·25·40·60·90·150 (7-day, repeats) | `src/core/daily.ts` |
 | `FREE_SPIN_DAILY_CAP` / `FREE_SPIN_BANK_CAP` | 6 / 12 | `src/core/save.ts` |
+| `DEAL_STREAK` | 3 wins in a row | `src/core/deal.ts` |
+| `DEAL_FACES` (prizes + base/lucky weights) | both columns sum to 100 | `src/core/deal.ts` |
+| `FAST_DEAL_FLIPS` / `FAST_DEAL_CHIPS` | 4 / 50 | `src/core/deal.ts` |
+| `BELL_SUBSTITUTE_CHIPS` | 50 (when a spin can't be paid) | `src/core/deal.ts` |
+| `SERIES_SIZE` / `SERIES_PURSE` | 9 / 500 | `src/core/charms.ts` |
+| `DUPLICATE_CHIPS` / `LUCK_CAP` | 40 / 9 | `src/core/charms.ts` |
 | `QUALIFY_LEVEL` | 5 | `src/core/referrals.ts` |
 | `REFERRER_CHIPS` / `REFEREE_CHIPS` | 300 / 150 | `src/core/referrals.ts` |
 | `REFERRAL_CAP` | 20 lifetime | `src/core/referrals.ts` |
