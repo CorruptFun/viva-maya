@@ -16,9 +16,11 @@ import { dayKey as appDayKey, weekKey as appWeekKey } from './endless'
  * The DAY key is the more dangerous of the two now, because it is the one the race actually turns on
  * and it rolls over seven times as often — a drift there is wrong every single evening.
  *
- * The 2026-07-26 timezone split is the precedent: weekKey was moved to UTC because a local-time
- * derivation put players in different timezones on different races. A second, drifting definition of
- * the same function is the same class of bug with a longer fuse.
+ * The 2026-07-26 timezone split is the precedent: weekKey was moved off DEVICE-LOCAL time because a
+ * local derivation put players in different timezones on different races. (The fixed anchor moved
+ * again on 2026-07-30, from UTC to the home zone America/Edmonton — still one worldwide instant,
+ * now at the home crowd's actual midnight.) A second, drifting definition of the same function is
+ * the same class of bug with a longer fuse.
  */
 describe('sender/app week key agreement', () => {
   it('agrees with core/endless.ts on every day for three years', () => {
@@ -33,10 +35,10 @@ describe('sender/app week key agreement', () => {
     expect(mismatches).toEqual([])
   })
 
-  it('agrees across the Monday 00:00 UTC rollover, to the minute', () => {
+  it('agrees across the Monday-midnight-Mountain rollover, to the minute', () => {
     // The boundary is the only place an off-by-one can hide: a whole-day sweep steps straight over
-    // the instant the race actually closes.
-    const rollover = Date.UTC(2026, 6, 27, 0, 0, 0) // a Monday
+    // the instant the race actually closes. Monday 00:00 America/Edmonton = Monday 06:00Z in July.
+    const rollover = Date.UTC(2026, 6, 27, 6, 0, 0)
     for (const offset of [-60_000, -1000, 0, 1000, 60_000]) {
       const d = new Date(rollover + offset)
       expect(senderWeekKey(d), `at ${d.toISOString()}`).toBe(appWeekKey(d))
@@ -64,13 +66,25 @@ describe('sender/app DAY key agreement', () => {
     expect(mismatches).toEqual([])
   })
 
-  it('agrees across the 00:00 UTC rollover, to the minute', () => {
+  it('agrees across the midnight-Mountain rollover, to the minute', () => {
     // The boundary is the only place an off-by-one can hide: a whole-day sweep steps straight over
-    // the instant the board actually closes.
-    const rollover = Date.UTC(2026, 6, 30, 0, 0, 0)
+    // the instant the board actually closes. Midnight America/Edmonton = 06:00Z in July (MDT).
+    const rollover = Date.UTC(2026, 6, 30, 6, 0, 0)
     for (const offset of [-60_000, -1000, 0, 1000, 60_000]) {
       const d = new Date(rollover + offset)
       expect(senderDayKey(d), `at ${d.toISOString()}`).toBe(appDayKey(d))
+    }
+  })
+
+  it('agrees across the DST seams, where the two copies could bend the clock differently', () => {
+    // Alberta 2026: spring forward Mar 8 (a 23h race day), fall back Nov 1 (a 25h race day). Sweep
+    // the minutes around each day's midnight handover — the only instants the offset flip can bite.
+    for (const boundary of [Date.UTC(2026, 2, 9, 6, 0, 0), Date.UTC(2026, 10, 2, 7, 0, 0)]) {
+      for (const offset of [-60_000, -1000, 0, 1000, 60_000]) {
+        const d = new Date(boundary + offset)
+        expect(senderDayKey(d), `at ${d.toISOString()}`).toBe(appDayKey(d))
+        expect(senderWeekKey(d), `at ${d.toISOString()}`).toBe(appWeekKey(d))
+      }
     }
   })
 

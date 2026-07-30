@@ -10,6 +10,7 @@
  * Only the side-effect-free helpers are declared. main() is intentionally absent: it sends real
  * notifications, and nothing should be able to reach it from a test.
  */
+export declare const RACE_TZ: string
 export declare function dayKey(now?: Date): string
 export declare function dayEndsAt(now?: Date): Date
 export declare function weekKey(now?: Date): string

@@ -8,7 +8,8 @@ truth; this explains the *why* and lists the activation steps that are **human-o
 Before this, the only telemetry was the two leaderboards, and both require a Google sign-in. That
 meant **8 known accounts against ~10–12 believed-active players** — every signed-out player was
 invisible, and none of "how many opened the game", "where do players quit", "did a referral ever
-convert" could be answered. Separately, the endless race resets Monday 00:00 UTC and nothing told
+convert" could be answered. Separately, the endless race resets weekly (now Monday midnight
+America/Edmonton) and nothing told
 anyone; the one measured churn (a W30 player absent from W31) crossed exactly that boundary.
 
 ## Part 1 — Analytics
@@ -60,7 +61,7 @@ select cron.schedule('prune-events','0 4 * * *',$$select public.prune_events(90)
 | Service-worker handlers | `public/push-sw.js` (via `workbox.importScripts` in `vite.config.ts`) |
 | Client opt-in | `src/core/push.ts` + `src/view/cloudmodal.ts` → "Race reminder" |
 | Sender | `scripts/send-push.mjs` |
-| Schedule | `.github/workflows/endless-push.yml` — Mon–Sat 18:00 UTC (today's board, `--daily`), Sunday 18:00 UTC (the weekly season). The two never overlap: the daily cron is `1-6`, so Sunday's slot belongs to the season alone |
+| Schedule | `.github/workflows/endless-push.yml` — 01:00 UTC = 6–7 PM at home, the evening before each midnight-Mountain close. Tue–Sun on the UTC calendar (= Mon–Sat evenings at home) is today's board (`--daily`); Monday 01:00 UTC (= Sunday evening at home) is the weekly season. The two never overlap: a player must never get two notifications in one evening |
 
 **Why a GitHub Actions cron:** GitHub Pages is static, so there is no server to run a timer on, and
 Web Push needs an authenticated application server to sign each message. Actions already deploys this

@@ -12,7 +12,9 @@ live deployment.
 5. …through `0011_push_subscriptions.sql`
 6. `supabase/migrations/0012_endless_daily.sql` — `endless_daily_scores` + the
    `endless_weekly_totals` view + the per-day guard. **Self-checking:** it refuses to apply if the
-   server's UTC day, or its day→ISO-week rollup, disagrees with `src/core/endless.ts`
+   server's race day, or its day→ISO-week rollup, disagrees with `src/core/endless.ts`
+   (`0013_race_day_mountain_time.sql` re-anchors the day to midnight America/Edmonton and
+   self-checks the same way — apply it BEFORE deploying the client that expects it)
 
 ## 2. Environment
 Set repo Actions variables (already wired into `.github/workflows/deploy.yml`):
@@ -39,9 +41,10 @@ Google OAuth must be enabled in Supabase Auth (see `CLOUD_SAVE_GOOGLE_SIGNIN.md`
 3. Win levels until the jackpot meter fills → wheel fires, payout lands in balance.
 4. Trigger a MEGA WIN (cascade ×4) → "+3 FREE SPINS" ticket → DAILY BONUS badge →
    chained free spins at the cabinet.
-5. After 00:00 UTC, yesterday's #1 sees the DAILY WINNER coronation once (+150); after the ISO
-   week rolls over (Mon), the closed week's #1 sees the WEEKLY CHAMPION one (+1,000). A Monday
-   that closes both shows the weekly ceremony first, then the daily.
+5. After midnight Mountain time (06:00 UTC on MDT / 07:00 on MST), yesterday's #1 sees the DAILY
+   WINNER coronation once (+150); after the ISO
+   week rolls over (Mon midnight Mountain), the closed week's #1 sees the WEEKLY CHAMPION one
+   (+1,000). A Monday that closes both shows the weekly ceremony first, then the daily.
 6. Play on two consecutive days → THIS WEEK shows the two days' scores ADDED, with "· 2d".
 
 ## 5. Rollback notes

@@ -89,7 +89,7 @@ data (`ClearWave`, `FallMove[]`, `Spawn[]`, `BlastEvent[]`). Tuning happens in
 | `src/core/levels.ts` | `LEVEL_COUNT=300`; deterministic `levelSpec(n)` — seeded per-level objectives, symbol count, and move budget |
 | `src/core/save.ts` | `localStorage` save (key `viva-maya:v1`, schema **v8**): load/persist, shape-tolerant migrations, `recordResult`/`recordScore`/`takePendingBoosts` |
 | `src/core/daily.ts` | Daily-spin logic: `todayKey`, streak math, weighted `PRIZES` table, `performSpin` (award-before-animate) |
-| `src/core/endless.ts` | Endless race: `dayKey`/`weekKey` (**UTC**), `dayEndsAt`/`weekEndsAt`/`formatRaceRemaining`, `weekKeyOfDay` (the daily→weekly rollup), `seedForKey` (FNV-1a), shared seeded RNG, `endlessWeekStanding` (daily bests summed), `recordEndless`, `endlessUnlocked` (after L20) |
+| `src/core/endless.ts` | Endless race: `dayKey`/`weekKey` (**fixed `RACE_TZ = America/Edmonton`**), `dayEndsAt`/`weekEndsAt`/`formatRaceRemaining`, `weekKeyOfDay` (the daily→weekly rollup), `seedForKey` (FNV-1a), shared seeded RNG, `endlessWeekStanding` (daily bests summed), `recordEndless`, `endlessUnlocked` (after L20) |
 | `src/core/lives.ts` | Lives/energy pool: wall-clock regen banking, `spendLife`/`grantLife`/`refreshLives`, `devSetLives`, `formatCountdown` |
 
 **Scenes (Phaser)**
@@ -285,7 +285,8 @@ text object — `letterSpacing` splits emoji surrogate pairs in Phaser's rendere
 ### Endless race: daily boards, weekly season — `src/core/endless.ts`, `GameScene` endless mode
 Unlocks after **Level 20** (`endlessUnlocked` = `save.unlocked > ENDLESS_UNLOCK_LEVEL`,
 `ENDLESS_UNLOCK_LEVEL=20`). Entry via the rose ENDLESS pill on Home and Level Select.
-Everyone on the same UTC **day** plays the **same** board (`seedForKey(dayKey)` FNV-1a →
+Everyone on the same race **day** (midnight-to-midnight America/Edmonton — `RACE_TZ`) plays the
+**same** board (`seedForKey(dayKey)` FNV-1a →
 `mulberry32`); a fixed budget (`ENDLESS_MOVES=30`), all 6 symbols, **no objectives, no boosts**
 (planting would change the shared board and break the race). Ends only on moves-out
 (`finishEndless`). `recordEndless` keeps the max per day in `save.endlessDays` (keyed by the day
@@ -297,7 +298,8 @@ mirrored server-side by the `endless_weekly_totals` view). Miss a day and you ba
 that no single run can make back — turning up is the strategy. Each day crowns a winner (150
 chips); each week crowns a champion (1,000).
 
-> **The keys are UTC, and that is load-bearing.** `dayKey` (and `weekKey` above it) drives three
+> **The keys are anchored to ONE FIXED ZONE, and that is load-bearing.** `dayKey` (and `weekKey`
+> above it) drives three
 > things at once — the board seed, the leaderboard partition scores are written to, and the
 > partition read back to build the standings. It read the device's LOCAL date until 2026-07-26,
 > which silently split the race in two: a player whose local date had already ticked over sat on
@@ -305,10 +307,13 @@ chips); each week crowns a champion (1,000).
 > nothing on screen to explain it. Two friends six timezones apart hit this for real. Going daily
 > raised the stakes sevenfold: a timezone-sensitive key would now split the player base every
 > single night. It also let a
-> forward-set device clock into next week's board early. One instant now maps to one week
-> worldwide; the rollover is Monday 00:00 UTC (Sunday evening in the Americas). The panel shows
+> forward-set device clock into next week's board early. One instant maps to one board worldwide;
+> the fixed zone was UTC until 2026-07-30 and is now the home zone `RACE_TZ = America/Edmonton`
+> (boards were flipping at 6 PM on the home clock — the owner found a 19-hour countdown at 11 PM),
+> so days hand over at midnight Mountain and the season Monday midnight Mountain, DST included
+> (a 23h board each March, a 25h one each November). The panel shows
 > `ends in 2d 5h` beside the key so players can see it. Pinned by `src/core/endless.test.ts`,
-> which is written against fixed UTC instants and fails on a local-time implementation.
+> which is written against fixed UTC instants and fails on a device-local implementation.
 End card shows **NEW BEST!** / **TIME'S UP**.
 
 ### Level race — `public.level_progress` (migration 0007), `core/leaderboard.ts`, `view/leaderboardpanel.ts`
@@ -414,7 +419,7 @@ interface SaveData {
   lastSpinDate: string | null  // 'YYYY-MM-DD' of last daily spin
   streak: number               // consecutive-day spin streak
   pendingBoosts: BoostType[]   // prizes queued for the next numbered level
-  endlessDays: Record<string, number> // best endless score per UTC day ('YYYY-MM-DD'); a
+  endlessDays: Record<string, number> // best endless score per race day ('YYYY-MM-DD'); a
                                //   week's standing is the sum of the days inside it
   lives: number                // current lives (0..LIVES_MAX)
   livesAnchor: number          // epoch ms the current regen cycle started (0 = full)
@@ -433,7 +438,7 @@ Separate keys: **`viva-maya:muted`** (`'1'`/`'0'`) and **`viva-maya:swapSound`**
 | v3 | daily spin (`lastSpinDate`, `streak`, `pendingBoosts`) |
 | v4 | endless race (`endlessWeek`, `endlessBest`) |
 | v9 | hazard teach-once latches (`hazardIntros`) |
-| **v10** | **Endless goes DAILY** — `endlessWeek`/`endlessBest` → `endlessDays` (per-UTC-day bests, pruned to ~16), plus `championDays` beside `championWeeks`. The old pair is NOT migrated: it held a best for a week-long board that no longer exists, and filing it under any day would credit a score nobody could earn on that layout |
+| **v10** | **Endless goes DAILY** — `endlessWeek`/`endlessBest` → `endlessDays` (per-race-day bests, pruned to ~16), plus `championDays` beside `championWeeks`. The old pair is NOT migrated: it held a best for a week-long board that no longer exists, and filing it under any day would credit a score nobody could earn on that layout |
 | v5 | lives/energy (`lives`, `livesAnchor`) — pre-v5 saves start full |
 | **v6** | **Grace refill** — the pool grew (3→10) and the break shortened; any save with stored `v < 6` is topped up to full (`lives = LIVES_MAX`, `livesAnchor = 0`) on load so no one is stranded at the old, stingier count |
 

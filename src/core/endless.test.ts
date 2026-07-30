@@ -30,7 +30,13 @@ import { coerceSave } from './save'
  * DEVICE'S LOCAL calendar date: a player whose local date had already reached Monday sat on 2026-W31
  * while everyone still on Sunday sat on 2026-W30. These tests pin the fix for both cadences — one
  * instant, one board, worldwide — and they are written against fixed UTC instants precisely so they
- * would FAIL on a local-time implementation when the runner's timezone disagrees with UTC.
+ * would FAIL on a device-local implementation when the runner's timezone disagrees.
+ *
+ * The anchor is the FIXED home zone RACE_TZ (America/Edmonton) rather than UTC since 2026-07-30:
+ * boards used to flip at 00:00 UTC, which is 6 PM on the home crowd's clock, so a player checking
+ * "the board resets at midnight" at 11 PM found NINETEEN HOURS on the countdown. The boundary
+ * instants pinned here are therefore 06:00 UTC in summer (MDT) and 07:00 UTC in winter (MST) —
+ * midnight in Alberta, both times.
  *
  * The stakes went UP when the race went daily: a day boundary is seven times as frequent as a week
  * boundary, so a timezone-sensitive key would now split the player base every single night.
@@ -40,19 +46,24 @@ import { coerceSave } from './save'
 const at = (iso: string): Date => new Date(iso)
 
 describe('dayKey — one instant, one board, for everyone', () => {
-  it('holds the day right up to its last second UTC', () => {
-    expect(dayKey(at('2026-07-29T00:00:00Z'))).toBe('2026-07-29') // the moment it opens
-    expect(dayKey(at('2026-07-29T12:00:00Z'))).toBe('2026-07-29')
-    expect(dayKey(at('2026-07-29T23:59:59Z'))).toBe('2026-07-29')
+  it('holds the day right up to the last second before midnight in Alberta', () => {
+    expect(dayKey(at('2026-07-29T06:00:00Z'))).toBe('2026-07-29') // midnight MDT — the moment it opens
+    expect(dayKey(at('2026-07-29T18:00:00Z'))).toBe('2026-07-29') // midday at home
+    expect(dayKey(at('2026-07-30T05:59:59Z'))).toBe('2026-07-29') // 23:59:59 MDT
   })
 
-  it('rolls over exactly at 00:00 UTC', () => {
-    expect(dayKey(at('2026-07-30T00:00:00Z'))).toBe('2026-07-30')
-    expect(dayKey(at('2026-07-30T00:00:01Z'))).toBe('2026-07-30')
+  it('rolls over exactly at midnight America/Edmonton — 06:00 UTC in summer', () => {
+    expect(dayKey(at('2026-07-30T06:00:00Z'))).toBe('2026-07-30')
+    expect(dayKey(at('2026-07-30T06:00:01Z'))).toBe('2026-07-30')
+  })
+
+  it('rolls over at 07:00 UTC in winter — the SAME midnight, now on MST', () => {
+    expect(dayKey(at('2026-01-15T06:59:59Z'))).toBe('2026-01-14') // 23:59:59 MST
+    expect(dayKey(at('2026-01-15T07:00:00Z'))).toBe('2026-01-15') // midnight MST
   })
 
   it('gives two players the SAME board for the same instant, whatever their offset', () => {
-    // 18:44 in Chicago is 09:44 the next morning in Tokyo. One instant — one board.
+    // 18:44 in Chicago is 08:44 the next morning in Tokyo. One instant — one board.
     const instant = at('2026-07-29T23:44:00Z')
     const chicago = new Date(instant.getTime()) // rendered locally as Wed 18:44 CDT
     const tokyo = new Date(instant.getTime()) // rendered locally as Thu 08:44 JST
@@ -61,10 +72,24 @@ describe('dayKey — one instant, one board, for everyone', () => {
   })
 
   it('zero-pads month and day, and crosses month/year seams cleanly', () => {
-    expect(dayKey(at('2026-01-01T00:00:00Z'))).toBe('2026-01-01')
-    expect(dayKey(at('2026-02-28T23:59:59Z'))).toBe('2026-02-28')
-    expect(dayKey(at('2026-03-01T00:00:00Z'))).toBe('2026-03-01')
-    expect(dayKey(at('2025-12-31T23:59:59Z'))).toBe('2025-12-31')
+    expect(dayKey(at('2026-01-01T12:00:00Z'))).toBe('2026-01-01')
+    expect(dayKey(at('2026-03-01T06:59:59Z'))).toBe('2026-02-28') // non-leap February's last second, MST
+    expect(dayKey(at('2026-03-01T07:00:00Z'))).toBe('2026-03-01')
+    expect(dayKey(at('2026-01-01T06:59:59Z'))).toBe('2025-12-31') // the year turns at MOUNTAIN midnight
+  })
+
+  it('bends with the clocks at the DST seams without skipping or repeating a board', () => {
+    // 2026 in Alberta: spring forward Sun Mar 8 (02:00 MST → 03:00 MDT), fall back Sun Nov 1.
+    // The switch happens at 2 AM, never at midnight, so every day still opens exactly once.
+    expect(dayKey(at('2026-03-08T06:59:59Z'))).toBe('2026-03-07') // 23:59:59 MST
+    expect(dayKey(at('2026-03-08T07:00:00Z'))).toBe('2026-03-08') // midnight MST — a 23-hour board opens
+    expect(dayKey(at('2026-03-09T05:59:59Z'))).toBe('2026-03-08') // 23:59:59 MDT, 23h later
+    expect(dayKey(at('2026-03-09T06:00:00Z'))).toBe('2026-03-09') // midnight MDT
+
+    expect(dayKey(at('2026-11-01T05:59:59Z'))).toBe('2026-10-31') // 23:59:59 MDT
+    expect(dayKey(at('2026-11-01T06:00:00Z'))).toBe('2026-11-01') // midnight MDT — a 25-hour board opens
+    expect(dayKey(at('2026-11-02T06:59:59Z'))).toBe('2026-11-01') // 23:59:59 MST, 25h later
+    expect(dayKey(at('2026-11-02T07:00:00Z'))).toBe('2026-11-02') // midnight MST
   })
 
   it('never emits a malformed key — the leaderboard column has a CHECK constraint on the shape', () => {
@@ -83,41 +108,61 @@ describe('dayKey — one instant, one board, for everyone', () => {
 })
 
 describe('dayEndsAt / previousDayKey', () => {
-  it('points at the next 00:00 UTC — the instant the board hands over', () => {
-    expect(dayEndsAt(at('2026-07-29T18:44:00Z')).toISOString()).toBe('2026-07-30T00:00:00.000Z')
-    expect(dayEndsAt(at('2026-07-29T00:00:00Z')).toISOString()).toBe('2026-07-30T00:00:00.000Z')
+  it('points at the next midnight in Alberta — the instant the board hands over', () => {
+    expect(dayEndsAt(at('2026-07-29T18:44:00Z')).toISOString()).toBe('2026-07-30T06:00:00.000Z')
+    expect(dayEndsAt(at('2026-07-29T06:00:00Z')).toISOString()).toBe('2026-07-30T06:00:00.000Z')
+  })
+
+  it('shows an 11 PM player ONE hour to the reset, not nineteen — the 2026-07-30 owner report', () => {
+    // Under the old UTC anchor the board had already flipped at 6 PM Mountain, so a player checking
+    // "it resets at midnight" just before their midnight found a countdown reading 19 hours.
+    const elevenPmInAlberta = at('2026-07-31T05:00:00Z') // 23:00 MDT on 2026-07-30
+    const left = dayEndsAt(elevenPmInAlberta).getTime() - elevenPmInAlberta.getTime()
+    expect(formatRaceRemaining(left)).toBe('1h 0m')
+    expect(dayKey(elevenPmInAlberta)).toBe('2026-07-30') // still the 30th's board at 11 PM the 30th
   })
 
   it('is the exact moment the key flips — one second either side straddles the rollover', () => {
-    const ends = dayEndsAt(at('2026-07-29T09:00:00Z'))
+    const ends = dayEndsAt(at('2026-07-29T15:00:00Z'))
     expect(dayKey(new Date(ends.getTime() - 1000))).toBe('2026-07-29')
     expect(dayKey(ends)).toBe('2026-07-30')
   })
 
+  it('crosses the DST seams to the TRUE next midnight — 23h and 25h boards, never 24 by rote', () => {
+    expect(dayEndsAt(at('2026-03-08T07:00:00Z')).toISOString()).toBe('2026-03-09T06:00:00.000Z') // 23h day
+    expect(dayEndsAt(at('2026-11-01T06:00:00Z')).toISOString()).toBe('2026-11-02T07:00:00.000Z') // 25h day
+  })
+
   it('names the board that just closed — the one whose winner is crowned', () => {
-    expect(previousDayKey(at('2026-07-30T00:00:00Z'))).toBe('2026-07-29')
-    expect(previousDayKey(at('2026-07-29T23:59:59Z'))).toBe('2026-07-28')
+    expect(previousDayKey(at('2026-07-30T06:00:00Z'))).toBe('2026-07-29') // the moment after handover
+    expect(previousDayKey(at('2026-07-30T05:59:59Z'))).toBe('2026-07-28') // still racing the 29th's
     // Month seams are where a naive "subtract 1 from the date field" would break.
-    expect(previousDayKey(at('2026-03-01T06:00:00Z'))).toBe('2026-02-28')
-    expect(previousDayKey(at('2026-01-01T06:00:00Z'))).toBe('2025-12-31')
+    expect(previousDayKey(at('2026-03-01T12:00:00Z'))).toBe('2026-02-28')
+    expect(previousDayKey(at('2026-01-01T12:00:00Z'))).toBe('2025-12-31')
+  })
+
+  it('survives the 25th hour of fall-back Sunday — where "now minus 24h" names the day ITSELF', () => {
+    // 23:30 MST on 2026-11-01: more than 24h after that day's own midnight, so the subtraction
+    // trick lands inside the same local day and would crown the wrong board.
+    expect(previousDayKey(at('2026-11-02T06:30:00Z'))).toBe('2026-10-31')
   })
 })
 
 describe('weekKey — the season the daily boards roll up into', () => {
-  it('holds W30 right up to the last second of Sunday UTC', () => {
-    expect(weekKey(at('2026-07-20T00:00:00Z'))).toBe('2026-W30') // Monday, the moment it opens
-    expect(weekKey(at('2026-07-26T23:59:59Z'))).toBe('2026-W30')
+  it('holds W30 right up to the last second of Sunday in Alberta', () => {
+    expect(weekKey(at('2026-07-20T06:00:00Z'))).toBe('2026-W30') // Monday midnight MDT — it opens
+    expect(weekKey(at('2026-07-27T05:59:59Z'))).toBe('2026-W30') // Sunday 23:59:59 MDT
   })
 
-  it('rolls to W31 exactly at Monday 00:00 UTC', () => {
-    expect(weekKey(at('2026-07-27T00:00:00Z'))).toBe('2026-W31')
+  it('rolls to W31 exactly at Monday midnight America/Edmonton — 06:00 UTC in summer', () => {
+    expect(weekKey(at('2026-07-27T06:00:00Z'))).toBe('2026-W31')
   })
 
   it('numbers the ISO year boundary correctly (2026 opens on a Thursday)', () => {
     // ISO week 1 is the week containing the first Thursday, so 2026-W01 starts Mon 2025-12-29.
-    expect(weekKey(at('2025-12-29T00:00:00Z'))).toBe('2026-W01')
-    expect(weekKey(at('2026-01-04T23:59:59Z'))).toBe('2026-W01')
-    expect(weekKey(at('2026-01-05T00:00:00Z'))).toBe('2026-W02')
+    expect(weekKey(at('2025-12-29T12:00:00Z'))).toBe('2026-W01')
+    expect(weekKey(at('2026-01-05T06:59:59Z'))).toBe('2026-W01') // Sunday 23:59:59 MST
+    expect(weekKey(at('2026-01-05T07:00:00Z'))).toBe('2026-W02') // Monday midnight MST
   })
 
   it('never emits a malformed key — the leaderboard column has a CHECK constraint on the shape', () => {
@@ -131,14 +176,19 @@ describe('weekKey — the season the daily boards roll up into', () => {
 })
 
 describe('weekEndsAt / previousWeekKey', () => {
-  it('points at the next Monday 00:00 UTC — the instant the season resets', () => {
-    expect(weekEndsAt(at('2026-07-26T18:44:00Z')).toISOString()).toBe('2026-07-27T00:00:00.000Z')
-    expect(weekEndsAt(at('2026-07-20T00:00:00Z')).toISOString()).toBe('2026-07-27T00:00:00.000Z')
+  it('points at the next Monday midnight in Alberta — the instant the season resets', () => {
+    expect(weekEndsAt(at('2026-07-26T18:44:00Z')).toISOString()).toBe('2026-07-27T06:00:00.000Z')
+    expect(weekEndsAt(at('2026-07-20T06:00:00Z')).toISOString()).toBe('2026-07-27T06:00:00.000Z')
+  })
+
+  it('closes the season at the same instant Sunday\'s board closes — one handover, not two', () => {
+    const sundayNight = at('2026-08-02T20:00:00Z')
+    expect(weekEndsAt(sundayNight).getTime()).toBe(dayEndsAt(sundayNight).getTime())
   })
 
   it('names the season that just closed', () => {
-    expect(previousWeekKey(at('2026-07-27T00:00:00Z'))).toBe('2026-W30')
-    expect(previousWeekKey(at('2026-07-26T23:59:59Z'))).toBe('2026-W29')
+    expect(previousWeekKey(at('2026-07-27T06:00:00Z'))).toBe('2026-W30')
+    expect(previousWeekKey(at('2026-07-27T05:59:59Z'))).toBe('2026-W29')
   })
 })
 
@@ -189,10 +239,10 @@ describe('formatRaceRemaining', () => {
   })
 
   it('agrees with the actual rollover instants', () => {
-    const now = at('2026-07-29T18:44:00Z')
-    expect(formatRaceRemaining(dayEndsAt(now).getTime() - now.getTime())).toBe('5h 16m')
-    // Wednesday evening → the season closes Monday 00:00 UTC, four boards later.
-    expect(formatRaceRemaining(weekEndsAt(now).getTime() - now.getTime())).toBe('4d 5h')
+    const now = at('2026-07-29T18:44:00Z') // Wednesday 12:44 in Alberta
+    expect(formatRaceRemaining(dayEndsAt(now).getTime() - now.getTime())).toBe('11h 16m')
+    // Wednesday lunchtime → the season closes Monday midnight Mountain, four boards later.
+    expect(formatRaceRemaining(weekEndsAt(now).getTime() - now.getTime())).toBe('4d 11h')
   })
 })
 
@@ -265,7 +315,8 @@ describe('endlessWeekStanding — daily bests, added up', () => {
 
   it('caps turnout at the number of boards a week actually has', () => {
     const every: Record<string, number> = {}
-    for (let i = 0; i < DAYS_PER_WEEK; i++) every[dayKey(new Date(Date.UTC(2026, 6, 27) + i * 86400000))] = 1000
+    const w31 = ['2026-07-27', '2026-07-28', '2026-07-29', '2026-07-30', '2026-07-31', '2026-08-01', '2026-08-02']
+    for (const day of w31) every[day] = 1000
     expect(endlessWeekStanding(withDays(every), '2026-W31')).toEqual({ total: 7000, days: DAYS_PER_WEEK })
   })
 })

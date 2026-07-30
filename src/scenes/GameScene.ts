@@ -408,7 +408,7 @@ export class GameScene extends Phaser.Scene {
     // break the race's fairness). Otherwise: the numbered level with a fresh random board.
     if (this.endless) {
       // Capture the day key ONCE so the run is scored against the board it was seeded from,
-      // even if midnight UTC passes mid-run.
+      // even if the midnight handover (core/endless.ts RACE_TZ) passes mid-run.
       this.endlessDayKey = dayKey()
       this.spec = { level: 0, moves: ENDLESS_MOVES, symbolCount: SYMBOLS.length, objectives: [] }
       this.board = new Board(ROWS, COLS, SYMBOLS.length, endlessRngForDay(this.endlessDayKey))
@@ -5970,7 +5970,7 @@ export class GameScene extends Phaser.Scene {
    * End-of-run card for the endless race — a score attack, no stars.
    *
    * Reads bottom-up as the two things a run now feeds: TODAY'S BEST (the board you were just racing,
-   * which closes at midnight UTC) and THIS WEEK (that best summed with every other day's, plus the
+   * which closes at midnight Mountain time) and THIS WEEK (that best summed with every other day's, plus the
    * turnout behind it). The week line is the whole reason the daily board exists, so it is on the
    * card rather than a screen away — the run that just ended visibly moved a season total, and a
    * player who has raced 2 of 7 days can see what the other five are worth.

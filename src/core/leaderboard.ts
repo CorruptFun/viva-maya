@@ -8,7 +8,8 @@ import type { SaveData } from './save'
  * the `public.endless_weekly_totals` view it rolls up into (see supabase/migrations/0012_endless_daily.sql).
  *
  * THREE BOARDS, ONE MODULE:
- *   · DAILY   — today's shared board, ranked by score. Resets at 00:00 UTC; the day's #1 is crowned.
+ *   · DAILY   — today's shared board, ranked by score. Resets at midnight America/Edmonton
+ *               (core/endless.ts RACE_TZ); the day's #1 is crowned.
  *   · WEEKLY  — the season. Ranked by the SUM of a player's daily bests, so it rewards turning up:
  *               a missed day is a zero you cannot make back with one big run.
  *   · LEVELS  — the all-time campaign ladder (public.level_progress, migration 0007).

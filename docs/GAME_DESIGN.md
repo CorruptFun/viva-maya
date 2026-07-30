@@ -225,13 +225,15 @@ clears a RANDOM present color. Swap-combos (both consumed, epicenter = drag dest
 ## Endless race — daily boards, weekly season (src/core/endless.ts + GameScene endless mode)
 - Unlocks after ENDLESS_UNLOCK_LEVEL=20 (fixed, independent of LEVEL_COUNT — save.unlocked > 20).
   Entry: rose ENDLESS pill on Home and LevelSelect.
-- **A NEW BOARD EVERY DAY.** dayKey(now) = "YYYY-MM-DD" in **UTC**. The board opens and closes at
-  00:00 UTC for EVERYONE at once, and the day's top score is crowned (DAILY_PURSE = 150 chips).
+- **A NEW BOARD EVERY DAY.** dayKey(now) = "YYYY-MM-DD" on the **RACE_TZ = America/Edmonton**
+  clock. The board opens and closes at midnight Mountain time for EVERYONE at once (06:00 UTC on
+  MDT, 07:00 on MST), and the day's top score is crowned (DAILY_PURSE = 150 chips).
   seedForKey(dayKey) = FNV-1a → endlessRngForDay = mulberry32(seed): everyone gets the SAME board
   that day; every attempt that day replays the identical starting board (a BEST-score race, not
   per-attempt random).
-- **THE WEEK IS THE SEASON.** weekKey(now) = ISO-8601 "YYYY-Www" in **UTC** (Thursday-anchored),
-  rolling over Monday 00:00 UTC. A week's standing is the SUM of that player's daily bests inside
+- **THE WEEK IS THE SEASON.** weekKey(now) = ISO-8601 "YYYY-Www" of the race calendar
+  (Thursday-anchored), rolling over Monday midnight Mountain — the same instant Sunday's board
+  closes. A week's standing is the SUM of that player's daily bests inside
   it (endlessWeekStanding), so a missed day is a zero you cannot make back with one big run —
   turning up IS the strategy. Ranked on total, ties broken by MORE days played, then first-to-reach.
   The season's #1 takes CHAMPION_PURSE = 1,000 chips.
@@ -240,13 +242,17 @@ clears a RANDOM present color. Swap-combos (both consumed, epicenter = drag dest
   people's practice, and there was no reason at all to come back TOMORROW. Daily boards give the
   game a daily heartbeat; the weekly sum is what stops that heartbeat being seven disconnected
   sprints, and it rewards the habit rather than one lucky session.
-- UTC, not local time, for BOTH keys. It was local until 2026-07-26, which silently split the race:
-  the key drives the board SEED, the leaderboard partition written to AND the one read back, so a
-  player whose local date had already ticked over sat on a different board — a leaderboard
-  containing only themselves, and no way to tell why (hit for real by two friends 6 timezones
-  apart). A forward-set device clock could also jump into tomorrow's board early. The stakes went UP
-  when the race went daily: a timezone-sensitive key would now split the player base every night.
-  Panels show "ends in 5h 12m" beside the key (formatRaceRemaining + dayEndsAt/weekEndsAt).
+- ONE FIXED ZONE, not device-local time, for BOTH keys. It was local until 2026-07-26, which
+  silently split the race: the key drives the board SEED, the leaderboard partition written to AND
+  the one read back, so a player whose local date had already ticked over sat on a different
+  board — a leaderboard containing only themselves, and no way to tell why (hit for real by two
+  friends 6 timezones apart). A forward-set device clock could also jump into tomorrow's board
+  early. The stakes went UP when the race went daily: a timezone-sensitive key would now split the
+  player base every night. The fixed zone was UTC until 2026-07-30, which put the flip at 6 PM on
+  the home crowd's clock — a player told "it resets at midnight" found a 19-hour countdown at
+  11 PM — so the anchor moved to the home zone (RACE_TZ, mirrored by `race_day_key()` in migration
+  0013 and the copies in scripts/send-push.mjs). Panels show "ends in 5h 12m" beside the key
+  (formatRaceRemaining + dayEndsAt/weekEndsAt).
 - Score attack: ENDLESS_MOVES=30, all 6 symbols, NO objectives, NO boosts applied (planting
   specials would change the board and break fairness). Ends only on moves-out → finishEndless.
 - recordEndless keeps the max per day in save.endlessDays (pruned to ~16 days); also flows into

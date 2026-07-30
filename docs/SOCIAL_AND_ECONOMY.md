@@ -145,7 +145,8 @@ away) glow on the shared heartbeat clock — the "one more win" tease.
 
 ## The endless race: daily boards, weekly season (leaderboard)
 
-Everyone plays the SAME endless board each UTC **day** (seeded from the day key) with the
+Everyone plays the SAME endless board each race **day** (midnight-to-midnight
+America/Edmonton, seeded from the day key) with the
 same 30-move budget and **no boosts allowed in endless** — that rule is the race's
 constitution; new boost features can never corrupt fairness while it holds. Each day's
 best mirrors to the shared `endless_daily_scores` table automatically when a signed-in
@@ -256,7 +257,8 @@ monotonic and timestamps set-once — so nobody can touch anyone else's data.
 
 **The BOARD a score is filed under is the server's decision, not the client's**
 (`0006_endless_week_guard.sql`, carried forward per-day in `0012_endless_daily.sql`). The
-trigger recomputes the current UTC day and rejects any `day_key` that isn't it, with a
+trigger recomputes the current race day (midnight-to-midnight America/Edmonton since
+migration 0013) and rejects any `day_key` that isn't it, with a
 one-hour grace so a run that starts before midnight and syncs after it still lands. That
 closes two holes at once:
 

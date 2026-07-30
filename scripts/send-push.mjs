@@ -16,9 +16,10 @@
  * nullable in 0011.
  *
  * TWO CADENCES, because the race has two (see supabase/migrations/0012_endless_daily.sql):
- *   --daily   today's board, which closes at 00:00 UTC and crowns its own winner. Ranked on score.
- *   (default) the weekly season, which closes Monday 00:00 UTC. Ranked on the SUM of daily bests,
- *             read from the endless_weekly_totals view.
+ *   --daily   today's board, which closes at midnight America/Edmonton and crowns its own winner.
+ *             Ranked on score.
+ *   (default) the weekly season, which closes Monday midnight America/Edmonton. Ranked on the SUM
+ *             of daily bests, read from the endless_weekly_totals view.
  * Both share every line of plumbing below — audience, personalisation, retire-on-410, failure
  * counting — because the only real differences are which partition to read and what to call it.
  *
@@ -89,17 +90,76 @@ const rest = (path, init = {}) =>
   })
 
 /**
- * ISO-8601 week key, UTC.
- *
- * ⚠️ MUST STAY BYTE-IDENTICAL TO `weekKey()` IN src/core/endless.ts. It selects the leaderboard
- * partition, so a sender that computes a different key reads an EMPTY board and silently sends
- * everyone the generic copy — a failure that looks like "nobody has played" rather than like a bug.
- * That function was made UTC on 2026-07-26 precisely because a local-time derivation split players
- * in different timezones onto different races; re-deriving it from local time here would reintroduce
- * that bug on the notification side only.
+ * The race's home timezone — MUST MATCH `RACE_TZ` in src/core/endless.ts. Since 2026-07-30 the
+ * boards flip at midnight on this clock (they used to flip at 00:00 UTC — 6 PM at home, which is
+ * how "the board resets at midnight" became a 19-hour countdown at 11 PM).
  */
-export function weekKey(now = new Date()) {
-  const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()))
+export const RACE_TZ = 'America/Edmonton'
+
+// Same wall-clock machinery as src/core/endless.ts, line for line. h23 pins midnight to "00".
+const raceClock = new Intl.DateTimeFormat('en-US', {
+  timeZone: RACE_TZ,
+  hourCycle: 'h23',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+})
+
+function raceWallClock(at) {
+  const v = {}
+  for (const part of raceClock.formatToParts(at)) {
+    if (part.type !== 'literal') v[part.type] = Number(part.value)
+  }
+  return { y: v.year, mo: v.month, d: v.day, h: v.hour % 24, mi: v.minute, s: v.second }
+}
+
+const pad2 = n => String(n).padStart(2, '0')
+
+/** RACE_TZ's UTC offset at `at`, in ms — negative when behind UTC (Mountain is −6h/−7h). */
+function raceOffsetMs(at) {
+  const w = raceWallClock(at)
+  return Date.UTC(w.y, w.mo - 1, w.d, w.h, w.mi, w.s) - at.getTime()
+}
+
+/** Calendar arithmetic on a day key — DST-free, because keys are dates and not instants. */
+function shiftDayKey(key, days) {
+  const d = new Date(Date.parse(`${key}T00:00:00Z`) + days * 86400000)
+  return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`
+}
+
+/** The instant RACE_TZ's clocks strike midnight opening `key` — two-pass for the DST seams. */
+function raceMidnight(key) {
+  const naive = Date.parse(`${key}T00:00:00Z`)
+  let t = naive - raceOffsetMs(new Date(naive))
+  t = naive - raceOffsetMs(new Date(t))
+  return new Date(t)
+}
+
+/**
+ * Race-day calendar key (midnight-to-midnight America/Edmonton).
+ *
+ * ⚠️ MUST STAY BEHAVIOURALLY IDENTICAL TO `dayKey()` IN src/core/endless.ts — it selects the daily
+ * leaderboard partition, so a sender computing a different key reads an EMPTY board and silently
+ * sends everyone the generic copy: a failure that looks like "nobody has played" rather than like
+ * a bug. Pinned against the app's own copy in src/core/analytics.test.ts (this file cannot import
+ * from src/ — it runs in CI as plain Node with no TypeScript step — so it carries this copy).
+ */
+export function dayKey(now = new Date()) {
+  const w = raceWallClock(now)
+  return `${w.y}-${pad2(w.mo)}-${pad2(w.d)}`
+}
+
+/** The next midnight America/Edmonton — mirrors dayEndsAt() in src/core/endless.ts. */
+export function dayEndsAt(now = new Date()) {
+  return raceMidnight(shiftDayKey(dayKey(now), 1))
+}
+
+/** ISO-8601 week of a day key — pure calendar math, byte-identical to isoWeekOf() in endless.ts. */
+function isoWeekOf(key) {
+  const d = new Date(Date.parse(`${key}T00:00:00Z`))
   const dow = (d.getUTCDay() + 6) % 7 // Mon=0 … Sun=6
   d.setUTCDate(d.getUTCDate() - dow + 3) // hop to this week's Thursday
   const year = d.getUTCFullYear()
@@ -110,31 +170,23 @@ export function weekKey(now = new Date()) {
   return `${year}-W${String(week).padStart(2, '0')}`
 }
 
-/** Monday 00:00 UTC — mirrors weekEndsAt() in src/core/endless.ts. */
-export function weekEndsAt(now = new Date()) {
-  const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()))
-  d.setUTCDate(d.getUTCDate() + (7 - ((d.getUTCDay() + 6) % 7)))
-  return d
-}
-
 /**
- * UTC calendar day key.
+ * ISO-8601 week key of the race calendar.
  *
- * ⚠️ MUST STAY BYTE-IDENTICAL TO `dayKey()` IN src/core/endless.ts, for exactly the reason spelled
- * out on weekKey above — it selects the daily leaderboard partition, so a sender computing a
- * different key reads an EMPTY board and silently sends everyone the generic copy. Pinned against
- * the app's own copy in src/core/analytics.test.ts.
+ * ⚠️ MUST STAY BEHAVIOURALLY IDENTICAL TO `weekKey()` IN src/core/endless.ts, for exactly the
+ * reason spelled out on dayKey above. That function was made timezone-FIXED on 2026-07-26 precisely
+ * because a device-local derivation split players in different timezones onto different races;
+ * re-deriving it from local time here would reintroduce that bug on the notification side only.
  */
-export function dayKey(now = new Date()) {
-  const p = n => String(n).padStart(2, '0')
-  return `${now.getUTCFullYear()}-${p(now.getUTCMonth() + 1)}-${p(now.getUTCDate())}`
+export function weekKey(now = new Date()) {
+  return isoWeekOf(dayKey(now))
 }
 
-/** The next 00:00 UTC — mirrors dayEndsAt() in src/core/endless.ts. */
-export function dayEndsAt(now = new Date()) {
-  const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()))
-  d.setUTCDate(d.getUTCDate() + 1)
-  return d
+/** Monday midnight America/Edmonton — mirrors weekEndsAt() in src/core/endless.ts. */
+export function weekEndsAt(now = new Date()) {
+  const key = dayKey(now)
+  const dow = (new Date(Date.parse(`${key}T00:00:00Z`)).getUTCDay() + 6) % 7 // Mon=0 … Sun=6
+  return raceMidnight(shiftDayKey(key, 7 - dow))
 }
 
 function hoursLeft(now = new Date()) {
