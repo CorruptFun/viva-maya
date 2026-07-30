@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <!-- Owner tool: keep it out of search results. It is harmless if found (everything behind it
+         is admin-gated server-side — see 0014), but there is no reason to advertise it. -->
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="theme-color" content="#fcfcfb" />
+    <link rel="icon" href="./favicon.ico" sizes="48x48" />
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+    <title>Viva Maya — Analytics</title>
+    <meta name="description" content="Owner analytics dashboard for Viva Maya." />
+    <meta name="author" content="CorruptFun LLC" />
+    <meta name="copyright" content="© 2026 CorruptFun LLC. All rights reserved." />
+    <style>
+      /* Paint the surface before the module loads so there is no white/black flash;
+         everything else lives in src/stats/stats.css. */
+      html {
+        background: #f9f9f7;
+      }
+      @media (prefers-color-scheme: dark) {
+        html {
+          background: #0d0d0d;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="stats"></div>
+    <script type="module" src="/src/stats/main.ts"></script>
+  </body>
+</html>

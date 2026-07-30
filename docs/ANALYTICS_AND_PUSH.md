@@ -20,6 +20,7 @@ anyone; the one measured churn (a W30 player absent from W31) crossed exactly th
 | Client | `src/core/analytics.ts` (`track`, `EVENTS`) |
 | Opt-out UI | `src/view/cloudmodal.ts` → "Gameplay stats" |
 | Tests | `src/core/analytics.test.ts` |
+| **Dashboard** (admin-gated read path) | `supabase/migrations/0014_analytics_dashboard.sql` + `stats.html` + `src/stats/` |
 
 **The table is append-only to every client.** `0010` grants INSERT and *no SELECT at all* — RLS denies
 what it doesn't allow, so a visitor holding the publishable key can write their own events and read
@@ -32,9 +33,23 @@ history. Read it from the SQL editor (service role bypasses RLS); never add a SE
 anything about the device or person. `user_id` is set only while signed in and RLS pins it to
 `auth.uid()`, so it cannot be forged. Disclosed in `public/privacy.html`, with a working opt-out.
 
-**Reading it.** Two views, owner-only (`security_invoker = on` — a view over an RLS table *without*
-that flag runs as its owner and re-exposes everything, which would silently undo the no-SELECT
-decision):
+**Reading it — the dashboard.** The everyday read path is
+<https://corruptfun.github.io/viva-maya/stats.html> — daily actives, the level funnel with a wall
+detector, every conversion funnel (sign-in, install, push, continue, invites, update toast, Deal,
+Plinko), sessions by hour, build propagation. Sign in with the owner Google account (the same
+session the game holds); the range presets re-query the live table.
+
+How it reads a table with **no SELECT policy**: it does not. `0014` adds `admin_analytics(p_days)`,
+a `SECURITY DEFINER` RPC (the `0012` shape, applied to reads) that answers **aggregates only** —
+never raw rows — and only to user ids listed in `app_admins`, a table with RLS on and zero
+policies, writable solely from the SQL editor. The events table keeps the exact `0010` posture; the
+service key still never leaves the server side; a stranger who finds the page gets a sign-in button
+and a 403. Anyone signed in but not listed is shown the exact `insert` to run (with their user id)
+— which only helps them if they can already open the SQL editor, i.e. they are you.
+
+**Reading it — SQL.** For ad-hoc questions the dashboard doesn't answer, the two `0010` views,
+owner-only (`security_invoker = on` — a view over an RLS table *without* that flag runs as its
+owner and re-exposes everything, which would silently undo the no-SELECT decision):
 
 ```sql
 select * from public.events_daily order by day desc limit 30;
@@ -121,8 +136,29 @@ Then verify against production:
 scripts/verify-rls.sh https://deskabqqxqqibxjffwmb.supabase.co <publishable-key>
 ```
 
-11 checks, each "must be empty" assertion paired with a control probe so an empty result can't be
-confused with a missing table. Expect `11 passed, 0 failed`.
+Each "must be refused" assertion is paired with a control probe so an empty result can't be
+confused with a missing table. Expect `14 passed, 0 failed` with a secret key in the environment
+(`10 passed` + 2 SKIP-labelled sender checks without one).
+
+### 1b. Turn on the dashboard (`0014` — additive, any order vs the client deploy)
+
+1. Paste `0014_analytics_dashboard.sql` into the SQL editor (same caveat: **not `sb push`** while
+   the `0009` hold stands).
+2. Grant your account: sign in at <https://corruptfun.github.io/viva-maya/stats.html> — it will
+   answer "not an analytics admin" and print the exact statement with your user id filled in, e.g.
+
+   ```sql
+   insert into public.app_admins (user_id, note) values ('<your-auth-uuid>', 'owner')
+   on conflict (user_id) do nothing;
+   ```
+
+   (Or find the id under Authentication → Users first.) Run it in the SQL editor, reload the page.
+3. Re-run `scripts/verify-rls.sh` — it now also proves anon can call neither `admin_analytics` nor
+   read `app_admins`.
+
+The dashboard needs no keys of its own: it uses the publishable key baked into the build plus your
+Google session, and the server decides. Locally, `npm run dev` + `.env.local` serves it at
+`http://localhost:5173/stats.html` against whatever stack the env points at.
 
 ### 2. Set the repo variables and secrets
 
