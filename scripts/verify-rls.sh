@@ -107,7 +107,7 @@ case "$c" in *42501*) ok "anon CANNOT read app_admins (grant revoked)" ;;
              *) bad "app_admins IS REACHABLE — the admin list should not even be queryable" "$c" ;; esac
 
 echo
-echo "── events hardening (0015/0019): idempotent ingest, private retention ───"
+echo "── events hardening (0015/0018/0019): idempotent ingest, private retention ───"
 # ⚠️ 0015 specified the dedupe as a PostgREST upsert (`?on_conflict=event_id` +
 # `resolution=ignore-duplicates`) straight at the table. That shape can NEVER work here and this
 # script is the thing that caught it: ON CONFLICT makes PostgreSQL require SELECT rights on the
@@ -133,6 +133,23 @@ esac
 case "$n1/$n2" in
   1/0) ok "duplicate event_id stored ONCE (dedupe proven by the returned insert count)" ;;
   *)   bad "DEDUPE DID NOTHING — a re-sent batch double-counts" "inserted $n1 then $n2" ;;
+esac
+# THE OTHER HALF, and it is not redundant: 0018 dedupes inside the guard trigger, which catches any
+# PLAIN insert — so it is what every OLD CACHED BUNDLE relies on, none of which will ever call the
+# RPC. 0019's path above is the atomic one the current client uses. Both ship; both are probed.
+# Plain inserts on purpose here: an on_conflict/upsert shape is refused outright on this table (the
+# root cause above), so a 401/403 on these means someone reintroduced an upsert.
+# The STATUS is a real assertion in this one case, because the two outcomes are distinguishable:
+# with the trigger the duplicate is silently skipped (201), and WITHOUT it the 0015 unique index
+# catches the same insert and PostgREST answers 409. So this works with no secret key either.
+TID=$(python3 -c 'import uuid;print(uuid.uuid4())')
+tev="{\"device_id\":\"$DEV\",\"session_id\":\"$SES\",\"name\":\"rls_probe\",\"event_id\":\"$TID\"}"
+t1=$(anonc -X POST "$URL/rest/v1/events" -d "$tev")
+t2=$(anonc -X POST "$URL/rest/v1/events" -d "$tev")
+case "$t1/$t2" in
+  20*/20*)  ok "guard trigger dedupes a plain re-sent insert ($t1/$t2)" ;;
+  20*/409)  bad "TRIGGER DEDUPE MISSING — is 0018 applied? (the unique index caught it instead)" "$t1/$t2" ;;
+  *)        bad "id-carrying plain insert rejected — are 0015+0018 applied?" "$t1/$t2" ;;
 esac
 if [ -n "${SECRET:-}" ]; then
   n=$(svc "$URL/rest/v1/events?event_id=eq.$EID&select=id" | python3 -c 'import json,sys;print(len(json.load(sys.stdin)))')

@@ -64,38 +64,47 @@ expose keepalive. Re-drain on `online`. Ship a working opt-out. Stamp every even
 version — under cached clients (PWAs especially), a metric that moves after a deploy is unreadable
 without knowing who runs which code.
 
-**Idempotent ingestion: client-minted `event_id` + nullable unique index + a DEFINER function.**
+**Idempotent ingestion: client-minted `event_id` + a nullable unique index — never ON CONFLICT.**
 A flush whose response is lost gets re-sent and would double count. Mint a UUID per event. The
 column stays NULLABLE with a FULL (not partial) unique index: old clients insert id-less rows
-forever (NULLs never collide), and `ON CONFLICT (event_id)` can only infer a whole-column index.
+forever (NULLs never collide), and the index is the race backstop under whichever dedupe you pick.
 
 ⚠️ **Do NOT dedupe with a PostgREST upsert on the table** — not `?on_conflict=event_id`, not
-`Prefer: resolution=ignore-duplicates`, not `resolution=merge-duplicates`. On a write-only table it
-is refused `42501 → 401` on **every** send, including the first, when nothing conflicts. `ON
-CONFLICT` makes PostgreSQL require SELECT rights on the target, so the rewriter folds the table's
-**SELECT policies** in as an extra `WITH CHECK` on the new row; a write-only table has none, so the
-check is built from an empty policy list and becomes a constant false. The tell is an error naming
-no policy: `new row violates row-level security policy for table "events"`.
+`Prefer: resolution=ignore-duplicates`, not `merge-duplicates`. On a write-only table it is refused
+on **every** send, including the first, when nothing conflicts. `ON CONFLICT` makes PostgreSQL
+require SELECT rights on the target, so the rewriter folds the table's **SELECT policies** in as an
+extra `WITH CHECK` on the new row; a write-only table has none, so the check is built from an empty
+policy list and becomes a constant false. The tell is an error naming no policy:
+`new row violates row-level security policy for table "events"`. (PostgREST reports it as 401 for
+anon, 403 under a user JWT — do not key any client logic on which.)
 It is **not** a missing UPDATE policy — adding one changes nothing (measured). And no SELECT policy
 can fix it: the check runs against the *new* row, so it must be `using (true)`, which republishes
-the whole behavioural log to everyone holding the publishable key. Same root cause as an UPDATE or
-DELETE that silently matches zero rows on a write-only table, arriving through INSERT.
+the whole behavioural log. Same root cause as an UPDATE or DELETE that silently matches zero rows
+on a write-only table, arriving through INSERT. Proven independently several times over; it will
+look like a one-line policy fix every single time.
 
-**Dedupe server-side instead**: one `SECURITY DEFINER` function taking the whole batch as jsonb and
-doing `insert … on conflict (event_id) do nothing`. It sees the conflicting row the caller may not,
-it is atomic (immune to a resend racing its own original, which an `EXISTS` check is not), and the
-table keeps zero SELECT and zero UPDATE policies. Take `user_id` **from the verified JWT, never the
-payload** — a definer function bypasses RLS, so the "you may only claim your own uid" policy is not
-protecting that path any more. **Return the number of rows actually inserted**: that is the only way
-to prove the dedupe from outside without a service key, i.e. the only way to verify it in prod.
+**Dedupe server-side. Two mechanisms, and a real project wants both:**
+- **In the guard trigger** (start here): an `exists` check → `return NULL` to skip. The trigger is
+  already SECURITY DEFINER, so it sees what the caller can't. It catches **any plain insert**, which
+  means every OLD CACHED CLIENT dedupes the moment it lands, without knowing anything new. Its gap
+  is a genuine concurrent resend racing the same `exists` check — the unique index catches that as a
+  409.
+- **In a batch RPC** (add when you want atomicity): a SECURITY DEFINER function taking the whole
+  batch as jsonb and doing `insert … on conflict (event_id) do nothing`. Atomic, so it has no race
+  to lose. Take `user_id` **from the verified JWT, never the payload** — a definer function bypasses
+  RLS, so the "you may only claim your own uid" policy stops protecting that path. **Return the
+  number of rows actually inserted**: that is the only way to prove the dedupe from outside without
+  a service key, i.e. the only way to verify it in prod.
+
 Also revoke the platform's default `UPDATE`/`DELETE` grants on the table, so append-only doesn't
-rest on the policy list alone.
+rest on the policy list alone — that is what makes "just add an UPDATE policy" fail closed.
 
-Client resilience for deploy races: degrade one rung at a time — RPC → direct table POST → direct
-POST with ids stripped — RE-QUEUEING at every step, so a client ahead of its migration delays events
-instead of losing them. Step down on **any** 4xx, not just the status you predicted: the original
-version of this bug dropped a day of events because it only handled 400 and the real failure was
-401.
+Client resilience for deploy races: degrade one rung at a time — RPC → plain insert → plain insert
+with ids stripped — RE-QUEUEING at every step, so a client ahead of its migration delays events
+instead of losing them. Step down on **any** 4xx, never the one status you predicted: this bug threw
+away a day of events because the fallback handled 400 and the real refusal was 401, and the
+reachable set is wider than it looks (400 unknown column, 401/403 the impossible upsert, 404 a
+server without the RPC, 409 the trigger-dedupe race).
 
 **Crash telemetry is part of analytics, and it is capped.**
 `window.onerror` + `unhandledrejection` → a `client_error` event (message truncated, first stack

@@ -261,7 +261,7 @@ function applySession(
 export async function initCloud(): Promise<void> {
   const c = await sb()
   if (!c) return
-  c.auth.onAuthStateChange((_event, s) => {
+  c.auth.onAuthStateChange((event, s) => {
     const hadSession = session !== null
     applySession(s)
     notify()
@@ -273,10 +273,16 @@ export async function initCloud(): Promise<void> {
     // bootstrapCloud's own syncNow simply converges. Does NOT fire on token refresh or sign-out.
     if (session && !hadSession) {
       // The other half of the OAuth funnel (signin_started is fired before the redirect, in
-      // view/cloudmodal.ts). This null→session transition IS the redirect returning, so it is the
-      // only place a completed sign-in can be observed. Lazy import so the auth path never waits on
-      // analytics and cloud.ts keeps no static dependency on it.
-      void import('./analytics').then(a => a.track(a.EVENTS.SIGNIN_COMPLETED))
+      // view/cloudmodal.ts). The null→session transition alone does NOT identify the redirect
+      // return: a returning signed-in player's boot restore is the same transition delivered as
+      // INITIAL_SESSION, and counting those logged a "completed sign-in" on EVERY app open — the
+      // first live dashboard read showed 242 completions against 13 starts, which is how this was
+      // caught. Only a genuinely new sign-in (the OAuth return included) arrives as SIGNED_IN.
+      // Lazy import so the auth path never waits on analytics and cloud.ts keeps no static
+      // dependency on it.
+      if (event === 'SIGNED_IN') {
+        void import('./analytics').then(a => a.track(a.EVENTS.SIGNIN_COMPLETED))
+      }
       void syncNow()
     }
   })

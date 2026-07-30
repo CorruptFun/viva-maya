@@ -361,7 +361,10 @@ button.primary {
 .fn-meter {
   display: flex;
   align-items: center;
-  gap: 8px;
+  /* A long conversion label ("1862% of prev" — real data) must wrap onto its own line inside the
+     card, never run off it: the count/pct spans keep nowrap, so wrapping happens between items. */
+  flex-wrap: wrap;
+  gap: 2px 8px;
   min-width: 0;
 }
 

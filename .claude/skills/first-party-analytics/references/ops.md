@@ -56,6 +56,11 @@ statements; this script turns one into the other. Rules learned the hard way:
    - anon CANNOT call the admin RPC (grant-level 42501)
    - anon CANNOT read the admins table
    - anon CANNOT *rewrite* an event — append-only holds against UPDATE, not just SELECT
+   - the id-carrying wire shape is accepted twice as PLAIN inserts (if this starts answering
+     401/403, someone reintroduced an upsert against the no-SELECT table). Assert the STATUS pair,
+     not just the first: with the guard-trigger dedupe the second is silently skipped (201), and
+     WITHOUT it the unique index catches the same insert and answers 409 — so 201/201 vs 201/409
+     tells you which mechanism is actually live, with no secret key
    - anon CAN call the ingest RPC with a batch, twice
    - the ingest RPC returns 1 then 0 for the same event_id — dedupe proven by the RETURNED count,
      so this assertion runs against production without a secret key on the command line

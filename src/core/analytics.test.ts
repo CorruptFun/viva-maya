@@ -256,21 +256,27 @@ describe('flush ladder: rpc → direct → legacy (0015/0019)', () => {
     await _flush()
     expect(sent[1].url).toMatch(/\/rest\/v1\/events$/)
     expect(sent[1].prefer).toBe('return=minimal')
-    expect(sent[1].rows[0]).toHaveProperty('event_id') // ids still ride — 0015's index still rejects exact dupes
+    expect(sent[1].rows[0]).toHaveProperty('event_id') // ids still ride — the 0018 guard trigger dedupes them
     expect(sent[1].rows[0]).toHaveProperty('name', EVENTS.APP_OPEN)
   })
 
-  it('a 401 on the RPC steps down too — the exact status the old ladder dropped on', async () => {
-    track(EVENTS.APP_OPEN)
-    respond = () => ({ ok: false, status: 401 })
-    await _flush()
-    expect(_queueDepth()).toBe(1) // NOT dropped
-    respond = () => ({ ok: true, status: 201 })
-    await _flush()
-    expect(sent[1].url).toMatch(/\/rest\/v1\/events$/)
-  })
+  // Refusal taxonomies drift, and every one of these is reachable: 400 unknown column, 401 the
+  // impossible upsert, 403 an RLS refusal under a user JWT, 404 a server predating 0019, 409 the
+  // unique index catching a guard-trigger dedupe race. The original bug dropped a day of events by
+  // handling exactly one of them, so the contract is the whole class, not a list.
+  for (const status of [400, 401, 403, 404, 409]) {
+    it(`a ${status} on the RPC steps down to the direct POST and re-queues`, async () => {
+      track(EVENTS.APP_OPEN)
+      respond = () => ({ ok: false, status })
+      await _flush()
+      expect(_queueDepth()).toBe(1) // NOT dropped
+      respond = () => ({ ok: true, status: 201 })
+      await _flush()
+      expect(sent[1].url).toMatch(/\/rest\/v1\/events$/)
+    })
+  }
 
-  it('a 400 on the direct rung strips the ids (server predates 0015) and re-queues', async () => {
+  it('a 4xx on the direct rung strips the ids (server predates 0015) and re-queues', async () => {
     track(EVENTS.APP_OPEN)
     respond = () => ({ ok: false, status: 404 })
     await _flush() // rpc → direct
@@ -281,6 +287,15 @@ describe('flush ladder: rpc → direct → legacy (0015/0019)', () => {
     await _flush()
     expect(sent[2].rows[0]).not.toHaveProperty('event_id')
     expect(sent[2].rows[0]).toHaveProperty('name', EVENTS.APP_OPEN)
+  })
+
+  it('a 409 on the direct rung steps down too — the trigger-dedupe race must not cost the batch', async () => {
+    track(EVENTS.APP_OPEN)
+    respond = () => ({ ok: false, status: 404 })
+    await _flush() // rpc → direct
+    respond = () => ({ ok: false, status: 409 }) // 0015 unique index caught a concurrent resend
+    await _flush() // direct → legacy, re-queued
+    expect(_queueDepth()).toBe(1)
   })
 
   it('a 400 on the legacy rung drops (a genuinely bad batch must not loop forever)', async () => {

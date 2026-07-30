@@ -19,9 +19,11 @@ create table if not exists public.events (
     props       jsonb not null default '{}'::jsonb,
     -- Which build produced the event — unreadable funnels otherwise under staggered rollouts.
     app_version text,
-    -- Idempotency key (client-minted UUID). NULLABLE + FULL unique index: legacy rows insert
-    -- forever (NULLs never collide) and ON CONFLICT (event_id) can only infer a whole-column
-    -- index — a partial index would silently disable the dedupe.
+    -- Idempotency key (client-minted UUID), deduped by the GUARD TRIGGER below — never by
+    -- ON CONFLICT: PostgreSQL refuses ANY `INSERT ... ON CONFLICT` for a caller with no SELECT
+    -- policy (conflict arbitration must see existing rows), so an upsert wire shape 403s every
+    -- batch on this deliberately append-only table. NULLABLE so legacy id-less clients insert
+    -- forever; the unique index is the race backstop behind the trigger.
     event_id    uuid,
     created_at  timestamptz not null default now()
 );
@@ -46,6 +48,13 @@ create or replace function public.events_guard()
 returns trigger language plpgsql security definer
 set search_path = public, pg_temp as $$
 begin
+    -- IDEMPOTENT INGESTION: a re-sent batch (lost response) inserts nothing the second time.
+    -- Lives HERE because definer context can see rows the append-only caller can't — the only
+    -- dedupe mechanism compatible with "no SELECT policy" (ON CONFLICT is not; see event_id).
+    if new.event_id is not null
+       and exists (select 1 from public.events e where e.event_id = new.event_id) then
+        return null;  -- silently skip; degrade, never throw
+    end if;
     new.name := lower(left(trim(coalesce(new.name, '')), 40));
     if new.name !~ '^[a-z][a-z0-9_]*$' then new.name := 'unknown'; end if;  -- visible, not vanished
     if jsonb_typeof(new.props) is distinct from 'object'
@@ -191,7 +200,7 @@ begin
             from (select w.utc_at::date as day, count(distinct w.device_id) devices,
                          count(distinct w.session_id) sessions, count(*) events
                   from win w group by 1) t
-            left join (select (f.first_at at time zone 'utc')::date as day, count(*) new_devices
+            left join (select (f.first_at at time zone 'utc')::date as day, count(*) as new_devices
                        from first_seen f where f.first_at >= since group by 1) n using (day)
         ), '[]'::jsonb),
         -- Every name in the window, unfiltered — this is how the 'unknown' bucket gets SEEN.

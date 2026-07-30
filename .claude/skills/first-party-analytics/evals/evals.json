@@ -5,19 +5,46 @@
       "id": 1,
       "prompt": "I'm building a habit-tracker PWA (SvelteKit + Supabase, hosted on Netlify, repo is this one). Honestly I have no idea if anyone keeps using it after they install it. Can you add analytics so I can see daily users, retention, and where people drop off — and some kind of dashboard only I can open?",
       "expected_output": "Append-only events table migration (INSERT policy only, guard trigger), dormant never-throw client pipe with keepalive unload flush and opt-out, admin-gated aggregate RPC + app_admins, same-origin dashboard page excluded from the PWA precache, retention with honest eligibility, verify script and weekly ops.",
-      "files": []
+      "files": [],
+      "assertions": [
+        "Events table has RLS enabled with an INSERT policy and NO SELECT policy for clients (append-only to the world)",
+        "created_at cannot be chosen by the client (trigger or equivalent forces server time; a bare column default alone does not stop a client-supplied value)",
+        "Client tracking module batches events and flushes on visibilitychange/pagehide using fetch keepalive (mobile quit events survive)",
+        "Client is dormant without config and never throws into the app (guarded track/flush paths)",
+        "A working analytics opt-out exists and is honored by the tracker",
+        "Dashboard reads through a server-gated path (admin allowlist / SECURITY DEFINER RPC / server-only route); no world-readable SELECT policy and no service key in browser-delivered code",
+        "Retention is computed with honest eligibility (cohorts too young for D1/D7 are excluded or marked, not counted as 0%)",
+        "Events carry an app/build version stamp"
+      ]
     },
     {
       "id": 2,
       "prompt": "my game already logs some events to a supabase table called telemetry but i just realized i can read the whole table from the browser console with the anon key which seems... bad?? also i want crash reports when the game blows up on someone's phone. can you fix the security and give me some charts",
       "expected_output": "Audit finds the SELECT exposure and removes it (no SELECT policy; security_invoker on any views), adds guard trigger + admin-gated RPC read path instead, adds capped client_error telemetry split by build version on the dashboard, and live verification probes proving the table is no longer readable.",
-      "files": []
+      "files": [],
+      "assertions": [
+        "The world-readable SELECT policy (for select using (true)) is removed and no equivalent client-readable SELECT path remains on the telemetry/events data",
+        "The debug recentEvents() world-read is removed or replaced with a gated/owner-only path",
+        "Deployed old clients keep logging: the existing insert wire shape (including the client-sent created_at field) is still accepted or safely normalized — analytics does not go dark for cached players",
+        "Crash reporting added: window 'error' and 'unhandledrejection' handlers emit events with a cap or dedupe so an error loop cannot flood the pipe",
+        "Charts/dashboard read through a gated path (not the anon key reading raw rows), with raw behavioural rows never returned to a browser",
+        "Identity improves: the free-text nickname stops being the identity key (anonymous generated id introduced) or the PII concern is explicitly handled",
+        "The migration is additive and safe to apply while live clients are running (insert path never breaks mid-rollout)"
+      ]
     },
     {
       "id": 3,
       "prompt": "Add event tracking and an admin metrics page to this Next.js app. Hard requirement: no Google Analytics, no third-party trackers of any kind, privacy is a selling point for us. I want funnels for signup -> first-project -> invite-sent, and I don't want our ops person pasting service keys into web pages.",
       "expected_output": "First-party pipe with anonymous device id and disclosure/opt-out, canonical EVENTS vocabulary with the three funnel steps pinned by a test, funnels with null-not-zero denominators on the dashboard, service key confined to server/CI (admin RPC gate for reads), idempotent ingestion.",
-      "files": []
+      "files": [],
+      "assertions": [
+        "No third-party analytics dependency or script is introduced (no gtag/GA, Segment, PostHog, Plausible, Mixpanel, etc.)",
+        "A canonical event-name constant exists; the three funnel steps are defined once and referenced by both tracker and funnel UI (no re-typed string literals that can drift)",
+        "Funnel math handles zero denominators (renders as no-data, never NaN or a fake 0%)",
+        "The service key is unreachable from the browser: server-only usage, never NEXT_PUBLIC_*, never imported into client components; the admin page is gated server-side",
+        "Events table is append-only for clients (INSERT policy, no client SELECT policy)",
+        "Client tracker batches and flushes on page-hide with fetch keepalive"
+      ]
     }
   ]
 }

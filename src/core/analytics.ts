@@ -145,11 +145,13 @@ interface QueuedEvent {
   props: Record<string, unknown>
   app_version: string
   /**
-   * Idempotency key (0015). A flush whose response is lost re-queues its batch, so a POST that
-   * actually landed can be re-sent — the unique index on this id makes the resend a no-op instead
-   * of a double count. Minted once per event and kept across re-queues; that persistence IS the
-   * dedupe. The server-side half is `ingest_events()` (0019), NOT the `on_conflict` upsert 0015
-   * originally specified: that wire shape is impossible on this table (see `wire` below).
+   * Idempotency key (0015/0018/0019). A flush whose response is lost re-queues its batch, so a
+   * POST that actually landed can be re-sent. Minted once per event and kept across re-queues;
+   * that persistence IS the dedupe. Two server-side halves catch it, on purpose:
+   *   · `ingest_events()` (0019) — atomic `on conflict do nothing`, what the 'rpc' rung uses;
+   *   · the guard trigger (0018) — skips a row whose id it has already stored, so the lower rungs
+   *     and every OLD CACHED CLIENT still dedupe without knowing the RPC exists.
+   * Never sent as an upsert: that wire shape is impossible on this table (see `wire` below).
    */
   event_id: string
 }
@@ -175,11 +177,14 @@ let currentToken: (() => string | null) | null = null
  * lose them (the 0008/0009 lesson). Session-scoped on purpose — the next app open starts back at
  * 'rpc' and heals itself the moment the server catches up.
  *
- *   'rpc'    → POST /rest/v1/rpc/ingest_events. The ONLY path that actually dedupes (0019).
- *   'direct' → POST /rest/v1/events. 0010's plain INSERT policy, on every server since. Carries
- *              event_id (harmless, and 0015's unique index still rejects an exact duplicate) but
- *              does NOT dedupe, because it cannot: see below.
- *   'legacy' → the same, with event_id stripped — for a server that predates 0015's column.
+ *   'rpc'    → POST /rest/v1/rpc/ingest_events (0019). Dedupes ATOMICALLY, and is the only rung
+ *              that cannot lose a resend racing its own original.
+ *   'direct' → POST /rest/v1/events. 0010's plain INSERT policy, on every server since. Still
+ *              dedupes — the 0018 guard trigger skips an id it has already stored — but by an
+ *              exists() check, so a true concurrent resend can reach 0015's unique index and 409.
+ *              That is why a 4xx here steps down instead of dropping.
+ *   'legacy' → the same, with event_id stripped — for a server that predates 0015's column. No
+ *              dedupe is possible without an id; delivering the events still beats losing them.
  *
  * ⚠️ WHAT IS NOT HERE, AND MUST NOT COME BACK: `?on_conflict=event_id` +
  * `Prefer: resolution=ignore-duplicates`. 0015 specified that shape and it CANNOT WORK on this
@@ -334,6 +339,9 @@ async function flush(unloading = false): Promise<void> {
     // integer — how many rows were new — which nothing here needs; the flush is fire-and-forget.
     body = JSON.stringify({ p_events: batch })
   } else {
+    // A PLAIN insert, deliberately — never `on_conflict`/upsert, on any rung. Dedupe here is the
+    // guard trigger's (0018), where definer context can see what this client can't; it is why the
+    // lower rungs still dedupe at all.
     url = `${supabaseUrl()}/rest/v1/events`
     // return=minimal: write-only table, nothing reads the result.
     headers.Prefer = 'return=minimal'
@@ -359,19 +367,16 @@ async function flush(unloading = false): Promise<void> {
         queue = batch.concat(queue).slice(-MAX_QUEUE)
       }
       if (res.status >= 500) {
-        // Server trouble — keep the batch for the next flush.
+        // Server trouble — keep the batch for the next flush, same rung.
         requeue()
-      } else if (wire === 'rpc') {
-        // ANY 4xx here, not just the 404/PGRST202 that a server predating 0019 actually returns.
-        // Being specific is what broke this pipe before: the old code stepped down on 400 alone,
-        // so the 401 that 0015's upsert really produced fell through to the drop below and took
-        // every event with it. The direct rung is a strictly more permissive wire, so trying it
-        // can only help — and if it fails too, the batch still drops, just one flush later.
-        wire = 'direct'
-        requeue()
-      } else if (wire === 'direct' && res.status === 400) {
-        // A server that predates 0015 rejecting the unknown event_id column. Strip and re-queue.
-        wire = 'legacy'
+      } else if (wire !== 'legacy') {
+        // ANY 4xx steps down one rung and RE-QUEUES — never only the status we predicted.
+        // Guessing is what broke this pipe: the fallback was written for the 400 a missing column
+        // returns, the real failure was the 401 an impossible upsert returns, and every batch fell
+        // through to the drop below. Refusal taxonomies drift (400 unknown column, 404 missing
+        // function, 409 the unique index catching a trigger-dedupe race), and each lower rung is a
+        // strictly more permissive wire — so a wrong guess must cost a retry, never the funnel.
+        wire = wire === 'rpc' ? 'direct' : 'legacy'
         requeue()
       }
       // On the legacy rung everything strippable is already stripped: a 4xx there is a batch that

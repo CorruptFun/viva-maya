@@ -64,18 +64,19 @@ async function flush(unloading = false): Promise<void> {
       wire === 'legacy' ? batch.map(({ event_id: _d, ...rest }) => rest) : batch)
   }
   try {
+    // Both non-RPC rungs are a PLAIN insert — never `?on_conflict=`/upsert, on any rung. Dedupe
+    // there is the guard trigger's job (definer context sees what the client can't).
     const res = await fetch(url_, {
       method: 'POST', headers, body,
       keepalive: unloading,   // ← the one flag that makes the quit-flush survive page death
       cache: 'no-store',
     })
     if (!res.ok) {
-      if (res.status >= 500) requeue(batch)                 // server trouble: keep, same rung
-      else if (wire === 'rpc') {                            // ANY 4xx — see below
-        wire = 'direct'; requeue(batch)                     // DELAY, never lose (deploy race)
-      } else if (wire === 'direct' && res.status === 400) { // server predates the event_id column
-        wire = 'legacy'; requeue(batch)
-      }                                 // legacy 4xx: nothing left to strip — drop is correct
+      if (res.status >= 500) requeue(batch)          // server trouble: keep, same rung
+      else if (wire !== 'legacy') {                  // ANY 4xx steps down ONE rung — see below
+        wire = wire === 'rpc' ? 'direct' : 'legacy'  // DELAY, never lose (deploy race)
+        requeue(batch)
+      }                        // legacy 4xx: nothing left to strip — drop is correct
     }
   } catch { requeue(batch) }                                // transport: keep
 }
@@ -140,9 +141,12 @@ the identity choices above.
 - Opt-out stops collection and discards the queue; opt-in resumes.
 - `track` never throws (circular props, empty name, undefined).
 - Every event carries a distinct UUID `event_id`; the batch goes to the ingest RPC.
-- The wire NEVER carries `on_conflict` / `ignore-duplicates` on any rung (pin the regression).
-- 5xx re-queues with the SAME ids and does NOT step down a rung (that persistence IS the dedupe).
-- A 404 steps down to the direct POST and RE-QUEUES; **a 401 does too** (the status the original
-  fallback dropped on — test it explicitly, it is the whole bug).
-- On the direct rung a 400 strips the ids; a 400 on the legacy rung finally drops.
+- The wire NEVER carries `on_conflict` / `ignore-duplicates` on any rung — pin this with a test so
+  nobody helpfully reintroduces the refusal.
+- 5xx re-queues with the SAME ids and does NOT step down a rung (that persistence IS the dedupe,
+  completed server-side).
+- Loop the step-down test over the whole reachable status set — `[400, 401, 403, 404, 409]` — not
+  one representative. Each re-queues and drops one rung. Testing a single status is precisely how
+  this bug shipped.
+- On the legacy rung a 4xx finally drops: there is nothing left to strip.
 - Error telemetry: truncation, per-message dedupe, session cap, never throws.
