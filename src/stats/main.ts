@@ -29,13 +29,17 @@ import {
   fmtDayLabel,
   fmtDuration,
   fmtPct,
+  hourInZone,
   SESSION_BUCKETS,
   sessionBucketCounts,
   share,
   unexpectedCounts,
+  viewerZone,
   WALL_DEFAULTS,
   wallLevels,
   winPct,
+  zoneAbbr,
+  zoneOffsetMinutes,
   type Analytics,
   type Funnel,
   type LevelRow,
@@ -51,6 +55,63 @@ const root = document.getElementById('stats') as HTMLElement
 const WINDOWS = [7, 14, 30, 90]
 let days = 14
 let data: Analytics | null = null
+
+// ---------------------------------------------------------------------------- the clock on the wall
+
+/**
+ * The dashboard renders on the viewer's own clock by default, and the bucketing that makes that
+ * true happens SERVER-side: the zone goes to admin_analytics as p_tz (0021) and every section of
+ * the payload — days, hours, retention — comes back cut on it. Nothing is re-bucketed here, so a
+ * zone change is a REFETCH, not a re-render.
+ *
+ * UTC stays one click away rather than being retired: the push cron, the weekly digest and every
+ * server log are configured in UTC, so the moment a number here has to be lined up against one of
+ * those, UTC is the only clock that matches.
+ */
+type ZoneMode = 'local' | 'utc'
+const ZONE_KEY = 'vm_stats_zone'
+let zoneMode: ZoneMode = readZoneMode()
+
+/** The hour the endless push actually goes out — `.github/workflows/endless-push.yml` cron `0 1`. */
+const PUSH_UTC_HOUR = 1
+
+interface ZoneView {
+  /** IANA name, sent verbatim as p_tz — Postgres reads the same tz database the browser does. */
+  zone: string
+  /** Minutes ahead of UTC, resolved for now (so DST is whatever is true today, not in January).
+   *  Used only for LABELS and for the day-window zero-fill, never to move a bucket. */
+  offsetMinutes: number
+  /** Heading label: 'CDT', 'UTC'. */
+  abbr: string
+}
+
+function readZoneMode(): ZoneMode {
+  try {
+    return localStorage.getItem(ZONE_KEY) === 'utc' ? 'utc' : 'local'
+  } catch {
+    return 'local'
+  }
+}
+
+function writeZoneMode(m: ZoneMode): void {
+  try {
+    localStorage.setItem(ZONE_KEY, m)
+  } catch {
+    /* private mode — the toggle still works for this page view */
+  }
+}
+
+function zoneView(): ZoneView {
+  const zone = zoneMode === 'utc' ? 'UTC' : viewerZone()
+  const now = Date.now()
+  const offsetMinutes = zone === 'UTC' ? 0 : zoneOffsetMinutes(zone, now)
+  return { zone, offsetMinutes, abbr: zoneAbbr(zone, now) }
+}
+
+/** A UTC hour as 'H:00' on the viewer's clock. */
+function zonedHourLabel(utcHour: number, z: ZoneView): string {
+  return `${hourInZone(utcHour, z.offsetMinutes)}:00`
+}
 
 // ---------------------------------------------------------------------------- supabase client
 
@@ -293,8 +354,10 @@ function errorsCard(a: Analytics): HTMLElement {
   return card
 }
 
-function dailyCard(a: Analytics): HTMLElement {
-  const filled = fillDaily(a.daily, a.meta.days, Date.now())
+function dailyCard(a: Analytics, z: ZoneView): HTMLElement {
+  // The offset must match the clock the RPC bucketed on, or the zero-fill window lines up with
+  // nothing and a full chart renders as an empty one.
+  const filled = fillDaily(a.daily, a.meta.days, Date.now(), z.offsetMinutes)
   const labels = filled.map(d => fmtDayLabel(d.day))
   const chart = lineChart({
     series: [
@@ -310,7 +373,7 @@ function dailyCard(a: Analytics): HTMLElement {
   )
   return chartCard(
     'Daily actives',
-    'Distinct devices per UTC day — the number that did not exist before 0010. The first day of the window can be partial.',
+    `Distinct devices per day — the number that did not exist before 0010. Days are cut at midnight ${z.abbr} (0021), so an evening session counts on the evening's own bar. The first day of the window can be partial.`,
     legend([
       { label: 'Devices', colorVar: '--s1', kind: 'line' },
       { label: 'Sessions', colorVar: '--s2', kind: 'line' },
@@ -321,7 +384,8 @@ function dailyCard(a: Analytics): HTMLElement {
   )
 }
 
-function hourlyCard(a: Analytics): HTMLElement {
+function hourlyCard(a: Analytics, z: ZoneView): HTMLElement {
+  // Already cut on z.zone by the RPC — zero-fill the silent hours and label, nothing more.
   const filled = fillHourly(a.hourly)
   const chart = columnChart({
     data: filled.map(h => ({ label: `${h.hour}:00`, value: h.sessions, tipRows: [{ label: 'events', value: fmtCompact(h.events) }] })),
@@ -330,10 +394,13 @@ function hourlyCard(a: Analytics): HTMLElement {
     labelMax: true,
   })
   return chartCard(
-    'Sessions by hour (UTC)',
-    'When the game actually gets played — the push reminders currently go out at 01:00 UTC (evening in Alberta).',
+    `Sessions by hour (${z.abbr})`,
+    `When the game actually gets played — the push reminders go out at ${zonedHourLabel(PUSH_UTC_HOUR, z)} ${z.abbr}, aimed at evening in Alberta.`,
     chart,
-    tableTwin('Table view', dataTable(['Hour (UTC)', 'Sessions', 'Events'], filled.map(h => [`${h.hour}:00`, h.sessions, h.events])))
+    tableTwin(
+      'Table view',
+      dataTable([`Hour (${z.abbr})`, 'Sessions', 'Events'], filled.map(h => [`${h.hour}:00`, h.sessions, h.events]))
+    )
   )
 }
 
@@ -538,7 +605,7 @@ function sharesCard(a: Analytics): HTMLElement {
   return card
 }
 
-function filtersRow(session: Session, a: Analytics | null): HTMLElement {
+function filtersRow(session: Session, a: Analytics | null, z: ZoneView): HTMLElement {
   const row = el('div', 'filters')
   const seg = el('div', 'seg')
   seg.setAttribute('role', 'group')
@@ -554,21 +621,45 @@ function filtersRow(session: Session, a: Analytics | null): HTMLElement {
     seg.appendChild(b)
   }
   row.appendChild(seg)
+
+  // Bucketing is server-side (0021), so a clock change has to go back for freshly-cut numbers —
+  // re-rendering the payload in hand would just relabel buckets that are still on the old clock.
+  const zseg = el('div', 'seg')
+  zseg.setAttribute('role', 'group')
+  zseg.setAttribute('aria-label', 'Time zone')
+  const modes: [ZoneMode, string][] = [
+    ['local', zoneMode === 'local' ? z.abbr : 'Local'],
+    ['utc', 'UTC'],
+  ]
+  for (const [mode, label] of modes) {
+    const b = el('button', undefined, label)
+    b.setAttribute('aria-pressed', String(mode === zoneMode))
+    b.addEventListener('click', () => {
+      if (zoneMode === mode) return
+      zoneMode = mode
+      writeZoneMode(mode)
+      void load(session)
+    })
+    zseg.appendChild(b)
+  }
+  row.appendChild(zseg)
+
   const refresh = el('button', 'ghost', 'Refresh')
   refresh.addEventListener('click', () => void load(session))
   row.appendChild(refresh)
   if (a) {
-    row.appendChild(el('span', 'hint', `generated ${fmtAgo(a.meta.generated_at, Date.now()) || 'now'} · days are UTC`))
+    row.appendChild(el('span', 'hint', `generated ${fmtAgo(a.meta.generated_at, Date.now()) || 'now'}`))
   }
   return row
 }
 
 function renderDashboard(session: Session, a: Analytics): void {
+  const z = zoneView()
   const grid = el('div', 'grid')
   grid.appendChild(kpis(a))
-  grid.appendChild(dailyCard(a))
+  grid.appendChild(dailyCard(a, z))
   const pair = el('div', 'cards-2')
-  pair.appendChild(hourlyCard(a))
+  pair.appendChild(hourlyCard(a, z))
   pair.appendChild(sharesCard(a))
   grid.appendChild(pair)
   const pairRet = el('div', 'cards-2')
@@ -586,9 +677,9 @@ function renderDashboard(session: Session, a: Analytics): void {
   grid.appendChild(errorsCard(a))
   grid.appendChild(versionsCard(a))
   const foot = el('p', 'foot')
-  foot.textContent = `Window: last ${a.meta.days} days, UTC · events are pruned after ~90 days, so “new device” means first seen within retention · aggregates only — no per-player rows leave the database (0014).`
+  foot.textContent = `Window: last ${a.meta.days} days · days, hours and retention all cut in ${z.abbr} (0021) · events are pruned after ~90 days, so “new device” means first seen within retention · aggregates only — no per-player rows leave the database (0014).`
   grid.appendChild(foot)
-  page(session, filtersRow(session, a), grid)
+  page(session, filtersRow(session, a, z), grid)
 }
 
 // ---------------------------------------------------------------------------- data loading + routing
@@ -600,7 +691,10 @@ async function load(session: Session): Promise<void> {
   else page(session, notice('Loading…', 'Fetching the aggregates.'))
 
   const c = await sb()
-  const { data: raw, error } = await c.rpc('admin_analytics', { p_days: days })
+  // p_tz is what makes every bucket in the response land on the viewer's clock (0021). An older
+  // server without the parameter answers PGRST202, handled below as a real error rather than
+  // silently falling back — wrong-but-plausible numbers are worse than a visible failure here.
+  const { data: raw, error } = await c.rpc('admin_analytics', { p_days: days, p_tz: zoneView().zone })
   if (error) {
     // 42501 is the deliberate "not an admin" answer from 0014 — a different page, not an error.
     if (error.code === '42501' || /42501|permission denied|admin-only/i.test(error.message)) {

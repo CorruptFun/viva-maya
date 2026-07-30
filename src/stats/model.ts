@@ -320,19 +320,26 @@ export function coerceAnalytics(raw: unknown): Analytics {
 
 // ---------------------------------------------------------------------------- time series shaping
 
-const DAY_MS = 86_400_000
-
-/** Epoch ms → UTC 'YYYY-MM-DD'. UTC on purpose: the server buckets days in UTC (0014, matching the
- *  0010 events_daily view) — a browser-local key here would disagree with it around midnight.
+/** Epoch ms → UTC 'YYYY-MM-DD'. The zero-offset case of `zoneDayKey`, which is what the RPC still
+ *  returns whenever no p_tz is asked for (0021).
  *  NOTE: the RACE day is a different clock on purpose (America/Edmonton since 0013_race_day). */
 export function utcDayKey(ms: number): string {
   return new Date(ms).toISOString().slice(0, 10)
 }
 
-/** The n UTC day keys ending on (and including) `nowMs`'s day, oldest first. */
-export function lastNDays(n: number, nowMs: number): string[] {
+/**
+ * The n day keys ending on (and including) `nowMs`'s day in a zone `offsetMinutes` ahead of UTC,
+ * oldest first. This MUST agree with the clock the RPC bucketed on (0021's p_tz) — a window built
+ * on a different calendar misses every row and renders the whole chart as zeroes.
+ *
+ * Walks calendar dates rather than subtracting 86.4e6 ms per step: across a DST seam a fixed-length
+ * day duplicates one date and skips another, which is exactly the kind of gap that reads as "nobody
+ * played that day".
+ */
+export function lastNDays(n: number, nowMs: number, offsetMinutes = 0): string[] {
+  const [y, m, d] = zoneDayKey(nowMs, offsetMinutes).split('-').map(Number)
   const out: string[] = []
-  for (let i = n - 1; i >= 0; i--) out.push(utcDayKey(nowMs - i * DAY_MS))
+  for (let i = n - 1; i >= 0; i--) out.push(utcDayKey(Date.UTC(y, m - 1, d - i)))
   return out
 }
 
@@ -352,15 +359,104 @@ const EMPTY_DAY: Omit<DailyRow, 'day'> = {
  * exists to show — the silence. (The first bucket can be partial: the window opens days×24h ago,
  * not at that day's midnight.)
  */
-export function fillDaily(rows: DailyRow[], days: number, nowMs: number): DailyRow[] {
+export function fillDaily(rows: DailyRow[], days: number, nowMs: number, offsetMinutes = 0): DailyRow[] {
   const byDay = new Map(rows.map(r => [r.day, r]))
-  return lastNDays(days, nowMs).map(day => byDay.get(day) ?? { day, ...EMPTY_DAY })
+  return lastNDays(days, nowMs, offsetMinutes).map(day => byDay.get(day) ?? { day, ...EMPTY_DAY })
 }
 
 /** Zero-fill all 24 UTC hours (the RPC omits hours with no events). */
 export function fillHourly(rows: HourlyRow[]): HourlyRow[] {
   const byHour = new Map(rows.map(r => [r.hour, r]))
   return Array.from({ length: 24 }, (_, hour) => byHour.get(hour) ?? { hour, sessions: 0, events: 0 })
+}
+
+// ---------------------------------------------------------------------------- the viewer's clock
+
+/**
+ * The zone the dashboard renders wall-clock times in — whatever the browser says it is sitting in.
+ * The server keeps bucketing in UTC (0014/0015) and that does not change; this is a READ-SIDE
+ * relabel so the owner stops converting hours in their head.
+ *
+ * Falls back to UTC when the runtime will not answer, which also makes every function below safe to
+ * call under a test runner or a headless build with no zone database.
+ */
+export function viewerZone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+  } catch {
+    return 'UTC'
+  }
+}
+
+/**
+ * Minutes `zone` runs AHEAD of UTC at instant `ms` — America/Chicago is -300 in July and -360 in
+ * January. Resolved per-instant rather than from a constant precisely because that pair exists: a
+ * hard-coded -360 for "CST" is wrong for two thirds of the year.
+ */
+export function zoneOffsetMinutes(zone: string, ms: number): number {
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: zone,
+      hourCycle: 'h23',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    }).formatToParts(new Date(ms))
+    const p: Record<string, string> = {}
+    for (const { type, value } of parts) p[type] = value
+    // %24 guards the engines that still render midnight as hour "24" under an h23 cycle.
+    const wall = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour % 24, +p.minute, +p.second)
+    if (!Number.isFinite(wall)) return 0
+    return Math.round((wall - Math.floor(ms / 1000) * 1000) / 60_000)
+  } catch {
+    return 0
+  }
+}
+
+/** Short zone name for headings — 'CDT', 'UTC', or a 'GMT+5:30' style fallback where there is no
+ *  abbreviation. Every heading that shows an hour carries one of these; an unlabelled hour on a
+ *  dashboard read from two timezones is exactly the ambiguity this whole section exists to remove. */
+export function zoneAbbr(zone: string, ms: number): string {
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', { timeZone: zone, timeZoneName: 'short' }).formatToParts(
+      new Date(ms)
+    )
+    return parts.find(p => p.type === 'timeZoneName')?.value || zone
+  } catch {
+    return zone
+  }
+}
+
+/** Whole hours to rotate a UTC histogram by to land in a zone `offsetMinutes` ahead of UTC. */
+function hourShift(offsetMinutes: number): number {
+  return Math.round(offsetMinutes / 60)
+}
+
+/** A UTC hour-of-day read as a wall-clock hour in a zone `offsetMinutes` ahead of UTC. */
+export function hourInZone(utcHour: number, offsetMinutes: number): number {
+  return (((utcHour + hourShift(offsetMinutes)) % 24) + 24) % 24
+}
+
+/**
+ * NOTE ON WHERE BUCKETING HAPPENS. Nothing here re-buckets. Since 0021 the RPC takes `p_tz` and
+ * cuts days, hours, retention and new-device firsts on that one clock, so this file's job is to
+ * decide which zone to ask for and to label what comes back.
+ *
+ * The browser could rotate the 24 hour buckets itself — that much is only a relabel — but it could
+ * never re-cut a DAY bucket, because those are count(distinct device_id) and the raw rows never
+ * leave the database. Doing hours here and days there would have put two clocks in one payload.
+ * One clock, chosen by the caller, is the whole point.
+ *
+ * `zoneDayKey` below still matters on this side: the zero-fill window has to be built from the
+ * SAME calendar the server bucketed on, or every day misses its row and the chart reads as silence.
+ */
+
+/** Epoch ms → 'YYYY-MM-DD' as read in a zone `offsetMinutes` ahead of UTC. */
+export function zoneDayKey(ms: number, offsetMinutes: number): string {
+  return new Date(ms + offsetMinutes * 60_000).toISOString().slice(0, 10)
 }
 
 // ---------------------------------------------------------------------------- rates & walls

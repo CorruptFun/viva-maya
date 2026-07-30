@@ -11,6 +11,7 @@ import {
   fmtDuration,
   fmtPct,
   FUNNEL_DEFS,
+  hourInZone,
   SESSION_BUCKETS,
   sessionBucketCounts,
   lastNDays,
@@ -22,6 +23,9 @@ import {
   utcDayKey,
   wallLevels,
   winPct,
+  zoneAbbr,
+  zoneDayKey,
+  zoneOffsetMinutes,
   type DailyRow,
   type LevelRow,
 } from './model'
@@ -194,6 +198,69 @@ describe('day window filling', () => {
     expect(filled).toHaveLength(24)
     expect(filled[18].sessions).toBe(4)
     expect(filled[0]).toEqual({ hour: 0, sessions: 0, events: 0 })
+  })
+})
+
+describe('rendering hours on the viewer’s clock', () => {
+  const july = Date.UTC(2026, 6, 30, 12, 0, 0) // daylight time
+  const january = Date.UTC(2026, 0, 15, 12, 0, 0) // standard time
+
+  it('resolves the offset per instant, so Central is not pinned to one of its two offsets', () => {
+    expect(zoneOffsetMinutes('America/Chicago', july)).toBe(-300) // CDT, UTC-5
+    expect(zoneOffsetMinutes('America/Chicago', january)).toBe(-360) // CST, UTC-6
+    expect(zoneOffsetMinutes('UTC', july)).toBe(0)
+    expect(zoneOffsetMinutes('Asia/Kolkata', july)).toBe(330)
+  })
+
+  it('names the zone it actually rendered, DST included', () => {
+    expect(zoneAbbr('America/Chicago', july)).toBe('CDT')
+    expect(zoneAbbr('America/Chicago', january)).toBe('CST')
+    expect(zoneAbbr('UTC', july)).toBe('UTC')
+  })
+
+  it('never throws on a zone the runtime will not parse — a bad clock must not blank the page', () => {
+    expect(zoneOffsetMinutes('Mars/Olympus', july)).toBe(0)
+    expect(zoneAbbr('Mars/Olympus', july)).toBe('Mars/Olympus')
+  })
+
+  it('reads a UTC-scheduled hour on the viewer’s clock (the push cron is fixed at 01:00 UTC)', () => {
+    expect(hourInZone(1, -300)).toBe(20) // the 01:00 UTC push lands at 20:00 CDT
+    expect(hourInZone(1, -360)).toBe(19) // …and at 19:00 once CST returns
+  })
+
+  it('zoneDayKey reads the calendar date the zone is on, not the one UTC is on', () => {
+    const lateEvening = Date.UTC(2026, 6, 31, 2, 0, 0) // 02:00Z on the 31st…
+    expect(utcDayKey(lateEvening)).toBe('2026-07-31')
+    expect(zoneDayKey(lateEvening, -300)).toBe('2026-07-30') // …is still Thursday evening in Chicago
+    expect(zoneDayKey(lateEvening, 330)).toBe('2026-07-31') // Kolkata is already well into the 31st
+  })
+
+  /**
+   * The regression this exists for: the RPC cuts days on p_tz (0021), and fillDaily zero-fills a
+   * window it builds itself. If the two use different calendars the keys never match and a full
+   * chart renders as an unbroken row of zeroes — a silent, total misread, not a visible error.
+   */
+  it('builds the zero-fill window on the SAME clock the server bucketed on', () => {
+    const lateEvening = Date.UTC(2026, 6, 31, 2, 0, 0) // 21:00 Jul 30 in Chicago
+    expect(lastNDays(3, lateEvening, -300)).toEqual(['2026-07-28', '2026-07-29', '2026-07-30'])
+    expect(lastNDays(3, lateEvening, 0)).toEqual(['2026-07-29', '2026-07-30', '2026-07-31'])
+  })
+
+  it('fills a Chicago-bucketed payload without dropping its newest day', () => {
+    const lateEvening = Date.UTC(2026, 6, 31, 2, 0, 0)
+    const rows: DailyRow[] = [
+      { day: '2026-07-30', devices: 4, signed_in: 1, sessions: 5, events: 40, app_opens: 5, standalone_opens: 2, new_devices: 1 },
+    ]
+    const filled = fillDaily(rows, 2, lateEvening, -300)
+    expect(filled.map(d => d.day)).toEqual(['2026-07-29', '2026-07-30'])
+    expect(filled[1].devices).toBe(4) // the server's newest row is IN the window, not past its end
+  })
+
+  it('walks calendar dates across a DST seam — no duplicated or skipped day', () => {
+    const afterSpringForward = Date.UTC(2026, 2, 10, 12, 0, 0) // US spring-forward was Mar 8
+    const week = lastNDays(5, afterSpringForward, -300)
+    expect(week).toEqual(['2026-03-06', '2026-03-07', '2026-03-08', '2026-03-09', '2026-03-10'])
+    expect(new Set(week).size).toBe(5)
   })
 })
 
