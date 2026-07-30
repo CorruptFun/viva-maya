@@ -49,7 +49,7 @@ admin-gated server-side, aggregates only; see `docs/ANALYTICS_AND_PUSH.md`.
 - [x] **Social & economy layer (round 4)** — daily + weekly race leaderboards, daily-winner
       and weekly-champion prize tiers + coronation, referral program, free spins from MEGA WINs, jackpot-wheel
       spectacle, lives tuning (5 / 20 min / grace below L10). See
-      `docs/SOCIAL_AND_ECONOMY.md` and `docs/GO_LIVE_CHECKLIST.md`.
+      `docs/GO_LIVE_CHECKLIST.md`.
 - [x] **Lucky Deal & charms** — a card pick'em dealt by a three-win HOT STREAK: nine
       face-down cards, turn them until three match. The first reward surface in the game
       the player *chooses* their way through (the slot, wheel and plinko are all watched),

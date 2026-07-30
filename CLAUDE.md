@@ -83,10 +83,21 @@ commit or paste key material.** Publishable client config belongs in
 
 ## Design docs
 
-`Supabase_Architecture.md` (schema + anti-cheat handshake),
-`Treasury_Architecture.md`, `Growth_and_Economy_Strategy.md`,
+In this repo: `Supabase_Architecture.md` (schema + anti-cheat handshake) and
 `Implementation_Roadmap.md`. Read the relevant one before changing economy or
 security behavior.
+
+**Not in this repo — the private vault.** `SOCIAL_AND_ECONOMY.md` (reward loops
+and the fairness "iron rules"), `IN_GAME_PURCHASES.md`, plus the Web3 tokenomics
+docs, moved to `CorruptFun/corrupt-brain-vault` on 2026-07-30. This repo is
+public, and those are product strategy rather than code documentation. Code
+comments in `src/core/charms.ts`, `daily.ts` and `leaderboard.ts` still cite
+`docs/SOCIAL_AND_ECONOMY.md`; that path is gone, but each cite restates its rule
+inline, so nothing is lost by not having it.
+
+Anything describing monetization, tokenomics, or unreleased strategy belongs in
+the vault, not here — it is the one category this repo's visibility makes
+expensive.
 
 ## Deploy
 
