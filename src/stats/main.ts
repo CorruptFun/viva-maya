@@ -27,7 +27,10 @@ import {
   fmtAgo,
   fmtCompact,
   fmtDayLabel,
+  fmtDuration,
   fmtPct,
+  SESSION_BUCKETS,
+  sessionBucketCounts,
   share,
   unexpectedCounts,
   WALL_DEFAULTS,
@@ -204,7 +207,90 @@ function kpis(a: Analytics): HTMLElement {
   row.appendChild(
     statTile('Sign-in share', fmtPct(share(t.signed_in, t.devices)), 'devices that were ever signed in')
   )
+  row.appendChild(
+    statTile('Median session', a.sessions.total > 0 ? fmtDuration(a.sessions.median_seconds) : '—', `${fmtPct(share(a.sessions.bounces, a.sessions.total))} bounce`)
+  )
+  const errTile = statTile(
+    'Client errors',
+    fmtCompact(a.errors.events),
+    a.errors.events > 0 ? `⚠ ${fmtCompact(a.errors.devices)} devices affected` : 'none in window'
+  )
+  // Status color is legitimate here — it IS a status — and it never rides alone: the ⚠ icon and
+  // the label carry the meaning for anyone the color doesn't reach.
+  if (a.errors.events > 0) errTile.querySelector('.tile-sub')?.classList.add('tile-alert')
+  row.appendChild(errTile)
   return row
+}
+
+function retentionCard(a: Analytics): HTMLElement {
+  const r = a.retention
+  const d1 = share(r.d1.returned, r.d1.eligible)
+  const d7 = share(r.d7.returned, r.d7.eligible)
+  const tiles = el('div', 'kpis')
+  tiles.appendChild(statTile('D1 retention', fmtPct(d1), `${fmtCompact(r.d1.returned)} of ${fmtCompact(r.d1.eligible)} eligible`))
+  tiles.appendChild(statTile('D7 retention', fmtPct(d7), `${fmtCompact(r.d7.returned)} of ${fmtCompact(r.d7.eligible)} eligible`))
+  const card = chartCard(
+    'Retention',
+    'Of devices first seen on a day, how many came back exactly 1 / 7 days later. “—” = that cohort’s day hasn’t fully elapsed yet; small cohorts swing hard, so read the aggregate tiles first.',
+    tiles
+  )
+  card.appendChild(
+    tableTwin(
+      'Cohorts',
+      dataTable(
+        ['First seen', 'Devices', 'D1', 'D7'],
+        r.cohorts.map(c => [
+          c.day,
+          c.cohort,
+          c.d1_ready ? `${c.d1} (${fmtPct(share(c.d1, c.cohort))})` : '—',
+          c.d7_ready ? `${c.d7} (${fmtPct(share(c.d7, c.cohort))})` : '—',
+        ])
+      )
+    )
+  )
+  return card
+}
+
+function sessionsCard(a: Analytics): HTMLElement {
+  const s = a.sessions
+  const counts = sessionBucketCounts(s)
+  const chart = columnChart({
+    data: counts.map((count, i) => ({ label: SESSION_BUCKETS[i], value: count })),
+    colorVar: '--s1',
+    labelMax: true,
+    height: 150,
+    xTickEvery: 1,
+  })
+  return chartCard(
+    'Session length',
+    `Median ${s.total > 0 ? fmtDuration(s.median_seconds) : '—'} across ${fmtCompact(s.total)} sessions · ${fmtPct(share(s.bounces, s.total))} bounced (≤1 event or <10s).`,
+    chart,
+    tableTwin(
+      'Table view',
+      dataTable(['Length', 'Sessions'], counts.map((count, i) => [SESSION_BUCKETS[i], count]))
+    )
+  )
+}
+
+function errorsCard(a: Analytics): HTMLElement {
+  const e = a.errors
+  if (e.events === 0) {
+    return chartCard('Client errors', '', el('p', 'ok-note', '✓ No uncaught errors reached the top in this window.'))
+  }
+  const now = Date.now()
+  const card = chartCard(
+    'Client errors',
+    'Uncaught exceptions and unhandled rejections, capped at 5 per session per device. The builds column is the tell: an error confined to one build is that deploy’s bug.',
+    dataTable(
+      ['Message', 'Count', 'Devices', 'Builds', 'Last seen'],
+      e.top.map(row => [row.message, row.count, row.devices, row.versions.join(', '), fmtAgo(row.last_seen, now)])
+    )
+  )
+  const flag = el('div', 'flag')
+  flag.appendChild(el('span', 'flag-swatch'))
+  flag.appendChild(el('span', undefined, `⚠ ${fmtCompact(e.events)} error events from ${fmtCompact(e.devices)} devices`))
+  card.insertBefore(flag, card.children[1])
+  return card
 }
 
 function dailyCard(a: Analytics): HTMLElement {
@@ -485,6 +571,10 @@ function renderDashboard(session: Session, a: Analytics): void {
   pair.appendChild(hourlyCard(a))
   pair.appendChild(sharesCard(a))
   grid.appendChild(pair)
+  const pairRet = el('div', 'cards-2')
+  pairRet.appendChild(retentionCard(a))
+  pairRet.appendChild(sessionsCard(a))
+  grid.appendChild(pairRet)
   grid.appendChild(levelsCard(a))
   const funnels = el('div', 'funnels')
   for (const f of buildFunnels(a.counts)) funnels.appendChild(funnelCard(f))
@@ -493,6 +583,7 @@ function renderDashboard(session: Session, a: Analytics): void {
   pair2.appendChild(dealCard(a))
   pair2.appendChild(plinkoCard(a))
   grid.appendChild(pair2)
+  grid.appendChild(errorsCard(a))
   grid.appendChild(versionsCard(a))
   const foot = el('p', 'foot')
   foot.textContent = `Window: last ${a.meta.days} days, UTC · events are pruned after ~90 days, so “new device” means first seen within retention · aggregates only — no per-player rows leave the database (0014).`

@@ -7,4 +7,8 @@ dev-dist/
 # these guard a bare .env / .env.production so keys are never committed by accident.
 .env
 .env.*
-.claude/
+# Local agent state stays out; the versioned skills (.claude/skills/) ship with the repo.
+# `.claude/*` + negation (not `.claude/`): git cannot re-include children of an ignored DIRECTORY,
+# so the directory itself must not match — only its non-skills contents.
+.claude/*
+!.claude/skills/

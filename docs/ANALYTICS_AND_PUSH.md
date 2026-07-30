@@ -21,6 +21,8 @@ anyone; the one measured churn (a W30 player absent from W31) crossed exactly th
 | Opt-out UI | `src/view/cloudmodal.ts` → "Gameplay stats" |
 | Tests | `src/core/analytics.test.ts` |
 | **Dashboard** (admin-gated read path) | `supabase/migrations/0014_analytics_dashboard.sql` + `stats.html` + `src/stats/` |
+| **Hardening** (dedupe, retention, sessions, crash telemetry, service-role gate) | `supabase/migrations/0015_analytics_hardening.sql` |
+| **Weekly ops** (prune + digest to a pinned issue) | `.github/workflows/analytics-weekly.yml` + `scripts/analytics-digest.mjs` |
 
 **The table is append-only to every client.** `0010` grants INSERT and *no SELECT at all* — RLS denies
 what it doesn't allow, so a visitor holding the publishable key can write their own events and read
@@ -137,8 +139,8 @@ scripts/verify-rls.sh https://deskabqqxqqibxjffwmb.supabase.co <publishable-key>
 ```
 
 Each "must be refused" assertion is paired with a control probe so an empty result can't be
-confused with a missing table. Expect `14 passed, 0 failed` with a secret key in the environment
-(`10 passed` + 2 SKIP-labelled sender checks without one).
+confused with a missing table. Expect `17 passed, 0 failed` with a secret key in the environment
+(`12 passed` + 3 SKIP-labelled effect checks without one).
 
 ### 1b. Turn on the dashboard (`0014` — additive, any order vs the client deploy)
 
@@ -159,6 +161,33 @@ confused with a missing table. Expect `14 passed, 0 failed` with a secret key in
 The dashboard needs no keys of its own: it uses the publishable key baked into the build plus your
 Google session, and the server decides. Locally, `npm run dev` + `.env.local` serves it at
 `http://localhost:5173/stats.html` against whatever stack the env points at.
+
+### 1c. Hardening (`0015`) — dedupe, retention, sessions, crash telemetry, weekly ops
+
+Paste `0015_analytics_hardening.sql` into the SQL editor **before deploying a client built from
+this revision** (the standing two-phase rule). What it adds:
+
+- **`events.event_id` + a unique index** — idempotent ingestion. A flush whose response is lost is
+  re-sent with the same ids and inserts nothing the second time. The client is resilient to the
+  wrong order anyway: its first 400 flips a session-scoped legacy mode that **re-queues** the batch
+  and strips ids — a deploy that outruns its migration delays events, never loses them. Old cached
+  clients keep writing id-less rows forever; the nullable column + full unique index make both
+  generations coexist.
+- **`admin_analytics` v2** — new `retention` (exact-day D1/D7 with honest eligibility), `sessions`
+  (median length, bounce rate, five duration buckets) and `errors` (uncaught-exception rollup,
+  split by build) sections, all rendered by the dashboard. The gate now also admits the
+  **service_role JWT** so the digest reports the same numbers — no second aggregation to drift.
+- **`client_error` events** — `core/analytics.ts` reports uncaught exceptions and unhandled
+  rejections, hard-capped (5/session, one per distinct message, truncated) so an error loop can't
+  flood the pipe. A broken deploy now shows up as a red tile instead of silence.
+- **Weekly ops** — `analytics-weekly.yml` (Mondays 14:00 UTC) runs `prune_events(90)` with the
+  service key (0015 grants it EXECUTE — scheduling finally happens, without pg_cron) and posts a
+  digest to the run summary **and a single reusable issue titled "📊 Analytics digest"** (updated
+  in place; the comment ping is what reaches your phone). Needs the same `SUPABASE_SERVICE_KEY`
+  secret the push sender already uses — no new setup.
+
+Then re-run `scripts/verify-rls.sh` (see the counts above — the dedupe check proves the effect by
+row count, not status code).
 
 ### 2. Set the repo variables and secrets
 

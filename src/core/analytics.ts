@@ -123,6 +123,16 @@ export const EVENTS = {
   /** The update toast, which the PWA stale-build trap makes worth watching. */
   UPDATE_SHOWN: 'update_shown',
   UPDATE_APPLIED: 'update_applied',
+
+  /**
+   * {message, source?, stack?, kind?} — an uncaught exception or unhandled rejection reached the
+   * top. Without this, a broken deploy is invisible until a player complains — and this game's
+   * players don't file bugs, they quietly stop opening it. Capped hard (ERROR_LIMIT per session,
+   * one per distinct message) so an error loop in a render frame cannot flood the pipe; the
+   * dashboard splits these by app_version, which is what turns "something broke" into "THIS deploy
+   * broke it".
+   */
+  CLIENT_ERROR: 'client_error',
 } as const
 
 export type EventName = (typeof EVENTS)[keyof typeof EVENTS]
@@ -134,6 +144,13 @@ interface QueuedEvent {
   name: string
   props: Record<string, unknown>
   app_version: string
+  /**
+   * Idempotency key (0015). A flush whose response is lost re-queues its batch, so a POST that
+   * actually landed can be re-sent — the unique index on this id makes the resend a no-op
+   * (`on_conflict=event_id` + ignore-duplicates) instead of a double count. Minted once per event
+   * and kept across re-queues; that persistence IS the dedupe.
+   */
+  event_id: string
 }
 
 /** Flush when the queue reaches this many — keeps a chatty session from hoarding events in memory. */
@@ -151,6 +168,18 @@ let started = false
 /** Set by initAnalytics from core/cloud, so events can carry attribution without importing cloud here. */
 let currentUserId: (() => string | null) | null = null
 let currentToken: (() => string | null) | null = null
+/**
+ * TRUE after a 400 while sending event_id — the server predates 0015 (its events table has no such
+ * column, and PostgREST rejects unknown columns). From then on this session strips event_id and
+ * drops the on_conflict param, and the batch that hit the 400 is RE-QUEUED, not dropped: a deploy
+ * that outruns its migration must delay events, never lose them (the 0008/0009 lesson). Session-
+ * scoped on purpose — the next open retries with ids and heals itself once 0015 is applied.
+ */
+let schemaFallback = false
+/** client_error budget: at most ERROR_LIMIT per session, one per distinct message. */
+const ERROR_LIMIT = 5
+let errorsSent = 0
+const seenErrors = new Set<string>()
 
 function uuid(): string {
   try {
@@ -233,6 +262,7 @@ export function track(name: EventName | string, props: Record<string, unknown> =
       name,
       props,
       app_version: APP_VERSION,
+      event_id: uuid(),
     })
 
     // Drop the OLDEST on overflow: during a long offline stretch the recent events are the ones
@@ -271,19 +301,25 @@ async function flush(unloading = false): Promise<void> {
 
   const token = currentToken?.() ?? null
   const key = supabaseKey() as string
-  const body = JSON.stringify(batch)
+  // Pre-0015 servers reject unknown columns outright, so in fallback mode the ids are stripped
+  // from the wire (the queue keeps them — they go back on if the session ever leaves fallback).
+  const body = JSON.stringify(
+    schemaFallback ? batch.map(({ event_id: _drop, ...rest }) => rest) : batch
+  )
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     apikey: key,
     // A signed-in player's own JWT, so auth.uid() matches the user_id above and RLS admits the row.
     // Anonymous rows go up under the publishable key, which is what the 0010 policy is built for.
     Authorization: `Bearer ${token ?? key}`,
-    // No response body wanted; this is a write-only table and nothing reads the result.
-    Prefer: 'return=minimal',
+    // return=minimal: write-only table, nothing reads the result. ignore-duplicates is the dedupe
+    // half of event_id (0015): a re-sent batch whose first attempt actually landed inserts nothing.
+    Prefer: schemaFallback ? 'return=minimal' : 'return=minimal,resolution=ignore-duplicates',
   }
 
   try {
-    const res = await fetch(`${supabaseUrl()}/rest/v1/events`, {
+    const conflict = schemaFallback ? '' : '?on_conflict=event_id'
+    const res = await fetch(`${supabaseUrl()}/rest/v1/events${conflict}`, {
       method: 'POST',
       headers,
       body,
@@ -291,11 +327,41 @@ async function flush(unloading = false): Promise<void> {
       // Analytics must never keep a connection alive that the game needs.
       cache: 'no-store',
     })
-    // 4xx means this batch will never be accepted (bad shape, revoked key) — dropping it is correct.
-    // Only a transport failure or a 5xx is worth keeping.
-    if (!res.ok && res.status >= 500) queue = batch.concat(queue).slice(-MAX_QUEUE)
+    if (!res.ok) {
+      if (res.status >= 500) {
+        // Server trouble — keep the batch for the next flush.
+        queue = batch.concat(queue).slice(-MAX_QUEUE)
+      } else if (!schemaFallback && res.status === 400) {
+        // First 400 while sending event_id: almost certainly a server that predates 0015 (unknown
+        // column / unknown on_conflict target). Flip to the legacy wire shape and RE-QUEUE — a
+        // client deployed ahead of its migration must delay events, never lose them. If the 400
+        // was really something else, the retry without ids will 400 again and THEN drop below.
+        schemaFallback = true
+        queue = batch.concat(queue).slice(-MAX_QUEUE)
+      }
+      // Any other 4xx: this batch will never be accepted (bad shape, revoked key) — dropping it
+      // is correct.
+    }
   } catch {
     queue = batch.concat(queue).slice(-MAX_QUEUE)
+  }
+}
+
+/**
+ * Report an uncaught error as a CLIENT_ERROR event — bounded hard, because error telemetry that can
+ * flood is worse than none: one per distinct message per session, ERROR_LIMIT per session total,
+ * every string truncated. Exported for tests; the game never calls it directly (the window
+ * listeners in initAnalytics do).
+ */
+export function _reportClientError(message: unknown, extra: Record<string, unknown> = {}): void {
+  try {
+    const msg = String(message ?? 'unknown').slice(0, 200)
+    if (errorsSent >= ERROR_LIMIT || seenErrors.has(msg)) return
+    seenErrors.add(msg)
+    errorsSent++
+    track(EVENTS.CLIENT_ERROR, { message: msg, ...extra })
+  } catch {
+    // the error reporter must never itself become an error source
   }
 }
 
@@ -332,6 +398,29 @@ export function initAnalytics(
     window.addEventListener('pagehide', () => void flush(true))
     // A reconnect is the natural moment to drain anything the offline stretch accumulated.
     window.addEventListener('online', () => void flush())
+
+    // Crash telemetry (0015). Uncaught exceptions and unhandled rejections are the failures no
+    // player will ever report — they just stop opening the game. `source` keeps only the file's
+    // basename: full URLs add bytes, not signal, when every bundle is one hashed file. The first
+    // stack frames ride along for the dashboard's top-errors table.
+    window.addEventListener('error', e => {
+      const src = typeof e.filename === 'string' ? e.filename.split('/').pop() : undefined
+      const stack = (e.error as { stack?: unknown } | null)?.stack
+      _reportClientError(e.message, {
+        source: src ? `${src}:${e.lineno ?? 0}`.slice(0, 120) : undefined,
+        stack: typeof stack === 'string' ? stack.split('\n').slice(0, 3).join(' | ').slice(0, 300) : undefined,
+      })
+    })
+    window.addEventListener('unhandledrejection', e => {
+      const reason = e.reason as { message?: unknown; stack?: unknown } | null | undefined
+      _reportClientError(reason?.message ?? reason, {
+        kind: 'promise',
+        stack:
+          typeof reason?.stack === 'string'
+            ? reason.stack.split('\n').slice(0, 3).join(' | ').slice(0, 300)
+            : undefined,
+      })
+    })
   }
 
   track(EVENTS.APP_OPEN, {
@@ -348,6 +437,11 @@ export function _queueDepth(): number {
   return queue.length
 }
 
+/** Test seam: run a flush and await it (flush is otherwise fire-and-forget internal). */
+export function _flush(unloading = false): Promise<void> {
+  return flush(unloading)
+}
+
 /** Test seam: drop all state so each test starts clean. */
 export function _reset(): void {
   queue = []
@@ -358,4 +452,7 @@ export function _reset(): void {
   started = false
   currentUserId = null
   currentToken = null
+  schemaFallback = false
+  errorsSent = 0
+  seenErrors.clear()
 }

@@ -1,0 +1,72 @@
+name: Analytics weekly ops
+
+# Monday morning at home (14:00 UTC = 7-8 AM America/Edmonton, DST either way): prune old events,
+# then deliver the weekly digest. One workflow, because the two are the same promise — "the
+# measurement layer maintains itself" — and a Monday read pairs with the season that just closed.
+#
+# The digest goes two places: the run's step summary (always), and a single reusable issue titled
+# "📊 Analytics digest" (updated in place, never a new issue per week — a weekly new-issue firehose
+# trains you to ignore it, which defeats the whole point).
+on:
+  schedule:
+    - cron: '0 14 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: analytics-weekly
+  cancel-in-progress: false
+
+jobs:
+  ops:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Retention actually happens (0010 shipped prune_events unscheduled on purpose — a migration
+      # must not silently start deleting; a visible weekly job is the right place for it).
+      # continue-on-error: a prune hiccup must not cost the week's digest; the summary line and the
+      # step's red mark still surface it.
+      - name: Prune events older than 90 days
+        continue-on-error: true
+        env:
+          SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+          # Service-role key (same secret the push sender uses): prune_events is executable by
+          # service_role only (0015) — the publishable key cannot reach it.
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          removed=$(curl -sS -X POST "$SUPABASE_URL/rest/v1/rpc/prune_events" \
+            -H "apikey: $SUPABASE_SERVICE_KEY" \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" \
+            -H "Content-Type: application/json" \
+            -d '{"keep_days":90}')
+          echo "prune_events removed: $removed rows"
+          echo "🧹 Pruned events older than 90 days: **$removed** rows" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Build digest
+        env:
+          SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          DIGEST_DAYS: 7
+        run: |
+          node scripts/analytics-digest.mjs > digest.md
+          cat digest.md >> "$GITHUB_STEP_SUMMARY"
+
+      # Upsert-by-title so there is exactly ONE digest issue, forever fresh. Notifications on the
+      # edit reach the owner's phone via the GitHub app — the digest comes to you.
+      - name: Post digest to the pinned issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TITLE: '📊 Analytics digest'
+        run: |
+          number=$(gh issue list --state open --search "in:title \"$TITLE\"" --json number,title \
+            --jq '[.[] | select(.title == env.TITLE)][0].number // empty')
+          if [ -n "$number" ]; then
+            gh issue edit "$number" --body-file digest.md
+            gh issue comment "$number" --body "Updated $(date -u +%F). See the issue body for this week's digest."
+          else
+            gh issue create --title "$TITLE" --body-file digest.md
+          fi

@@ -456,6 +456,16 @@ details summary {
   background: var(--critical);
 }
 
+.tile-alert {
+  color: var(--critical);
+}
+
+.ok-note {
+  color: var(--good-text);
+  font-size: 13px;
+  margin: 4px 0 0;
+}
+
 .notice {
   background: var(--surface);
   border: 1px solid var(--border);

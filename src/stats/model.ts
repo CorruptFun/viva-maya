@@ -95,6 +95,49 @@ export interface VersionRow {
   last_seen: string
 }
 
+export interface RetentionSide {
+  /** Devices whose day0+N has fully elapsed — the honest denominator. */
+  eligible: number
+  returned: number
+}
+
+export interface CohortRow {
+  day: string
+  cohort: number
+  d1: number
+  d7: number
+  d1_ready: boolean
+  d7_ready: boolean
+}
+
+export interface RetentionPanel {
+  d1: RetentionSide
+  d7: RetentionSide
+  cohorts: CohortRow[]
+}
+
+export interface SessionsPanel {
+  total: number
+  median_seconds: number
+  bounces: number
+  /** Sparse {b: 0..4, count} — see SESSION_BUCKETS for the labels. */
+  buckets: { b: number; count: number }[]
+}
+
+export interface ErrorRow {
+  message: string
+  count: number
+  devices: number
+  versions: string[]
+  last_seen: string
+}
+
+export interface ErrorsPanel {
+  events: number
+  devices: number
+  top: ErrorRow[]
+}
+
 export interface Analytics {
   meta: { days: number; since: string; generated_at: string }
   totals: Totals
@@ -102,6 +145,9 @@ export interface Analytics {
   hourly: HourlyRow[]
   counts: CountRow[]
   levels: LevelRow[]
+  retention: RetentionPanel
+  sessions: SessionsPanel
+  errors: ErrorsPanel
   deal: DealPanel
   plinko: PlinkoPanel
   shares: ShareRow[]
@@ -126,13 +172,23 @@ function obj(v: unknown): Record<string, unknown> {
   return v !== null && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {}
 }
 
-/** Shape-tolerant read of the admin_analytics payload. Any missing/miscast piece becomes an empty default. */
+function retentionSide(v: unknown): RetentionSide {
+  const o = obj(v)
+  return { eligible: num(o.eligible), returned: num(o.returned) }
+}
+
+/** Shape-tolerant read of the admin_analytics payload. Any missing/miscast piece becomes an empty
+ *  default — which is also what a pre-0015 server's payload (no retention/sessions/errors keys)
+ *  coerces to, so the dashboard degrades to its 0014 panels instead of breaking. */
 export function coerceAnalytics(raw: unknown): Analytics {
   const r = obj(raw)
   const meta = obj(r.meta)
   const t = obj(r.totals)
   const deal = obj(r.deal)
   const plinko = obj(r.plinko)
+  const retention = obj(r.retention)
+  const sessions = obj(r.sessions)
+  const errors = obj(r.errors)
   return {
     meta: {
       days: num(meta.days, 14),
@@ -184,6 +240,44 @@ export function coerceAnalytics(raw: unknown): Analytics {
         devices: num(o.devices),
       }
     }),
+    retention: {
+      d1: retentionSide(retention.d1),
+      d7: retentionSide(retention.d7),
+      cohorts: arr(retention.cohorts).map(c => {
+        const o = obj(c)
+        return {
+          day: str(o.day),
+          cohort: num(o.cohort),
+          d1: num(o.d1),
+          d7: num(o.d7),
+          d1_ready: o.d1_ready === true,
+          d7_ready: o.d7_ready === true,
+        }
+      }),
+    },
+    sessions: {
+      total: num(sessions.total),
+      median_seconds: num(sessions.median_seconds),
+      bounces: num(sessions.bounces),
+      buckets: arr(sessions.buckets).map(b => {
+        const o = obj(b)
+        return { b: num(o.b, -1), count: num(o.count) }
+      }),
+    },
+    errors: {
+      events: num(errors.events),
+      devices: num(errors.devices),
+      top: arr(errors.top).map(e => {
+        const o = obj(e)
+        return {
+          message: str(o.message, '?'),
+          count: num(o.count),
+          devices: num(o.devices),
+          versions: arr(o.versions).map(v => str(v, '?')),
+          last_seen: str(o.last_seen),
+        }
+      }),
+    },
     deal: {
       offers: num(deal.offers),
       wins: num(deal.wins),
@@ -477,6 +571,26 @@ export function fmtDayLabel(day: string): string {
   const t = Date.parse(`${day}T00:00:00Z`)
   if (!Number.isFinite(t)) return day
   return new Date(t).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })
+}
+
+/** Bucket labels for SessionsPanel.buckets — index-aligned with the SQL CASE in 0015. */
+export const SESSION_BUCKETS = ['<1 min', '1–3 min', '3–10 min', '10–30 min', '30 min+'] as const
+
+/** Densify the sparse {b, count} list into the five fixed slots (unknown indices are dropped). */
+export function sessionBucketCounts(p: SessionsPanel): number[] {
+  const out = [0, 0, 0, 0, 0]
+  for (const { b, count } of p.buckets) if (b >= 0 && b < out.length) out[b] = count
+  return out
+}
+
+/** Seconds → '45s' / '4m 32s' / '1h 12m'. Sub-second and negative junk clamp to '0s'. */
+export function fmtDuration(secs: number): string {
+  const s = Math.max(0, Math.round(secs))
+  if (s < 60) return `${s}s`
+  const m = Math.floor(s / 60)
+  if (m < 60) return s % 60 === 0 ? `${m}m` : `${m}m ${s % 60}s`
+  const h = Math.floor(m / 60)
+  return m % 60 === 0 ? `${h}h` : `${h}h ${m % 60}m`
 }
 
 /** Coarse relative time for table cells ('3h ago'). Unparseable → ''. */

@@ -8,8 +8,11 @@ import {
   fmtAgo,
   fmtCompact,
   fmtDayLabel,
+  fmtDuration,
   fmtPct,
   FUNNEL_DEFS,
+  SESSION_BUCKETS,
+  sessionBucketCounts,
   lastNDays,
   linePath,
   niceTicks,
@@ -114,6 +117,57 @@ describe('coerceAnalytics', () => {
 
   it('null avg_flips stays null (no fabricated zero)', () => {
     expect(coerceAnalytics({ deal: { avg_flips: null } }).deal.avg_flips).toBeNull()
+  })
+
+  it('a pre-0015 payload (no retention/sessions/errors keys) degrades to empty panels, not a crash', () => {
+    const a = coerceAnalytics({ totals: { devices: 3 } })
+    expect(a.retention.d1).toEqual({ eligible: 0, returned: 0 })
+    expect(a.retention.cohorts).toEqual([])
+    expect(a.sessions.total).toBe(0)
+    expect(a.errors.top).toEqual([])
+  })
+
+  it('passes the 0015 sections through intact', () => {
+    const a = coerceAnalytics({
+      retention: {
+        d1: { eligible: 8, returned: 3 },
+        d7: { eligible: 4, returned: 1 },
+        cohorts: [{ day: '2026-07-20', cohort: 2, d1: 1, d7: 0, d1_ready: true, d7_ready: false }],
+      },
+      sessions: { total: 40, median_seconds: 272, bounces: 6, buckets: [{ b: 2, count: 18 }] },
+      errors: {
+        events: 3,
+        devices: 2,
+        top: [{ message: 'boom', count: 3, devices: 2, versions: ['abc1234'], last_seen: 'x' }],
+      },
+    })
+    expect(a.retention.d1.returned).toBe(3)
+    expect(a.retention.cohorts[0].d7_ready).toBe(false)
+    expect(a.sessions.median_seconds).toBe(272)
+    expect(a.errors.top[0].versions).toEqual(['abc1234'])
+  })
+})
+
+describe('sessions + duration helpers', () => {
+  it('densifies sparse buckets into the five fixed slots and drops junk indices', () => {
+    expect(
+      sessionBucketCounts({ total: 0, median_seconds: 0, bounces: 0, buckets: [{ b: 2, count: 7 }, { b: 4, count: 1 }, { b: 9, count: 5 }, { b: -1, count: 5 }] })
+    ).toEqual([0, 0, 7, 0, 1])
+  })
+
+  it('labels stay index-aligned with the SQL CASE in 0015', () => {
+    expect(SESSION_BUCKETS).toHaveLength(5)
+    expect(SESSION_BUCKETS[0]).toBe('<1 min')
+    expect(SESSION_BUCKETS[4]).toBe('30 min+')
+  })
+
+  it('fmtDuration reads like a human wrote it', () => {
+    expect(fmtDuration(0)).toBe('0s')
+    expect(fmtDuration(45)).toBe('45s')
+    expect(fmtDuration(272)).toBe('4m 32s')
+    expect(fmtDuration(600)).toBe('10m')
+    expect(fmtDuration(4320)).toBe('1h 12m')
+    expect(fmtDuration(-5)).toBe('0s')
   })
 })
 

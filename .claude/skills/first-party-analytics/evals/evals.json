@@ -1,0 +1,23 @@
+{
+  "skill_name": "first-party-analytics",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "I'm building a habit-tracker PWA (SvelteKit + Supabase, hosted on Netlify, repo is this one). Honestly I have no idea if anyone keeps using it after they install it. Can you add analytics so I can see daily users, retention, and where people drop off — and some kind of dashboard only I can open?",
+      "expected_output": "Append-only events table migration (INSERT policy only, guard trigger), dormant never-throw client pipe with keepalive unload flush and opt-out, admin-gated aggregate RPC + app_admins, same-origin dashboard page excluded from the PWA precache, retention with honest eligibility, verify script and weekly ops.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "my game already logs some events to a supabase table called telemetry but i just realized i can read the whole table from the browser console with the anon key which seems... bad?? also i want crash reports when the game blows up on someone's phone. can you fix the security and give me some charts",
+      "expected_output": "Audit finds the SELECT exposure and removes it (no SELECT policy; security_invoker on any views), adds guard trigger + admin-gated RPC read path instead, adds capped client_error telemetry split by build version on the dashboard, and live verification probes proving the table is no longer readable.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "Add event tracking and an admin metrics page to this Next.js app. Hard requirement: no Google Analytics, no third-party trackers of any kind, privacy is a selling point for us. I want funnels for signup -> first-project -> invite-sent, and I don't want our ops person pasting service keys into web pages.",
+      "expected_output": "First-party pipe with anonymous device id and disclosure/opt-out, canonical EVENTS vocabulary with the three funnel steps pinned by a test, funnels with null-not-zero denominators on the dashboard, service key confined to server/CI (admin RPC gate for reads), idempotent ingestion.",
+      "files": []
+    }
+  ]
+}

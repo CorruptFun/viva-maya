@@ -89,6 +89,30 @@ case "$c" in *42501*) ok "anon CANNOT read app_admins (grant revoked)" ;;
              *) bad "app_admins IS REACHABLE — the admin list should not even be queryable" "$c" ;; esac
 
 echo
+echo "── events hardening (0015): idempotent ingest, private retention ───"
+# The dedupe check needs the EFFECT, not the status (the send-push lesson above): both sends
+# answer 20x whether or not the second row was ignored — only the row count proves the unique
+# index and on_conflict path actually work.
+EID=$(python3 -c 'import uuid;print(uuid.uuid4())')
+c1=$(anonc -X POST "$URL/rest/v1/events?on_conflict=event_id" -H 'Prefer: return=minimal,resolution=ignore-duplicates' \
+     -d "{\"device_id\":\"$DEV\",\"session_id\":\"$SES\",\"name\":\"rls_probe\",\"event_id\":\"$EID\"}")
+c2=$(anonc -X POST "$URL/rest/v1/events?on_conflict=event_id" -H 'Prefer: return=minimal,resolution=ignore-duplicates' \
+     -d "{\"device_id\":\"$DEV\",\"session_id\":\"$SES\",\"name\":\"rls_probe\",\"event_id\":\"$EID\"}")
+case "$c1/$c2" in 20*/20*) ok "anon CAN send the idempotent wire shape, twice ($c1/$c2)" ;;
+                  *) bad "idempotent insert rejected — is 0015 applied?" "$c1/$c2" ;; esac
+if [ -n "${SECRET:-}" ]; then
+  n=$(svc "$URL/rest/v1/events?event_id=eq.$EID&select=id" | python3 -c 'import json,sys;print(len(json.load(sys.stdin)))')
+  [ "$n" = "1" ] && ok "duplicate event_id stored ONCE (dedupe verified by count)" \
+    || bad "DEDUPE DID NOTHING — a re-sent batch double-counts" "$n rows"
+else
+  skip "dedupe row-count check (needs a secret key to count rows)"
+fi
+
+c=$(anon -X POST "$URL/rest/v1/rpc/prune_events" -d '{"keep_days":90}')
+case "$c" in *42501*) ok "anon CANNOT run retention pruning" ;;
+             *) bad "PRUNE IS REACHABLE BY ANON — anyone could empty the event log" "$c" ;; esac
+
+echo
 echo "── push_subscriptions: write-only, endpoints are bearer secrets ──"
 # ⚠️ EVERY assertion below checks the EFFECT, never just the status code.
 # The original version of this script checked `20*` on the unsubscribe and passed for weeks against

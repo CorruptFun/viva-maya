@@ -1,6 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { dayKey as senderDayKey, weekKey as senderWeekKey } from '../../scripts/send-push.mjs'
-import { EVENTS, _queueDepth, _reset, analyticsEnabled, setAnalyticsEnabled, track } from './analytics'
+import {
+  EVENTS,
+  _flush,
+  _queueDepth,
+  _reportClientError,
+  _reset,
+  analyticsEnabled,
+  setAnalyticsEnabled,
+  track,
+} from './analytics'
 import { dayKey as appDayKey, weekKey as appWeekKey } from './endless'
 
 /**
@@ -149,5 +158,122 @@ describe('analytics queue', () => {
     expect(() => track(EVENTS.LEVEL_FAIL, circular)).not.toThrow()
     expect(() => track('' as never)).not.toThrow()
     expect(() => track(EVENTS.APP_OPEN, undefined as never)).not.toThrow()
+  })
+})
+
+/**
+ * The 0015 wire contract: every event carries an idempotency key, a resend after a lost response
+ * cannot double-count, and a client deployed AHEAD of the 0015 migration falls back to the legacy
+ * shape without losing a single event. The fallback test is the load-bearing one — it is the
+ * 0008/0009 deploy-race lesson applied to this table, and it is exactly the path nobody would
+ * notice breaking until a whole day of events silently vanished.
+ */
+describe('flush idempotency + schema fallback (0015)', () => {
+  interface SentBatch {
+    url: string
+    prefer: string
+    rows: Record<string, unknown>[]
+  }
+  let sent: SentBatch[]
+  let respond: () => { ok: boolean; status: number }
+
+  beforeEach(() => {
+    _reset()
+    vi.stubEnv('VITE_SUPABASE_URL', 'http://localhost:54321')
+    vi.stubEnv('VITE_SUPABASE_ANON_KEY', 'test-key')
+    installLocalStorage()
+    sent = []
+    respond = () => ({ ok: true, status: 201 })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init: { headers: Record<string, string>; body: string }) => {
+        sent.push({ url: String(url), prefer: init.headers.Prefer, rows: JSON.parse(init.body) })
+        return respond() as Response
+      })
+    )
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.unstubAllEnvs()
+    _reset()
+  })
+
+  it('mints a distinct event_id per event and posts with on_conflict + ignore-duplicates', async () => {
+    track(EVENTS.LEVEL_START, { level: 1 })
+    track(EVENTS.LEVEL_WIN, { level: 1 })
+    await _flush()
+    expect(sent).toHaveLength(1)
+    expect(sent[0].url).toContain('/rest/v1/events?on_conflict=event_id')
+    expect(sent[0].prefer).toContain('resolution=ignore-duplicates')
+    const ids = sent[0].rows.map(r => r.event_id)
+    expect(ids).toHaveLength(2)
+    expect(new Set(ids).size).toBe(2)
+    for (const id of ids) expect(String(id)).toMatch(/^[0-9a-f-]{36}$/)
+  })
+
+  it('a 5xx re-queues the batch with the SAME ids — that persistence is the dedupe', async () => {
+    track(EVENTS.APP_OPEN)
+    respond = () => ({ ok: false, status: 503 })
+    await _flush()
+    const firstIds = sent[0].rows.map(r => r.event_id)
+    expect(_queueDepth()).toBe(1) // kept, not dropped
+    respond = () => ({ ok: true, status: 201 })
+    await _flush()
+    expect(sent[1].rows.map(r => r.event_id)).toEqual(firstIds)
+  })
+
+  it('a 400 while sending ids flips to the legacy shape and re-queues instead of dropping', async () => {
+    track(EVENTS.APP_OPEN)
+    respond = () => ({ ok: false, status: 400 }) // a pre-0015 server rejecting the unknown column
+    await _flush()
+    expect(_queueDepth()).toBe(1) // the batch survived the schema mismatch
+    respond = () => ({ ok: true, status: 201 })
+    await _flush()
+    expect(sent[1].url).not.toContain('on_conflict') // legacy wire shape…
+    expect(sent[1].prefer).not.toContain('ignore-duplicates')
+    expect(sent[1].rows[0]).not.toHaveProperty('event_id') // …with the ids stripped
+    expect(sent[1].rows[0]).toHaveProperty('name', EVENTS.APP_OPEN)
+  })
+
+  it('a 400 in legacy mode drops (a genuinely bad batch must not loop forever)', async () => {
+    track(EVENTS.APP_OPEN)
+    respond = () => ({ ok: false, status: 400 })
+    await _flush() // flips to fallback, re-queues
+    await _flush() // legacy send also 400s
+    expect(_queueDepth()).toBe(0)
+  })
+})
+
+describe('client error telemetry (0015)', () => {
+  beforeEach(() => {
+    _reset()
+    vi.stubEnv('VITE_SUPABASE_URL', 'http://localhost:54321')
+    vi.stubEnv('VITE_SUPABASE_ANON_KEY', 'test-key')
+    installLocalStorage()
+  })
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    _reset()
+  })
+
+  it('queues a client_error, truncated and once per distinct message', () => {
+    _reportClientError('x'.repeat(999), { source: 'main.js:1' })
+    _reportClientError('x'.repeat(999)) // same message after truncation — deduped
+    expect(_queueDepth()).toBe(1)
+  })
+
+  it('caps the per-session budget so an error loop cannot flood the pipe', () => {
+    for (let i = 0; i < 50; i++) _reportClientError(`boom ${i}`)
+    expect(_queueDepth()).toBe(5)
+  })
+
+  it('never throws, even handed hostile reasons', () => {
+    const evil = {
+      get message(): string {
+        throw new Error('gotcha')
+      },
+    }
+    expect(() => _reportClientError(evil)).not.toThrow()
+    expect(() => _reportClientError(undefined)).not.toThrow()
   })
 })
