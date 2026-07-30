@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   LEGACY_WEEK_CUTOVER,
+  adoptHandle,
+  anonName,
   formatStanding,
   getHandle,
   isLegacyWeek,
@@ -9,7 +11,7 @@ import {
   sanitizeName,
   setHandle,
 } from './leaderboard'
-import type { SaveData } from './save'
+import { coerceSave, loadSave, type SaveData } from './save'
 
 /**
  * Race-name (handle) unit tests — the pure storage + sanitising layer only.
@@ -84,6 +86,91 @@ describe('preferredName', () => {
   it('falls back to "player" when signed out with no handle', () => {
     // cloudSession() is null in the test env (never signed in).
     expect(preferredName()).toBe('player')
+  })
+})
+
+/**
+ * The ANONYMOUS DEFAULT — what a player who never opened the picker publishes. It replaced the email
+ * local-part, which for a Google account is routinely a real name, so these tests are the privacy
+ * invariant's front door. (leaderboard.privacy.test.ts pins the other half: that a live session's
+ * email cannot reach a board even when one exists.)
+ */
+describe('anonName', () => {
+  it('matches the SQL formula EXACTLY — the shared case asserted by migration 0017', () => {
+    // 0017's own self-check runs public.anon_display_name on this uuid and refuses to apply unless it
+    // returns this string. The client renders one and the server stores the other, so a drift here
+    // would have the board calling a player something the app never showed them. Change both or
+    // neither: this line and supabase/migrations/0017_display_name_never_email.sql.
+    expect(anonName('7f3a91b2-0000-0000-0000-000000000000')).toBe('Player 7F3A')
+  })
+
+  it('is stable for one account and distinct between accounts', () => {
+    const a = '9c1e0000-0000-0000-0000-000000000000'
+    const b = '2b4d0000-0000-0000-0000-000000000000'
+    expect(anonName(a)).toBe(anonName(a))
+    expect(anonName(a)).not.toBe(anonName(b))
+  })
+
+  it('degrades to "player" rather than inventing a name from junk', () => {
+    // Signed out there is no user id, and a half-formed one must not become a public label.
+    expect(anonName(null)).toBe('player')
+    expect(anonName(undefined)).toBe('player')
+    expect(anonName('')).toBe('player')
+    expect(anonName('xyz')).toBe('player')
+  })
+
+  it('survives sanitizeName unchanged, so it reaches the board as written', () => {
+    // Every read path re-sanitizes display_name. If the space or the digits were stripped, the anon
+    // name would render differently than the picker's preview promised.
+    expect(sanitizeName(anonName('7f3a91b2-0000-0000-0000-000000000000'))).toBe('Player 7F3A')
+  })
+})
+
+/**
+ * The HANDLE BRIDGE — the name lives in its own localStorage key AND in the save. Storage-only was the
+ * whole reason a name did not survive a cleared browser or a new phone: the cloud restored the
+ * player's progress but had never been told their name, so the boards reverted to the default and the
+ * player re-entered it. These tests pin the two halves of the round trip.
+ */
+describe('handle ↔ save bridge', () => {
+  it('writes the name into the SAVE, so it rides cloud sync', () => {
+    setHandle('neonghost')
+    expect(loadSave().handle).toBe('neonghost')
+  })
+
+  it('stamps handleSetAt, so the newest rename wins the cross-device merge', () => {
+    const before = Date.now()
+    setHandle('neonghost')
+    expect(loadSave().handleSetAt).toBeGreaterThanOrEqual(before)
+  })
+
+  it('records a CLEARED name as a stamped null, not as "never set"', () => {
+    setHandle('neonghost')
+    setHandle(null)
+    const s = loadSave()
+    expect(s.handle).toBeNull()
+    expect(s.handleSetAt).toBeGreaterThan(0) // an unstamped clear would lose to any cloud name
+  })
+
+  it('reads the save when the dedicated key is missing — a name is not lost with one key', () => {
+    setHandle('neonghost')
+    localStorage.removeItem('viva-maya:handle')
+    expect(getHandle()).toBe('neonghost')
+  })
+
+  it('adopts the cloud name over whatever this device had', () => {
+    // The recovery path: a rename happened on another device and arrived via the merge.
+    setHandle('oldname')
+    adoptHandle(coerceSave({ handle: 'phantom', handleSetAt: 9_000 }))
+    expect(getHandle()).toBe('phantom')
+    expect(preferredName()).toBe('phantom')
+  })
+
+  it('does not clobber a local name when the cloud has none', () => {
+    // A save from a player who never chose a name must not wipe one this device legitimately holds.
+    setHandle('neonghost')
+    adoptHandle(coerceSave({}))
+    expect(getHandle()).toBe('neonghost')
   })
 })
 

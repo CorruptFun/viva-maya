@@ -13,7 +13,7 @@
 import { EVENTS, analyticsEnabled, setAnalyticsEnabled, track } from '../core/analytics'
 import { cloudSession, isCloudConfigured, onCloudChange, signInWithGoogle, signOutCloud } from '../core/cloud'
 import { disablePush, enablePush, isPushEnabled, pushSupport } from '../core/push'
-import { getHandle, sanitizeName, setHandle } from '../core/leaderboard'
+import { anonName, getHandle, sanitizeName, setHandle } from '../core/leaderboard'
 import { exportSave, importSave } from '../core/save'
 
 const MODAL_ID = 'vm-cloud-modal'
@@ -240,14 +240,16 @@ export function openCloudModal(): void {
   }
 
   // ── Race name block (shown whenever cloud is configured) ─────────────────────────────────
-  // The race leaderboards show a display name with each score. It defaults to the
-  // email's local-part, which can be a REAL NAME — this picker overrides it (and, signed in,
-  // the rename is pushed to every board row the player owns, past days included, so the old
-  // name is scrubbed from history — core/leaderboard.setHandle). Deliberately visible while
-  // signed OUT too: set a handle first and the email name never reaches the board at all.
+  // The race leaderboards show a display name with each score. Nothing here is ever derived from the
+  // player's email — unset, the boards show the anonymous `anonName(userId)` (core/leaderboard.ts),
+  // and this picker replaces it with a name they chose. Signed in, the rename is pushed to every
+  // board row the player owns, past days included, so an old name is scrubbed from history.
+  // Deliberately visible while signed OUT too, so a name can be set before the first submission.
   const buildRaceName = (): HTMLElement => {
     const session = cloudSession()
-    const emailFallback = session?.email ? sanitizeName(session.email) : null
+    // What the boards show with no chosen name. Null when signed out: there is no user id to derive
+    // it from yet, and inventing one here would print a name that isn't the one they'll actually get.
+    const anonFallback = session ? anonName(session.userId) : null
 
     const input = mk('input', {
       display: 'block', width: '100%', minHeight: '44px', padding: '11px 13px',
@@ -257,7 +259,7 @@ export function openCloudModal(): void {
     input.type = 'text'
     input.maxLength = 24
     input.autocomplete = 'off'
-    input.placeholder = emailFallback ?? 'e.g. neonghost'
+    input.placeholder = 'e.g. neonghost'
     input.value = nameValue
     input.setAttribute('aria-label', 'Race name')
     focusRing(input)
@@ -266,8 +268,8 @@ export function openCloudModal(): void {
     const shows = (v: string): string => {
       const clean = v.trim() === '' ? null : sanitizeName(v)
       if (clean) return `Shows on the board as: ${clean}`
-      return emailFallback
-        ? `No name set — the board falls back to: ${emailFallback}`
+      return anonFallback
+        ? `No name set — the board shows: ${anonFallback}`
         : 'No name set yet.'
     }
     const preview = note(shows(nameValue))
@@ -289,8 +291,8 @@ export function openCloudModal(): void {
     input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') save() })
 
     const copy = session
-      ? 'Shown with your score on the daily and weekly boards — instead of your email name. Renaming also updates every board you are already on.'
-      : 'Shown with your score on the race boards once you sign in — set it now and your email name never appears.'
+      ? 'Shown with your score on the daily and weekly boards. Your email is never shown to anyone. Renaming also updates every board you are already on.'
+      : 'Shown with your score on the race boards once you sign in. Your email is never shown to anyone.'
 
     return stack([heading('Race name'), note(copy), input, preview, saveBtn])
   }

@@ -3,7 +3,7 @@ import { DIFFICULTY } from './difficulty'
 import type { BoostType, PromoReward } from './types'
 
 export interface SaveData {
-  v: 12
+  v: 13
   best: number
   /** Highest level the player may attempt (1-based). */
   unlocked: number
@@ -77,6 +77,22 @@ export interface SaveData {
   charmsAllTime: number
   /** Consecutive numbered-level WINS. Every DEAL_STREAK of them deals the Lucky Deal; a loss resets it. */
   winStreak: number
+  // --- v13 identity fields. Default to "never chosen"; read shape-tolerantly below. ---
+  /**
+   * The player's chosen PUBLIC race name, or null when they haven't picked one.
+   *
+   * Lives in the save — not just in its own localStorage key — because it is the one piece of
+   * identity the cloud has to carry: a cleared browser or a new phone otherwise loses the name and
+   * the boards fall back to a default, which is exactly the "I have to set my name again" report.
+   * core/leaderboard.ts owns the sanitising rules and the localStorage mirror; this field is the
+   * copy that travels. Stored as written by that module (already sanitized), length-capped here only.
+   */
+  handle: string | null
+  /**
+   * Epoch ms the handle was last set (0 = never). The merge tiebreak: without it a rename on the
+   * phone would be silently undone by a tablet that happens to be further progressed.
+   */
+  handleSetAt: number
 }
 
 /** Most free spins the bank ever holds — earning past this is quietly forfeited. */
@@ -113,7 +129,7 @@ function freeSpinHeadroom(save: SaveData, dayKey: string, source: FreeSpinSource
 const KEY = 'viva-maya:v1'
 
 const DEFAULTS: SaveData = {
-  v: 12,
+  v: 13,
   best: 0,
   unlocked: 1,
   stars: {},
@@ -144,6 +160,8 @@ const DEFAULTS: SaveData = {
   charmSeries: 1,
   charmsAllTime: 0,
   winStreak: 0,
+  handle: null,
+  handleSetAt: 0,
 }
 
 function fresh(): SaveData {
@@ -253,6 +271,16 @@ export function coerceSave(raw: unknown): SaveData {
     base.charmSeries = typeof data.charmSeries === 'number' ? Math.max(1, Math.floor(data.charmSeries)) : 1
     base.charmsAllTime = typeof data.charmsAllTime === 'number' ? Math.max(0, Math.floor(data.charmsAllTime)) : 0
     base.winStreak = typeof data.winStreak === 'number' ? Math.max(0, Math.floor(data.winStreak)) : 0
+    // v13 identity — absent in older saves → "never chosen", which reads as the anonymous default.
+    // Only shape + length are enforced here: the NAME RULES live in core/leaderboard.ts (sanitizeName),
+    // and importing them would close a cycle (leaderboard → cloud → save), so getHandle sanitizes on
+    // read instead. A blank string is normalised to null so "" and null can't mean different things.
+    base.handle =
+      typeof data.handle === 'string' && data.handle.trim() !== '' ? data.handle.trim().slice(0, 24) : null
+    base.handleSetAt =
+      typeof data.handleSetAt === 'number' && Number.isFinite(data.handleSetAt)
+        ? Math.max(0, Math.floor(data.handleSetAt))
+        : 0
     // v6 grace refill: the pool grew (3→10) and the break got much shorter — top EVERYONE up to
     // full on upgrade so nobody is left stranded at the old, stingier count (e.g. mid-session).
     const storedVersion = typeof data.v === 'number' ? (data.v as number) : 1

@@ -169,6 +169,16 @@ export async function syncNow(): Promise<void> {
   const remote = await pullCloudSave()
   const winner = remote ? mergeSaves(loadSave(), remote) : loadSave()
   persistSave(winner)
+  // The race name rides the save (core/leaderboard.ts's handle bridge). Adopt the merge winner's
+  // handle into this device's mirror FIRST, then repair the player's board rows — in that order, or
+  // the repair would publish whatever name this device happened to have instead of the reconciled
+  // one. This is the step that restores a name after a cleared browser or on a new phone, and that
+  // scrubs rows an older build published under the email fallback. Lazy import + fire-and-forget,
+  // matching flushPush above: a board must never block or fail a sync.
+  void import('./leaderboard').then(m => {
+    m.adoptHandle(winner)
+    void m.reconcileName()
+  })
   pushCloudSave(winner) // ensure a first-ever cloud row is created even if local was already newest
 }
 

@@ -1,5 +1,18 @@
 -- ============================================================================
--- 0012_push_subscription_rpc.sql
+-- 0016_push_subscription_rpc.sql
+--
+-- RENUMBERED 2026-07-30, from 0012. It collided with 0012_endless_daily.sql,
+-- which arrived from a parallel session under the same number — and `version` is
+-- the PRIMARY KEY of supabase_migrations.schema_migrations, so the CLI could not
+-- apply the set at all: `supabase db reset` and `sb push` both aborted with
+-- `duplicate key value violates unique constraint "schema_migrations_pkey"`.
+-- THIS file moved rather than the daily-board chain, because 0013 replaces a
+-- function 0012_endless_daily creates, and 0017 (then numbered 0015) was already applied to production
+-- by hand — renumbering either would have rewritten a live migration's identity.
+-- Moving to the end is safe here and nowhere else in that chain: everything below
+-- depends only on 0011_push_subscriptions, and nothing later depends on it. It
+-- was written before 0012–0017, so its position no longer reflects when it landed.
+--
 -- FIX: a push subscriber could never unsubscribe, and a rotated key could never
 -- be refreshed. Both failed SILENTLY — 204 from PostgREST, zero rows affected.
 --

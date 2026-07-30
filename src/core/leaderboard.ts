@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { cloudSession, isCloudConfigured, sbClient } from './cloud'
 import { dayKey, endlessBestForDay, formatWeekStanding, previousDayKey, previousWeekKey, weekKey } from './endless'
-import type { SaveData } from './save'
+import { loadSave, persistSave, type SaveData } from './save'
 
 /**
  * Endless-race leaderboard client — the read/submit surface over `public.endless_daily_scores` and
@@ -30,14 +30,28 @@ import type { SaveData } from './save'
  *     so there is exactly one number to keep honest and the total can never disagree with the
  *     days that made it.
  *
- * Privacy: only user id, a sanitized display name, the day key, and the score ever leave the
- * device. The display name defaults to the Google account's email local-part, and the RACE
- * NAME picker (cloud modal → setHandle) overrides it: the chosen handle is persisted in its own
- * shape-tolerant localStorage key (theme.ts's storage pattern — no save-schema coupling), wins
- * inside `preferredName()`, and a rename immediately UPDATEs display_name on every leaderboard
- * row the player owns (all days — RLS permits updating own rows), so a real name can be scrubbed
- * from history, not just from future submissions. Set the handle BEFORE first sign-in and the
- * email local-part never reaches the table at all.
+ * Privacy — THE INVARIANT: nothing derived from the player's email address may ever reach a
+ * public board. Only the user id, a sanitized display name, the day key and the score leave
+ * the device.
+ *
+ * The public name is `preferredName()`: the chosen RACE NAME if there is one, else
+ * `anonName(userId)` — never the email. It used to fall back to the email local-part, which for
+ * a Google account is very often a real name (`jane.doe`), so every player who had not found the
+ * name picker was publishing one. `anonName` discloses nothing new, being derived from the user
+ * id that is already on every row.
+ *
+ * The chosen handle is persisted TWICE, on purpose:
+ *   - its own shape-tolerant localStorage key (theme.ts's pattern), for synchronous reads on the
+ *     submit path;
+ *   - and in the SAVE (`save.handle`), so it rides cloud sync. Storage-only was the reason
+ *     players had to re-enter their name after clearing a browser or moving to a new phone: the
+ *     cloud restored their progress but had never been told their name, so the boards silently
+ *     reverted to the default.
+ * `adoptHandle` closes the loop on the way back in, and `reconcileName` repairs rows a previous
+ * build already published.
+ *
+ * A rename UPDATEs display_name on every row the player owns (all days — RLS permits updating own
+ * rows), so a name can be scrubbed from history, not just from future submissions.
  */
 
 /**
@@ -83,28 +97,56 @@ export function sanitizeName(raw: string | null | undefined): string {
   return (base || 'player').slice(0, 24)
 }
 
+/**
+ * The public name for a player who has not chosen one — stable, anonymous, and derived from the
+ * account's own user id, which is ALREADY on every board row, so it reveals nothing that reading the
+ * board did not. Four hex digits keep the boards legible (twenty rows of "player" tells you nothing)
+ * without pretending to be a real handle.
+ *
+ * MUST stay byte-identical to `public.anon_display_name` in
+ * supabase/migrations/0017_display_name_never_email.sql. That migration substitutes this exact string
+ * server-side when a submission would publish the account's email name — including from an old cached
+ * client that still has the removed fallback — so a divergent formula here would show the player one
+ * name in the app and the board another. The migration self-checks the shared case ('7f3a91b2-…' →
+ * 'Player 7F3A') and refuses to apply if it drifts; the matching assertion is in leaderboard.test.ts.
+ */
+export function anonName(userId: string | null | undefined): string {
+  const hex = (userId ?? '').replace(/-/g, '').slice(0, 4).toUpperCase()
+  return /^[0-9A-F]{4}$/.test(hex) ? `Player ${hex}` : 'player'
+}
+
 // --- Race name (chosen handle) ----------------------------------------------
-// Own shape-tolerant localStorage key, mirroring theme.ts: decoupled from the
-// save schema (no migration, no merge semantics) and read synchronously.
+// Persisted in its own shape-tolerant localStorage key (theme.ts's pattern) for synchronous reads on
+// the submit path, AND mirrored into the save so it rides cloud sync — see the module header.
 const HANDLE_KEY = 'viva-maya:handle'
 
-/** The persisted chosen handle (already sanitized), or null when none is set. */
+/**
+ * The chosen handle (sanitized), or null when none is set.
+ *
+ * Falls back to the save's copy when the dedicated key is missing, so a device that still has its
+ * save but lost the key keeps its name. Both are localStorage reads, so this stays synchronous.
+ */
 export function getHandle(): string | null {
   try {
     const raw = localStorage.getItem(HANDLE_KEY)
-    if (raw === null || raw.trim() === '') return null
-    return sanitizeName(raw)
+    if (raw !== null && raw.trim() !== '') return sanitizeName(raw)
   } catch {
-    return null // storage blocked (private mode / no DOM) — behave as unset
+    // storage blocked (private mode / no DOM) — fall through to the save
+  }
+  try {
+    const fromSave = loadSave().handle
+    return fromSave && fromSave.trim() !== '' ? sanitizeName(fromSave) : null
+  } catch {
+    return null // no storage at all — behave as unset
   }
 }
 
 /**
- * Set (or clear, with null/empty) the chosen race name. Persists the sanitized
- * handle, then — when signed in — immediately renames EVERY leaderboard row the
- * player owns (all days, fire-and-forget), so the old name disappears from
- * current and past boards without waiting for the next score submission.
- * Returns the sanitized handle that was stored (null when cleared).
+ * Set (or clear, with null/empty) the chosen race name. Persists the sanitized handle to BOTH homes
+ * (the key and the save — the save write is what pushes it to the cloud via the persist listener),
+ * then, when signed in, immediately renames EVERY leaderboard row the player owns (all days,
+ * fire-and-forget), so the old name disappears from current and past boards without waiting for the
+ * next score submission. Returns the sanitized handle that was stored (null when cleared).
  */
 export function setHandle(raw: string | null): string | null {
   const clean = raw === null || raw.trim() === '' ? null : sanitizeName(raw)
@@ -112,10 +154,60 @@ export function setHandle(raw: string | null): string | null {
     if (clean === null) localStorage.removeItem(HANDLE_KEY)
     else localStorage.setItem(HANDLE_KEY, clean)
   } catch {
-    // storage blocked — the rename below still applies for this session
+    // storage blocked — the save write and the rename below still apply for this session
+  }
+  try {
+    const save = loadSave()
+    save.handle = clean
+    save.handleSetAt = Date.now() // stamped so the newest rename wins the cross-device merge
+    persistSave(save)
+  } catch {
+    // best-effort: the name still applies locally and to the rename below
   }
   void renameEverywhere()
   return clean
+}
+
+/**
+ * Adopt a (merged) save's race name into this device's mirror — the recovery half of the bridge.
+ *
+ * core/cloud.ts calls this right after a sync persists the merge winner. This is what makes a name
+ * survive a cleared browser and follow the player to a new phone: the cloud save carries the handle,
+ * mergeSaves picks the most recently set one, and this writes it over whatever this device had.
+ *
+ * Deliberately does NOT re-stamp `handleSetAt` — an adopted name would then look freshly chosen and
+ * win every future merge, so the oldest device to sync would start dictating the name. And it does
+ * not push a rename; the caller does that once, via reconcileName.
+ */
+export function adoptHandle(save: SaveData): void {
+  try {
+    const cloud = save.handle && save.handle.trim() !== '' ? sanitizeName(save.handle) : null
+    if (cloud === null) return // nothing chosen anywhere — leave this device's state alone
+    if (localStorage.getItem(HANDLE_KEY) === cloud) return
+    localStorage.setItem(HANDLE_KEY, cloud)
+  } catch {
+    // storage blocked — getHandle's save fallback still returns the adopted name
+  }
+}
+
+// One repair per page-load. Cheap, but there is no reason to repeat it.
+let reconciled = false
+
+/**
+ * Repair the player's own board rows once per session, after a sign-in/sync.
+ *
+ * Two things need it, both invisible until someone reads the board:
+ *   - rows an OLDER BUILD published under the email fallback. They are only ever rewritten when the
+ *     owner next submits, and for a closed day that is never — so without this they would keep a
+ *     real name on the boards permanently.
+ *   - a name just adopted from the cloud on a device whose rows have never carried it.
+ *
+ * Idempotent and fire-and-forget: RLS-scoped UPDATEs that can only touch this player's own rows.
+ */
+export async function reconcileName(): Promise<void> {
+  if (reconciled) return
+  reconciled = true
+  await renameEverywhere()
 }
 
 /**
@@ -146,9 +238,15 @@ async function renameEverywhere(): Promise<void> {
   }
 }
 
-/** The display name submissions carry — the chosen race name, else the email local-part. */
+/**
+ * The display name submissions carry — the chosen race name, else the anonymous default.
+ *
+ * The email is deliberately unreachable from here: this function is the ONLY thing that decides what
+ * becomes public, so keeping `cloudSession().email` out of it is what makes the privacy invariant in
+ * the module header hold by construction rather than by discipline.
+ */
 export function preferredName(): string {
-  return getHandle() ?? sanitizeName(cloudSession()?.email)
+  return getHandle() ?? anonName(cloudSession()?.userId)
 }
 
 // (day, score) memo: skip an upsert we've already sent this page-load. The server-side

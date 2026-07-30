@@ -193,3 +193,47 @@ describe('mergeSaves — daily bests survive per day', () => {
     expect(mergeSaves(bare, save({ endlessDays: { '2026-07-29': 10 } })).endlessDays).toEqual({ '2026-07-29': 10 })
   })
 })
+
+/**
+ * The RACE NAME — the third merge rule, and the one a player notices fastest, because getting it wrong
+ * republishes a name they deliberately changed. It follows neither of the other rules: not the winner's
+ * record (a name is not a magnitude) and not a union (a name changes, and can be cleared), so recency
+ * decides. See `pickHandle` in merge.ts.
+ */
+describe('mergeSaves — the race name', () => {
+  it('restores a name from the cloud onto a device that has none — the cleared-browser case', () => {
+    // THE case behind "I have to set my name again every day": storage was cleared, so this device has
+    // no name and no stamp. The cloud has both. If the local null won, the boards would fall straight
+    // back to the anonymous default and the player would have to re-enter the name — again.
+    const wiped = coerceSave({})
+    const cloud = save({ handle: 'neonghost', handleSetAt: 1_700_000_000_000 })
+    expect(mergeSaves(wiped, cloud).handle).toBe('neonghost')
+  })
+
+  it('keeps the most RECENT rename, even when the other device is further progressed', () => {
+    // Renaming on the phone must survive opening a tablet that happens to be deeper into the campaign.
+    const renamedOnPhone = save({ unlocked: 5, handle: 'phantom', handleSetAt: 2_000 })
+    const staleTablet = save({ unlocked: 90, handle: 'neonghost', handleSetAt: 1_000 })
+    expect(mergeSaves(renamedOnPhone, staleTablet).handle).toBe('phantom')
+    expect(mergeSaves(staleTablet, renamedOnPhone).handle).toBe('phantom')
+  })
+
+  it('propagates a CLEARED name, rather than resurrecting the old one', () => {
+    // Clearing is a rename to nothing, and it is stamped like any other, so it must win on recency.
+    const cleared = save({ handle: null, handleSetAt: 3_000 })
+    const cloud = save({ handle: 'neonghost', handleSetAt: 1_000 })
+    expect(mergeSaves(cleared, cloud).handle).toBeNull()
+  })
+
+  it('carries the stamp with the name, so the next merge still compares recency', () => {
+    const local = coerceSave({})
+    const cloud = save({ handle: 'neonghost', handleSetAt: 1_700_000_000_000 })
+    expect(mergeSaves(local, cloud).handleSetAt).toBe(1_700_000_000_000)
+  })
+
+  it('prefers LOCAL on equal stamps, matching the progress tie rule', () => {
+    const local = save({ handle: 'local', handleSetAt: 5_000 })
+    const cloud = save({ handle: 'cloud', handleSetAt: 5_000 })
+    expect(mergeSaves(local, cloud).handle).toBe('local')
+  })
+})

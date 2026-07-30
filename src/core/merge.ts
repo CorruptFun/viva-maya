@@ -25,7 +25,27 @@ export function mergeSaves(a: SaveData, b: SaveData): SaveData {
     }
     if (ma[i] > mb[i]) break
   }
-  return { ...winner, ...unionLatches(a, b) }
+  return { ...winner, ...unionLatches(a, b), ...pickHandle(a, b) }
+}
+
+/**
+ * The chosen race name, reconciled across devices — MOST RECENTLY SET WINS.
+ *
+ * It rides neither of the other two rules. It is not a magnitude, so it must not travel with the
+ * progress winner: rename yourself on the phone, then open a tablet that happens to be further along,
+ * and the winner's record would quietly restore the old name — and re-publish it to the boards. Nor is
+ * it a monotonic latch like the ones below, because a name legitimately CHANGES (and can be cleared),
+ * so there is nothing to union. What makes one side right is only ever recency, hence `handleSetAt`.
+ *
+ * A dead tie prefers `a` — callers pass LOCAL first — matching mergeSaves' own tie rule. The common
+ * recovery case falls out of this for free: a device whose storage was cleared has handleSetAt 0, so
+ * the cloud's stamped name wins and core/leaderboard.adoptHandle writes it back to the device.
+ */
+function pickHandle(a: SaveData, b: SaveData): Partial<SaveData> {
+  const at = a.handleSetAt || 0
+  const bt = b.handleSetAt || 0
+  const win = bt > at ? b : a
+  return { handle: win.handle ?? null, handleSetAt: win.handleSetAt || 0 }
 }
 
 /**
