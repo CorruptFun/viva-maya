@@ -9,8 +9,10 @@ implementation: Viva Maya `.github/workflows/analytics-weekly.yml`, `scripts/ana
 Schedule: weekly, a morning the owner actually reads (cron is UTC — convert, and remember a fixed
 UTC hour drifts ±1h across DST).
 
-**Prune step.** `POST /rest/v1/rpc/prune_events {"keep_days":90}` with the service key (the
-function is EXECUTE-granted to service_role only). `continue-on-error: true` — a prune hiccup must
+**Prune step.** `POST /rest/v1/rpc/prune_events {"keep_days":90}` with the service key (EXECUTE
+revoked from anon/authenticated **by name** — Supabase default privileges grant EXECUTE on every
+new function to those roles directly, so `revoke … from public` alone is a no-op — then granted to
+service_role). `continue-on-error: true` — a prune hiccup must
 not cost the week's digest, but echo the result into the run summary so a red step is still seen.
 Never auto-schedule deletion from inside a migration; a visible CI job is the right home.
 

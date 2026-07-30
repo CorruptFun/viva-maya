@@ -60,7 +60,9 @@ begin
     if jsonb_typeof(new.props) is distinct from 'object'
        or length(new.props::text) > 2048 then new.props := '{}'::jsonb; end if;
     new.app_version := left(nullif(trim(coalesce(new.app_version, '')), ''), 32);
-    new.created_at := now();  -- the client never chooses when
+    new.created_at := now();  -- the client never chooses when (trusted RECEIVE time). If clients
+    -- queue offline, also derive an occurred_at from a clamped client-sent age — a drained queue
+    -- otherwise collapses onto the reconnect instant (see SKILL.md: receive ≠ occurrence).
     return new;
 end; $$;
 drop trigger if exists events_guard on public.events;
@@ -260,5 +262,8 @@ begin
     get diagnostics removed = row_count;
     return removed;
 end; $$;
+-- The roles are NAMED on purpose: Supabase default privileges grant EXECUTE on every new function
+-- to anon/authenticated/service_role DIRECTLY, so `from public` alone is a no-op and would leave
+-- this deletion callable by anyone holding the publishable anon key (measured).
 revoke all on function public.prune_events(integer) from public, anon, authenticated;
 grant execute on function public.prune_events(integer) to service_role;

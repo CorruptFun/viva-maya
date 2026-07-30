@@ -45,6 +45,58 @@
         "Events table is append-only for clients (INSERT policy, no client SELECT policy)",
         "Client tracker batches and flushes on page-hide with fetch keepalive"
       ]
+    },
+    {
+      "id": 4,
+      "prompt": "We run a small B2B invoicing tool — Fastify API + Postgres (node-postgres, migrations are plain numbered .sql files in db/migrations, applied by a tiny migrate script), React frontend built with Vite, all deployed on one Hetzner box behind Caddy. No Supabase, no Firebase, nothing managed — the API owns the database and the browser never talks to Postgres directly. My cofounder keeps asking me questions I can't answer: how many companies actually send an invoice in their first week, are people coming back after month one, and what's breaking in people's browsers that we never hear about. Can you add proper event tracking and an internal metrics page? Only the two of us should be able to open it.",
+      "expected_output": "The skill's invariants translated to a trusted-server stack instead of pasted: write-only-from-the-internet ingest route (no route returns raw event rows to a non-admin), server-assigned timestamps, bounded/normalized payloads with a batch cap, server-side admin gate on the metrics route, keepalive unload flush, dedupe done the way a non-RLS owner connection should do it, honest denominators, capped crash telemetry — and no Supabase/PostgREST artifacts hallucinated into a stack that has none.",
+      "files": [],
+      "assertions": [
+        "Degrades gracefully off-stack: no Supabase/PostgREST artifacts are introduced into a project that has none (no @supabase/* dependency, no auth.uid(), no anon/authenticated/service_role role grants, no PostgREST-style REST calls from the client)",
+        "The events data is not readable from the internet: the ingest route accepts writes unauthenticated, and every route that returns event-derived data requires the admin gate (no unauthenticated read/debug/export endpoint over events)",
+        "The server assigns the event time; a client-supplied created_at/timestamp field cannot set the stored server time",
+        "The ingest endpoint is bounded against abuse: a body-size or batch-length cap AND event-name normalization (unknown/oversized input is bucketed or rejected, not written unbounded)",
+        "The metrics page is gated server-side (session/token check executed on the server), not by an unguessable URL or a client-side-only check, and the database credentials never reach the browser bundle",
+        "Client tracker batches events and flushes on page-hide using keepalive/sendBeacon so the last events of a visit survive",
+        "Duplicate ingestion is prevented server-side with a client-minted event id, and the approach fits this stack: an owner/non-RLS connection may use ON CONFLICT DO NOTHING (or an equivalent guard) — the skill's PostgREST-specific 'never ON CONFLICT' warning is not cargo-culted into a place where it does not apply",
+        "Retention/funnel rates use honest denominators (zero or not-yet-elapsed denominators render as no-data, never a fake 0%)",
+        "Crash telemetry is captured from window error/unhandledrejection with a per-session cap or dedupe so an error loop cannot flood the pipe"
+      ]
+    },
+    {
+      "id": 5,
+      "prompt": "our analytics dashboard is lying to me and i need to know why before i make any decisions off it. three things. (1) D1 retention supposedly fell from around 40% to about 16% over the last couple of weeks and nothing shipped that would explain that. (2) the 'invite sent' step of the signup funnel has been exactly 0% since we launched it, which cannot be right — i sent an invite myself yesterday and i can see the row in the events table. (3) the daily active number on the dashboard doesn't match what i get when i count distinct device_id in psql myself, it's off by a few hundred some days and matches on others. dig in and figure out what's actually wrong — and if you find other things that are broken while you're in there, tell me about those too. dashboard is in public/admin/, the read path is the RPC in the migrations, and you have a connection string to a copy of the prod database in DB_URL.md.",
+      "expected_output": "A written diagnosis that names each planted defect by mechanism (retention counting un-elapsed cohorts, funnel vocabulary drift, UTC-vs-local day bucketing, fake 0% from NaN coercion, the guard trigger silently discarding unwhitelisted event names, retry-without-event-id duplicate inflation), fixes verified by running the corrected queries against the provided database and showing before/after numbers, without weakening the read path or breaking already-deployed clients.",
+      "files": [],
+      "assertions": [
+        "Diagnoses the retention bug by mechanism: cohorts whose D1/D7 window has not fully elapsed are still counted in the denominator, so recent cohorts drag the rate down (explains a 'drop' with no deploy)",
+        "Diagnoses the funnel 0% as event-name drift: the client emits one name and the funnel query looks for a different one, so the step is permanently zero and indistinguishable from a real zero",
+        "Diagnoses the DAU mismatch as inconsistent day bucketing (local/session timezone in one place vs UTC in the other), not as missing or duplicated data",
+        "Identifies that zero/absent denominators are rendered as a literal 0% (NaN coerced to zero) so 'no data' is indistinguishable from a measured zero",
+        "Finds the unreported latent bug: the guard trigger silently discards events whose name is not in its hardcoded whitelist, so a newly-added or renamed event never lands and leaves no trace",
+        "Identifies duplicate-inflation exposure: batches are retried without a client-minted event id or server-side dedupe, so a lost response double-counts",
+        "Verifies claims against the provided database — corrected queries are actually run and before/after numbers are shown, rather than the diagnosis being asserted from reading code alone",
+        "Fixes are safe for already-deployed clients: no change makes the currently-shipped client's insert wire shape start failing (two-phase where a wire change is needed)",
+        "Does not weaken the read path while debugging: no new client-readable SELECT policy, world-readable view, or broadened grant on the events table is introduced"
+      ]
+    },
+    {
+      "id": 6,
+      "prompt": "I'm shipping my HTML5 puzzle game to the App Store and Play Store as a Capacitor app — same web build, just wrapped in the native shell. I need to know where players quit and how long they actually play. The problem is the web version's tracking is useless on mobile: I tried a basic tracker and the last chunk of every session just vanishes, because people swipe the app away from the app switcher and whatever hadn't been sent yet is gone forever. Half my players are also on the subway with no signal for twenty minutes at a time. Backend is Supabase, already using it for cloud saves.",
+      "expected_output": "A pipe built for a WebView's actual lifecycle: durably persisted queue that survives process death and relaunch, visibilitychange/pagehide plus the Capacitor native appStateChange hook, beacon/keepalive with a fallback, offline accumulation with bounded drop-oldest and drain-on-reconnect, resume-based session boundaries, and an occurred-at/received-at split so a queue drained hours later does not collapse the timeline — on top of the usual append-only schema, capped crash telemetry and gated reads.",
+      "files": [],
+      "assertions": [
+        "The pending-event queue is persisted to durable storage (localStorage/IndexedDB/Preferences) and re-sent on next launch — a memory-only queue loses everything when the OS kills the WebView with no JS event, which is the reported symptom",
+        "Flushing does not depend on beforeunload/unload (they do not fire reliably in mobile WebViews); visibilitychange->hidden and/or pagehide drive the flush",
+        "The native app-lifecycle signal is wired, not just web page events (Capacitor App appStateChange/pause listener or equivalent) — that is the only event guaranteed on an app-switcher swipe",
+        "Unload sending uses sendBeacon or fetch keepalive AND degrades safely when unavailable (older WKWebView lacks keepalive), with unsent events retained rather than dropped",
+        "Offline behaviour is explicit: events accumulate without signal and drain on reconnect, with a bounded queue that drops OLDEST first so a long tunnel cannot blow out storage or lose the most recent play",
+        "Returning from background after a threshold starts a NEW session instead of extending one indefinitely, so session length is meaningful on mobile",
+        "Session length tolerates a missing tail (derived from the last observed event and/or an explicit session_end emitted at hide) rather than assuming a clean exit event always arrives",
+        "Offline events keep their real occurrence time: the schema and client separate when the event happened (client clock, sanity-bounded) from when the server received it, so a queue drained hours later does not collapse every event onto the reconnect timestamp",
+        "Events table is append-only to clients (INSERT policy, no client SELECT policy) with server-side control of the trusted timestamp",
+        "Crash telemetry is captured with a per-session cap/dedupe and events carry the build version (store builds linger, so a metric that moves must be attributable to a build)"
+      ]
     }
   ]
 }

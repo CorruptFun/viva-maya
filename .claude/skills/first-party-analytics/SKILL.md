@@ -55,6 +55,16 @@ surface, not vanish), bound props (JSON object, ~2KB, else `{}`), force `created
 client never chooses when), and never THROW — a bad row degrades, because an error here goes back
 into the game loop.
 
+**Receive time is not occurrence time once a queue can outlive an outage.** Forced
+`created_at = now()` is the *trusted* clock — everything anti-forgery (rate math, thresholds,
+pruning) reads it. But a queue drained after a tunnel or an offline stretch lands as one batch, and
+stamping the batch at receive time collapses the timeline: sessions of 0 s, funnel steps that
+precede their own predecessors (measured: 10k+ collisions in one fixture). Where clients queue
+offline, carry a client-supplied **age/duration** (`client_age_ms`), clamp it server-side (e.g. to
+30 days), and derive `occurred_at = received_at − age` for ordering and session length. A duration
+survives the wrong device clock that poisons a raw client timestamp — and nothing trust-sensitive
+ever reads `occurred_at`.
+
 **The client pipe never throws, never blocks, and is dormant until configured.**
 `track()` is synchronous void: append to a queue, return. Batch flush (size + interval), hard queue
 cap dropping OLDEST (recent events describe the player now). No env config → every export no-ops.
@@ -69,19 +79,24 @@ A flush whose response is lost gets re-sent and would double count. Mint a UUID 
 column stays NULLABLE with a FULL (not partial) unique index: old clients insert id-less rows
 forever (NULLs never collide), and the index is the race backstop under whichever dedupe you pick.
 
-⚠️ **Do NOT dedupe with a PostgREST upsert on the table** — not `?on_conflict=event_id`, not
-`Prefer: resolution=ignore-duplicates`, not `merge-duplicates`. On a write-only table it is refused
-on **every** send, including the first, when nothing conflicts. `ON CONFLICT` makes PostgreSQL
-require SELECT rights on the target, so the rewriter folds the table's **SELECT policies** in as an
-extra `WITH CHECK` on the new row; a write-only table has none, so the check is built from an empty
-policy list and becomes a constant false. The tell is an error naming no policy:
+⚠️ **On a write-only table, ANY operation that makes Postgres read the new row back is refused** —
+a PostgREST upsert (`?on_conflict=event_id`, `Prefer: resolution=ignore-duplicates` or
+`merge-duplicates`), `INSERT … RETURNING`, and therefore supabase-js's most idiomatic line,
+`.insert(rows).select()`, which sends `Prefer: return=representation`. Each is refused on **every**
+send, including the first, when nothing conflicts. `ON CONFLICT` and `RETURNING` both make
+PostgreSQL require SELECT rights on the target, so the rewriter folds the table's **SELECT
+policies** in as an extra `WITH CHECK` on the new row; a write-only table has none, so the check is
+built from an empty policy list and becomes a constant false. The tell is an error naming no policy:
 `new row violates row-level security policy for table "events"`. (PostgREST reports it as 401 for
 anon, 403 under a user JWT — do not key any client logic on which.)
 It is **not** a missing UPDATE policy — adding one changes nothing (measured). And no SELECT policy
 can fix it: the check runs against the *new* row, so it must be `using (true)`, which republishes
-the whole behavioural log. Same root cause as an UPDATE or DELETE that silently matches zero rows
-on a write-only table, arriving through INSERT. Proven independently several times over; it will
-look like a one-line policy fix every single time.
+the whole behavioural log. So `Prefer: return=minimal` — in supabase-js, never chaining `.select()`
+onto this insert — is a **correctness requirement** on a write-only table, not a bandwidth nicety.
+Proven independently several times over; it will look like a one-line policy fix every single time.
+The trap is RLS-plus-write-only, not `ON CONFLICT` itself: on an owner or definer connection with
+RLS out of the picture (plain node-postgres, a SECURITY DEFINER function), `on conflict do nothing`
+is exactly right — which is why the batch RPC below uses it.
 
 **Dedupe server-side. Two mechanisms, and a real project wants both:**
 - **In the guard trigger** (start here): an `exists` check → `return NULL` to skip. The trigger is
@@ -98,6 +113,13 @@ look like a one-line policy fix every single time.
 
 Also revoke the platform's default `UPDATE`/`DELETE` grants on the table, so append-only doesn't
 rest on the policy list alone — that is what makes "just add an UPDATE policy" fail closed.
+**The same platform default exists for FUNCTIONS, and `revoke … from public` does not touch it.**
+Supabase's default privileges grant EXECUTE on every new function to `anon`, `authenticated`, and
+`service_role` *directly*, so revoking from PUBLIC removes a grant that was never load-bearing and
+the function stays callable by anyone holding the publishable key (measured — which makes an
+"admin-only" `prune_events(90)` a public delete-my-history endpoint). Revoke naming the roles —
+`revoke all on function f(args) from public, anon, authenticated;` — then grant back exactly who
+calls it.
 
 Client resilience for deploy races: degrade one rung at a time — RPC → plain insert → plain insert
 with ids stripped — RE-QUEUEING at every step, so a client ahead of its migration delays events
@@ -127,7 +149,11 @@ Rates with zero denominators are null ("no data"), never 0%. D1/D7 retention cou
 whose day0+N has FULLY elapsed — folding in yesterday's cohort drags every number toward zero.
 Difficulty/win rates need a sample floor before flagging anything. Funnels are defined against the
 client's canonical EVENTS constant (one vocabulary, compile-time pinned, tested) — a funnel built
-on a misspelled name renders as a permanently-zero step, indistinguishable from real 0%.
+on a misspelled name renders as a permanently-zero step, indistinguishable from real 0%. **The pin
+must cross the language boundary**: SQL cannot import a TS constant, so a test that compares the
+constant against a TS copy of itself proves nothing. The test has to read the other side's source
+text — grep the migration/dashboard files for each canonical literal — or a SQL-only rename sails
+through while the test goes on claiming the vocabulary is pinned.
 
 **The dashboard is a static page on the app's own origin.**
 Same origin → it reuses the app's existing auth session (same client lib defaults). Keep it out of
@@ -139,8 +165,9 @@ for form/color if available.
 
 **Ops make it self-maintaining; a dashboard nobody opens is decoration.**
 A weekly CI job (the CI already holds the service key for other jobs, or add it as a secret):
-1) run retention pruning (`prune_events(90)` — grant EXECUTE to service_role; never auto-schedule
-deletion inside a migration), and 2) build a digest by calling the SAME admin RPC — never a second
+1) run retention pruning (`prune_events(90)` — EXECUTE revoked from anon/authenticated *by name*
+and granted to service_role; never auto-schedule deletion inside a migration), and 2) build a
+digest by calling the SAME admin RPC — never a second
 aggregation that drifts — and deliver it where the owner already looks (one continuously-updated
 issue beats a weekly new-issue firehose; the ⚠ lines are your alerting: zero events = dead pipe,
 client errors, unknown-name spikes).
@@ -165,7 +192,8 @@ clients keep writing for weeks, so schema changes must always tolerate the previ
 3. Read `references/dashboard.md`; build the static dashboard against the RPC. Start with: KPI
    tiles, daily actives, retention, session length, the product's core funnel, errors, versions.
 4. Read `references/ops.md`; add the weekly digest + prune job and the verify script.
-5. Write tests for the pure pieces: vocabulary pinning, rate math with zero denominators,
+5. Write tests for the pure pieces: vocabulary pinning (reading the SQL/dashboard source text, not
+   a TS copy of the constant), rate math with zero denominators,
    coercion of the RPC payload (shape-tolerant — SQL and the client drift independently), and the
    client pipe's queue/flush/fallback behaviour with a stubbed fetch.
 
