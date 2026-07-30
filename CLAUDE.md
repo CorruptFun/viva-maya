@@ -51,6 +51,30 @@ for schema, RLS, and migration work — it covers the two-phase rule that matter
 here, since cached PWA clients keep running old code after a deploy.
 Verify with `scripts/verify-rls.sh` afterward.
 
+**Applying them.** Run from the repo root — the project ref lives in
+`supabase/.temp/`, so anywhere else these fail with `Cannot find project ref`
+and the link is not actually broken:
+
+```sh
+supabase db push --dry-run --include-all   # always look first
+supabase db push --include-all             # apply
+```
+
+`--include-all` is not optional. A migration numbered below the highest one
+already applied gets skipped with only a hint buried in the output — that is
+how `0009` sat unapplied under `0019` without anyone noticing.
+
+**CI never applies migrations.** The workflows only build Pages, send push, and
+prune events. So applying a migration to production and merging it to `main`
+are two separate acts, and *the repo does not describe production until both
+have happened*. Land migration branches promptly — a migration that is live but
+unmerged is invisible to whoever looks next.
+
+If a push reports `Remote migration versions not found` and suggests
+`migration repair --status reverted <v>`, check whether your branch is simply
+behind `main` before running it. It usually is, and marking an applied
+migration as reverted re-creates exactly the drift above.
+
 ## Secrets
 
 Web-push VAPID keys live at `~/.secrets/viva-maya/` — **pointer only, never
