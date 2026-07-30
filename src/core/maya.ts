@@ -160,6 +160,36 @@ export function warmLoseLine(seed?: number, near = true): string {
 }
 
 /**
+ * How much of a level is still outstanding — collect goals PLUS the felt still on the table — and
+ * how much of it has already been yielded.
+ *
+ * A numbered level is won on the CONJUNCTION of both terms (every objective met AND no felt left),
+ * but each surface that explains a shortfall used to re-derive it from the objectives alone. That
+ * made a level whose last outstanding requirement was felt look finished to everything except the
+ * win check itself: the lose card headed a row of green checks with STILL NEEDED, and the continue
+ * offer bailed on "nothing owed" at exactly the moment one more move would have won the level.
+ * Deriving it once, here, is what stops those three from drifting apart again.
+ *
+ * Felt counts in LAYERS, not squares (a 2-layer coat owes 2) — the same unit as `coatsToClear` and
+ * the FELT n/m HUD counter, so a level cannot be reported as swept while a second layer remains.
+ * Pass 0/0 for coats on a hazard-free level or in endless; both terms then collapse to the goals.
+ */
+export function levelProgress(
+  objectives: readonly { remaining: number; total: number }[],
+  coatsLeft = 0,
+  coatsTotal = 0
+): { owed: number; collected: number; total: number } {
+  const goalsOwed = objectives.reduce((n, o) => n + Math.max(0, o.remaining), 0)
+  const goalsTotal = objectives.reduce((n, o) => n + o.total, 0)
+  const left = Math.max(0, coatsLeft)
+  return {
+    owed: goalsOwed + left,
+    collected: goalsTotal - goalsOwed + Math.max(0, coatsTotal - left),
+    total: goalsTotal + Math.max(0, coatsTotal),
+  }
+}
+
+/**
  * Was this loss a near miss? True when the goals still owed are a small enough slice of what the
  * level asked for that "almost" is honest. 12% is the line: on a 3×55 level that is under 20 pieces,
  * roughly the last four or five good moves — close enough that a player feels it slipping away.

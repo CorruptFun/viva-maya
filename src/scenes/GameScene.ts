@@ -32,7 +32,7 @@ import { shouldOfferPlinko } from '../core/plinko'
 import { dealReady, winsToDeal } from '../core/deal'
 import { EVENTS, track } from '../core/analytics'
 import { devSetLives, formatCountdown, grantLife, refreshLives, spendLifeFor } from '../core/lives'
-import { maya, pendingOccasion, warmLoseLine, warmWinSubtitle, wasNearMiss } from '../core/maya'
+import { levelProgress, maya, pendingOccasion, warmLoseLine, warmWinSubtitle, wasNearMiss } from '../core/maya'
 import { mulberry32 } from '../core/rng'
 import { addChips, addFreeSpins, bumpJackpotMeter, bumpWinStreak, freeSpinRoom, loadSave, markFinaleSeen, markOccasionSeen, persistSave, recordResult, recordScore, resetJackpotMeter, resetWinStreak, spendChips, takePendingBoosts } from '../core/save'
 import { LIFE_REFILL_PRICE, POWER_ITEMS } from '../core/store'
@@ -2086,13 +2086,21 @@ export class GameScene extends Phaser.Scene {
       })
     }
 
+    // The standing brief under the board. It named only the symbols even on a coated level, where
+    // felt is a genuine binding constraint (core/difficulty.ts: ~5pp of failures end with felt still
+    // on the table) — so the one always-visible sentence describing the win condition described half
+    // of it, and a player could sweep every symbol and still not know what was holding the level open.
+    const brief = this.endless
+      ? "Biggest score wins today's board"
+      : this.coatsTotal > 0
+        ? 'Match the goal symbols and sweep every felt square'
+        : 'Match the highlighted goal symbols before moves run out'
     this.add
-      .text(
-        DESIGN_W / 2,
-        988,
-        this.endless ? "Biggest score wins today's board" : 'Match the highlighted goal symbols before moves run out',
-        { fontFamily: 'Arial, sans-serif', fontSize: '22px', color: T.onBackdropMuted }
-      )
+      .text(DESIGN_W / 2, 988, brief, {
+        fontFamily: 'Arial, sans-serif',
+        fontSize: '22px',
+        color: T.onBackdropMuted,
+      })
       .setOrigin(0.5)
   }
 
@@ -4985,7 +4993,9 @@ export class GameScene extends Phaser.Scene {
     const chips = loadSave().chips
     if (chips < item.price) return false
 
-    const owed = this.objectives.reduce((n, o) => n + Math.max(0, o.remaining), 0)
+    // Felt counts toward what is owed (`levelProgress`), so the level that is one felt square from
+    // a win now reaches the offer instead of failing this guard with every goal already ticked.
+    const { owed, collected } = this.levelProgress()
     if (owed <= 0) return false
 
     // REACHABILITY GATE. An offer the extra moves cannot actually cash is worse than no offer: it
@@ -4993,7 +5003,9 @@ export class GameScene extends Phaser.Scene {
     // did on THIS board — collected-per-move over the moves they just spent — and only offer when the
     // grant plausibly closes the gap. The 1.4 is deliberate optimism (a late cascade beats the
     // average), not a fudge: at 1.0 a player who needed one lucky chain would never see the offer.
-    const collected = this.objectives.reduce((n, o) => n + (o.total - Math.max(0, o.remaining)), 0)
+    // Both sides of this comparison count felt, so the rate stays honest: crediting the felt already
+    // swept while charging for the felt still owed is what keeps a felt-heavy level from reading as
+    // hopeless to a gate that only ever watched the symbols.
     const movesUsed = Math.max(1, this.spec.moves + this.purchasedMoves - this.movesLeft)
     if (owed > (collected / movesUsed) * grant * 1.4) return false
 
@@ -5116,13 +5128,32 @@ export class GameScene extends Phaser.Scene {
   }
 
   /**
+   * What the level still owes, and what it has already yielded — collect goals PLUS the felt still
+   * on the table, as one pair.
+   *
+   * The win check in `resolveLoop` has always been the conjunction of both terms (every objective
+   * met AND `coatsRemaining() === 0`), but the three surfaces that EXPLAIN a shortfall each read
+   * `this.objectives` alone. On a level whose LAST outstanding requirement was felt that was not a
+   * cosmetic gap: the lose card rendered a row of green checks under the heading STILL NEEDED, and
+   * `offerContinue` bailed on `owed <= 0` at precisely the moment one more move would have won the
+   * level — the offer withheld exactly where it was worth the most. Every one of them now reads
+   * this, so what the game SAYS it wants can no longer disagree with what it actually checks.
+   *
+   * Felt counts in layers, not squares (a 2-layer coat owes 2), matching `coatsToClear` and the
+   * FELT n/m HUD counter. `coatsTotal` is 0 on every hazard-free level and in endless, so both
+   * terms collapse to the objectives-only arithmetic that was here before.
+   */
+  private levelProgress(): { owed: number; collected: number; total: number } {
+    return levelProgress(this.objectives, this.board.coatsRemaining(), this.coatsTotal)
+  }
+
+  /**
    * §G13 — did this loss actually end within reach? Drives the lose card's copy, which used to
    * assert a near miss on every single loss regardless (the line was seeded by SCORE, a number with
    * no relationship at all to how much goal was left).
    */
   private wasCloseLoss(): boolean {
-    const owed = this.objectives.reduce((n, o) => n + Math.max(0, o.remaining), 0)
-    const total = this.objectives.reduce((n, o) => n + o.total, 0)
+    const { owed, total } = this.levelProgress()
     return wasNearMiss(owed, total)
   }
 
@@ -5399,7 +5430,20 @@ export class GameScene extends Phaser.Scene {
 
     // Show WHICH symbols still need collecting (icon + count), not bare numbers — a learning player
     // reads "which ones do I still need?" at a glance. A finished goal dims to a green check.
-    const objs = this.objectives
+    //
+    // Felt is a REQUIREMENT, not decoration, so it takes a slot in this row on any level that has
+    // it. Reading `this.objectives` alone was how a player who had ticked every symbol but left one
+    // felt square got a STILL NEEDED heading over three green checks — a card that showed nothing
+    // outstanding to explain a loss, on the one screen whose entire job is explaining the loss.
+    // A real sample of the coat art (not a stand-in glyph) so the row points at the thing on the
+    // board; `ensureHazardTexture` is lazy and idempotent, and on a coated level it is already baked.
+    const slots: { texture: string; remaining: number }[] = this.objectives.map(o => ({
+      texture: o.symbol,
+      remaining: Math.max(0, o.remaining),
+    }))
+    if (this.coatsTotal > 0) {
+      slots.push({ texture: ensureHazardTexture(this, 'coat', 1), remaining: this.board.coatsRemaining() })
+    }
     const goalRow: Fadeable[] = []
     const stillLabel = this.add
       .text(0, -112, 'STILL NEEDED', { fontFamily: FONT, fontSize: '18px', color: T.inkMuted })
@@ -5412,19 +5456,19 @@ export class GameScene extends Phaser.Scene {
     // nearIdx stays -1 if nothing is owed (never on a real loss), which harmlessly skips the highlight.
     let nearIdx = -1
     let nearRem = Infinity
-    objs.forEach((o, i) => {
-      if (o.remaining > 0 && o.remaining < nearRem) {
-        nearRem = o.remaining
+    slots.forEach((s, i) => {
+      if (s.remaining > 0 && s.remaining < nearRem) {
+        nearRem = s.remaining
         nearIdx = i
       }
     })
     const slotW = 94
-    const x0 = -((objs.length - 1) * slotW) / 2
+    const x0 = -((slots.length - 1) * slotW) / 2
     let nearIcon: Phaser.GameObjects.Image | undefined
     let nearHalo: Phaser.GameObjects.Image | undefined
-    objs.forEach((o, i) => {
+    slots.forEach((s, i) => {
       const ox = x0 + i * slotW
-      const done = o.remaining <= 0
+      const done = s.remaining <= 0
       if (i === nearIdx) {
         // Soft gold glow radiating from the nearest symbol (ADD, tucked BEHIND the icon). Rests at a
         // static soft alpha under reduced motion; breathes otherwise (gated with the entrance below).
@@ -5436,12 +5480,12 @@ export class GameScene extends Phaser.Scene {
           .setAlpha(this.reducedMotion ? 0.5 : 0.26)
         card.add(nearHalo)
       }
-      const icon = this.add.image(ox, -66, o.symbol).setDisplaySize(48, 48).setAlpha(done ? 0.4 : 1)
+      const icon = this.add.image(ox, -66, s.texture).setDisplaySize(48, 48).setAlpha(done ? 0.4 : 1)
       card.add(icon)
       goalRow.push(icon)
       if (i === nearIdx) nearIcon = icon
       const count = this.add
-        .text(ox, -30, done ? '✓' : String(o.remaining), {
+        .text(ox, -30, done ? '✓' : String(s.remaining), {
           fontFamily: FONT,
           fontSize: '26px',
           fontStyle: '900',
