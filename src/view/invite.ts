@@ -59,9 +59,15 @@ export function inviteFixture(): InviteFixtureMode | null {
 }
 
 // ---------------------------------------------------------------------------- share flow
-/** Invite link carrying `?ref=CODE` — the exact param core/referrals.ts captureRefFromUrl reads. */
+/**
+ * Invite link carrying `?ref=CODE` — the exact param core/referrals.ts captureRefFromUrl reads.
+ * Hardcoded to the canonical public URL (NOT location.origin): the game is also served from
+ * corruptfun.github.io and from installed PWAs, and every player must share the same canonical
+ * link. The trailing slash is load-bearing — the corrupt.solutions proxy breaks relative assets
+ * without it.
+ */
 function inviteUrl(code: string): string {
-  return `${location.origin}${location.pathname}?ref=${code}`
+  return `https://corrupt.solutions/games/viva-maya/?ref=${code}`
 }
 
 // Link-first: the invite is a tracking LINK (the ?ref=CODE url carries the referral), so the message
