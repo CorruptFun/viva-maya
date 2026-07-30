@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# verify-rls.sh — prove the exposure rules of 0010/0011/0014 against a LIVE API.
+# verify-rls.sh — prove the exposure rules of 0010/0011/0014/0015/0019 against a LIVE API.
 #
 # Written because this matrix has to run at least twice: once against a local
 # stack while writing the migrations, and again against production the moment
@@ -43,6 +43,12 @@ skip() { printf '  \033[33m–\033[0m SKIP %s\n' "$1"; }
 anon()   { curl -s -H "apikey: $KEY" -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' "$@"; }
 anonc()  { curl -s -o /dev/null -w '%{http_code}' -H "apikey: $KEY" -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' "$@"; }
 svc()    { curl -s -H "apikey: $SECRET" -H "Authorization: Bearer $SECRET" -H 'Content-Type: application/json' "$@"; }
+# Body AND status in one request, so a check can assert the RETURNED VALUE without spending a
+# second write to learn the status code. Sets $BODY and $CODE.
+anonbc() {
+  local r; r="$(curl -s -w $'\n%{http_code}' -H "apikey: $KEY" -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' "$@")"
+  CODE="${r##*$'\n'}"; BODY="${r%$'\n'*}"
+}
 
 DEV="11111111-1111-1111-1111-111111111111"
 SES="22222222-2222-2222-2222-222222222222"
@@ -67,6 +73,18 @@ c=$(anon -X POST "$URL/rest/v1/events" -d "{\"device_id\":\"$DEV\",\"session_id\
 case "$c" in *42501*) ok "anon CANNOT attribute an event to another user" ;;
              *) bad "user_id can be forged" "$c" ;; esac
 
+# ⚠️ REGRESSION GUARD (0019). The idempotent-ingest bug looked exactly like "the upsert just needs
+# an UPDATE policy" — it did not (an UPDATE policy changes nothing; the blocker was the absent
+# SELECT policy), and adding one would have made an event log rewritable by the very clients that
+# write it. 0019 also revokes the UPDATE/DELETE grants Supabase hands out by default, so a
+# permissive policy added in haste still cannot land a write.
+# A status assertion is sufficient HERE, and only here: with the grant revoked the refusal is an
+# unambiguous 42501. Were it left to the policy list alone, PostgREST would answer 204/0-rows and
+# this check would pass while proving nothing — the exact trap documented in the push section.
+c=$(anon -X PATCH "$URL/rest/v1/events?device_id=eq.$DEV" -d '{"name":"rewritten"}')
+case "$c" in *42501*) ok "anon CANNOT rewrite an event (append-only holds)" ;;
+             *) bad "EVENTS ARE MUTABLE — a client can rewrite events it already sent" "$c" ;; esac
+
 for v in events_daily events_level_funnel; do
   c=$(anon "$URL/rest/v1/$v?select=*")
   case "$c" in *42501*|"[]") ok "view $v is not readable by anon" ;;
@@ -89,23 +107,55 @@ case "$c" in *42501*) ok "anon CANNOT read app_admins (grant revoked)" ;;
              *) bad "app_admins IS REACHABLE — the admin list should not even be queryable" "$c" ;; esac
 
 echo
-echo "── events hardening (0015): idempotent ingest, private retention ───"
-# The dedupe check needs the EFFECT, not the status (the send-push lesson above): both sends
-# answer 20x whether or not the second row was ignored — only the row count proves the unique
-# index and on_conflict path actually work.
+echo "── events hardening (0015/0019): idempotent ingest, private retention ───"
+# ⚠️ 0015 specified the dedupe as a PostgREST upsert (`?on_conflict=event_id` +
+# `resolution=ignore-duplicates`) straight at the table. That shape can NEVER work here and this
+# script is the thing that caught it: ON CONFLICT makes PostgreSQL require SELECT rights on the
+# target, which folds the table's SELECT policies in as an extra WITH CHECK on the new row —
+# and `events` deliberately has none, so the check is a constant false and every send is 401.
+# The only policy that satisfies it is `for select using (true)`, i.e. publishing the whole
+# behavioural log. 0019 moved the conflict handling into a SECURITY DEFINER function instead;
+# the probe below deliberately exercises THAT path, because it is the one the client now uses.
 EID=$(python3 -c 'import uuid;print(uuid.uuid4())')
-c1=$(anonc -X POST "$URL/rest/v1/events?on_conflict=event_id" -H 'Prefer: return=minimal,resolution=ignore-duplicates' \
-     -d "{\"device_id\":\"$DEV\",\"session_id\":\"$SES\",\"name\":\"rls_probe\",\"event_id\":\"$EID\"}")
-c2=$(anonc -X POST "$URL/rest/v1/events?on_conflict=event_id" -H 'Prefer: return=minimal,resolution=ignore-duplicates' \
-     -d "{\"device_id\":\"$DEV\",\"session_id\":\"$SES\",\"name\":\"rls_probe\",\"event_id\":\"$EID\"}")
-case "$c1/$c2" in 20*/20*) ok "anon CAN send the idempotent wire shape, twice ($c1/$c2)" ;;
-                  *) bad "idempotent insert rejected — is 0015 applied?" "$c1/$c2" ;; esac
+# $1 = event_id, $2 = extra JSON fields (leading comma), e.g. ',"user_id":"…"'
+ev() { printf '{"p_events":[{"device_id":"%s","session_id":"%s","name":"rls_probe","event_id":"%s"%s}]}' "$DEV" "$SES" "$1" "${2:-}"; }
+
+anonbc -X POST "$URL/rest/v1/rpc/ingest_events" -d "$(ev "$EID")"; n1="$BODY"; s1="$CODE"
+anonbc -X POST "$URL/rest/v1/rpc/ingest_events" -d "$(ev "$EID")"; n2="$BODY"; s2="$CODE"
+case "$s1/$s2" in
+  20*/20*) ok "anon CAN ingest a batch via ingest_events, twice ($s1/$s2)" ;;
+  *)       bad "idempotent ingest rejected — is 0019 applied?" "$s1/$s2 — $n1" ;;
+esac
+# The EFFECT, not the status (the send-push lesson below): both sends answer 200 whether or not the
+# second row was ignored. ingest_events RETURNS how many rows it actually inserted, so 1-then-0 is
+# proof by itself — which is what finally makes this assertion runnable against PRODUCTION, where
+# nobody should be putting the secret key on a command line.
+case "$n1/$n2" in
+  1/0) ok "duplicate event_id stored ONCE (dedupe proven by the returned insert count)" ;;
+  *)   bad "DEDUPE DID NOTHING — a re-sent batch double-counts" "inserted $n1 then $n2" ;;
+esac
 if [ -n "${SECRET:-}" ]; then
   n=$(svc "$URL/rest/v1/events?event_id=eq.$EID&select=id" | python3 -c 'import json,sys;print(len(json.load(sys.stdin)))')
-  [ "$n" = "1" ] && ok "duplicate event_id stored ONCE (dedupe verified by count)" \
+  [ "$n" = "1" ] && ok "…and exactly one row is really there (confirmed by count)" \
     || bad "DEDUPE DID NOTHING — a re-sent batch double-counts" "$n rows"
 else
-  skip "dedupe row-count check (needs a secret key to count rows)"
+  skip "dedupe row-count confirmation (needs a secret key; the count check above already proved it)"
+fi
+
+# ingest_events is SECURITY DEFINER, so RLS is NOT what protects user_id on this path — the
+# function reading it from the VERIFIED JWT and ignoring the payload is. A definer function that
+# trusted the row would let any anonymous visitor attribute events to any account: strictly worse
+# than the hole 0010's policy closes, and invisible without checking the stored value.
+FID=$(python3 -c 'import uuid;print(uuid.uuid4())')
+anon -X POST "$URL/rest/v1/rpc/ingest_events" \
+     -d "$(ev "$FID" ',"user_id":"33333333-3333-3333-3333-333333333333"')" >/dev/null
+if [ -n "${SECRET:-}" ]; then
+  got=$(svc "$URL/rest/v1/events?event_id=eq.$FID&select=user_id" \
+        | python3 -c 'import json,sys;d=json.load(sys.stdin);print("MISSING" if not d else (d[0]["user_id"] or "null"))')
+  [ "$got" = "null" ] && ok "ingest_events IGNORES a forged user_id (attribution comes from the JWT)" \
+    || bad "THE RPC ATTRIBUTED AN EVENT TO ANOTHER USER — definer function trusts the payload" "$got"
+else
+  skip "RPC forged-user_id check (needs a secret key to read the stored row back)"
 fi
 
 c=$(anon -X POST "$URL/rest/v1/rpc/prune_events" -d '{"keep_days":90}')

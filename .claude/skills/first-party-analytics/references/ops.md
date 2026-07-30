@@ -55,8 +55,12 @@ statements; this script turns one into the other. Rules learned the hard way:
    - any views over events are not readable by anon
    - anon CANNOT call the admin RPC (grant-level 42501)
    - anon CANNOT read the admins table
-   - the idempotent wire shape (on_conflict + ignore-duplicates) is accepted, twice
+   - anon CANNOT *rewrite* an event — append-only holds against UPDATE, not just SELECT
+   - anon CAN call the ingest RPC with a batch, twice
+   - the ingest RPC returns 1 then 0 for the same event_id — dedupe proven by the RETURNED count,
+     so this assertion runs against production without a secret key on the command line
    - [secret] duplicate event_id stored ONCE — counted
+   - [secret] a forged `user_id` in the RPC payload is IGNORED (definer function reads the JWT)
    - anon CANNOT call prune
 4. Exit non-zero on any failure; print counts.
 

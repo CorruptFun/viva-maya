@@ -162,17 +162,25 @@ describe('analytics queue', () => {
 })
 
 /**
- * The 0015 wire contract: every event carries an idempotency key, a resend after a lost response
- * cannot double-count, and a client deployed AHEAD of the 0015 migration falls back to the legacy
- * shape without losing a single event. The fallback test is the load-bearing one — it is the
- * 0008/0009 deploy-race lesson applied to this table, and it is exactly the path nobody would
- * notice breaking until a whole day of events silently vanished.
+ * The 0015/0019 wire contract: every event carries an idempotency key, a resend after a lost
+ * response cannot double-count, and a client deployed AHEAD of its migrations degrades one rung at
+ * a time without losing a single event. The ladder tests are the load-bearing ones — the 0008/0009
+ * deploy-race lesson applied to this table, and exactly the path nobody would notice breaking until
+ * a whole day of events had silently vanished.
+ *
+ * ⚠️ The regression this file now pins: 0015 shipped `?on_conflict=event_id` +
+ * `resolution=ignore-duplicates`, which `events` can never accept (no SELECT policy, by design), so
+ * every flush was refused 401 — and because the old ladder only stepped down on 400, a 401 fell
+ * through to "drop the batch". The dedupe bug was really a total-loss bug. Two tests below exist
+ * solely so that cannot come back: the wire must not carry on_conflict, and a 401 must step down.
  */
-describe('flush idempotency + schema fallback (0015)', () => {
+describe('flush ladder: rpc → direct → legacy (0015/0019)', () => {
   interface SentBatch {
     url: string
-    prefer: string
+    prefer: string | undefined
+    /** The event rows, unwrapped from the RPC envelope when there is one. */
     rows: Record<string, unknown>[]
+    raw: unknown
   }
   let sent: SentBatch[]
   let respond: () => { ok: boolean; status: number }
@@ -183,11 +191,13 @@ describe('flush idempotency + schema fallback (0015)', () => {
     vi.stubEnv('VITE_SUPABASE_ANON_KEY', 'test-key')
     installLocalStorage()
     sent = []
-    respond = () => ({ ok: true, status: 201 })
+    respond = () => ({ ok: true, status: 200 })
     vi.stubGlobal(
       'fetch',
       vi.fn(async (url: string, init: { headers: Record<string, string>; body: string }) => {
-        sent.push({ url: String(url), prefer: init.headers.Prefer, rows: JSON.parse(init.body) })
+        const raw = JSON.parse(init.body)
+        const rows = Array.isArray(raw) ? raw : (raw as { p_events: Record<string, unknown>[] }).p_events
+        sent.push({ url: String(url), prefer: init.headers.Prefer, rows, raw })
         return respond() as Response
       })
     )
@@ -198,17 +208,30 @@ describe('flush idempotency + schema fallback (0015)', () => {
     _reset()
   })
 
-  it('mints a distinct event_id per event and posts with on_conflict + ignore-duplicates', async () => {
+  it('sends the batch to ingest_events with a distinct event_id per event', async () => {
     track(EVENTS.LEVEL_START, { level: 1 })
     track(EVENTS.LEVEL_WIN, { level: 1 })
     await _flush()
     expect(sent).toHaveLength(1)
-    expect(sent[0].url).toContain('/rest/v1/events?on_conflict=event_id')
-    expect(sent[0].prefer).toContain('resolution=ignore-duplicates')
+    expect(sent[0].url).toContain('/rest/v1/rpc/ingest_events')
+    expect(sent[0].raw).toHaveProperty('p_events')
     const ids = sent[0].rows.map(r => r.event_id)
     expect(ids).toHaveLength(2)
     expect(new Set(ids).size).toBe(2)
     for (const id of ids) expect(String(id)).toMatch(/^[0-9a-f-]{36}$/)
+  })
+
+  it('NEVER sends the on_conflict upsert shape — events has no SELECT policy, so it 401s', async () => {
+    track(EVENTS.APP_OPEN)
+    respond = () => ({ ok: false, status: 404 })
+    await _flush() // rpc rung
+    await _flush() // direct rung
+    respond = () => ({ ok: false, status: 400 })
+    await _flush() // legacy rung
+    for (const s of sent) {
+      expect(s.url).not.toContain('on_conflict')
+      expect(s.prefer ?? '').not.toContain('ignore-duplicates')
+    }
   })
 
   it('a 5xx re-queues the batch with the SAME ids — that persistence is the dedupe', async () => {
@@ -217,29 +240,55 @@ describe('flush idempotency + schema fallback (0015)', () => {
     await _flush()
     const firstIds = sent[0].rows.map(r => r.event_id)
     expect(_queueDepth()).toBe(1) // kept, not dropped
-    respond = () => ({ ok: true, status: 201 })
+    expect(sent[0].url).toContain('/rpc/ingest_events') // and 5xx does NOT step down a rung
+    respond = () => ({ ok: true, status: 200 })
     await _flush()
+    expect(sent[1].url).toContain('/rpc/ingest_events')
     expect(sent[1].rows.map(r => r.event_id)).toEqual(firstIds)
   })
 
-  it('a 400 while sending ids flips to the legacy shape and re-queues instead of dropping', async () => {
+  it('a 404 (server predates 0019) steps down to the direct table POST and re-queues', async () => {
     track(EVENTS.APP_OPEN)
-    respond = () => ({ ok: false, status: 400 }) // a pre-0015 server rejecting the unknown column
+    respond = () => ({ ok: false, status: 404 }) // PGRST202: no such function
     await _flush()
-    expect(_queueDepth()).toBe(1) // the batch survived the schema mismatch
+    expect(_queueDepth()).toBe(1) // the batch survived the missing RPC
     respond = () => ({ ok: true, status: 201 })
     await _flush()
-    expect(sent[1].url).not.toContain('on_conflict') // legacy wire shape…
-    expect(sent[1].prefer).not.toContain('ignore-duplicates')
-    expect(sent[1].rows[0]).not.toHaveProperty('event_id') // …with the ids stripped
+    expect(sent[1].url).toMatch(/\/rest\/v1\/events$/)
+    expect(sent[1].prefer).toBe('return=minimal')
+    expect(sent[1].rows[0]).toHaveProperty('event_id') // ids still ride — 0015's index still rejects exact dupes
     expect(sent[1].rows[0]).toHaveProperty('name', EVENTS.APP_OPEN)
   })
 
-  it('a 400 in legacy mode drops (a genuinely bad batch must not loop forever)', async () => {
+  it('a 401 on the RPC steps down too — the exact status the old ladder dropped on', async () => {
+    track(EVENTS.APP_OPEN)
+    respond = () => ({ ok: false, status: 401 })
+    await _flush()
+    expect(_queueDepth()).toBe(1) // NOT dropped
+    respond = () => ({ ok: true, status: 201 })
+    await _flush()
+    expect(sent[1].url).toMatch(/\/rest\/v1\/events$/)
+  })
+
+  it('a 400 on the direct rung strips the ids (server predates 0015) and re-queues', async () => {
+    track(EVENTS.APP_OPEN)
+    respond = () => ({ ok: false, status: 404 })
+    await _flush() // rpc → direct
+    respond = () => ({ ok: false, status: 400 }) // unknown column event_id
+    await _flush() // direct → legacy
+    expect(_queueDepth()).toBe(1)
+    respond = () => ({ ok: true, status: 201 })
+    await _flush()
+    expect(sent[2].rows[0]).not.toHaveProperty('event_id')
+    expect(sent[2].rows[0]).toHaveProperty('name', EVENTS.APP_OPEN)
+  })
+
+  it('a 400 on the legacy rung drops (a genuinely bad batch must not loop forever)', async () => {
     track(EVENTS.APP_OPEN)
     respond = () => ({ ok: false, status: 400 })
-    await _flush() // flips to fallback, re-queues
-    await _flush() // legacy send also 400s
+    await _flush() // rpc → direct, re-queued
+    await _flush() // direct → legacy, re-queued
+    await _flush() // legacy also 400s — nothing left to strip
     expect(_queueDepth()).toBe(0)
   })
 })

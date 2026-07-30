@@ -22,6 +22,7 @@ anyone; the one measured churn (a W30 player absent from W31) crossed exactly th
 | Tests | `src/core/analytics.test.ts` |
 | **Dashboard** (admin-gated read path) | `supabase/migrations/0014_analytics_dashboard.sql` + `stats.html` + `src/stats/` |
 | **Hardening** (dedupe, retention, sessions, crash telemetry, service-role gate) | `supabase/migrations/0015_analytics_hardening.sql` |
+| **Idempotent ingest** (the dedupe 0015 specified but could not execute) | `supabase/migrations/0019_events_idempotent_ingest.sql` |
 | **Weekly ops** (prune + digest to a pinned issue) | `.github/workflows/analytics-weekly.yml` + `scripts/analytics-digest.mjs` |
 
 **The table is append-only to every client.** `0010` grants INSERT and *no SELECT at all* — RLS denies
@@ -139,8 +140,8 @@ scripts/verify-rls.sh https://deskabqqxqqibxjffwmb.supabase.co <publishable-key>
 ```
 
 Each "must be refused" assertion is paired with a control probe so an empty result can't be
-confused with a missing table. Expect `17 passed, 0 failed` with a secret key in the environment
-(`12 passed` + 3 SKIP-labelled effect checks without one).
+confused with a missing table. Expect `20 passed, 0 failed` with a secret key in the environment
+(`14 passed` + 4 SKIP-labelled effect checks without one).
 
 ### 1b. Turn on the dashboard (`0014` — additive, any order vs the client deploy)
 
@@ -168,11 +169,12 @@ Paste `0015_analytics_hardening.sql` into the SQL editor **before deploying a cl
 this revision** (the standing two-phase rule). What it adds:
 
 - **`events.event_id` + a unique index** — idempotent ingestion. A flush whose response is lost is
-  re-sent with the same ids and inserts nothing the second time. The client is resilient to the
-  wrong order anyway: its first 400 flips a session-scoped legacy mode that **re-queues** the batch
-  and strips ids — a deploy that outruns its migration delays events, never loses them. Old cached
-  clients keep writing id-less rows forever; the nullable column + full unique index make both
-  generations coexist.
+  re-sent with the same ids and inserts nothing the second time. Old cached clients keep writing
+  id-less rows forever; the nullable column + full unique index make both generations coexist.
+  ⚠️ The column and index are right, but the *wire shape* 0015 specified to use them
+  (`?on_conflict=event_id` + `Prefer: resolution=ignore-duplicates`) can never execute against this
+  table — **`0019` is what actually makes the dedupe work, and applying `0015` without it takes
+  analytics dark.** See 1d before applying either.
 - **`admin_analytics` v2** — new `retention` (exact-day D1/D7 with honest eligibility), `sessions`
   (median length, bounce rate, five duration buckets) and `errors` (uncaught-exception rollup,
   split by build) sections, all rendered by the dashboard. The gate now also admits the
@@ -187,7 +189,46 @@ this revision** (the standing two-phase rule). What it adds:
   secret the push sender already uses — no new setup.
 
 Then re-run `scripts/verify-rls.sh` (see the counts above — the dedupe check proves the effect by
-row count, not status code).
+insert count, not status code).
+
+### 1d. Idempotent ingest (`0019`) — apply this WITH `0015`, not after it
+
+**If you apply `0015` and stop, the analytics pipe goes silent.** Not double-counted — *empty*.
+
+`0015` designed the dedupe as a PostgREST upsert straight at the table
+(`POST /rest/v1/events?on_conflict=event_id` with `Prefer: resolution=ignore-duplicates`). That
+request is refused `42501 → 401` on every send, including the first, when nothing conflicts:
+
+> `ON CONFLICT` makes PostgreSQL require SELECT rights on the target, so the rewriter folds the
+> table's **SELECT policies** in as an extra `WITH CHECK` on the row being inserted. `events` has
+> none — that is `0010`'s most important line — so the check is built from an empty policy list and
+> becomes a constant false. The error names no policy, because there is no policy.
+
+It is **not** a missing UPDATE policy (adding one changes nothing — measured), and it cannot be
+fixed with a SELECT policy: the check runs against the *new* row, so it would have to be
+`using (true)`, which republishes the entire behavioural log to every holder of the publishable
+key. This is the same root cause as `0016`, arriving through INSERT instead of UPDATE/DELETE.
+
+The client treats a 4xx that isn't 400 as "this batch will never be accepted" and **drops** it, so
+before `0019` every event of every session was discarded. The live bundle already ships that wire
+shape; it heals when players pick up a build from this revision or later.
+
+`0019` moves the conflict handling into `ingest_events(p_events jsonb)` — `SECURITY DEFINER`, the
+shape `0005`/`0008`/`0016` already use — and hardens what it can:
+
+- the table keeps **no SELECT policy and no UPDATE policy**; `0010`'s INSERT policy is untouched, so
+  old cached clients keep writing exactly as they do today (purely additive, safe in any order);
+- `user_id` is taken from the **verified JWT** and the payload's is ignored — a definer function
+  bypasses RLS, so `0010`'s `auth.uid() = user_id` policy is not protecting this path;
+- the default `UPDATE`/`DELETE` grants Supabase hands `anon`/`authenticated` on `events` are
+  **revoked**, so the append-only guarantee no longer rests on the policy list alone;
+- the function **returns how many rows it actually inserted**, which is what lets `verify-rls.sh`
+  prove the dedupe against production without a secret key (`1` then `0`).
+
+The client (`src/core/analytics.ts`) now degrades one rung at a time —
+`rpc → direct POST → direct POST with ids stripped` — re-queueing at every step, so a client ahead
+of its migrations delays events instead of losing them. Any 4xx steps it down, not just a 400:
+being specific about the status is what let the original bug throw away data.
 
 ### 2. Set the repo variables and secrets
 

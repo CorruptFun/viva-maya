@@ -4,6 +4,23 @@
 -- telemetry, and an ops path — the ring of things a studio pipeline has that
 -- 0010/0014 didn't yet.
 --
+-- ⚠️⚠️ AMENDED BY 0019 — READ THIS FIRST. APPLY 0019 TOGETHER WITH THIS FILE.
+-- The dedupe below is HALF a mechanism. The column and the unique index are
+-- correct and stay exactly as they are; the WIRE SHAPE this header specifies for
+-- using them — `POST /rest/v1/events?on_conflict=event_id` with
+-- `Prefer: resolution=ignore-duplicates` — CANNOT EXECUTE against this table and
+-- never could. `ON CONFLICT` makes PostgreSQL require SELECT rights on the
+-- target, which folds the table's SELECT policies in as an extra WITH CHECK on
+-- the row being inserted; `events` deliberately has none (0010), so that check is
+-- built from an empty policy list and is a constant false. Every send is refused
+-- 42501 → 401, including the first, with nothing to conflict against.
+-- Worse than a missing dedupe: core/analytics.ts drops any 4xx that is not a 400,
+-- so applying THIS FILE ALONE does not double-count events, it discards all of
+-- them. 0019 moves the conflict handling into a SECURITY DEFINER function and
+-- the client onto it. Sentences below that describe the on_conflict wire are
+-- kept only so the amendment reads against the original — they are WRONG.
+-- (This file's SQL is unchanged and still correct; only its prose is amended.)
+--
 -- WHAT THIS ADDS, and why each piece exists:
 --
 -- 1. events.event_id + a unique index — IDEMPOTENT INGESTION. The client's

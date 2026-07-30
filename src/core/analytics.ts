@@ -146,9 +146,10 @@ interface QueuedEvent {
   app_version: string
   /**
    * Idempotency key (0015). A flush whose response is lost re-queues its batch, so a POST that
-   * actually landed can be re-sent — the unique index on this id makes the resend a no-op
-   * (`on_conflict=event_id` + ignore-duplicates) instead of a double count. Minted once per event
-   * and kept across re-queues; that persistence IS the dedupe.
+   * actually landed can be re-sent — the unique index on this id makes the resend a no-op instead
+   * of a double count. Minted once per event and kept across re-queues; that persistence IS the
+   * dedupe. The server-side half is `ingest_events()` (0019), NOT the `on_conflict` upsert 0015
+   * originally specified: that wire shape is impossible on this table (see `wire` below).
    */
   event_id: string
 }
@@ -169,13 +170,28 @@ let started = false
 let currentUserId: (() => string | null) | null = null
 let currentToken: (() => string | null) | null = null
 /**
- * TRUE after a 400 while sending event_id — the server predates 0015 (its events table has no such
- * column, and PostgREST rejects unknown columns). From then on this session strips event_id and
- * drops the on_conflict param, and the batch that hit the 400 is RE-QUEUED, not dropped: a deploy
- * that outruns its migration must delay events, never lose them (the 0008/0009 lesson). Session-
- * scoped on purpose — the next open retries with ids and heals itself once 0015 is applied.
+ * Which wire this session sends on. It only ever steps DOWN, once per rung, and every step re-queues
+ * the batch that provoked it: a client deployed ahead of its migrations must delay events, never
+ * lose them (the 0008/0009 lesson). Session-scoped on purpose — the next app open starts back at
+ * 'rpc' and heals itself the moment the server catches up.
+ *
+ *   'rpc'    → POST /rest/v1/rpc/ingest_events. The ONLY path that actually dedupes (0019).
+ *   'direct' → POST /rest/v1/events. 0010's plain INSERT policy, on every server since. Carries
+ *              event_id (harmless, and 0015's unique index still rejects an exact duplicate) but
+ *              does NOT dedupe, because it cannot: see below.
+ *   'legacy' → the same, with event_id stripped — for a server that predates 0015's column.
+ *
+ * ⚠️ WHAT IS NOT HERE, AND MUST NOT COME BACK: `?on_conflict=event_id` +
+ * `Prefer: resolution=ignore-duplicates`. 0015 specified that shape and it CANNOT WORK on this
+ * table — `ON CONFLICT` makes PostgreSQL require SELECT rights on the target, which folds the
+ * table's SELECT policies in as an extra WITH CHECK on the new row; `events` deliberately has none
+ * (0010), so the check is a constant false and every send is refused 42501 → 401. The only policy
+ * that satisfies it is `for select using (true)`, i.e. publishing the whole behavioural log. It
+ * shipped, and because a 401 is not a 400 the old code DROPPED every batch — the dedupe bug was
+ * silently a total-data-loss bug. 0019 moves the conflict handling server-side instead.
  */
-let schemaFallback = false
+type Wire = 'rpc' | 'direct' | 'legacy'
+let wire: Wire = 'rpc'
 /** client_error budget: at most ERROR_LIMIT per session, one per distinct message. */
 const ERROR_LIMIT = 5
 let errorsSent = 0
@@ -301,25 +317,36 @@ async function flush(unloading = false): Promise<void> {
 
   const token = currentToken?.() ?? null
   const key = supabaseKey() as string
-  // Pre-0015 servers reject unknown columns outright, so in fallback mode the ids are stripped
-  // from the wire (the queue keeps them — they go back on if the session ever leaves fallback).
-  const body = JSON.stringify(
-    schemaFallback ? batch.map(({ event_id: _drop, ...rest }) => rest) : batch
-  )
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     apikey: key,
-    // A signed-in player's own JWT, so auth.uid() matches the user_id above and RLS admits the row.
-    // Anonymous rows go up under the publishable key, which is what the 0010 policy is built for.
+    // A signed-in player's own JWT. On the RPC path it is what auth.uid() reads to attribute the
+    // rows; on the direct path it is what makes RLS admit a non-null user_id (0010).
     Authorization: `Bearer ${token ?? key}`,
-    // return=minimal: write-only table, nothing reads the result. ignore-duplicates is the dedupe
-    // half of event_id (0015): a re-sent batch whose first attempt actually landed inserts nothing.
-    Prefer: schemaFallback ? 'return=minimal' : 'return=minimal,resolution=ignore-duplicates',
+  }
+
+  let url: string
+  let body: string
+  if (wire === 'rpc') {
+    url = `${supabaseUrl()}/rest/v1/rpc/ingest_events`
+    // The batch goes up unreshaped. ingest_events takes user_id from the VERIFIED JWT and ignores
+    // whatever the row claims, so the field riding along is inert (0019). The reply is a small
+    // integer — how many rows were new — which nothing here needs; the flush is fire-and-forget.
+    body = JSON.stringify({ p_events: batch })
+  } else {
+    url = `${supabaseUrl()}/rest/v1/events`
+    // return=minimal: write-only table, nothing reads the result.
+    headers.Prefer = 'return=minimal'
+    // Pre-0015 servers reject unknown columns outright, so the legacy rung strips the ids from the
+    // wire (the queue keeps them — they ride again if a later session reaches a server that has
+    // ingest_events).
+    body = JSON.stringify(
+      wire === 'legacy' ? batch.map(({ event_id: _drop, ...rest }) => rest) : batch
+    )
   }
 
   try {
-    const conflict = schemaFallback ? '' : '?on_conflict=event_id'
-    const res = await fetch(`${supabaseUrl()}/rest/v1/events${conflict}`, {
+    const res = await fetch(url, {
       method: 'POST',
       headers,
       body,
@@ -328,19 +355,27 @@ async function flush(unloading = false): Promise<void> {
       cache: 'no-store',
     })
     if (!res.ok) {
-      if (res.status >= 500) {
-        // Server trouble — keep the batch for the next flush.
-        queue = batch.concat(queue).slice(-MAX_QUEUE)
-      } else if (!schemaFallback && res.status === 400) {
-        // First 400 while sending event_id: almost certainly a server that predates 0015 (unknown
-        // column / unknown on_conflict target). Flip to the legacy wire shape and RE-QUEUE — a
-        // client deployed ahead of its migration must delay events, never lose them. If the 400
-        // was really something else, the retry without ids will 400 again and THEN drop below.
-        schemaFallback = true
+      const requeue = () => {
         queue = batch.concat(queue).slice(-MAX_QUEUE)
       }
-      // Any other 4xx: this batch will never be accepted (bad shape, revoked key) — dropping it
-      // is correct.
+      if (res.status >= 500) {
+        // Server trouble — keep the batch for the next flush.
+        requeue()
+      } else if (wire === 'rpc') {
+        // ANY 4xx here, not just the 404/PGRST202 that a server predating 0019 actually returns.
+        // Being specific is what broke this pipe before: the old code stepped down on 400 alone,
+        // so the 401 that 0015's upsert really produced fell through to the drop below and took
+        // every event with it. The direct rung is a strictly more permissive wire, so trying it
+        // can only help — and if it fails too, the batch still drops, just one flush later.
+        wire = 'direct'
+        requeue()
+      } else if (wire === 'direct' && res.status === 400) {
+        // A server that predates 0015 rejecting the unknown event_id column. Strip and re-queue.
+        wire = 'legacy'
+        requeue()
+      }
+      // On the legacy rung everything strippable is already stripped: a 4xx there is a batch that
+      // will never be accepted (bad shape, revoked key), and dropping it is correct.
     }
   } catch {
     queue = batch.concat(queue).slice(-MAX_QUEUE)
@@ -452,7 +487,7 @@ export function _reset(): void {
   started = false
   currentUserId = null
   currentToken = null
-  schemaFallback = false
+  wire = 'rpc'
   errorsSent = 0
   seenErrors.clear()
 }

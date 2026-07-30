@@ -38,40 +38,61 @@ Read env lazily (function, not module consts) so tests can stub it.
 
 ## The flush — where all the subtlety lives
 
+The wire degrades one rung at a time. `wire` is session-scoped: the next launch starts at `'rpc'`
+and heals itself once the migration lands.
+
 ```ts
+type Wire = 'rpc' | 'direct' | 'legacy'
+let wire: Wire = 'rpc'
+
 async function flush(unloading = false): Promise<void> {
   const batch = queue; queue = []
-  const body = JSON.stringify(
-    schemaFallback ? batch.map(({ event_id: _d, ...rest }) => rest) : batch)
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json', apikey: key,
+    // Signed-in? send the user's own JWT: it's what auth.uid() reads inside the ingest function
+    // (and what RLS checks on the direct rung). Else the publishable key.
+    Authorization: `Bearer ${token ?? key}`,
+  }
+  let url_: string, body: string
+  if (wire === 'rpc') {
+    url_ = `${url}/rest/v1/rpc/ingest_events`      // the ONLY rung that dedupes
+    body = JSON.stringify({ p_events: batch })     // server takes user_id from the JWT
+  } else {
+    url_ = `${url}/rest/v1/events`                 // plain INSERT policy; no dedupe, but it lands
+    headers.Prefer = 'return=minimal'
+    body = JSON.stringify(
+      wire === 'legacy' ? batch.map(({ event_id: _d, ...rest }) => rest) : batch)
+  }
   try {
-    const res = await fetch(`${url}/rest/v1/events${schemaFallback ? '' : '?on_conflict=event_id'}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json', apikey: key,
-        // Signed-in? send the user's own JWT so RLS admits the user_id; else the publishable key.
-        Authorization: `Bearer ${token ?? key}`,
-        Prefer: schemaFallback ? 'return=minimal' : 'return=minimal,resolution=ignore-duplicates',
-      },
-      body,
+    const res = await fetch(url_, {
+      method: 'POST', headers, body,
       keepalive: unloading,   // ← the one flag that makes the quit-flush survive page death
       cache: 'no-store',
     })
     if (!res.ok) {
-      if (res.status >= 500) requeue(batch)                    // server trouble: keep
-      else if (!schemaFallback && res.status === 400) {        // server predates the event_id column
-        schemaFallback = true; requeue(batch)                  // DELAY, never lose (deploy race)
-      }                                                        // other 4xx: drop — never acceptable
+      if (res.status >= 500) requeue(batch)                 // server trouble: keep, same rung
+      else if (wire === 'rpc') {                            // ANY 4xx — see below
+        wire = 'direct'; requeue(batch)                     // DELAY, never lose (deploy race)
+      } else if (wire === 'direct' && res.status === 400) { // server predates the event_id column
+        wire = 'legacy'; requeue(batch)
+      }                                 // legacy 4xx: nothing left to strip — drop is correct
     }
-  } catch { requeue(batch) }                                   // transport: keep
+  } catch { requeue(batch) }                                // transport: keep
 }
 ```
 
+⚠️ **Step down on ANY 4xx from the RPC rung, not just the 404 you expect.** Being specific is what
+broke this pipe the first time: the fallback was written for the 400 a missing column returns, the
+real failure was a 401, and every batch fell through to "drop" — a dedupe bug that was silently a
+total-data-loss bug. The lower rung is a strictly more permissive wire, so trying it can only help;
+if it fails too the batch still drops, one flush later.
+
 Why raw `fetch` and not a client SDK: (a) `keepalive` — the unload flush carries "user quit here",
 the single most valuable funnel event, and SDKs typically don't expose it; (b) analytics keeps
-working even before/without the SDK's lazy chunk loading.
+working even before/without the SDK's lazy chunk loading. (c) An SDK's `.upsert()` would put you
+straight back on the `on_conflict` path that cannot work here.
 
-`requeue` = `queue = batch.concat(queue).slice(-MAX_QUEUE)`. `schemaFallback` is session-scoped —
-next launch retries ids and heals once the migration is applied.
+`requeue` = `queue = batch.concat(queue).slice(-MAX_QUEUE)`.
 
 ## Lifecycle wiring (init)
 
@@ -118,7 +139,10 @@ the identity choices above.
 
 - Opt-out stops collection and discards the queue; opt-in resumes.
 - `track` never throws (circular props, empty name, undefined).
-- Every event carries a distinct UUID `event_id`; the wire has `on_conflict` + ignore-duplicates.
-- 5xx re-queues with the SAME ids (that persistence IS the dedupe).
-- First 400 flips fallback and RE-QUEUES; the retry has no ids; a second 400 drops.
+- Every event carries a distinct UUID `event_id`; the batch goes to the ingest RPC.
+- The wire NEVER carries `on_conflict` / `ignore-duplicates` on any rung (pin the regression).
+- 5xx re-queues with the SAME ids and does NOT step down a rung (that persistence IS the dedupe).
+- A 404 steps down to the direct POST and RE-QUEUES; **a 401 does too** (the status the original
+  fallback dropped on — test it explicitly, it is the whole bug).
+- On the direct rung a 400 strips the ids; a 400 on the legacy rung finally drops.
 - Error telemetry: truncation, per-message dedupe, session cap, never throws.

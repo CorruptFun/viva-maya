@@ -59,6 +59,59 @@ create trigger events_guard before insert on public.events
     for each row execute function public.events_guard();
 
 -- ============================================================================
+-- IDEMPOTENT INGEST — the ONLY way to dedupe on a table with no SELECT policy.
+--
+-- ⚠️ Do NOT try `POST /events?on_conflict=event_id` + `resolution=ignore-duplicates`. It is refused
+-- 42501 → 401 on EVERY send, including the first, with nothing conflicting: ON CONFLICT makes
+-- PostgreSQL require SELECT rights on the target, so the rewriter folds the table's SELECT policies
+-- in as an extra WITH CHECK on the NEW row. There are none, so that check is a constant false. The
+-- tell is an error that names no policy. An UPDATE policy does not help (measured); the only SELECT
+-- policy that would is `using (true)`, which publishes the whole behavioural log.
+-- ============================================================================
+create or replace function public.ingest_events(p_events jsonb)
+returns integer language plpgsql security definer
+set search_path = public, pg_temp as $$
+declare
+    uuid_re constant text :=
+        '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$';
+    inserted integer;
+begin
+    if jsonb_typeof(p_events) is distinct from 'array' then return 0; end if;
+    -- `as materialized` fences the guard from the casts: a bad uuid must be FILTERED, never cast,
+    -- or one malformed row raises 22P02 and takes the whole batch with it.
+    with src as materialized (
+        select e from jsonb_array_elements(p_events) with ordinality as t(e, ord)
+        where ord <= 500                      -- bound one call; excess ignored, not rejected
+          and jsonb_typeof(e) = 'object'
+          and e ->> 'device_id' ~ uuid_re and e ->> 'session_id' ~ uuid_re
+          and (e ->> 'event_id' is null or e ->> 'event_id' ~ uuid_re)
+    )
+    insert into public.events (device_id, session_id, user_id, name, props, app_version, event_id)
+    select (e ->> 'device_id')::uuid, (e ->> 'session_id')::uuid,
+           -- ⚠️ FROM THE VERIFIED JWT, NEVER THE PAYLOAD. Definer bypasses RLS, so the
+           -- `auth.uid() = user_id` policy is NOT protecting this path: honouring a supplied
+           -- user_id would let any visitor attribute events to any account.
+           auth.uid(),
+           e ->> 'name', coalesce(e -> 'props', '{}'::jsonb), e ->> 'app_version',
+           (e ->> 'event_id')::uuid
+    from src
+    on conflict (event_id) do nothing;       -- atomic: immune to a resend racing its own original
+    -- Return the count so the dedupe is provable from outside WITHOUT a service key (1 then 0) —
+    -- the only way the assertion can be run against production.
+    get diagnostics inserted = row_count;
+    return inserted;
+end; $$;
+revoke all on function public.ingest_events(jsonb) from public;
+grant execute on function public.ingest_events(jsonb) to anon, authenticated;
+
+-- Append-only at the GRANT layer too. Platforms like Supabase `grant all` on new public tables by
+-- default; with no UPDATE/DELETE policy those are already dead, but revoking them means a
+-- permissive policy added later in haste still cannot rewrite or erase an event.
+-- Do NOT revoke SELECT: the no-SELECT-policy design already returns [], and the empty result is
+-- what the RLS probe asserts on — a permission error there would hide the property being tested.
+revoke update, delete, truncate on public.events from anon, authenticated;
+
+-- ============================================================================
 -- Admin allow-list: RLS on, ZERO policies — the API can neither read nor write it in any role.
 -- Membership is granted only via the SQL editor / service role. This is the whole authorization
 -- model for reads: a row here is a person, not a role.
@@ -138,7 +191,7 @@ begin
             from (select w.utc_at::date as day, count(distinct w.device_id) devices,
                          count(distinct w.session_id) sessions, count(*) events
                   from win w group by 1) t
-            left join (select (f.first_at at time zone 'utc')::date day, count(*) new_devices
+            left join (select (f.first_at at time zone 'utc')::date as day, count(*) new_devices
                        from first_seen f where f.first_at >= since group by 1) n using (day)
         ), '[]'::jsonb),
         -- Every name in the window, unfiltered — this is how the 'unknown' bucket gets SEEN.
