@@ -145,10 +145,10 @@ interface QueuedEvent {
   props: Record<string, unknown>
   app_version: string
   /**
-   * Idempotency key (0015). A flush whose response is lost re-queues its batch, so a POST that
-   * actually landed can be re-sent — the unique index on this id makes the resend a no-op
-   * (`on_conflict=event_id` + ignore-duplicates) instead of a double count. Minted once per event
-   * and kept across re-queues; that persistence IS the dedupe.
+   * Idempotency key (0015/0018). A flush whose response is lost re-queues its batch, so a POST
+   * that actually landed can be re-sent — the guard trigger (0018) silently skips a row whose id
+   * it has already stored, backed by the 0015 unique index. Minted once per event and kept across
+   * re-queues; that persistence IS the dedupe. (Never sent as an upsert — see flush.)
    */
   event_id: string
 }
@@ -312,14 +312,17 @@ async function flush(unloading = false): Promise<void> {
     // A signed-in player's own JWT, so auth.uid() matches the user_id above and RLS admits the row.
     // Anonymous rows go up under the publishable key, which is what the 0010 policy is built for.
     Authorization: `Bearer ${token ?? key}`,
-    // return=minimal: write-only table, nothing reads the result. ignore-duplicates is the dedupe
-    // half of event_id (0015): a re-sent batch whose first attempt actually landed inserts nothing.
-    Prefer: schemaFallback ? 'return=minimal' : 'return=minimal,resolution=ignore-duplicates',
+    // No response body wanted; this is a write-only table and nothing reads the result.
+    Prefer: 'return=minimal',
   }
 
   try {
-    const conflict = schemaFallback ? '' : '?on_conflict=event_id'
-    const res = await fetch(`${supabaseUrl()}/rest/v1/events${conflict}`, {
+    // A PLAIN insert, deliberately — never `on_conflict`/upsert. Postgres refuses ANY
+    // `INSERT ... ON CONFLICT` for a caller with no SELECT policy (arbitration has to see
+    // existing rows), and this table is append-only BY DESIGN (0010) — so the 0015 upsert shape
+    // 403'd every batch. Dedupe of re-sent event_ids happens server-side in the guard trigger
+    // (0018), where definer context can see what this client can't.
+    const res = await fetch(`${supabaseUrl()}/rest/v1/events`, {
       method: 'POST',
       headers,
       body,
@@ -331,16 +334,17 @@ async function flush(unloading = false): Promise<void> {
       if (res.status >= 500) {
         // Server trouble — keep the batch for the next flush.
         queue = batch.concat(queue).slice(-MAX_QUEUE)
-      } else if (!schemaFallback && res.status === 400) {
-        // First 400 while sending event_id: almost certainly a server that predates 0015 (unknown
-        // column / unknown on_conflict target). Flip to the legacy wire shape and RE-QUEUE — a
-        // client deployed ahead of its migration must delay events, never lose them. If the 400
-        // was really something else, the retry without ids will 400 again and THEN drop below.
+      } else if (!schemaFallback) {
+        // First 4xx while sending event_id: most likely a server that predates 0015 (unknown
+        // column → 400), but ANY first refusal gets one retry in the legacy shape — refusal
+        // taxonomies drift (400 vs 403 vs 409), and a mapping we guessed wrong must cost a
+        // retry, not the funnel. Flip and RE-QUEUE: a client deployed ahead of its migration
+        // delays events, never loses them. A genuinely bad batch 4xxes again and drops below.
         schemaFallback = true
         queue = batch.concat(queue).slice(-MAX_QUEUE)
       }
-      // Any other 4xx: this batch will never be accepted (bad shape, revoked key) — dropping it
-      // is correct.
+      // A 4xx in the legacy shape: this batch will never be accepted (bad shape, revoked key) —
+      // dropping it is correct.
     }
   } catch {
     queue = batch.concat(queue).slice(-MAX_QUEUE)

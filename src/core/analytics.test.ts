@@ -198,13 +198,15 @@ describe('flush idempotency + schema fallback (0015)', () => {
     _reset()
   })
 
-  it('mints a distinct event_id per event and posts with on_conflict + ignore-duplicates', async () => {
+  it('mints a distinct event_id per event and posts a PLAIN insert — never an upsert', async () => {
     track(EVENTS.LEVEL_START, { level: 1 })
     track(EVENTS.LEVEL_WIN, { level: 1 })
     await _flush()
     expect(sent).toHaveLength(1)
-    expect(sent[0].url).toContain('/rest/v1/events?on_conflict=event_id')
-    expect(sent[0].prefer).toContain('resolution=ignore-duplicates')
+    // The 0018 lesson, pinned: ON CONFLICT needs a SELECT policy the append-only table will never
+    // have — the server guard trigger owns dedupe, so the wire must stay a plain insert.
+    expect(sent[0].url).toBe('http://localhost:54321/rest/v1/events')
+    expect(sent[0].prefer).toBe('return=minimal')
     const ids = sent[0].rows.map(r => r.event_id)
     expect(ids).toHaveLength(2)
     expect(new Set(ids).size).toBe(2)
@@ -229,10 +231,20 @@ describe('flush idempotency + schema fallback (0015)', () => {
     expect(_queueDepth()).toBe(1) // the batch survived the schema mismatch
     respond = () => ({ ok: true, status: 201 })
     await _flush()
-    expect(sent[1].url).not.toContain('on_conflict') // legacy wire shape…
-    expect(sent[1].prefer).not.toContain('ignore-duplicates')
-    expect(sent[1].rows[0]).not.toHaveProperty('event_id') // …with the ids stripped
+    expect(sent[1].rows[0]).not.toHaveProperty('event_id') // ids stripped in the legacy shape
     expect(sent[1].rows[0]).toHaveProperty('name', EVENTS.APP_OPEN)
+  })
+
+  it('ANY first 4xx (e.g. an RLS 403) gets the same delay-never-lose fallback', async () => {
+    // Refusal taxonomies drift — the 0018 incident was a 403 the old 400-only condition would
+    // have dropped. The contract is: first refusal with ids costs a retry, never the funnel.
+    track(EVENTS.APP_OPEN)
+    respond = () => ({ ok: false, status: 403 })
+    await _flush()
+    expect(_queueDepth()).toBe(1)
+    respond = () => ({ ok: true, status: 201 })
+    await _flush()
+    expect(sent[1].rows[0]).not.toHaveProperty('event_id')
   })
 
   it('a 400 in legacy mode drops (a genuinely bad batch must not loop forever)', async () => {

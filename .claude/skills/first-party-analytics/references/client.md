@@ -44,13 +44,17 @@ async function flush(unloading = false): Promise<void> {
   const body = JSON.stringify(
     schemaFallback ? batch.map(({ event_id: _d, ...rest }) => rest) : batch)
   try {
-    const res = await fetch(`${url}/rest/v1/events${schemaFallback ? '' : '?on_conflict=event_id'}`, {
+    // A PLAIN insert — never `?on_conflict=`/upsert. Postgres refuses ANY ON CONFLICT for a
+    // caller with no SELECT policy (it must see existing rows to arbitrate), so an upsert shape
+    // 403s EVERY batch on an append-only table. Dedupe of re-sent event_ids is the guard
+    // trigger's job (definer context sees what the client can't).
+    const res = await fetch(`${url}/rest/v1/events`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json', apikey: key,
         // Signed-in? send the user's own JWT so RLS admits the user_id; else the publishable key.
         Authorization: `Bearer ${token ?? key}`,
-        Prefer: schemaFallback ? 'return=minimal' : 'return=minimal,resolution=ignore-duplicates',
+        Prefer: 'return=minimal',
       },
       body,
       keepalive: unloading,   // ← the one flag that makes the quit-flush survive page death
@@ -58,9 +62,10 @@ async function flush(unloading = false): Promise<void> {
     })
     if (!res.ok) {
       if (res.status >= 500) requeue(batch)                    // server trouble: keep
-      else if (!schemaFallback && res.status === 400) {        // server predates the event_id column
-        schemaFallback = true; requeue(batch)                  // DELAY, never lose (deploy race)
-      }                                                        // other 4xx: drop — never acceptable
+      else if (!schemaFallback) {                              // FIRST refusal of any 4xx kind:
+        schemaFallback = true; requeue(batch)                  // strip ids + DELAY, never lose —
+      }                                                        // refusal taxonomies drift (400/403/409)
+      // 4xx in legacy shape: genuinely bad batch — drop.
     }
   } catch { requeue(batch) }                                   // transport: keep
 }
@@ -118,7 +123,8 @@ the identity choices above.
 
 - Opt-out stops collection and discards the queue; opt-in resumes.
 - `track` never throws (circular props, empty name, undefined).
-- Every event carries a distinct UUID `event_id`; the wire has `on_conflict` + ignore-duplicates.
-- 5xx re-queues with the SAME ids (that persistence IS the dedupe).
-- First 400 flips fallback and RE-QUEUES; the retry has no ids; a second 400 drops.
+- Every event carries a distinct UUID `event_id`; the wire is a PLAIN insert (no on_conflict, no
+  upsert Prefer — pin this with a test so nobody helpfully reintroduces the 403).
+- 5xx re-queues with the SAME ids (that persistence IS the dedupe, completed server-side).
+- First 4xx of ANY kind flips fallback and RE-QUEUES; the retry has no ids; a second 4xx drops.
 - Error telemetry: truncation, per-message dedupe, session cap, never throws.

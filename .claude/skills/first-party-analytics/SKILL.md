@@ -64,14 +64,17 @@ expose keepalive. Re-drain on `online`. Ship a working opt-out. Stamp every even
 version — under cached clients (PWAs especially), a metric that moves after a deploy is unreadable
 without knowing who runs which code.
 
-**Idempotent ingestion: client-minted `event_id` + nullable unique index.**
-A flush whose response is lost gets re-sent and would double count. Mint a UUID per event, POST
-with `?on_conflict=event_id` + `Prefer: resolution=ignore-duplicates`. The column stays NULLABLE
-with a FULL (not partial) unique index: old clients insert id-less rows forever (NULLs never
-collide), and `ON CONFLICT (event_id)` can only infer a whole-column index. Client resilience for
-deploy races: on the first 400 while sending ids, flip to a session-scoped legacy mode that
-RE-QUEUES the batch and strips ids — a client ahead of its migration must delay events, never lose
-them.
+**Idempotent ingestion: client-minted `event_id`, deduped in the guard trigger — never ON CONFLICT.**
+A flush whose response is lost gets re-sent and would double count. Mint a UUID per event and POST
+a PLAIN insert. The dedupe lives in the SECURITY DEFINER guard trigger (`exists` check → return
+NULL to skip), because **PostgreSQL refuses ANY `INSERT ... ON CONFLICT` for a caller with no
+SELECT policy** — conflict arbitration must see existing rows, so an upsert wire shape 403s every
+batch on an append-only table, taking analytics down entirely. (Proven empirically, three times
+independently, against real Postgres 16.) Keep a NULLABLE `event_id` + full unique index as the
+race backstop; old id-less clients coexist forever. Client resilience for deploy races: on the
+FIRST 4xx of any kind while sending ids, flip to a session-scoped legacy mode that RE-QUEUES the
+batch and strips ids — refusal taxonomies drift (400 vs 403 vs 409), and a wrong guess must cost a
+retry, never the funnel.
 
 **Crash telemetry is part of analytics, and it is capped.**
 `window.onerror` + `unhandledrejection` → a `client_error` event (message truncated, first stack

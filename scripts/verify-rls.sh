@@ -91,15 +91,17 @@ case "$c" in *42501*) ok "anon CANNOT read app_admins (grant revoked)" ;;
 echo
 echo "── events hardening (0015): idempotent ingest, private retention ───"
 # The dedupe check needs the EFFECT, not the status (the send-push lesson above): both sends
-# answer 20x whether or not the second row was ignored — only the row count proves the unique
-# index and on_conflict path actually work.
+# answer 20x whether or not the second row was skipped — only the row count proves the guard
+# trigger's dedupe (0018) actually works. PLAIN inserts on purpose: any on_conflict/upsert shape
+# is REFUSED outright on a no-SELECT-policy table (the 0018 root cause), so if these ever start
+# failing with 403, someone reintroduced an upsert somewhere.
 EID=$(python3 -c 'import uuid;print(uuid.uuid4())')
-c1=$(anonc -X POST "$URL/rest/v1/events?on_conflict=event_id" -H 'Prefer: return=minimal,resolution=ignore-duplicates' \
+c1=$(anonc -X POST "$URL/rest/v1/events" \
      -d "{\"device_id\":\"$DEV\",\"session_id\":\"$SES\",\"name\":\"rls_probe\",\"event_id\":\"$EID\"}")
-c2=$(anonc -X POST "$URL/rest/v1/events?on_conflict=event_id" -H 'Prefer: return=minimal,resolution=ignore-duplicates' \
+c2=$(anonc -X POST "$URL/rest/v1/events" \
      -d "{\"device_id\":\"$DEV\",\"session_id\":\"$SES\",\"name\":\"rls_probe\",\"event_id\":\"$EID\"}")
-case "$c1/$c2" in 20*/20*) ok "anon CAN send the idempotent wire shape, twice ($c1/$c2)" ;;
-                  *) bad "idempotent insert rejected — is 0015 applied?" "$c1/$c2" ;; esac
+case "$c1/$c2" in 20*/20*) ok "anon CAN send the id-carrying wire shape, twice ($c1/$c2)" ;;
+                  *) bad "id-carrying insert rejected — are 0015+0018 applied?" "$c1/$c2" ;; esac
 if [ -n "${SECRET:-}" ]; then
   n=$(svc "$URL/rest/v1/events?event_id=eq.$EID&select=id" | python3 -c 'import json,sys;print(len(json.load(sys.stdin)))')
   [ "$n" = "1" ] && ok "duplicate event_id stored ONCE (dedupe verified by count)" \

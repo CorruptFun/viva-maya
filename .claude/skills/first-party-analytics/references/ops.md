@@ -55,8 +55,9 @@ statements; this script turns one into the other. Rules learned the hard way:
    - any views over events are not readable by anon
    - anon CANNOT call the admin RPC (grant-level 42501)
    - anon CANNOT read the admins table
-   - the idempotent wire shape (on_conflict + ignore-duplicates) is accepted, twice
-   - [secret] duplicate event_id stored ONCE — counted
+   - the id-carrying wire shape is accepted twice as PLAIN inserts (if this starts answering 403,
+     someone reintroduced an upsert against the no-SELECT table)
+   - [secret] duplicate event_id stored ONCE — counted (the guard-trigger dedupe's effect)
    - anon CANNOT call prune
 4. Exit non-zero on any failure; print counts.
 

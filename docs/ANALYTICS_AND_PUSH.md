@@ -162,17 +162,22 @@ The dashboard needs no keys of its own: it uses the publishable key baked into t
 Google session, and the server decides. Locally, `npm run dev` + `.env.local` serves it at
 `http://localhost:5173/stats.html` against whatever stack the env points at.
 
-### 1c. Hardening (`0015`) — dedupe, retention, sessions, crash telemetry, weekly ops
+### 1c. Hardening (`0015` + `0018`) — dedupe, retention, sessions, crash telemetry, weekly ops
 
-Paste `0015_analytics_hardening.sql` into the SQL editor **before deploying a client built from
-this revision** (the standing two-phase rule). What it adds:
+Paste `0015_analytics_hardening.sql` **and then `0018_event_dedupe_in_guard.sql`** into the SQL
+editor, together. What they add:
 
-- **`events.event_id` + a unique index** — idempotent ingestion. A flush whose response is lost is
-  re-sent with the same ids and inserts nothing the second time. The client is resilient to the
-  wrong order anyway: its first 400 flips a session-scoped legacy mode that **re-queues** the batch
-  and strips ids — a deploy that outruns its migration delays events, never loses them. Old cached
-  clients keep writing id-less rows forever; the nullable column + full unique index make both
-  generations coexist.
+- **`events.event_id` + guard-trigger dedupe** — idempotent ingestion. A flush whose response is
+  lost is re-sent with the same ids and inserts nothing the second time. ⚠️ The dedupe lives in
+  the guard trigger (`0018`), NOT in an `ON CONFLICT` upsert: PostgreSQL refuses ANY
+  `INSERT ... ON CONFLICT` for a caller with no SELECT policy (arbitration must see existing
+  rows), so the upsert wire `0015` originally assumed would have 403'd every batch on this
+  deliberately append-only table — caught by adversarial re-implementation before `0015` reached
+  production, then reproduced as anon on a scratch Postgres. The client is resilient to migration
+  ordering either way: its first 4xx flips a session-scoped legacy mode that **re-queues** the
+  batch and strips ids — a deploy that outruns its migration delays events, never loses them. Old
+  cached clients keep writing id-less rows forever; the nullable column + full unique index make
+  all generations coexist.
 - **`admin_analytics` v2** — new `retention` (exact-day D1/D7 with honest eligibility), `sessions`
   (median length, bounce rate, five duration buckets) and `errors` (uncaught-exception rollup,
   split by build) sections, all rendered by the dashboard. The gate now also admits the
