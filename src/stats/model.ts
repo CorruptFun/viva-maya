@@ -1,0 +1,534 @@
+/**
+ * Pure data layer for the owner analytics dashboard (stats.html).
+ *
+ * Everything here is Phaser-free, DOM-free and side-effect-free so it can be unit-tested the same
+ * way core/ is (model.test.ts). The split mirrors the game's own core/view divide: main.ts wires
+ * the page, charts.ts draws, THIS file decides what the numbers mean.
+ *
+ * The input is the jsonb returned by admin_analytics (0013). That payload crosses a trust seam —
+ * not because the server is hostile, but because SQL and TypeScript drift independently and a
+ * dashboard that throws on one missing key is a dashboard that shows nothing. So the shape is
+ * coerced field-by-field with defaults, the same shape-tolerance contract core/save.ts uses.
+ * String fields (face, surface, version, event names) additionally originate from UNTRUSTED
+ * clients (0010's trust model: anyone can insert), so renderers must treat them as text, never
+ * markup — charts.ts/main.ts only ever put them in the DOM via textContent.
+ */
+
+import { EVENTS } from '../core/analytics'
+
+// ---------------------------------------------------------------------------- payload types
+
+export interface Totals {
+  devices: number
+  signed_in: number
+  sessions: number
+  events: number
+  app_opens: number
+  standalone_opens: number
+  new_devices: number
+}
+
+export interface DailyRow {
+  /** UTC day, 'YYYY-MM-DD' — the same day boundary the endless race uses. */
+  day: string
+  devices: number
+  signed_in: number
+  sessions: number
+  events: number
+  app_opens: number
+  standalone_opens: number
+  new_devices: number
+}
+
+export interface HourlyRow {
+  hour: number
+  sessions: number
+  events: number
+}
+
+export interface CountRow {
+  name: string
+  events: number
+  devices: number
+}
+
+export interface LevelRow {
+  level: number
+  starts: number
+  wins: number
+  fails: number
+  fails_moves: number
+  fails_lives: number
+  quits: number
+  continues_shown: number
+  continues_taken: number
+  devices: number
+}
+
+export interface DealPanel {
+  offers: number
+  wins: number
+  fast_wins: number
+  charms: number
+  avg_flips: number | null
+  streaks: { streak: number; count: number }[]
+  faces: { face: string; count: number }[]
+}
+
+export interface PlinkoPanel {
+  offered: number
+  played: number
+  slots: { slot: number; count: number; avg_payout: number | null }[]
+}
+
+export interface ShareRow {
+  surface: string
+  count: number
+}
+
+export interface VersionRow {
+  version: string
+  devices: number
+  events: number
+  first_seen: string
+  last_seen: string
+}
+
+export interface Analytics {
+  meta: { days: number; since: string; generated_at: string }
+  totals: Totals
+  daily: DailyRow[]
+  hourly: HourlyRow[]
+  counts: CountRow[]
+  levels: LevelRow[]
+  deal: DealPanel
+  plinko: PlinkoPanel
+  shares: ShareRow[]
+  versions: VersionRow[]
+}
+
+// ---------------------------------------------------------------------------- coercion
+
+function num(v: unknown, fallback = 0): number {
+  return typeof v === 'number' && Number.isFinite(v) ? v : fallback
+}
+function numOrNull(v: unknown): number | null {
+  return typeof v === 'number' && Number.isFinite(v) ? v : null
+}
+function str(v: unknown, fallback = ''): string {
+  return typeof v === 'string' ? v : fallback
+}
+function arr(v: unknown): unknown[] {
+  return Array.isArray(v) ? v : []
+}
+function obj(v: unknown): Record<string, unknown> {
+  return v !== null && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {}
+}
+
+/** Shape-tolerant read of the admin_analytics payload. Any missing/miscast piece becomes an empty default. */
+export function coerceAnalytics(raw: unknown): Analytics {
+  const r = obj(raw)
+  const meta = obj(r.meta)
+  const t = obj(r.totals)
+  const deal = obj(r.deal)
+  const plinko = obj(r.plinko)
+  return {
+    meta: {
+      days: num(meta.days, 14),
+      since: str(meta.since),
+      generated_at: str(meta.generated_at),
+    },
+    totals: {
+      devices: num(t.devices),
+      signed_in: num(t.signed_in),
+      sessions: num(t.sessions),
+      events: num(t.events),
+      app_opens: num(t.app_opens),
+      standalone_opens: num(t.standalone_opens),
+      new_devices: num(t.new_devices),
+    },
+    daily: arr(r.daily).map(d => {
+      const o = obj(d)
+      return {
+        day: str(o.day),
+        devices: num(o.devices),
+        signed_in: num(o.signed_in),
+        sessions: num(o.sessions),
+        events: num(o.events),
+        app_opens: num(o.app_opens),
+        standalone_opens: num(o.standalone_opens),
+        new_devices: num(o.new_devices),
+      }
+    }),
+    hourly: arr(r.hourly).map(h => {
+      const o = obj(h)
+      return { hour: num(o.hour, -1), sessions: num(o.sessions), events: num(o.events) }
+    }),
+    counts: arr(r.counts).map(c => {
+      const o = obj(c)
+      return { name: str(o.name, '?'), events: num(o.events), devices: num(o.devices) }
+    }),
+    levels: arr(r.levels).map(l => {
+      const o = obj(l)
+      return {
+        level: num(o.level, -1),
+        starts: num(o.starts),
+        wins: num(o.wins),
+        fails: num(o.fails),
+        fails_moves: num(o.fails_moves),
+        fails_lives: num(o.fails_lives),
+        quits: num(o.quits),
+        continues_shown: num(o.continues_shown),
+        continues_taken: num(o.continues_taken),
+        devices: num(o.devices),
+      }
+    }),
+    deal: {
+      offers: num(deal.offers),
+      wins: num(deal.wins),
+      fast_wins: num(deal.fast_wins),
+      charms: num(deal.charms),
+      avg_flips: numOrNull(deal.avg_flips),
+      streaks: arr(deal.streaks).map(s => {
+        const o = obj(s)
+        return { streak: num(o.streak, -1), count: num(o.count) }
+      }),
+      faces: arr(deal.faces).map(f => {
+        const o = obj(f)
+        return { face: str(o.face, '?'), count: num(o.count) }
+      }),
+    },
+    plinko: {
+      offered: num(plinko.offered),
+      played: num(plinko.played),
+      slots: arr(plinko.slots).map(s => {
+        const o = obj(s)
+        return { slot: num(o.slot, -1), count: num(o.count), avg_payout: numOrNull(o.avg_payout) }
+      }),
+    },
+    shares: arr(r.shares).map(s => {
+      const o = obj(s)
+      return { surface: str(o.surface, '?'), count: num(o.count) }
+    }),
+    versions: arr(r.versions).map(v => {
+      const o = obj(v)
+      return {
+        version: str(o.version, '?'),
+        devices: num(o.devices),
+        events: num(o.events),
+        first_seen: str(o.first_seen),
+        last_seen: str(o.last_seen),
+      }
+    }),
+  }
+}
+
+// ---------------------------------------------------------------------------- time series shaping
+
+const DAY_MS = 86_400_000
+
+/** Epoch ms → UTC 'YYYY-MM-DD'. UTC on purpose: the server buckets days in UTC (0013), and so does
+ *  the endless race — a local-time key here would disagree with both around midnight. */
+export function utcDayKey(ms: number): string {
+  return new Date(ms).toISOString().slice(0, 10)
+}
+
+/** The n UTC day keys ending on (and including) `nowMs`'s day, oldest first. */
+export function lastNDays(n: number, nowMs: number): string[] {
+  const out: string[] = []
+  for (let i = n - 1; i >= 0; i--) out.push(utcDayKey(nowMs - i * DAY_MS))
+  return out
+}
+
+const EMPTY_DAY: Omit<DailyRow, 'day'> = {
+  devices: 0,
+  signed_in: 0,
+  sessions: 0,
+  events: 0,
+  app_opens: 0,
+  standalone_opens: 0,
+  new_devices: 0,
+}
+
+/**
+ * Zero-fill the daily series onto a contiguous window ending today. The RPC only returns days that
+ * HAVE events, but a chart that skips silent days would hide exactly the thing a retention chart
+ * exists to show — the silence. (The first bucket can be partial: the window opens days×24h ago,
+ * not at that day's midnight.)
+ */
+export function fillDaily(rows: DailyRow[], days: number, nowMs: number): DailyRow[] {
+  const byDay = new Map(rows.map(r => [r.day, r]))
+  return lastNDays(days, nowMs).map(day => byDay.get(day) ?? { day, ...EMPTY_DAY })
+}
+
+/** Zero-fill all 24 UTC hours (the RPC omits hours with no events). */
+export function fillHourly(rows: HourlyRow[]): HourlyRow[] {
+  const byHour = new Map(rows.map(r => [r.hour, r]))
+  return Array.from({ length: 24 }, (_, hour) => byHour.get(hour) ?? { hour, sessions: 0, events: 0 })
+}
+
+// ---------------------------------------------------------------------------- rates & walls
+
+/** n/d as a 0..100 percentage, or null when the denominator is zero (never NaN into the DOM). */
+export function share(n: number, d: number): number | null {
+  return d > 0 ? (100 * n) / d : null
+}
+
+/** Win rate per level — wins / (wins + fails), the SAME denominator events_level_funnel (0010)
+ *  uses, so the dashboard and the SQL view can never disagree about what a wall is. Quits are
+ *  deliberately not decisions: backing out mid-level reads very differently from losing. */
+export function winPct(r: LevelRow): number | null {
+  return share(r.wins, r.wins + r.fails)
+}
+
+export interface WallOptions {
+  /** Minimum decided attempts (wins+fails) before a rate is believed at all. */
+  minDecided: number
+  /** A win rate at or below this, with enough sample, flags the level. */
+  maxPct: number
+}
+
+export const WALL_DEFAULTS: WallOptions = { minDecided: 6, maxPct: 40 }
+
+/**
+ * The wall detector — the question 0010 was commissioned to answer ("is level 21 a wall?"). A level
+ * is flagged when enough attempts were DECIDED there and the win rate is low. The sample floor is
+ * what keeps a single unlucky evening from lighting the chart up red; docs/ANALYTICS_AND_PUSH.md's
+ * "give it a week" warning applies to reading these flags too.
+ */
+export function wallLevels(levels: LevelRow[], opts: WallOptions = WALL_DEFAULTS): LevelRow[] {
+  return levels.filter(r => {
+    const pct = winPct(r)
+    return r.wins + r.fails >= opts.minDecided && pct !== null && pct <= opts.maxPct
+  })
+}
+
+// ---------------------------------------------------------------------------- funnels
+
+export interface FunnelStep {
+  name: string
+  label: string
+  events: number
+  devices: number
+  /** % of the funnel's first step, or null when the first step is 0. */
+  pctOfFirst: number | null
+  /** % of the previous step, or null on the first step / zero previous. */
+  pctOfPrev: number | null
+}
+
+export interface Funnel {
+  id: string
+  title: string
+  /** One-line reading aid rendered under the title. */
+  note?: string
+  steps: FunnelStep[]
+  /** Extra non-step counts worth showing beside the funnel (e.g. push_blocked). */
+  aside: { label: string; events: number }[]
+}
+
+interface FunnelDef {
+  id: string
+  title: string
+  note?: string
+  steps: { name: string; label: string }[]
+  aside?: { name: string; label: string }[]
+}
+
+/**
+ * The funnel vocabulary, pinned to EVENTS (core/analytics.ts) so a renamed event breaks the
+ * dashboard at compile time instead of silently flatlining a chart.
+ */
+export const FUNNEL_DEFS: FunnelDef[] = [
+  {
+    id: 'signin',
+    title: 'Google sign-in',
+    steps: [
+      { name: EVENTS.SIGNIN_SHOWN, label: 'Offer seen' },
+      { name: EVENTS.SIGNIN_STARTED, label: 'Started' },
+      { name: EVENTS.SIGNIN_COMPLETED, label: 'Completed' },
+    ],
+  },
+  {
+    id: 'install',
+    title: 'PWA install',
+    note: 'Installs are believed to predict retention — this is the test.',
+    steps: [
+      { name: EVENTS.INSTALL_SHOWN, label: 'Nudge seen' },
+      { name: EVENTS.INSTALL_ACCEPTED, label: 'Accepted' },
+    ],
+  },
+  {
+    id: 'push',
+    title: 'Push opt-in',
+    steps: [
+      { name: EVENTS.PUSH_SHOWN, label: 'Offer seen' },
+      { name: EVENTS.PUSH_ENABLED, label: 'Enabled' },
+    ],
+    aside: [{ name: EVENTS.PUSH_BLOCKED, label: 'Blocked' }],
+  },
+  {
+    id: 'continue',
+    title: 'Out-of-moves continue',
+    note: 'Decline rate per level is in the levels table — high decline near the goal means the price is wrong.',
+    steps: [
+      { name: EVENTS.CONTINUE_SHOWN, label: 'Offered' },
+      { name: EVENTS.CONTINUE_TAKEN, label: 'Taken' },
+    ],
+  },
+  {
+    id: 'referral',
+    title: 'Invites',
+    note: 'Capture/registration happen on the invitee’s device, so steps can cross sessions.',
+    steps: [
+      { name: EVENTS.SHARE_CLICKED, label: 'Share tapped' },
+      { name: EVENTS.REFERRAL_CAPTURED, label: 'Link captured' },
+      { name: EVENTS.REFERRAL_REGISTERED, label: 'Registered' },
+    ],
+  },
+  {
+    id: 'update',
+    title: 'Update toast',
+    steps: [
+      { name: EVENTS.UPDATE_SHOWN, label: 'Toast seen' },
+      { name: EVENTS.UPDATE_APPLIED, label: 'Applied' },
+    ],
+  },
+  {
+    id: 'deal',
+    title: 'Lucky Deal',
+    steps: [
+      { name: EVENTS.DEAL_OFFERED, label: 'Dealt' },
+      { name: EVENTS.DEAL_WON, label: 'Played out' },
+    ],
+  },
+  {
+    id: 'plinko',
+    title: 'Plinko',
+    steps: [
+      { name: EVENTS.PLINKO_OFFERED, label: 'Offered' },
+      { name: EVENTS.PLINKO_PLAYED, label: 'Dropped' },
+    ],
+  },
+]
+
+/** Index the counts list by event name for O(1) funnel assembly. */
+export function countsByName(counts: CountRow[]): Map<string, CountRow> {
+  return new Map(counts.map(c => [c.name, c]))
+}
+
+/** Assemble every funnel from the window's per-event counts. */
+export function buildFunnels(counts: CountRow[]): Funnel[] {
+  const by = countsByName(counts)
+  return FUNNEL_DEFS.map(def => {
+    let first = 0
+    let prev = 0
+    const steps = def.steps.map((s, i) => {
+      const row = by.get(s.name)
+      const events = row?.events ?? 0
+      const devices = row?.devices ?? 0
+      if (i === 0) first = events
+      const step: FunnelStep = {
+        name: s.name,
+        label: s.label,
+        events,
+        devices,
+        pctOfFirst: i === 0 ? null : share(events, first),
+        pctOfPrev: i === 0 ? null : share(events, prev),
+      }
+      prev = events
+      return step
+    })
+    const aside = (def.aside ?? []).map(a => ({ label: a.label, events: by.get(a.name)?.events ?? 0 }))
+    return { id: def.id, title: def.title, note: def.note, steps, aside }
+  })
+}
+
+/** Names on the wire that the dashboard has no definition for — a typo'd client, the guard's
+ *  'unknown' bucket, or an event added without updating FUNNEL_DEFS/KNOWN. Surfaced, never dropped:
+ *  a visible oddity is how a mistake gets noticed (same philosophy as the 0010 guard). */
+export function unexpectedCounts(counts: CountRow[]): CountRow[] {
+  const known = new Set<string>(Object.values(EVENTS))
+  return counts.filter(c => !known.has(c.name))
+}
+
+// ---------------------------------------------------------------------------- formatting
+
+/** Stat-tile numbers: 1,284 · 12.9K · 4.2M (compact only from five digits up, per the tile spec). */
+export function fmtCompact(n: number): string {
+  const abs = Math.abs(n)
+  if (abs >= 1_000_000) return trimZero(n / 1_000_000) + 'M'
+  if (abs >= 10_000) return trimZero(n / 1_000) + 'K'
+  return n.toLocaleString('en-US')
+}
+function trimZero(x: number): string {
+  const s = x.toFixed(1)
+  return s.endsWith('.0') ? s.slice(0, -2) : s
+}
+
+/** 0..100 → '62%' (or '—' for null: a zero denominator is "no data", never "0%"). */
+export function fmtPct(pct: number | null, digits = 0): string {
+  return pct === null ? '—' : `${pct.toFixed(digits)}%`
+}
+
+/** 'YYYY-MM-DD' → 'Jul 24' (UTC, matching the buckets). Unparseable input passes through. */
+export function fmtDayLabel(day: string): string {
+  const t = Date.parse(`${day}T00:00:00Z`)
+  if (!Number.isFinite(t)) return day
+  return new Date(t).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })
+}
+
+/** Coarse relative time for table cells ('3h ago'). Unparseable → ''. */
+export function fmtAgo(iso: string, nowMs: number): string {
+  const t = Date.parse(iso)
+  if (!Number.isFinite(t)) return ''
+  const mins = Math.round((nowMs - t) / 60_000)
+  if (mins < 2) return 'just now'
+  if (mins < 90) return `${mins}m ago`
+  const hours = Math.round(mins / 60)
+  if (hours < 36) return `${hours}h ago`
+  return `${Math.round(hours / 24)}d ago`
+}
+
+// ---------------------------------------------------------------------------- chart geometry (pure)
+
+/**
+ * Clean axis ticks 0..≥max: steps snap to 1/2/5×10ⁿ so the labels read as counting, not noise.
+ * Always includes 0; the last tick is the first clean step at or above max. max<=0 → [0, 1] so an
+ * empty chart still has a frame.
+ */
+export function niceTicks(max: number, target = 4): number[] {
+  if (!(max > 0)) return [0, 1]
+  const rawStep = max / target
+  const mag = Math.pow(10, Math.floor(Math.log10(rawStep)))
+  const norm = rawStep / mag
+  // 2.5× only when the resulting step is still an integer (mag ≥ 10): a percent axis gets
+  // 0/25/50/75/100, but a small count axis must never tick at "2.5 sessions".
+  const step = (norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 2.5 && mag >= 10 ? 2.5 : norm <= 5 ? 5 : 10) * mag
+  const out: number[] = []
+  for (let v = 0; v < max + step; v += step) out.push(Math.round(v * 1e6) / 1e6)
+  return out
+}
+
+/** Polyline path for a zero-filled series: 'M x0 y0 L x1 y1 …'. Coordinates are rounded to 0.1px
+ *  to keep the d attribute small. */
+export function linePath(values: number[], x: (i: number) => number, y: (v: number) => number): string {
+  return values
+    .map((v, i) => `${i === 0 ? 'M' : 'L'}${round1(x(i))} ${round1(y(v))}`)
+    .join(' ')
+}
+
+/** Bar with a 4px-rounded DATA end and a square baseline end (the mark spec) — as an SVG path. */
+export function roundedTopRect(x: number, y: number, w: number, h: number, r: number): string {
+  const rr = Math.max(0, Math.min(r, w / 2, h))
+  const x2 = x + w
+  return (
+    `M${round1(x)} ${round1(y + h)} ` +
+    `L${round1(x)} ${round1(y + rr)} Q${round1(x)} ${round1(y)} ${round1(x + rr)} ${round1(y)} ` +
+    `L${round1(x2 - rr)} ${round1(y)} Q${round1(x2)} ${round1(y)} ${round1(x2)} ${round1(y + rr)} ` +
+    `L${round1(x2)} ${round1(y + h)} Z`
+  )
+}
+
+function round1(v: number): number {
+  return Math.round(v * 10) / 10
+}

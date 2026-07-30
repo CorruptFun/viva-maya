@@ -21,6 +21,9 @@ Board size, symbol count, and all timing/feel constants live in `src/config.ts`.
 Game logic is pure TypeScript in `src/core/` (no Phaser imports) — rendering,
 input, and tweens live in `src/scenes/` and `src/view/`.
 
+Owner analytics dashboard: `/stats.html` (its own Vite entry, `src/stats/`) —
+admin-gated server-side, aggregates only; see `docs/ANALYTICS_AND_PUSH.md`.
+
 ## Roadmap
 
 - [x] **Phase 1** — Vite + TypeScript + Phaser 3 + PWA scaffold

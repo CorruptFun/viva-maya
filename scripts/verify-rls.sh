@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# verify-rls.sh — prove the exposure rules of 0010/0011 against a LIVE API.
+# verify-rls.sh — prove the exposure rules of 0010/0011/0013 against a LIVE API.
 #
 # Written because this matrix has to run at least twice: once against a local
 # stack while writing the migrations, and again against production the moment
@@ -72,6 +72,21 @@ for v in events_daily events_level_funnel; do
   case "$c" in *42501*|"[]") ok "view $v is not readable by anon" ;;
                *) bad "VIEW $v LEAKS the events table" "$c" ;; esac
 done
+
+echo
+echo "── analytics dashboard (0013): admin-gated, admin list unreadable ──"
+# The RPC must refuse the anon role at the GRANT level (42501) — a signed-in
+# non-admin is refused inside the function instead, which this script cannot
+# probe (it holds no user JWT); the page itself shows that path as "not an
+# admin". If 0013 isn't applied yet this reports PGRST202 (no such function),
+# which also fails the check — apply, then re-verify.
+c=$(anon -X POST "$URL/rest/v1/rpc/admin_analytics" -d '{"p_days":7}')
+case "$c" in *42501*) ok "anon CANNOT call admin_analytics" ;;
+             *) bad "ADMIN ANALYTICS ANSWERS ANON — aggregates are public" "$c" ;; esac
+
+c=$(anon "$URL/rest/v1/app_admins?select=*")
+case "$c" in *42501*) ok "anon CANNOT read app_admins (grant revoked)" ;;
+             *) bad "app_admins IS REACHABLE — the admin list should not even be queryable" "$c" ;; esac
 
 echo
 echo "── push_subscriptions: write-only, endpoints are bearer secrets ──"

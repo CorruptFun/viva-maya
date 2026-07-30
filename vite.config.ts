@@ -19,6 +19,10 @@ export default defineConfig({
   // 3D room must work offline like the rest of the PWA.
   build: {
     rollupOptions: {
+      // Two entries: the game, and the owner-only analytics dashboard (stats.html →
+      // src/stats/main.ts). A separate entry — not a route in the game — so the dashboard ships
+      // zero Phaser/three and the game ships zero dashboard; they share only the supabase chunk.
+      input: { main: 'index.html', stats: 'stats.html' },
       output: { manualChunks: { supabase: ['@supabase/supabase-js'], three: ['three'] } },
     },
   },
@@ -64,14 +68,19 @@ export default defineConfig({
         globPatterns: ['**/*.{js,css,html,png,svg,ico,webmanifest,woff2}'],
         // Social-preview poster is for link unfurlers only; the Supabase chunk is optional + lazy —
         // keep both out of the offline precache so local-only builds never download the cloud client.
-        globIgnores: ['**/og-image.png', '**/supabase-*.js'],
+        // The stats.html dashboard (entry + its js/css) is owner-only: precaching it would push it
+        // onto every player's device with the offline bundle, paying bytes for a page only one
+        // person can use.
+        globIgnores: ['**/og-image.png', '**/supabase-*.js', '**/stats.html', '**/stats-*.js', '**/stats-*.css'],
         // Phaser's bundle is ~1.5 MB raw; keep it under the precache ceiling.
         maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
         navigateFallback: 'index.html',
         // Standalone content pages (about / privacy / terms — linked from the Google OAuth consent
         // screen and the app) must always serve as THEMSELVES, never the SPA game fallback — even for
         // an installed PWA. Without this, the navigate-fallback would hand back index.html (the game).
-        navigateFallbackDenylist: [/\/(about|privacy|terms)\.html(\?.*)?$/]
+        // stats.html is in the same boat: it is not precached (above), so a navigation to it from an
+        // installed PWA would otherwise be answered with the game.
+        navigateFallbackDenylist: [/\/(about|privacy|terms|stats)\.html(\?.*)?$/]
       }
     })
   ]
