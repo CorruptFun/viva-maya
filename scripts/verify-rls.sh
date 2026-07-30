@@ -49,10 +49,15 @@ anonbc() {
   local r; r="$(curl -s -w $'\n%{http_code}' -H "apikey: $KEY" -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' "$@")"
   CODE="${r##*$'\n'}"; BODY="${r%$'\n'*}"
 }
+# A PostgREST filter value has to be URL-encoded, and an endpoint is a whole https:// URL.
+# It worked unencoded by luck: `:` and `/` survive, but a push service is free to mint an
+# endpoint containing `,` or `&`, either of which would silently re-parse as filter syntax.
+urlenc() { python3 -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1],safe=''))" "$1"; }
 
 DEV="11111111-1111-1111-1111-111111111111"
 SES="22222222-2222-2222-2222-222222222222"
 EP="https://fcm.googleapis.com/fcm/send/verify-rls-$(date +%s)"
+EPQ="$(urlenc "$EP")"
 
 echo "Verifying $URL"
 echo
@@ -200,16 +205,24 @@ c=$(anon "$URL/rest/v1/push_subscriptions?select=*")
 anonc -X POST "$URL/rest/v1/rpc/register_push_subscription" \
   -d "{\"p_endpoint\":\"$EP\",\"p_p256dh\":\"BRotatedKeyMaterial11111\",\"p_auth\":\"rotatedAuth9\",\"p_device_id\":\"$DEV\"}" >/dev/null
 if [ -n "${SECRET:-}" ]; then
-  got=$(svc "$URL/rest/v1/push_subscriptions?endpoint=eq.$(python3 -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1],safe=''))" "$EP")&select=p256dh" \
+  got=$(svc "$URL/rest/v1/push_subscriptions?endpoint=eq.$EPQ&select=p256dh" \
         | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d[0]["p256dh"] if d else "MISSING")')
   [ "$got" = "BRotatedKeyMaterial11111" ] && ok "re-register REFRESHES the stored key (rotation works)" \
     || bad "re-register did not update the row — rotated keys would be silently ignored" "$got"
 fi
 
 # The real unsubscribe test: delete, then prove it is GONE by counting rows.
+# ⚠️ SCOPED TO THE ENDPOINT, because that is what unsubscribe_push deletes by. This counted
+# `device_id` until 2026-07-30 and cost a full diagnostic round trip: every run mints a fresh
+# endpoint but reuses the one probe device_id, so a single stranded row from ANY earlier run
+# failed this check forever. It conflates "this delete failed" with "unrelated debris exists" —
+# opposite conclusions, and it prints the alarming one. The real leftover was a 2026-07-28
+# orphan from a PRE-0016 run, back when unsubscribe was a direct DELETE that matched zero rows
+# and so could never remove itself. The delete under test was working the whole time.
+# The device-wide count is still worth having — it just gets its OWN check, at the end.
 anonc -X POST "$URL/rest/v1/rpc/unsubscribe_push" -d "{\"p_endpoint\":\"$EP\"}" >/dev/null
 if [ -n "${SECRET:-}" ]; then
-  left=$(svc "$URL/rest/v1/push_subscriptions?device_id=eq.$DEV&select=endpoint" \
+  left=$(svc "$URL/rest/v1/push_subscriptions?endpoint=eq.$EPQ&select=endpoint" \
          | python3 -c 'import json,sys;print(len(json.load(sys.stdin)))')
   [ "$left" = "0" ] && ok "anon CAN unsubscribe — row is actually GONE (verified by count)" \
     || bad "UNSUBSCRIBE DID NOTHING — player keeps getting notifications after opting out" "$left rows left"
@@ -222,15 +235,30 @@ if [ -n "${SECRET:-}" ]; then
   # it), so without re-registering here these two assertions read "?" and fail for the wrong reason.
   anonc -X POST "$URL/rest/v1/rpc/register_push_subscription" \
     -d "{\"p_endpoint\":\"$EP\",\"p_p256dh\":\"BProbeKeyMaterial00000000\",\"p_auth\":\"probeAuth1234\",\"p_device_id\":\"$DEV\"}" >/dev/null
-  svc -X PATCH "$URL/rest/v1/push_subscriptions?endpoint=eq.$EP" -d '{"failure_count":7}' >/dev/null
-  got=$(svc "$URL/rest/v1/push_subscriptions?endpoint=eq.$EP&select=failure_count" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d[0]["failure_count"] if d else "?")')
+  svc -X PATCH "$URL/rest/v1/push_subscriptions?endpoint=eq.$EPQ" -d '{"failure_count":7}' >/dev/null
+  got=$(svc "$URL/rest/v1/push_subscriptions?endpoint=eq.$EPQ&select=failure_count" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d[0]["failure_count"] if d else "?")')
   [ "$got" = "7" ] && ok "sender CAN record delivery bookkeeping" || bad "sender cannot write failure_count — dead endpoints never retire" "$got"
 
-  anonc -X PATCH "$URL/rest/v1/push_subscriptions?endpoint=eq.$EP" -d '{"failure_count":0}' >/dev/null
-  got=$(svc "$URL/rest/v1/push_subscriptions?endpoint=eq.$EP&select=failure_count" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d[0]["failure_count"] if d else "?")')
+  anonc -X PATCH "$URL/rest/v1/push_subscriptions?endpoint=eq.$EPQ" -d '{"failure_count":0}' >/dev/null
+  got=$(svc "$URL/rest/v1/push_subscriptions?endpoint=eq.$EPQ&select=failure_count" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d[0]["failure_count"] if d else "?")')
   [ "$got" = "7" ] && ok "client CANNOT clear its own failure_count" || bad "client forged delivery bookkeeping" "$got"
   # Leave nothing behind: this script is run against production.
   anonc -X POST "$URL/rest/v1/rpc/unsubscribe_push" -d "{\"p_endpoint\":\"$EP\"}" >/dev/null
+
+  # …and PROVE nothing was left behind, by this run or any earlier one. This is the
+  # device-wide count that used to masquerade as the unsubscribe assertion above; it is real
+  # signal, it just had the wrong label on it. Not cosmetic bookkeeping: a stranded probe row
+  # sits in the sender's audience and gets a real delivery attempt on every send — the
+  # 2026-07-28 orphan was found carrying failure_count=1 from exactly that.
+  # A leftover here is swept with the public RPC (no secret key needed), which doubles as an
+  # independent proof of the opt-out path on a row this run did not create:
+  #   curl -s -X POST -H "apikey: $KEY" -H "Authorization: Bearer $KEY" \
+  #        -H 'Content-Type: application/json' "$URL/rest/v1/rpc/unsubscribe_push" \
+  #        -d '{"p_endpoint":"<the endpoint printed below>"}'
+  stale=$(svc "$URL/rest/v1/push_subscriptions?device_id=eq.$DEV&select=endpoint")
+  n=$(printf '%s' "$stale" | python3 -c 'import json,sys;print(len(json.load(sys.stdin)))')
+  [ "$n" = "0" ] && ok "no probe subscriptions left behind (this run or earlier ones)" \
+    || bad "PROBE ROWS STRANDED IN push_subscriptions — they ride along in every real send" "$n left: $stale"
 else
   skip "sender-side bookkeeping checks (no secret key given)"
 fi
