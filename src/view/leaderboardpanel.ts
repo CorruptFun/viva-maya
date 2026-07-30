@@ -1171,6 +1171,13 @@ const MODULE_H = 152
  */
 const STRIP_W = MODULE_W - 44
 const STRIP_H = 52
+/**
+ * The marquee variant (LevelSelect's header): 60, not the row's 52 — as tall as the title band
+ * allows (the art's top edge meets the LEVELS wordmark's shadow around y=120) while staying clear
+ * of the grid mask at 196. Prominence past that comes from structure, not pixels: badge, heading
+ * deck, module-plate shadow and the 3px bezel.
+ */
+const MARQUEE_H = 60
 
 /** Bake the module's cream plate: soft down-cast shadow + gloss bands + gold bezel (+ dark rim). */
 function ensureModulePlate(scene: Phaser.Scene): string {
@@ -1229,6 +1236,43 @@ function ensureRaceStrip(scene: Phaser.Scene): string {
   g.lineStyle(2, T.goldBezel, 1)
   g.strokeRoundedRect(x, y, STRIP_W, STRIP_H, r)
   g.generateTexture(key, STRIP_W + PAD * 2, STRIP_H + PAD * 2)
+  g.destroy()
+  return key
+}
+
+/**
+ * The marquee face LevelSelect's ladder strip wears — same strip, louder clothes (owner call,
+ * 2026-07-30: the header strip was still reading as a caption). Home's rows stay on
+ * `ensureRaceStrip`: there the strip must rank BELOW the rose ENDLESS pill; here it is the header's
+ * only control and the screen's whole subject, so it gets the button grammar the row deliberately
+ * renounces — the module plate's stacked seat shadow and 3px bezel instead of a hairline.
+ * The LIGHT `cardFill` face is load-bearing, not taste: `goldText` measures 4.53:1 on `cardFill`
+ * (why that token exists) but only 4.13:1 on the row's warmer fill, and the marquee carries a
+ * 13px gold heading that must pass AA at small-text size.
+ */
+function ensureRaceStripMarquee(scene: Phaser.Scene): string {
+  const T = getTheme()
+  const key = `race:stripmq:${T.id}:${STRIP_W}x${MARQUEE_H}`
+  if (scene.textures.exists(key)) return key
+  const g = scene.make.graphics({ x: 0, y: 0 }, false)
+  const x = PAD
+  const y = PAD
+  const r = MARQUEE_H / 2
+  for (let i = 3; i >= 1; i--) {
+    g.fillStyle(T.shadow, 0.08)
+    g.fillRoundedRect(x, y + i * 2, STRIP_W, MARQUEE_H, r)
+  }
+  g.fillStyle(T.cardFill, 1)
+  g.fillRoundedRect(x, y, STRIP_W, MARQUEE_H, r)
+  g.fillStyle(T.glossHi, 0.5)
+  g.fillRoundedRect(x + 5, y + 3, STRIP_W - 10, MARQUEE_H * 0.34, r * 0.6)
+  g.lineStyle(3, T.goldBezel, 1)
+  g.strokeRoundedRect(x, y, STRIP_W, MARQUEE_H, r)
+  if (isDarkWash(T)) {
+    g.fillStyle(T.accent, 0.8)
+    g.fillRoundedRect(x + r, y + 3, STRIP_W - r * 2, 2, 1)
+  }
+  g.generateTexture(key, STRIP_W + PAD * 2, MARQUEE_H + PAD * 2)
   g.destroy()
   return key
 }
@@ -1317,6 +1361,10 @@ export function addLevelRaceStrip(scene: Phaser.Scene, x: number, y: number, sav
   const local =
     stand.cleared > 0 ? `your climb · level ${stand.cleared} · ★${stand.stars}` : `clear a level to join the ladder`
   return addRaceStrip(scene, x, y, {
+    // Marquee, not the quiet row (owner call, 2026-07-30): on LevelSelect this strip is the header's
+    // only control and the screen's subject, so it wears the loud face. The heading matches the
+    // panel title it opens ('LEVEL RACE', BOARDS.levels) so the tap keeps its promise.
+    marquee: { heading: 'LEVEL RACE', icon: '🏆' },
     initial: local,
     refresh: async () => {
       const b = await fetchLevelBoard(25)
@@ -1340,6 +1388,13 @@ interface StripSpec {
   refresh?: () => Promise<string | null>
   /** What tapping the strip opens. */
   open: () => void
+  /**
+   * Present = the strip wears the marquee face (`ensureRaceStripMarquee`), a badge glyph at the left
+   * end, and a small gold heading deck above the data line. The heading names the board so the data
+   * line never has to — "your climb · level 21" alone never said LEADERBOARD, which is most of why
+   * the plain strip still read as a caption even inside a container.
+   */
+  marquee?: { heading: string; icon: string }
 }
 
 /**
@@ -1351,19 +1406,34 @@ interface StripSpec {
 function addRaceStrip(scene: Phaser.Scene, x: number, y: number, spec: StripSpec): Phaser.GameObjects.Container {
   const T = getTheme()
   const still = prefersReducedMotion()
+  const mq = spec.marquee
+  const stripH = mq ? MARQUEE_H : STRIP_H
   const container = scene.add.container(x, y)
   // Everything visible rides `face` so the press can sink it while the tap zone stays put — moving the
   // zone under a held finger is what makes a button flicker between over/out.
   const face = scene.add.container(0, 0)
   container.add(face)
-  face.add(scene.add.image(0, 0, ensureRaceStrip(scene)))
+  face.add(scene.add.image(0, 0, mq ? ensureRaceStripMarquee(scene) : ensureRaceStrip(scene)))
+  if (mq) {
+    // Badge left, chevron right — the same bracketing grammar a settings row uses, and it survives
+    // any standings copy length (the widest line stays clear of both).
+    face.add(scene.add.text(-STRIP_W / 2 + 40, 0, mq.icon, { fontFamily: FONT, fontSize: '26px' }).setOrigin(0.5))
+    face.add(
+      scene.add
+        .text(-14, -14, mq.heading, { fontFamily: FONT, fontSize: '13px', fontStyle: '900', color: T.goldText })
+        .setOrigin(0.5)
+        .setLetterSpacing(3),
+    )
+  }
   // Nudged left of centre so the label sits optically centred against the pinned chevron. The label
   // deliberately stays on the high-contrast body ink (9:1) rather than moving to the interactive gold:
   // gold on this warm fill measures 4.13:1, which passes AA only because the text is large and heavy,
   // and this line carries real data — your rank, your best score. The strip and the chevron say
   // "tappable" on their own, exactly as a settings row does; the numbers should just stay readable.
+  // (The marquee's small gold HEADING is the one exception, and it rides the lighter cardFill face
+  // where goldText holds 4.53:1 — see ensureRaceStripMarquee.)
   const line = scene.add
-    .text(-14, 0, '', { fontFamily: FONT, fontSize: '20px', fontStyle: '900', color: T.inkSoft })
+    .text(-14, mq ? 10 : 0, '', { fontFamily: FONT, fontSize: mq ? '21px' : '20px', fontStyle: '900', color: T.inkSoft })
     .setOrigin(0.5)
   face.add(line)
   const chev = scene.add
@@ -1393,7 +1463,7 @@ function addRaceStrip(scene: Phaser.Scene, x: number, y: number, spec: StripSpec
 
   // The whole strip is the tap target (≥44pt tall) → its board's panel. Sized to the strip now,
   // not to the text, so the target no longer grows and shrinks as the standings copy changes.
-  const zone = scene.add.rectangle(0, 0, STRIP_W, STRIP_H, 0xffffff, 0.001).setInteractive({ useHandCursor: true })
+  const zone = scene.add.rectangle(0, 0, STRIP_W, stripH, 0xffffff, 0.001).setInteractive({ useHandCursor: true })
   container.add(zone)
   // Press = the strip itself sinks and dims, the grammar every other control here uses. The old press
   // only faded the text, which is invisible on a surface players weren't reading as a control anyway.

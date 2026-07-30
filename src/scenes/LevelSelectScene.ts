@@ -269,15 +269,18 @@ export class LevelSelectScene extends Phaser.Scene {
     // clip, so they stay in lockstep for free.
     const viewBottom = endless ? 1072 : 1232
 
-    // The LEVEL RACE strip, promoted out of the footer into the header. It measures THIS screen's
-    // subject — your campaign climb — so at the top it doubles as the "where am I" line, and the two
-    // standings strips stop being twins: they now differ in position, in neighbourhood and in what
-    // they sit on, without either being forked (they are one shared component, shared with Home).
-    // Grown to the §E8 touch floor, art untouched. Its taller target reaches up to y=108, which
-    // clips the bottom-left corner of the ‹ back button's own zone — deliberately the safe way round:
-    // the button is depth 50 and wins the overlap, which is the direction this screen's one real
-    // input bug (a chip stealing BACK) taught us to err in.
-    const climb = addLevelRaceStrip(this, DESIGN_W / 2, 150, save)
+    // The LEVEL RACE strip, promoted out of the footer into the header — and since 2026-07-30 it
+    // wears the MARQUEE face (badge + gold heading deck + button-grammar plate; see StripSpec) —
+    // the owner's read was that the quiet row still looked like a caption up here. It measures THIS
+    // screen's subject — your campaign climb — so at the top it doubles as the "where am I" line,
+    // and the two standings strips stop being twins without being forked (one shared component,
+    // shared with Home, which keeps its deliberately-subordinate row face).
+    // y=152 with the 60px face: art spans 122–182, clearing the wordmark's shadow above and the
+    // grid mask at 196 below. Grown to the §E8 touch floor, art untouched: the 84px target reaches
+    // up to y=110, which clips the bottom-left corner of the ‹ back button's own zone —
+    // deliberately the safe way round: the button is depth 50 and wins the overlap, which is the
+    // direction this screen's one real input bug (a chip stealing BACK) taught us to err in.
+    const climb = addLevelRaceStrip(this, DESIGN_W / 2, 152, save)
     this.growTouchTarget(climb)
 
     // Scrollable grid of level chips.
