@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { cloudSession, isCloudConfigured, sbClient } from './cloud'
+import { cloudSession, flushCloudSaveNow, isCloudConfigured, sbClient } from './cloud'
 import { dayKey, endlessBestForDay, formatWeekStanding, previousDayKey, previousWeekKey, weekKey } from './endless'
 import { loadSave, persistSave, type SaveData } from './save'
 
@@ -164,6 +164,11 @@ export function setHandle(raw: string | null): string | null {
   } catch {
     // best-effort: the name still applies locally and to the rename below
   }
+  // Skip the save-push debounce. Setting a name is a deliberate one-off the player expects to have
+  // stuck, and "set the name, close the browser" — the exact flow this bug was reported from — fits
+  // inside the 1.5s window, which would strand the name on this device only. Fire-and-forget: the
+  // debounced push still stands behind it, so a failure here costs nothing.
+  void flushCloudSaveNow()
   void renameEverywhere()
   return clean
 }

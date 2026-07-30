@@ -20,6 +20,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const EMAIL = 'jane.doe@example.com'
 const USER_ID = '7f3a91b2-0000-0000-0000-000000000000'
 
+// Spy on the immediate save-push. Declared via vi.hoisted because vi.mock's factory is hoisted above
+// ordinary consts, and this one has to exist when the factory runs, not merely when the test does.
+const mocks = vi.hoisted(() => ({ flushCloudSaveNow: vi.fn(async () => {}) }))
+
 // Signed IN, with an email that is a real name — the exact shape that used to leak. isCloudConfigured
 // is true so nothing takes the dormant early-out, while sbClient yields null so the fire-and-forget
 // rename resolves as a no-op instead of reaching for a network.
@@ -27,6 +31,7 @@ vi.mock('./cloud', () => ({
   cloudSession: () => ({ userId: USER_ID, email: EMAIL }),
   isCloudConfigured: () => true,
   sbClient: async () => null,
+  flushCloudSaveNow: mocks.flushCloudSaveNow,
 }))
 
 const { anonName, preferredName, sanitizeName, setHandle } = await import('./leaderboard')
@@ -40,7 +45,10 @@ function stubStorage(): void {
   }
 }
 
-beforeEach(stubStorage)
+beforeEach(() => {
+  stubStorage()
+  mocks.flushCloudSaveNow.mockClear()
+})
 afterEach(() => {
   delete (globalThis as { localStorage?: unknown }).localStorage
 })
@@ -79,5 +87,25 @@ describe('preferredName never publishes the email', () => {
     expect(setHandle(EMAIL)).toBe('jane.doe')
     expect(sanitizeName(EMAIL)).not.toContain('@')
     expect(sanitizeName(EMAIL)).not.toContain('example')
+  })
+})
+
+/**
+ * Setting a name must reach the CLOUD immediately, not on the 1.5s save debounce.
+ *
+ * The reported flow was "set my race name, then close the browser", which fits inside that window.
+ * The name would still reach the boards (setHandle renames those rows directly) but never the cloud
+ * SAVE — so the next device would restore progress without the name, which is the exact bug the
+ * handle bridge exists to fix. Only reachable with a session, hence this file rather than the other.
+ */
+describe('setHandle pushes the save immediately', () => {
+  it('flushes the pending cloud save rather than waiting for the debounce', () => {
+    setHandle('neonghost')
+    expect(mocks.flushCloudSaveNow).toHaveBeenCalledTimes(1)
+  })
+
+  it('flushes on a CLEAR too — erasing a name is just as deliberate as setting one', () => {
+    setHandle(null)
+    expect(mocks.flushCloudSaveNow).toHaveBeenCalledTimes(1)
   })
 })

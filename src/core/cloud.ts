@@ -127,6 +127,36 @@ export function pushCloudSave(data: SaveData): void {
   }, 1500)
 }
 
+/**
+ * Push the queued save NOW, skipping the 1.5s debounce.
+ *
+ * The debounce is right for gameplay — a level win writes the save several times in a second and one
+ * upsert should carry them all. It is WRONG for a deliberate, one-off act the player expects to have
+ * taken effect, because the window is exactly long enough to lose: the reporting player's flow was
+ * "set my race name, then close the browser", and a tab closed inside 1.5s takes the pending push
+ * with it. The name would still reach the boards (setHandle renames those rows directly) but never
+ * the cloud SAVE — so the next device would restore progress without the name, which is the whole
+ * bug the handle bridge exists to fix.
+ *
+ * Safe to call with nothing queued: flushPush no-ops on a null `pending`. Failures re-queue exactly
+ * as the debounced path does, so this is an "also try now", never a replacement for it.
+ */
+export async function flushCloudSaveNow(): Promise<void> {
+  if (!isCloudConfigured() || !session) return
+  if (pushTimer) {
+    clearTimeout(pushTimer)
+    pushTimer = null
+  }
+  try {
+    await flushPush()
+  } catch {
+    // Never reject. flushPush guards its own upsert, but `await sb()` — a dynamic import — is
+    // outside that guard and can fail offline, and this module's contract is that nothing here
+    // throws into the game. Callers use `void flushCloudSaveNow()`, so a rejection would surface
+    // as an unhandled one; the debounced push still stands behind us either way.
+  }
+}
+
 async function flushPush(): Promise<void> {
   pushTimer = null
   const c = await sb()
