@@ -1,7 +1,8 @@
 /**
  * RACE leaderboard panel — the display surface over `core/leaderboard.ts`.
  *
- * Renders THREE boards through one card: TODAY (the daily board, which closes at midnight UTC),
+ * Renders THREE boards through one card: TODAY (the daily board, which closes at midnight Mountain
+ * time — core/endless.ts RACE_TZ),
  * THIS WEEK (the season — every day's best added up), and the all-time LEVEL ladder. The first two
  * are TABS of one another, because the second is literally the first summed across seven boards and
  * a player has to be able to see both to understand either.
@@ -1718,7 +1719,7 @@ function ruleBeats(): RuleBeat[] {
     {
       n: 2,
       title: 'THE TOP SCORE WINS THE DAY',
-      body: `At midnight UTC the board closes and the highest score takes ${DAILY_PURSE.toLocaleString()} chips. Then a brand-new board opens and everyone starts level again.`,
+      body: `At midnight the board closes and the highest score takes ${DAILY_PURSE.toLocaleString()} chips. Then a brand-new board opens and everyone starts level again.`,
     },
     {
       n: 3,

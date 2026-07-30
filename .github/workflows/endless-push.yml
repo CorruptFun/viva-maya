@@ -2,24 +2,28 @@ name: Endless race reminders
 
 # The race has two clocks, so this workflow has two schedules.
 #
-# TODAY'S BOARD closes at 00:00 UTC (core/endless.ts dayEndsAt). The daily job fires ~6 hours before
-# that — evening in Europe, afternoon in the Americas — while there is still time to take the board.
+# TODAY'S BOARD closes at midnight America/Edmonton (core/endless.ts dayEndsAt — 06:00 UTC on MDT,
+# 07:00 UTC on MST). The daily job fires at 01:00 UTC — 6–7 PM on the home crowd's clock, ~5–6 hours
+# before the close — while there is still time to take the board. A cron cannot follow DST, so the
+# hour is fixed in UTC and the local send time breathes by an hour across the seasons; the message
+# computes "in N hours" from the real clock either way.
 #
-# THE SEASON closes Monday 00:00 UTC (core/endless.ts weekEndsAt). That fires ~6 hours before, on
-# Sunday evening in the Americas / Monday morning in Europe: awkward for nobody, and late enough that
-# the totals being reported are close to final.
+# THE SEASON closes Monday midnight America/Edmonton (core/endless.ts weekEndsAt). Its job fires in
+# the same 01:00 UTC slot — which on Monday's UTC calendar is SUNDAY EVENING at home, late enough
+# that the totals being reported are close to final.
 #
-# The two never both fire: the daily cron is Mon-Sat, so Sunday's 18:00 slot belongs to the season
-# alone. That is the whole reason it is `1-6` rather than `*` — a player getting two notifications in
-# the same evening is how a subscription gets switched off for good.
+# ⚠️ The UTC day at 01:00 UTC is already TOMORROW on the home clock's calendar: Monday evening in
+# Alberta is Tuesday 01:00 UTC. That is why the daily cron runs Tue–Sun (`0,2-6`) and the season owns
+# Monday (`1`) — Monday 01:00 UTC IS Sunday evening at home. The two never both fire: a player
+# getting two notifications in the same evening is how a subscription gets switched off for good.
 #
 # GitHub's scheduler is best-effort and can run 10–30 minutes late under load. That is irrelevant
 # here: every message says "in N hours", computed at run time from the real clock, so a delayed run
 # reports a smaller N rather than saying anything untrue.
 on:
   schedule:
-    - cron: '0 18 * * 1-6' # Mon-Sat 18:00 UTC — today's board (Sunday belongs to the season)
-    - cron: '0 18 * * 0'   # Sunday 18:00 UTC — the season
+    - cron: '0 1 * * 0,2-6' # Tue–Sun 01:00 UTC = Mon–Sat evening at home — today's board
+    - cron: '0 1 * * 1'     # Monday 01:00 UTC = Sunday evening at home — the season
   workflow_dispatch:
     inputs:
       scope:
@@ -68,8 +72,9 @@ jobs:
           # On a scheduled run this is empty, so the real send is the default and --dry-run is opt-in.
           DRY_RUN: ${{ inputs.dry_run }}
           # Which board to remind about. A scheduled run has no inputs, so it is decided by WHICH cron
-          # fired: the Sunday 18:00 entry is the season, every other evening is that day's board.
-          SCOPE: ${{ inputs.scope || (github.event.schedule == '0 18 * * 0' && 'weekly' || 'daily') }}
+          # fired: the Monday-01:00-UTC entry (Sunday evening at home) is the season, every other
+          # evening is that day's board.
+          SCOPE: ${{ inputs.scope || (github.event.schedule == '0 1 * * 1' && 'weekly' || 'daily') }}
         run: |
           ARGS=""
           [ "$SCOPE" = "daily" ] && ARGS="--daily"

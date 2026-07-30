@@ -43,53 +43,121 @@ const DAY_HISTORY = 16
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/
 
 /**
- * Calendar day key "YYYY-MM-DD" in **UTC** — the board seed and the daily leaderboard partition.
+ * The race's HOME TIMEZONE — the boards flip at midnight on THIS clock, for everyone at once.
  *
- * UTC, not local time, and that is the whole point (the same lesson the week key learned on
- * 2026-07-26). The key drives THREE things at once: the board SEED everyone is racing on, the
- * partition a score is written to, and the partition read back to build the standings. Derive it
- * from the device's local calendar and two friends a few timezones apart play different boards and
- * each see a leaderboard containing only themselves, with nothing on screen to explain why — and a
- * device clock set forward jumps into tomorrow's board early.
+ * The anchor used to be UTC, which put the flip at 6 PM on the home crowd's clock: the player who
+ * was told "the board closes at midnight and crowns a winner" looked up at 11 PM and saw NINETEEN
+ * HOURS on the countdown, because a new board had quietly opened while they were at dinner
+ * (owner report, 2026-07-30). Midnight has to mean midnight to the people actually racing.
+ *
+ * This is a FIXED zone, not the device's local one — that distinction is load-bearing, and it is
+ * the lesson of 2026-07-26 (see the dayKey doc below). One instant still maps to one board for
+ * every player on earth; a racer in another timezone just sees the handover at a different
+ * wall-clock hour, exactly as the whole world once saw it at 00:00 UTC.
+ *
+ * Mirrored server-side by `public.race_day_key()` (migration 0013) and by the sender copies in
+ * scripts/send-push.mjs — change one, change all three, and move the crons in
+ * .github/workflows/endless-push.yml to match.
+ */
+export const RACE_TZ = 'America/Edmonton'
+
+/**
+ * One cached formatter — construction is the expensive part (~ms), reads are microseconds.
+ * `hourCycle: 'h23'` pins midnight to "00": an 'h24'-style "24" would silently corrupt the
+ * offset arithmetic in `raceOffsetMs`. Constructed eagerly: an environment without IANA data
+ * should fail LOUDLY at load, not quietly race a different day than everyone else.
+ */
+const raceClock = new Intl.DateTimeFormat('en-US', {
+  timeZone: RACE_TZ,
+  hourCycle: 'h23',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+})
+
+/** What RACE_TZ's wall clock reads at `at` — the pieces every key below derives from. */
+function raceWallClock(at: Date): { y: number; mo: number; d: number; h: number; mi: number; s: number } {
+  const v: Record<string, number> = {}
+  for (const part of raceClock.formatToParts(at)) {
+    if (part.type !== 'literal') v[part.type] = Number(part.value)
+  }
+  return { y: v.year, mo: v.month, d: v.day, h: v.hour % 24, mi: v.minute, s: v.second }
+}
+
+const pad2 = (n: number): string => String(n).padStart(2, '0')
+
+/** RACE_TZ's UTC offset at `at`, in ms — negative when behind UTC (Mountain is −6h/−7h). */
+function raceOffsetMs(at: Date): number {
+  const w = raceWallClock(at)
+  return Date.UTC(w.y, w.mo - 1, w.d, w.h, w.mi, w.s) - at.getTime()
+}
+
+/** Calendar arithmetic on a day key — DST-free, because keys are dates and not instants. */
+function shiftDayKey(key: string, days: number): string {
+  const d = new Date(Date.parse(`${key}T00:00:00Z`) + days * 86400000)
+  return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`
+}
+
+/**
+ * The instant RACE_TZ's clocks strike midnight opening `key` — the wall-clock→instant conversion
+ * both "ends at" functions stand on. The offset AT the answer is what converts, but the answer is
+ * what we're solving for: guess with the offset at the naive UTC-midnight instant, then correct
+ * once with the offset at the guess. Mountain's DST switches happen at 02:00 local, never at
+ * midnight, so the second pass always lands exactly.
+ */
+function raceMidnight(key: string): Date {
+  const naive = Date.parse(`${key}T00:00:00Z`)
+  let t = naive - raceOffsetMs(new Date(naive))
+  t = naive - raceOffsetMs(new Date(t))
+  return new Date(t)
+}
+
+/**
+ * Calendar day key "YYYY-MM-DD" on the RACE_TZ clock — the board seed and the daily leaderboard
+ * partition. Midnight-to-midnight in America/Edmonton, so the board turns over at midnight for the
+ * home crowd, DST included (one 23-hour board each March, one 25-hour board each November — the
+ * same board for everyone either way).
+ *
+ * A FIXED zone, not the device's local one, and that is the whole point (the lesson the week key
+ * learned on 2026-07-26). The key drives THREE things at once: the board SEED everyone is racing
+ * on, the partition a score is written to, and the partition read back to build the standings.
+ * Derive it from the device's local calendar and two friends a few timezones apart play different
+ * boards and each see a leaderboard containing only themselves, with nothing on screen to explain
+ * why — and a device clock set forward jumps into tomorrow's board early.
  *
  * Deliberately NOT `daily.ts todayKey()`, which is LOCAL by design: that one gates the daily bonus
  * spin and the free-spin earn cap, where "my day" should mean the player's own midnight. A shared
- * race has to mean the same day for everyone on earth, so the two stay separate on purpose.
+ * race has to mean the same day for everyone racing it, so the two stay separate on purpose.
  */
 export function dayKey(now = new Date()): string {
-  const p = (n: number): string => String(n).padStart(2, '0')
-  return `${now.getUTCFullYear()}-${p(now.getUTCMonth() + 1)}-${p(now.getUTCDate())}`
+  const w = raceWallClock(now)
+  return `${w.y}-${pad2(w.mo)}-${pad2(w.d)}`
 }
 
 /**
- * The instant today's board closes — the next 00:00 UTC. Exposed so a surface can tell the player
- * when the board resets instead of leaving a bare date to be decoded, and so tests can pin the edge.
+ * The instant today's board closes — the next midnight in RACE_TZ. Exposed so a surface can tell
+ * the player when the board resets instead of leaving a bare date to be decoded, and so tests can
+ * pin the edge.
  */
 export function dayEndsAt(now = new Date()): Date {
-  const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()))
-  d.setUTCDate(d.getUTCDate() + 1)
-  return d
-}
-
-/** The day key BEFORE `now`'s — i.e. the board that most recently closed (whose winner is crowned). */
-export function previousDayKey(now = new Date()): string {
-  return dayKey(new Date(now.getTime() - 86400000))
+  return raceMidnight(shiftDayKey(dayKey(now), 1))
 }
 
 /**
- * ISO-8601 week key "YYYY-Www" in **UTC** (Thursday-anchored, weeks start Monday). Same week → same
- * key → the same seven daily boards, and the same weekly-total partition. The season resets at
- * Monday 00:00 UTC, for EVERYONE at once.
- *
- * UTC, not local time, for exactly the reasons spelled out on `dayKey` above. This used to read the
- * device's local calendar date, which quietly split the race in two: a player whose local date had
- * already ticked over to Monday got a different key, so their scores landed in a week nobody else
- * was in. One instant now maps to one week for every player on earth, whatever their timezone or
- * clock offset. The visible trade is that the rollover is a fixed moment worldwide rather than local
- * midnight — Monday 00:00 UTC is Sunday evening in the Americas.
+ * The day key BEFORE `now`'s — i.e. the board that most recently closed (whose winner is crowned).
+ * Derived from the key, not from `now − 24h`: on the 25-hour fall-back day the last hour lies more
+ * than 24h after the previous midnight, so the subtraction trick would name the day ITSELF here.
  */
-export function weekKey(now = new Date()): string {
-  const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()))
+export function previousDayKey(now = new Date()): string {
+  return shiftDayKey(dayKey(now), -1)
+}
+
+/** ISO-8601 week "YYYY-Www" of a day key — pure calendar math on the key itself (Thursday-anchored). */
+function isoWeekOf(key: string): string {
+  const d = new Date(Date.parse(`${key}T00:00:00Z`))
   const dow = (d.getUTCDay() + 6) % 7 // Mon=0 … Sun=6
   d.setUTCDate(d.getUTCDate() - dow + 3) // hop to this week's Thursday
   const year = d.getUTCFullYear()
@@ -100,31 +168,51 @@ export function weekKey(now = new Date()): string {
   return `${year}-W${String(week).padStart(2, '0')}`
 }
 
-/** The week key BEFORE `now`'s — i.e. the most recently CLOSED season, whose champion is crowned. */
-export function previousWeekKey(now = new Date()): string {
-  return weekKey(new Date(now.getTime() - 7 * 86400000))
+/**
+ * ISO-8601 week key "YYYY-Www" of the RACE_TZ calendar (weeks start Monday). Same week → same key →
+ * the same seven daily boards, and the same weekly-total partition. The season resets at Monday
+ * midnight in RACE_TZ, for EVERYONE at once — by construction the exact instant Sunday's board
+ * closes, so the day and the season always hand over together.
+ *
+ * A fixed zone rather than the device's local one, for exactly the reasons spelled out on `dayKey`
+ * above. The local-calendar version quietly split the race in two on 2026-07-26: a player whose
+ * local date had already ticked over to Monday got a different key, so their scores landed in a
+ * week nobody else was in.
+ */
+export function weekKey(now = new Date()): string {
+  return isoWeekOf(dayKey(now))
 }
 
 /**
- * The instant this week's season closes — Monday 00:00 UTC. Exposed so a surface can tell the player
- * when the totals reset instead of leaving "2026-W30" to be decoded, and so tests can pin the edge.
+ * The week key BEFORE `now`'s — i.e. the most recently CLOSED season, whose champion is crowned.
+ * Seven days back on the CALENDAR (via the key), not 7×24h back on the clock, for the same
+ * fall-back-day reason as `previousDayKey`.
+ */
+export function previousWeekKey(now = new Date()): string {
+  return isoWeekOf(shiftDayKey(dayKey(now), -7))
+}
+
+/**
+ * The instant this week's season closes — Monday midnight in RACE_TZ. Exposed so a surface can tell
+ * the player when the totals reset instead of leaving "2026-W30" to be decoded, and so tests can
+ * pin the edge.
  */
 export function weekEndsAt(now = new Date()): Date {
-  const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()))
-  const dow = (d.getUTCDay() + 6) % 7 // Mon=0 … Sun=6
-  d.setUTCDate(d.getUTCDate() + (7 - dow)) // next Monday, 00:00 UTC
-  return d
+  const key = dayKey(now)
+  const dow = (new Date(Date.parse(`${key}T00:00:00Z`)).getUTCDay() + 6) % 7 // Mon=0 … Sun=6
+  return raceMidnight(shiftDayKey(key, 7 - dow))
 }
 
 /**
  * Which week a day key belongs to — the ONE place the daily→weekly rollup is defined client-side,
- * and the mirror of `public.iso_week_of_day()` in migration 0012. Null for a malformed key, so a
- * corrupt save entry drops out of the total instead of poisoning it with NaN.
+ * and the mirror of `public.iso_week_of_day()` in migration 0012 (day→week is pure calendar math,
+ * so the 0013 timezone re-anchor did not touch it). Null for a malformed key, so a corrupt save
+ * entry drops out of the total instead of poisoning it with NaN.
  */
 export function weekKeyOfDay(day: string): string | null {
   if (!DAY_RE.test(day)) return null
   const t = Date.parse(`${day}T00:00:00Z`)
-  return Number.isNaN(t) ? null : weekKey(new Date(t))
+  return Number.isNaN(t) ? null : isoWeekOf(day)
 }
 
 /**

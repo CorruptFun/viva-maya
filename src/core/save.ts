@@ -16,7 +16,8 @@ export interface SaveData {
   /** Prizes waiting to be applied to the next level started. */
   pendingBoosts: BoostType[]
   /**
-   * Best endless score per DAILY board, keyed by UTC day ("YYYY-MM-DD" — core/endless.ts dayKey).
+   * Best endless score per DAILY board, keyed by race day ("YYYY-MM-DD" — core/endless.ts dayKey,
+   * midnight-to-midnight in RACE_TZ).
    * The week's standing is the sum of the entries inside it, so this map is the local half of both
    * races at once. Pruned to the newest ~16 days by recordEndless; `{}` until the first run.
    */
