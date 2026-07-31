@@ -288,29 +288,37 @@ export function formatWeekStanding(s: WeekStanding): string {
 }
 
 /**
- * The ceiling a CHEAT run may post to the race — the "pace score".
+ * The hard ceiling a CHEAT run may post to the race.
  *
- * The endless cheat code (core/cheat.ts) mints score by the hundred thousand, and a run that fired it
- * still belongs on the board: an empty leaderboard, or one whose top line is unreachable, gives
- * nobody a reason to come back tomorrow. What it must never do is put a number up there that kills
- * the chase. So a cheat run posts `min(score, this)` and honest runs are untouched.
+ * ── WHAT THIS IS, AND WHAT IT USED TO BE (owner decision, 2026-07-31) ────────────────────────────
+ * This began at 13,000 — the 85th percentile of a typical run — as a "pace score": a top line
+ * deliberately pitched at human reach so honest players took it down about one run in seven. That
+ * made the clamp bind on essentially every cheat run, which is the wrong trade for how the cheat is
+ * actually used here: fire it once to get a little ahead, then play the run out. Under the old
+ * ceiling that run's real score was thrown away and replaced with a fixed 13,000.
  *
- * MEASURED, not guessed — the number is the 85th percentile of a typical player's run, from a
- * headless sweep of the real board core (`sim.playEndless`, 400 runs, Plinko included; the guard in
- * endless.pace.test.ts re-derives it and fails if the board ever drifts away from it). The
- * distribution behind it, on the 'greedy' policy that models someone playing quickly without
- * lookahead:
+ * At 100,000 the clamp is a BACKSTOP rather than a pace-setter. It exists for exactly one thing —
+ * the cheat costs no moves and can be re-entered as often as the player has patience for, so an
+ * unclamped run can mint an arbitrarily large number and own the board permanently. This bounds
+ * that. What it no longer does is normalise ordinary cheat use: a single fire lands somewhere near
+ * 30–40k, well under this, so it posts what it actually scored.
+ *
+ * ── WHAT THAT COSTS, STATED PLAINLY ─────────────────────────────────────────────────────────────
+ * A lightly-cheated run now outranks most honest ones. Measured honest distribution from a headless
+ * sweep of the real board core (`sim.playEndless`, 400 runs, Plinko included, 'greedy' policy —
+ * someone playing quickly without lookahead):
  *
  *     p50 7,080 · p75 10,500 · p85 13,020 · p95 17,220 · longest tail 62,660
  *
- * p85 is the pick because of what it means in play, not because it is a nice number: a typical
- * player already beats it about one run in seven, and a careful one — 'greedy' has no lookahead, so
- * it UNDERSTATES a human paying attention — beats it a good deal more often. That is a top line that
- * reads as a real score worth chasing and gets taken down most days. p95 would be beaten a couple of
- * times a month, which is the "unrealistically high" this exists to avoid; the median would not be
- * worth chasing at all.
+ * So a one-fire cheat run sits above p95 but still inside the range the board genuinely produces —
+ * an exceptional honest run can beat it. A run that fires the cheat repeatedly will reach this
+ * ceiling and sit on top of the board until someone else does the same. That is the accepted
+ * trade, not an oversight: see endless.pace.test.ts, which now guards the backstop rather than the
+ * old chaseability band.
+ *
+ * Honest runs are untouched either way — this only ever applies to `recordEndless({ paced: true })`.
  */
-export const ENDLESS_PACE_SCORE = 13000
+export const ENDLESS_MAX_CHEAT_SCORE = 100000
 
 /** Endless unlocks once the player has cleared ENDLESS_UNLOCK_LEVEL numbered levels. */
 export function endlessUnlocked(save: SaveData): boolean {
@@ -332,15 +340,15 @@ function pruneDays(save: SaveData): void {
  *
  * `paced: true` marks a run that fired the endless cheat code (core/cheat.ts). Such a run DOES reach
  * the race — a top line nobody can see is worth nothing to the players it is meant to draw back —
- * but only at `min(score, ENDLESS_PACE_SCORE)`, so the cheat can set the pace and can never run away
- * with the board. This clamp is the ONE place that happens: everything downstream, including the
- * leaderboard mirror core/cloud.ts fires off `endlessDays` after each save push, reads the clamped
- * number and has no idea a cheat was involved. Don't route a cheat score around it.
+ * at `min(score, ENDLESS_MAX_CHEAT_SCORE)`, which bounds a run that re-fires the cheat indefinitely
+ * without touching one that fired it once. This clamp is the ONE place that happens: everything
+ * downstream, including the leaderboard mirror core/cloud.ts fires off `endlessDays` after each save
+ * push, reads the clamped number and has no idea a cheat was involved. Don't route a score around it.
  *
  * The clamp cuts BOTH ways by design. It cannot lower a day whose honest best already stands above
  * it (that best simply wins the `isRecord` comparison, as any lower score would), and a cheat run
- * under the ceiling posts exactly what it scored — the pace score is a ceiling, never a floor, so it
- * can never invent a number the run did not reach.
+ * under the ceiling posts exactly what it scored — this is a ceiling, never a floor, so it can never
+ * invent a number the run did not reach.
  *
  * Returns `posted` alongside the rest: what this run actually put on the board, which the result
  * card needs so it can say so rather than showing a six-figure score above a best that did not move.
@@ -351,7 +359,7 @@ export function recordEndless(
   opts: { paced?: boolean } = {}
 ): { best: number; isRecord: boolean; week: WeekStanding; posted: number } {
   const save = loadSave()
-  const posted = opts.paced ? Math.min(score, ENDLESS_PACE_SCORE) : score
+  const posted = opts.paced ? Math.min(score, ENDLESS_MAX_CHEAT_SCORE) : score
   const prev = endlessBestForDay(save, day)
   const isRecord = posted > prev
   if (isRecord) save.endlessDays[day] = Math.floor(posted)

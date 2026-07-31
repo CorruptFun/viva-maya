@@ -12,12 +12,15 @@
  * file owns "was that the code?".
  *
  * WHAT THE RACE SEES. A cheat run does reach the daily leaderboard, deliberately — a board with no
- * top line, or one nobody can see, gives no one a reason to come back tomorrow. What it posts is a
- * PACE SCORE: `recordEndless({ paced: true })` clamps it to ENDLESS_PACE_SCORE, a number measured
- * off the real board at the 85th percentile of a typical player's run, so the top line stays one
- * that gets taken down about one run in seven. The mega win can therefore set the pace and can never
- * run away with the board. That clamp is the only place this is enforced; everything downstream
- * reads the clamped number.
+ * top line, or one nobody can see, gives no one a reason to come back tomorrow. It posts what it
+ * ACTUALLY SCORED, capped at ENDLESS_MAX_CHEAT_SCORE by `recordEndless({ paced: true })`.
+ *
+ * That cap is a backstop, not a normaliser (owner decision, 2026-07-31 — it used to be a 13,000
+ * "pace score" that bound on essentially every cheat run and replaced the real number with a fixed
+ * one). The cheat costs no moves and can be re-entered as often as the player likes, so an unclamped
+ * run can mint an arbitrarily large score and own the board forever; the cap bounds that and nothing
+ * else. A single fire lands well under it and therefore posts honestly. The clamp is the only place
+ * this is enforced; everything downstream reads the clamped number.
  *
  * The clamp is not decoration. Two things make a cheat run's raw score meaningless as a race entry,
  * and the second holds even with the multiplier and the extra Plinko drops taken away:
