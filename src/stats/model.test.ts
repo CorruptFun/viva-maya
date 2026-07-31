@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { EVENTS } from '../core/analytics'
+import { PLINKO_ENDLESS_SLOTS, PLINKO_SLOTS } from '../core/plinko'
 import {
   buildFunnels,
   coerceAnalytics,
@@ -12,6 +13,7 @@ import {
   fmtPct,
   FUNNEL_DEFS,
   hourInZone,
+  plinkoTargetPct,
   SESSION_BUCKETS,
   sessionBucketCounts,
   lastNDays,
@@ -188,6 +190,61 @@ describe('coerceAnalytics', () => {
     expect(a.retention.cohorts).toEqual([])
     expect(a.sessions.total).toBe(0)
     expect(a.errors.top).toEqual([])
+  })
+
+  /**
+   * The load-bearing compatibility case for 0022. The RPC and this dashboard deploy INDEPENDENTLY —
+   * the migration is applied by hand, the page ships with the game — so a client that knows about
+   * `modes` will meet a payload without it, and the panel has to degrade to "not shown" rather than
+   * throw and blank the whole page.
+   */
+  it('a pre-0022 plinko payload (no modes key) degrades to an empty split, not a crash', () => {
+    const a = coerceAnalytics({
+      plinko: { offered: 40, played: 31, slots: [{ slot: 0, count: 2, avg_payout: 9999 }] },
+    })
+    expect(a.plinko.played).toBe(31)
+    expect(a.plinko.slots).toHaveLength(1) // the pooled histogram still reads
+    expect(a.plinko.modes).toEqual([]) // and the new panel simply does not render
+  })
+
+  it('splits plinko by board, with honest denominators', () => {
+    const a = coerceAnalytics({
+      plinko: {
+        offered: 100,
+        played: 32,
+        slots: [],
+        modes: [
+          { mode: 'endless', played: 10, top_hits: 1, avg_mult: 2.8 },
+          { mode: 'numbered', played: 20, top_hits: 1, avg_mult: 3.35 },
+          { mode: 'unknown', played: 2, top_hits: 0, avg_mult: null },
+          { mode: 'nothing_played', played: 0, top_hits: 0, avg_mult: null },
+        ],
+      },
+    })
+    const by = Object.fromEntries(a.plinko.modes.map(m => [m.mode, m]))
+    expect(by.endless.topPct).toBeCloseTo(10)
+    expect(by.numbered.topPct).toBeCloseTo(5)
+    expect(by.unknown.avgMult).toBeNull()
+    // 0 of 0 is "no data" — a fabricated 0% here would read as "the x10 never lands".
+    expect(by.nothing_played.topPct).toBeNull()
+  })
+
+  /**
+   * The target rates are DERIVED from the shipped weight tables, so the dashboard cannot go on
+   * comparing live data against a stale number after the next retune. Pinned against the tables
+   * themselves rather than against 6/8 literals, for exactly the same reason.
+   */
+  it('derives each board’s x10 target from the real table, and has none for unknown', () => {
+    const edge = (t: typeof PLINKO_SLOTS): number =>
+      (t.filter(p => p.kind === 'mult' && p.mult >= 10).reduce((s, p) => s + p.weight, 0) /
+        t.reduce((s, p) => s + p.weight, 0)) *
+      100
+    expect(plinkoTargetPct('numbered')).toBeCloseTo(edge(PLINKO_SLOTS))
+    expect(plinkoTargetPct('endless')).toBeCloseTo(edge(PLINKO_ENDLESS_SLOTS))
+    // Endless is the more generous board — if this ever inverts, the dashboard is mislabelling them.
+    expect(plinkoTargetPct('endless')!).toBeGreaterThan(plinkoTargetPct('numbered')!)
+    expect(plinkoTargetPct('unknown')).toBeNull()
+    expect(plinkoTargetPct('something_else')).toBeNull()
   })
 
   it('passes the 0015 sections through intact', () => {

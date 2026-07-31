@@ -24,6 +24,8 @@ anyone; the one measured churn (a W30 player absent from W31) crossed exactly th
 | **Hardening** (dedupe, retention, sessions, crash telemetry, service-role gate) | `supabase/migrations/0015_analytics_hardening.sql` |
 | **Dedupe in the guard trigger** (catches any plain insert — every cached client) | `supabase/migrations/0018_event_dedupe_in_guard.sql` |
 | **Idempotent ingest RPC** (atomic dedupe + the path the current client uses) | `supabase/migrations/0019_events_idempotent_ingest.sql` |
+| **Viewer's-clock buckets** (`p_tz`) | `supabase/migrations/0021_analytics_timezone.sql` |
+| **Plinko split by board** (`plinko.modes`) | `supabase/migrations/0022_plinko_by_mode.sql` |
 | **Weekly ops** (prune + digest to a pinned issue) | `.github/workflows/analytics-weekly.yml` + `scripts/analytics-digest.mjs` |
 
 **The table is append-only to every client.** `0010` grants INSERT and *no SELECT at all* — RLS denies

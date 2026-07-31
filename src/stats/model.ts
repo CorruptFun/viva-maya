@@ -15,6 +15,7 @@
  */
 
 import { EVENTS } from '../core/analytics'
+import { PLINKO_ENDLESS_SLOTS, PLINKO_SLOTS } from '../core/plinko'
 
 // ---------------------------------------------------------------------------- payload types
 
@@ -76,10 +77,52 @@ export interface DealPanel {
   faces: { face: string; count: number }[]
 }
 
+/**
+ * `modes` splits the drop by which weight table produced it (0022). The two boards are tuned to
+ * different ×10 edge rates — 6% on numbered levels, 8% in endless — so `slots` alone, which pools
+ * them, cannot confirm either: a pooled rate somewhere between the two is consistent with both.
+ * `topPct` is the field reading to compare against those targets.
+ *
+ * `mode` carries a third value, 'unknown', for events whose `endless` prop is missing or not a
+ * boolean. It should always be zero — every plinko_played event sends the prop — so a non-zero
+ * unknown row is a signal, not noise, and is rendered rather than filtered.
+ *
+ * Empty on any payload from before 0022. That is a real state, not an error: the RPC and this client
+ * deploy independently, so a cached dashboard may be talking to the new function and vice versa.
+ */
+export interface PlinkoModeRow {
+  mode: string
+  played: number
+  topHits: number
+  avgMult: number | null
+  /** topHits/played as a percentage, or null when nothing has been played — never a fabricated 0. */
+  topPct: number | null
+}
+
 export interface PlinkoPanel {
   offered: number
   played: number
   slots: { slot: number; count: number; avg_payout: number | null }[]
+  modes: PlinkoModeRow[]
+}
+
+/**
+ * The ×10 edge share a board is TUNED to, as a percentage — the target `topPct` should converge on.
+ *
+ * DERIVED from the shipped weight tables rather than written down, because a hardcoded 6/8 here is a
+ * number that goes quietly wrong the next time someone retunes the drop, and a dashboard confidently
+ * comparing live data against a stale target is worse than one showing no target at all.
+ *
+ * Returns null for 'unknown' (and any mode this client does not recognise): there is no board behind
+ * it, so there is nothing to aim at.
+ */
+export function plinkoTargetPct(mode: string): number | null {
+  const table = mode === 'endless' ? PLINKO_ENDLESS_SLOTS : mode === 'numbered' ? PLINKO_SLOTS : null
+  if (!table) return null
+  const total = table.reduce((s, p) => s + p.weight, 0)
+  if (total <= 0) return null
+  const top = table.filter(p => p.kind === 'mult' && p.mult >= 10).reduce((s, p) => s + p.weight, 0)
+  return (top / total) * 100
 }
 
 export interface ShareRow {
@@ -299,6 +342,20 @@ export function coerceAnalytics(raw: unknown): Analytics {
       slots: arr(plinko.slots).map(s => {
         const o = obj(s)
         return { slot: num(o.slot, -1), count: num(o.count), avg_payout: numOrNull(o.avg_payout) }
+      }),
+      // Absent on any pre-0022 payload — `arr` yields [] and the panel simply does not render.
+      modes: arr(plinko.modes).map(m => {
+        const o = obj(m)
+        const played = num(o.played)
+        const topHits = num(o.top_hits)
+        return {
+          mode: str(o.mode, 'unknown'),
+          played,
+          topHits,
+          avgMult: numOrNull(o.avg_mult),
+          // Zero denominator is "no data", never 0% — the honest-denominator rule.
+          topPct: played > 0 ? (topHits / played) * 100 : null,
+        }
       }),
     },
     shares: arr(r.shares).map(s => {

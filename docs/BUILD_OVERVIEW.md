@@ -188,11 +188,19 @@ player the endless odds (pinned by its own test).
 
 **Every number above is simulated.** The field check is `plinko_played` — which was declared and
 charted but fired by nothing until 2026-07-31; see the "a declared event is not a sent event" warning
-in `ANALYTICS_AND_PUSH.md`. It now sends `{slot, mult, payout, spins, endless}` on claim, and the
-admin RPC already aggregates a slot histogram from it. **`endless` is carried but not yet read**: the
-RPC groups by `slot` alone, so today's histogram pools both boards and therefore measures neither
-tuning on its own. Splitting it needs a migration (the prop is jsonb, so the data is accumulating in
-the meantime and the split can be applied retroactively).
+in `ANALYTICS_AND_PUSH.md`. It sends `{slot, mult, payout, spins, endless}` on claim.
+
+`0022_plinko_by_mode.sql` reads the `endless` half: `admin_analytics` returns a `plinko.modes` array
+of `{mode, played, top_hits, avg_mult}`, so **`top_hits / played` per board is directly comparable to
+the 6% / 8% above** and `avg_mult` checks the ~3.61× / ~4.28× EV. The pooled `slots` histogram is
+unchanged beside it — splitting it in place would have made a cached dashboard render two rows per
+slot, so the split arrives under a new key old clients ignore.
+
+The dashboard's **target** column is derived from `PLINKO_SLOTS` / `PLINKO_ENDLESS_SLOTS` at runtime
+(`plinkoTargetPct` in `src/stats/model.ts`), not written down — a hardcoded 6/8 there would go quietly
+wrong at the next retune, and a dashboard comparing live data against a stale target is worse than one
+showing no target. A third `unknown` bucket catches events whose `endless` prop is missing or not a
+boolean; it should always be zero, and the panel says so loudly if it is not.
 
 **Frequency is the design, and it is PER-MODE.** Three gates keep it a treat on a numbered level: the
 x5 bar, a 1-in-2 roll, and one drop per level. x5 (not the x4 MEGA bar) because it was **measured** —

@@ -30,6 +30,7 @@ import {
   fmtDuration,
   fmtPct,
   hourInZone,
+  plinkoTargetPct,
   SESSION_BUCKETS,
   sessionBucketCounts,
   share,
@@ -555,11 +556,49 @@ function plinkoCard(a: Analytics): HTMLElement {
     labelMax: true,
     height: 150,
   })
-  return chartCard(
+  const card = chartCard(
     'Plinko — landing slots',
-    `Offered ${fmtCompact(p.offered)} · dropped ${fmtCompact(p.played)}. Field data for the 2026-07-28 endless retune.`,
+    `Offered ${fmtCompact(p.offered)} · dropped ${fmtCompact(p.played)}. Slots are POOLED across both boards; the split is below.`,
     chart
   )
+
+  // The per-board split (0022). Absent on a pre-0022 payload, in which case the card is exactly what
+  // it was before — this client and the RPC deploy independently, so both directions have to be fine.
+  if (p.modes.length > 0) {
+    card.appendChild(
+      el(
+        'p',
+        'sub',
+        'Numbered levels and endless roll DIFFERENT weight tables, so a pooled ×10 rate confirms neither. ' +
+          'Target is derived from the shipped tables, not written down.'
+      )
+    )
+    card.appendChild(
+      dataTable(
+        ['Board', 'Drops', '×10+', 'Rate', 'Target', 'Avg mult'],
+        p.modes.map(m => {
+          const target = plinkoTargetPct(m.mode)
+          return [
+            m.mode,
+            m.played,
+            m.topHits,
+            fmtPct(m.topPct), // null -> "no data", never a fabricated 0%
+            target === null ? '—' : fmtPct(target),
+            m.avgMult === null ? '—' : m.avgMult.toFixed(2),
+          ]
+        })
+      )
+    )
+    // Should always be zero: every plinko_played event carries `endless`. A non-zero row means
+    // events are arriving malformed, so say so rather than letting it sit in the table unremarked.
+    const unknown = p.modes.find(m => m.mode === 'unknown' && m.played > 0)
+    if (unknown) {
+      const warn = el('div', 'fn-aside')
+      warn.textContent = `⚠ ${unknown.played} drop(s) arrived without a usable \`endless\` prop — excluded from both boards.`
+      card.appendChild(warn)
+    }
+  }
+  return card
 }
 
 function versionsCard(a: Analytics): HTMLElement {
