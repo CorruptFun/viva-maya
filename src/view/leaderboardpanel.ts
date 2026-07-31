@@ -63,6 +63,7 @@ import {
   levelStanding,
 } from '../core/leaderboard'
 import type { Champion, LeaderboardEntry, RaceBoard } from '../core/leaderboard'
+import { LEVEL_COUNT } from '../core/levels'
 import type { SaveData } from '../core/save'
 import { openCloudModal } from './cloudmodal'
 import { D, E, OVERSHOOT, backOut, fadeRise, heartbeat, popIn } from './motion'
@@ -561,6 +562,10 @@ export function openRacePanel(scene: Phaser.Scene, opts: RacePanelOpts = {}): vo
   // only in how-to-play: a player who is confused about the race is looking AT the race, and the
   // weekly board is the one screen where the numbers make no sense until someone says "these are
   // seven days added together". Pinned to the card's top-left, clear of the tabs and the subtitle.
+  //
+  // It hands over the CURRENT mode, read at tap time rather than captured at build time, so a tab
+  // switch takes the explainer with it — and the ladder, which is not part of the endless race at
+  // all, gets the rules of the board it is actually on.
   const rules = addRoundChip(
     scene,
     cx + 46,
@@ -568,7 +573,7 @@ export function openRacePanel(scene: Phaser.Scene, opts: RacePanelOpts = {}): vo
     46,
     '?',
     { fontFamily: FONT, fontSize: '26px', fontStyle: '900', color: T.goldText },
-    () => openRaceRulesPanel(scene)
+    () => openRaceRulesPanel(scene, mode)
   )
   rules.container.setDepth(0) // rides the card's own stacking, not addRoundChip's default 50
   cardRoot.add(rules.container)
@@ -1733,20 +1738,30 @@ export function devLevelOpts(variant: string | null): RacePanelOpts {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// HOW THE RACE WORKS — the in-app explainer.
+// THE EXPLAINERS — one card, two sets of rules.
 //
-// The format asks players to hold two ideas at once: today's board is its own contest, AND every
-// day's best feeds a weekly total. That second half is the part nobody guesses. It is not visible in
-// any single number on any screen — you only see it if you already know to look for it — and a player
-// who doesn't know it reads the weekly board as "someone had an enormous run" rather than "someone
-// showed up six days out of seven". Get that wrong and the whole reason to come back tomorrow is
-// invisible.
+// THE RACE. The format asks players to hold two ideas at once: today's board is its own contest, AND
+// every day's best feeds a weekly total. That second half is the part nobody guesses. It is not
+// visible in any single number on any screen — you only see it if you already know to look for it —
+// and a player who doesn't know it reads the weekly board as "someone had an enormous run" rather
+// than "someone showed up six days out of seven". Get that wrong and the whole reason to come back
+// tomorrow is invisible.
 //
-// So this is a DIAGRAM, not a paragraph. The week strip below is the entire mental model in one
-// glance: seven bars, one of them a hole where Wednesday should be, and a total underneath that is
-// visibly the sum of the rest. The missing bar does the teaching — you can see the cost of a skipped
-// day without a sentence explaining it, which is the only way this lands for someone who is skimming.
-// The three numbered beats above it are the words for what the picture already showed.
+// THE LADDER. Its unguessable half is the TIEBREAK. Ranked by level cleared, ties are not an edge
+// case, they are the normal state of the board — a player who sees three names on level 47 and
+// themselves third has no way to tell why from the numbers unless someone says "stars".
+//
+// So both are a DIAGRAM, not a paragraph. The week strip is the whole mental model in one glance:
+// seven bars, one of them a hole where Wednesday should be, and a total underneath that is visibly
+// the sum of the rest. The ladder strip is the same trick pointed at the other rule: three rows on an
+// identical rung, so the only column that moves is the one doing the ranking. The missing bar and the
+// unchanging rung do the teaching — you can see the rule without a sentence explaining it, which is
+// the only way this lands for someone who is skimming. The three numbered beats above are the words
+// for what the picture already showed.
+//
+// Which one opens is the caller's `mode`, because the ONE thing worse than no explainer is the wrong
+// explainer: a player on the ladder tapping `?` and being told about midnight and weekly purses
+// learns nothing about the board in front of them and mistrusts the next screen that offers help.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Card geometry — its own, narrower than the board card: this is prose + a diagram, not a list of rows. */
@@ -1780,7 +1795,7 @@ interface RuleBeat {
  * budget, both purses, the days in a week. A help screen that quietly disagrees with the game is
  * worse than no help screen, and this is exactly the copy that rots when a purse is retuned.
  */
-function ruleBeats(): RuleBeat[] {
+function raceBeats(): RuleBeat[] {
   return [
     {
       n: 1,
@@ -1896,17 +1911,172 @@ function buildWeekStrip(scene: Phaser.Scene, still: boolean): Phaser.GameObjects
   return c
 }
 
+/**
+ * The ladder's worked example: three players on the SAME rung. Ties are the normal case on a board
+ * ranked by level cleared, not a curiosity, so the fixture that teaches it has to be a tie — a strip
+ * of three descending levels would illustrate "higher is better", which nobody needed telling.
+ *
+ * Star totals are kept legal against the rung (3 a level × 47 = 141 max) because a help screen that
+ * shows an impossible row is teaching the wrong game.
+ */
+const LADDER_RUNG = 47 // the rung all three share — the constant the diagram is built around
+const LADDER_EXAMPLE: Array<{ name: string; stars: number; you?: boolean }> = [
+  { name: 'marisol', stars: 131 },
+  { name: 'you', stars: 118, you: true }, // the middle row: one above to chase, one below to hold off
+  { name: 'renotwin', stars: 104 },
+]
+
+/** The ladder's beats. Same discipline as `raceBeats`: every number comes from a constant. */
+function ladderBeats(): RuleBeat[] {
+  return [
+    {
+      n: 1,
+      title: 'ONE LADDER, ALL TIME',
+      body: `Everyone climbing the ${LEVEL_COUNT}-level campaign shares one board, ranked by the highest level they have CLEARED. It never closes and never resets.`,
+    },
+    {
+      n: 2,
+      title: 'STARS BREAK THE TIE',
+      body: `Plenty of players share a rung, so your stars decide who sits higher — up to 3 a level, added up across every level you have cleared. Level on both? Whoever got there first.`,
+    },
+    {
+      n: 3,
+      title: 'YOUR CLIMB POSTS ITSELF',
+      body: `Clear a level while signed in and your row moves on its own. No purse rides on this board — the chips are in the daily race; this one is the long climb.`,
+    },
+  ]
+}
+
+/**
+ * The ladder strip: three rows on an identical rung, on the board's own plates and rank coins, with
+ * the level column repeating and the star column falling. The repetition IS the diagram — the eye
+ * finds the one thing that changes down the column, which is the tiebreak, without reading a word.
+ *
+ * Rendered in the real row grammar (baked plate, struck coin, rose ring on YOUR row) rather than as
+ * an abstract sketch, so a player looks back at the board and recognises what they were just shown.
+ */
+function buildLadderStrip(scene: Phaser.Scene, still: boolean): Phaser.GameObjects.Container {
+  const T = getTheme()
+  const c = scene.add.container(0, 0)
+  const RW = 476
+  const RH = 50
+  const STEP = 60
+  LADDER_EXAMPLE.forEach((p, i) => {
+    const row = scene.add.container(0, i * STEP)
+    // #1 wears the podium plate, the rest the plain row — the board's own hierarchy, in miniature.
+    row.add(scene.add.image(0, 0, ensurePlate(scene, i === 0 ? 'podium' : 'row', RW, RH)))
+    if (p.you) {
+      const ring = scene.add.graphics()
+      ring.lineStyle(3, T.rose, 0.95)
+      ring.strokeRoundedRect(-RW / 2, -RH / 2, RW, RH, 14)
+      row.add(ring)
+    }
+    const med = makeMedal(scene, i + 1, 17)
+    med.setPosition(-RW / 2 + 32, 0)
+    row.add(med)
+    row.add(
+      scene.add
+        .text(-RW / 2 + 62, 0, p.name, {
+          fontFamily: FONT,
+          fontSize: '20px',
+          fontStyle: '900',
+          color: p.you ? T.ink : T.inkSoft,
+        })
+        .setOrigin(0, 0.5)
+    )
+    // The rung — deliberately IDENTICAL on all three rows, and in the quietest ink on the card, so it
+    // reads as the constant it is. Everything the ranking is doing happens to its right.
+    row.add(
+      scene.add
+        .text(RW / 2 - 118, 0, `level ${LADDER_RUNG}`, {
+          fontFamily: 'Arial, sans-serif',
+          fontSize: '19px',
+          color: T.inkFaint,
+        })
+        .setOrigin(1, 0.5)
+    )
+    row.add(
+      scene.add
+        .text(RW / 2 - 24, 0, `★${p.stars}`, { fontFamily: FONT, fontSize: '22px', fontStyle: '900', color: T.goldText })
+        .setOrigin(1, 0.5)
+    )
+    c.add(row)
+    // The rows arrive top-down, in ranking order — the same cascade the board itself lands in.
+    if (!still) fadeRise(scene, row, { rise: 10, delay: D.base + 260 + i * 70, duration: D.settle })
+  })
+  // The sentence the picture was making — the ladder's counterpart to the week strip's "= total".
+  c.add(
+    scene.add
+      .text(0, (LADDER_EXAMPLE.length - 1) * STEP + 52, 'same rung  ·  the stars decide', {
+        fontFamily: FONT,
+        fontSize: '22px',
+        fontStyle: '900',
+        color: T.goldText,
+      })
+      .setOrigin(0.5)
+      .setLetterSpacing(1)
+  )
+  return c
+}
+
+/**
+ * What one explainer is. Everything the two disagree on lives here — heading, beats, the exhibit and
+ * where it sits on its shelf — so `openRaceRulesPanel` renders either without knowing which it holds,
+ * the same arrangement `BOARDS` uses for the boards themselves.
+ */
+interface RulesSpec {
+  title: string
+  subtitle: string
+  beats: () => RuleBeat[]
+  /** Caption over the shelf — names the exhibit, so the diagram never has to caption itself. */
+  exhibit: string
+  diagram: (scene: Phaser.Scene, still: boolean) => Phaser.GameObjects.Container
+  /** Where the diagram's origin lands between the shelf's edges — each strip hangs differently. */
+  diagramY: (shelfTop: number, shelfBottom: number) => number
+}
+
+/**
+ * The race explainer serves BOTH tabs. They are two halves of one format — the weekly board is the
+ * daily one summed — so splitting them into two explainers would have to repeat half of each, and the
+ * relationship is the thing that needs explaining.
+ */
+const RULES: Record<'race' | 'levels', RulesSpec> = {
+  race: {
+    title: 'HOW THE RACE WORKS',
+    subtitle: 'two races, one run',
+    beats: raceBeats,
+    exhibit: 'A WEEK THAT MISSED A DAY',
+    diagram: buildWeekStrip,
+    // Baseline-anchored: the day letters and the total hang BELOW the bars' baseline.
+    diagramY: (_top, bottom) => bottom - 96,
+  },
+  levels: {
+    title: 'HOW THE LADDER WORKS',
+    subtitle: 'one ladder, all time',
+    beats: ladderBeats,
+    exhibit: 'THREE PLAYERS, ONE RUNG',
+    diagram: buildLadderStrip,
+    // Top-anchored: the strip grows downward from its first row, so it hangs under the caption.
+    diagramY: top => top + 82,
+  },
+}
+
 /** Double-open latch — its own, so the rules can open OVER the board panel without fighting its latch. */
 let rulesOpen = false
 
 /**
- * Open the HOW THE RACE WORKS explainer. Reachable from the race panel's `?` chip and from the
- * how-to-play panel's RACE RULES button, because the two audiences arrive from opposite directions:
- * one is already looking at a leaderboard they don't understand, the other is reading the manual.
+ * Open the explainer for a board. Reachable from the board panel's `?` chip and from the how-to-play
+ * panel's RACE RULES button, because the two audiences arrive from opposite directions: one is
+ * already looking at a leaderboard they don't understand, the other is reading the manual.
+ *
+ * `mode` is the board being explained, so the `?` chip can hand over whichever board is on screen —
+ * the two race tabs share the race explainer, the ladder gets its own. It defaults to the race for
+ * the manual's door, which has no board in front of it and means the endless race when it says RACE.
  */
-export function openRaceRulesPanel(scene: Phaser.Scene): void {
+export function openRaceRulesPanel(scene: Phaser.Scene, mode: BoardMode = 'daily'): void {
   if (rulesOpen) return
   rulesOpen = true
+  const R = RULES[mode === 'levels' ? 'levels' : 'race']
   const T = getTheme()
   const still = prefersReducedMotion()
   const layer = scene.add.container(0, 0).setDepth(70) // above the board panel (60) — it opens on top
@@ -1945,21 +2115,21 @@ export function openRaceRulesPanel(scene: Phaser.Scene): void {
 
   root.add(
     scene.add
-      .text(0, cy + 58, 'HOW THE RACE WORKS', { fontFamily: FONT, fontSize: '38px', fontStyle: '900', color: T.goldText })
+      .text(0, cy + 58, R.title, { fontFamily: FONT, fontSize: '38px', fontStyle: '900', color: T.goldText })
       .setOrigin(0.5)
       .setLetterSpacing(2)
       .setShadow(0, 2, 'rgba(0,0,0,0.12)', 4, false, true)
   )
   root.add(
     scene.add
-      .text(0, cy + 100, 'two races, one run', { fontFamily: 'Arial, sans-serif', fontSize: '21px', color: T.inkMuted })
+      .text(0, cy + 100, R.subtitle, { fontFamily: 'Arial, sans-serif', fontSize: '21px', color: T.inkMuted })
       .setOrigin(0.5)
   )
 
   // The three beats. The coin numerals are the board's own rank medallions at a small radius — the
   // same struck-metal language, so the explainer reads as part of the race rather than as a document
   // about it.
-  const beats = ruleBeats()
+  const beats = R.beats()
   let y = cy + 152
   const textX = cx + 104
   beats.forEach((b, i) => {
@@ -1999,7 +2169,7 @@ export function openRaceRulesPanel(scene: Phaser.Scene): void {
   root.add(shelf)
   root.add(
     scene.add
-      .text(0, shelfTop + 26, 'A WEEK THAT MISSED A DAY', {
+      .text(0, shelfTop + 26, R.exhibit, {
         fontFamily: FONT,
         fontSize: '17px',
         fontStyle: '900',
@@ -2008,9 +2178,8 @@ export function openRaceRulesPanel(scene: Phaser.Scene): void {
       .setOrigin(0.5)
       .setLetterSpacing(2)
   )
-  const strip = buildWeekStrip(scene, still)
-  // Baseline sits above the day letters and the total, both of which hang below it.
-  strip.setPosition(0, shelfBottom - 96)
+  const strip = R.diagram(scene, still)
+  strip.setPosition(0, R.diagramY(shelfTop, shelfBottom))
   root.add(strip)
 
   root.add(addPillButton(scene, 0, cy + RULES_H - 62, 260, 68, 'GOT IT', GOLD_PILL, close))

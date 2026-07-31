@@ -28,6 +28,7 @@ import {
   devSeedRaceLine,
   openLevelRacePanel,
   openRacePanel,
+  openRaceRulesPanel,
 } from '../view/leaderboardpanel'
 import { addScreenGloss } from '../view/fx'
 import { maybeShowInstallNudge } from '../view/installnudge'
@@ -230,6 +231,12 @@ export class HomeScene extends Phaser.Scene {
     // because the two boards render through one panel and this is what proves the mode branch.
     if (import.meta.env.DEV && new URLSearchParams(location.search).has('levels')) {
       openLevelRacePanel(this, devLevelOpts(new URLSearchParams(location.search).get('levels')))
+    }
+    // `?rules=<race|levels>` — the explainer behind a board's `?` chip, opened straight. Worth its own
+    // knob: it is two screens deep from Home otherwise, and the two variants are exactly the pair that
+    // has to be checked together whenever either one's copy or diagram moves.
+    if (import.meta.env.DEV && new URLSearchParams(location.search).has('rules')) {
+      openRaceRulesPanel(this, new URLSearchParams(location.search).get('rules') === 'levels' ? 'levels' : 'daily')
     }
 
     // §E14 first-run advertisement: pulse the ? help chip ONCE for a truly-new player (seenIntro
