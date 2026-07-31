@@ -507,7 +507,7 @@ export class HomeScene extends Phaser.Scene {
     /** The surviving rows, top → bottom: [height, air above it]. Drives the centring below. */
     const stackRows: Array<[number, number]> = []
     if (showBrowseRow) stackRows.push([64, 0]) // LEVELS + GIFT STORE
-    stackRows.push([76, 44]) // DAILY BONUS — never deferred (see below)
+    stackRows.push([76, 44]) // LUCKY SLOTS — never deferred (see below)
     if (showRaceRow) stackRows.push([152, 34]) // WEEKLY RACE, live or locked signpost
     const stackH = stackRows.reduce((total, [h, gap], i) => total + h + (i > 0 ? gap : 0), 0)
     let stackY = STACK_TOP + Math.round((STACK_BOTTOM - STACK_TOP - stackH) / 2)
@@ -557,7 +557,7 @@ export class HomeScene extends Phaser.Scene {
     menuButtons.push(daily)
     // The daily's ARRIVAL beat is fired after the entrance (see the stagger below) — it no longer
     // breathes, so PLAY owns the only perpetual "tap me" on the screen.
-    // Banked free spins → a glowing "×N FREE SPINS" badge pinned to the DAILY BONUS corner. Rides
+    // Banked free spins → a glowing "×N FREE SPINS" badge pinned to the LUCKY SLOTS corner. Rides
     // INSIDE the pill container so the daily's beat carries it; the glow pulse is its own beat
     // (reduce-flashing → static soft glow; reduced motion → static badge, no pop, no pulse).
     if (save.freeSpins > 0) daily.add(this.buildFreeSpinsBadge(save.freeSpins))
@@ -608,7 +608,7 @@ export class HomeScene extends Phaser.Scene {
       springIn(play, HERO_BEAT) // the primary action leads; on boot it is fully landed at 500ms
       menuButtons.forEach((btn, i) => springIn(btn, STACK_BEAT + i * STAGGER_STEP))
       // The ONE perpetual breathe on this screen — the cookbook's "≤1 hero breathe per screen",
-      // which Home was quietly breaking. Two of them (PLAY + a ready DAILY BONUS) is the same as
+      // which Home was quietly breaking. Two of them (PLAY + a lit LUCKY SLOTS) is the same as
       // none: an idle pulse means "tap me", and the eye can only be sent to one place. It hands off
       // from the entrance so the two scale animations never overlap on the same target.
       this.playBreathe = this.tweens.add({

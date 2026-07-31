@@ -1354,7 +1354,7 @@ const HELP_SECTIONS: HelpSection[] = [
   // heart refill) and the panel described none of them. A player who never reads this has to
   // reverse-engineer the only currency in the game.
   { icon: 'chip', title: 'CHIPS', body: 'Won from levels. Spend them mid-level on helpers, on more moves when you run out, or on a heart.' },
-  { icon: 'chip', title: 'DAILY BONUS', body: 'Spin once a day for a free boost. Come back daily to grow your streak.' },
+  { icon: 'chip', title: 'LUCKY SLOTS', body: 'One free spin a day, every payline lit — a free spin always pays. Come back daily to grow your streak, or buy rows for another pull.' },
   // §G15 — ONE section, not two, and the trigger and the charm source are both crammed into its two
   // lines on purpose. At 10 sections the derived row pitch lands at 90px and the card closes at
   // exactly its ceiling on the SHORT world (1280); an eleventh drops the pitch under the 88px floor,
