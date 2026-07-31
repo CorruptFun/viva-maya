@@ -129,6 +129,12 @@ export function openCloudModal(): void {
   let restoreError = ''
   let nameValue = getHandle() ?? ''
   let unsub: (() => void) | null = null
+  // signin_shown is the funnel's DENOMINATOR, so it has to count offers, not renders. render()
+  // re-runs on every cloud-state change and on errors that have nothing to do with auth (a bad
+  // backup code re-renders the whole card), and counting those would inflate the denominator the
+  // same way counting INITIAL_SESSION once inflated signin_completed to 242 against 13 starts —
+  // see the note in core/cloud.ts. One per modal open; a re-open is a genuinely new offer.
+  let signinOfferTracked = false
 
   // ── Overlay (scrim) + card shell ──────────────────────────────────────────────────────────
   const overlay = mk('div', {
@@ -210,6 +216,18 @@ export function openCloudModal(): void {
     // returns to the app; there is no code to run on success (see signInWithGoogle in core/cloud), so we
     // only surface an error if the redirect itself couldn't start. On success the button stays in its
     // "Continuing…" state because the navigation happens immediately.
+    //
+    // The top of the OAuth funnel: the offer is on screen. Tracked HERE rather than at open(),
+    // because the modal also opens for players who are already signed in and on builds where cloud
+    // isn't configured at all — neither of those was offered anything, and counting them would
+    // charge the funnel for a decline nobody was asked to make. Every entry point (the Settings
+    // pill, the leaderboard's SIGN IN, the install nudge) lands on this one branch, so this is the
+    // single denominator for the signin_started fired below.
+    if (!signinOfferTracked) {
+      signinOfferTracked = true
+      track(EVENTS.SIGNIN_SHOWN)
+    }
+
     const signInBtn = primaryBtn('Sign in with Google')
     signInBtn.addEventListener('click', () => {
       authError = ''

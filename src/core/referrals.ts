@@ -93,6 +93,21 @@ export function captureRefFromUrl(): void {
     if (readStash()) return // never overwrite — the first captured invite stands
     localStorage.setItem(REF_STASH_KEY, code)
     setReferredByCode(code)
+    // The middle of the invite funnel, and the step that splits "nobody clicks the link" from
+    // "everybody clicks it and nobody signs in" — share_clicked and referral_registered alone
+    // cannot tell those apart, because they happen on different devices weeks apart.
+    //
+    // Fires only on a FIRST capture: the early return above means a reload of the same ?ref= URL,
+    // or a second inviter's link arriving later, captures nothing and so counts nothing.
+    //
+    // Lazily imported, like REFERRAL_REGISTERED below — this runs at module scope from main.ts,
+    // ahead of the cloud bootstrap that initAnalytics is sequenced behind, and boot must never wait
+    // on analytics. Tracking before initAnalytics is expected and safe: it mints the session id and
+    // initAnalytics uses `??=` precisely so the pre-init event keeps the session it opened.
+    //
+    // The code itself is deliberately NOT sent. It identifies the referrer, and `events` is an
+    // anonymous log by construction — the count is the entire measurement.
+    void import('./analytics').then(a => a.track(a.EVENTS.REFERRAL_CAPTURED))
   } catch {
     // storage unavailable / malformed URL — the invite is simply lost, never the boot
   }

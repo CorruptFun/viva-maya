@@ -74,12 +74,27 @@ export const EVENTS = {
   ENDLESS_START: 'endless_start',
   ENDLESS_END: 'endless_end',
 
-  /** The sign-in funnel: how many see the offer vs take it. */
+  /**
+   * The sign-in funnel: how many see the offer vs take it.
+   *
+   * `signin_shown` counts OFFERS, not renders — once per cloud-modal open, from the signed-out
+   * branch only (view/cloudmodal.ts). A player already signed in, or on a build with no cloud
+   * configured, is never offered anything and must not land in the denominator.
+   */
   SIGNIN_SHOWN: 'signin_shown',
   SIGNIN_STARTED: 'signin_started',
   SIGNIN_COMPLETED: 'signin_completed',
 
-  /** PWA install funnel — the memory note says installs are believed to predict retention; this tests it. */
+  /**
+   * PWA install funnel — the memory note says installs are believed to predict retention; this
+   * tests it. Fired from main.ts off the browser's own `beforeinstallprompt` / `appinstalled`.
+   *
+   * ⚠️ Read as a FLOOR, not a total: both events are Chromium-only, so every iOS install (a manual
+   * Share → "Add to Home Screen") is invisible here, and `install_accepted` can exceed
+   * `install_shown` when the install starts from the browser menu. The cross-platform "is this
+   * player installed" signal is APP_OPEN's `standalone` prop below, which every client reports on
+   * every open; this pair answers the narrower question of whether an offered install is taken.
+   */
   INSTALL_SHOWN: 'install_shown',
   INSTALL_ACCEPTED: 'install_accepted',
 

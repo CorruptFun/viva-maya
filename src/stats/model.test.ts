@@ -87,16 +87,17 @@ describe('funnel definitions', () => {
    */
   it('every funnel step is actually FIRED somewhere in the app, not merely declared', () => {
     /**
-     * Events charted but genuinely unsent as of 2026-07-31. Listed, not silently tolerated: each is
-     * a real dashboard funnel reading 0% for want of a `track()` call, and the point of naming them
-     * is that this test fails the moment a SIXTH one appears. Delete entries as they get wired.
+     * Events charted but genuinely unsent. Listed, not silently tolerated: each entry is a real
+     * dashboard funnel reading 0% for want of a `track()` call, and the point of naming them is
+     * that this test fails the moment an unlisted one appears. Delete entries as they get wired.
+     *
+     * EMPTY as of 2026-07-31 — every charted step now has a sender. The last four went in together:
+     * `signin_shown` (view/cloudmodal.ts, once per modal open), `install_shown`/`install_accepted`
+     * (main.ts, beforeinstallprompt/appinstalled) and `referral_captured` (core/referrals.ts, on a
+     * first ?ref= capture). Keep the set: it is the seam for the next honestly-unsent event, and
+     * both assertions below stay meaningful while it is empty.
      */
-    const KNOWN_UNSENT = new Set<string>([
-      EVENTS.SIGNIN_SHOWN, // the sign-in funnel's own denominator
-      EVENTS.INSTALL_SHOWN, // whole PWA-install funnel: both steps
-      EVENTS.INSTALL_ACCEPTED,
-      EVENTS.REFERRAL_CAPTURED, // invite.ts fires SHARE_CLICKED, referrals.ts REFERRAL_REGISTERED
-    ])
+    const KNOWN_UNSENT = new Set<string>([])
 
     const modules = import.meta.glob('/src/**/*.ts', { query: '?raw', import: 'default', eager: true })
     const source = Object.entries(modules as Record<string, string>)

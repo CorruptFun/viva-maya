@@ -55,11 +55,30 @@ Source text, because senders are spread across scenes, views and lazily-imported
 of them fire through `import('./analytics').then(a => a.track(a.EVENTS.X))`, which no static import
 would reveal.
 
-It carries a `KNOWN_UNSENT` list, and that list is the current debt — **still unsent as of
-2026-07-31**: `signin_shown`, `install_shown`, `install_accepted`, `referral_captured`. So the
-sign-in funnel is missing its own denominator, the whole PWA-install funnel is dead, and invites
-show only `share_clicked` → `referral_registered`. Read those four as "no data", never as 0%. The
-test fails if a fifth appears, and also fails if a listed one gets wired and is left on the list.
+It carries a `KNOWN_UNSENT` list for events that are honestly unsent, and that list is **empty as of
+2026-07-31** — every charted step now has a sender. The last four went in together, and until that
+day the sign-in funnel was missing its own denominator, the whole PWA-install funnel was dead, and
+invites showed only `share_clicked` → `referral_registered`:
+
+| event | fires from | when |
+| --- | --- | --- |
+| `signin_shown` | `src/view/cloudmodal.ts` | the signed-out branch of the auth block, **once per modal open** — not per `render()`, which re-runs on any cloud-state change and on unrelated errors like a bad backup code |
+| `install_shown` | `src/main.ts` | `beforeinstallprompt` |
+| `install_accepted` | `src/main.ts` | `appinstalled` |
+| `referral_captured` | `src/core/referrals.ts` | `captureRefFromUrl` stashes a **first** `?ref=CODE`; a reload of the same link captures nothing and counts nothing |
+
+The test fails if an unlisted step goes unsent, and also fails if a listed one gets wired and is
+left on the list — so the list cannot rot in either direction.
+
+⚠️ **The install funnel is a floor, not a total.** `beforeinstallprompt` and `appinstalled` are
+Chromium-only: Safari fires neither, so every iOS install — a manual Share → "Add to Home Screen" —
+is invisible to it, on the platform most of these players are on. `install_accepted` can also
+exceed `install_shown`, since appinstalled fires for an install begun from the browser's own menu on
+a visit where the prompt never surfaced. The cross-platform answer to "does installing predict
+retention" is `app_open`'s `standalone` prop, which every client reports on every open; the funnel
+answers the narrower question of whether an *offered* install gets taken. Neither listener calls
+`preventDefault()` — that would suppress the browser's install affordance and delete the thing being
+measured.
 
 Reading the events it DOES have is a Vite `?raw` glob, not `node:fs`: this project compiles with
 `types: ["vite/client"]` and no `@types/node`, so a `node:fs` import type-checks under vitest and

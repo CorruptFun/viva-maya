@@ -63,6 +63,29 @@ async function applyUpdate(): Promise<void> {
   void updateSW(true)
 }
 
+// PWA install funnel (install_shown → install_accepted). Registered at module scope because
+// `beforeinstallprompt` fires within moments of load — anything sequenced behind the cloud
+// bootstrap below would miss it. Firing before initAnalytics() is fine and deliberate: track()
+// mints the session id, and initAnalytics uses `??=` so the event keeps the session it opened,
+// exactly as the update toast already does.
+//
+// ⚠️ BOTH LISTENERS ARE PASSIVE — do NOT call preventDefault() on beforeinstallprompt here. That
+// suppresses the browser's own install affordance, and with no in-game install button to replace
+// it, capturing the prompt would delete the very thing this funnel exists to measure. Measuring a
+// UI must not become changing it.
+//
+// ⚠️ CHROMIUM ONLY, and that shapes how the funnel reads. Safari fires neither event, so on iOS —
+// where installing is a manual Share → "Add to Home Screen" gesture — this funnel is blind, and its
+// counts are a floor, never a total. `install_accepted` can also EXCEED `install_shown`, because
+// appinstalled fires for an install started from the browser's own menu on a visit where the prompt
+// never surfaced. The cross-platform answer to "does installing predict retention" is app_open's
+// `standalone` prop (core/analytics.ts), which every client reports on every open; this pair is the
+// narrower question of whether players who are offered the install take it.
+window.addEventListener('beforeinstallprompt', () => track(EVENTS.INSTALL_SHOWN))
+// Ground truth: the install actually completed. It fires in the page the player installed FROM, so
+// it carries the same device_id as the install_shown that preceded it.
+window.addEventListener('appinstalled', () => track(EVENTS.INSTALL_ACCEPTED))
+
 // Ask the browser NOT to evict our localStorage (the save) under storage pressure — a real durability
 // win for an installed PWA. Fire-and-forget; browsers without the API just skip it.
 try {
