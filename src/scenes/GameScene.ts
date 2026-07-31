@@ -3126,7 +3126,33 @@ export class GameScene extends Phaser.Scene {
       { at: centre, kind: 'diceBomb' },
     ]
     for (const p of plants) {
+      // ⚠️ `plant` REPLACES the cell with a freshly-minted piece, so the piece that was there stops
+      // existing and its sprite is orphaned the instant we plant. `sprites` is keyed by piece id and
+      // nothing reaps an id that simply vanished from the grid — the clear path only retires pieces
+      // it actually popped, and the transform path only those it morphed. So the old sprite stays on
+      // screen forever and the special draws ON TOP of it: pieces visibly stacked on the four centre
+      // cells, for the rest of the run, multiplying with every mega win.
+      //
+      // Retire the outgoing sprite first, exactly as `runWaveEffects` does for `wave.transformed`,
+      // then draw the new piece. Deleting from `sprites` is also what lets the armed-halo upkeep in
+      // `update()` collect the old glow — it reaps any entry whose id no longer has a live sprite,
+      // so a leaked id would leave a gold halo burning over an empty cell too.
+      //
+      // The other two `board.plant` callers (`applyBoosts`, the `?plant` dev hook) are safe without
+      // this: both run during setup, BEFORE any sprite exists, so there is nothing to orphan. This is
+      // the only path that plants onto a board the player is already looking at.
+      const outgoing = this.board.get(p.at)
       this.board.plant(p.at, p.kind)
+      if (outgoing) {
+        const old = this.sprites.get(outgoing.id)
+        if (old) {
+          this.sprites.delete(outgoing.id)
+          this.tweens.killTweensOf(old) // Phaser never sweeps tweens for a destroyed target
+          old.destroy()
+        }
+      }
+      const planted = this.board.get(p.at)
+      if (planted) this.createSprite(planted, p.at)
       this.specialBirth(p.at)
     }
 
