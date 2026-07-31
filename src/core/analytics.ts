@@ -147,6 +147,20 @@ export const EVENTS = {
   CONTINUE_SHOWN: 'continue_shown',
   CONTINUE_TAKEN: 'continue_taken',
 
+  /**
+   * LUCKY SLOTS — the first thing in the build a player SPENDS chips on for a chance rather than a
+   * certainty, so it is the first place the economy can be wrong in a way nobody feels until later.
+   *
+   * `slots_opened` {chips, rows} against `slots_spun` {rows, price, lines, boosts, points, charm} is
+   * the bet ladder's own report card. The design bets that players climb it — more rows costs more but
+   * returns more (core/slots.ts SLOT_BETS) — and the DISTRIBUTION of `rows` is the only way to find out
+   * whether they do, or whether everyone parks on the cheapest tier where the edge is steepest and the
+   * hit rate is one spin in eleven. An open with no spin behind it reads just as loudly: it means the
+   * cabinet was looked at and walked away from.
+   */
+  SLOTS_OPENED: 'slots_opened',
+  SLOTS_SPUN: 'slots_spun',
+
   /** The update toast, which the PWA stale-build trap makes worth watching. */
   UPDATE_SHOWN: 'update_shown',
   UPDATE_APPLIED: 'update_applied',

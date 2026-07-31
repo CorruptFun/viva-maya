@@ -3,6 +3,7 @@ import { sfx } from '../audio/sfx'
 import { DESIGN_H, DESIGN_W, restScrollY } from '../config'
 import { LEVEL_COUNT } from '../core/levels'
 import { loadSave } from '../core/save'
+import { SLOT_BETS, SLOT_MAX_ROWS } from '../core/slots'
 import { BOOST_ITEMS, buyBoost } from '../core/store'
 import type { BoostStoreItem } from '../core/store'
 import { SYMBOLS } from '../core/types'
@@ -158,9 +159,60 @@ export class StoreScene extends Phaser.Scene {
     // the shared motion helpers (item C2). Only on first paint — purchase refreshes rebuild silently.
     // (delay 110 seats the boost rows one beat behind the invite card's fadeRise, one entrance arc.)
     if (animate) stagger(this, rows, 70, { rise: 26, duration: D.pop, ease: backOut(OVERSHOOT.gentle), delay: 110 })
-    // S3 · "play to earn" empty state: when nothing is affordable the list is all ghosted pills with
-    // no next step, so point the broke player back into the earn loop (rebuilt in/out with the list).
-    if (firstAffordable < 0) this.renderEmptyState()
+    // The band under the shelf holds exactly one thing, and which one is decided by what the balance
+    // can still DO. A slot spin starts at a fraction of the cheapest boost, so a player who is too
+    // short for the shelf usually isn't too short for the machine — and pointing them at "go win a
+    // level" while they could be spinning would be the wrong answer to a thin balance. Below even
+    // that, the S3 empty state is the right one: there is genuinely nothing here to buy.
+    if (chips >= SLOT_BETS[0].price) this.renderSlotsCard()
+    else if (firstAffordable < 0) this.renderEmptyState()
+  }
+
+  /**
+   * The LUCKY SLOTS shelf card — the store's one gamble, seated below the boost rows it is priced
+   * against. Deliberately last rather than first: the shelf above sells certainty at a fair price and
+   * is the thing a player came here for, and a machine advertised above it would be the shop leading
+   * with the bet instead of the goods. Built by `renderList`, so it refreshes with affordability.
+   */
+  private renderSlotsCard(): void {
+    const T = getTheme()
+    const cy = 1046
+    const h = 96
+    const y = cy - h / 2
+    const g = this.add.graphics()
+    g.fillStyle(T.shadow, 0.16)
+    g.fillRoundedRect(CARD_X + 3, y + 6, CARD_W, h, 24)
+    g.fillStyle(T.cardFill, 1)
+    g.fillRoundedRect(CARD_X, y, CARD_W, h, 24)
+    g.lineStyle(2.5, T.goldBezel, 0.9)
+    g.strokeRoundedRect(CARD_X, y, CARD_W, h, 24)
+    this.hold(g)
+
+    // Three faces at reel spacing — the card reads as a machine at a glance, using board art that is
+    // already baked (no new assets for one banner).
+    ;['seven', 'cherry', 'bell'].forEach((tex, i) =>
+      this.hold(this.add.image(64 + i * 32, cy, tex).setDisplaySize(32, 32))
+    )
+    this.hold(
+      this.add
+        .text(166, cy - 26, 'LUCKY SLOTS', { fontFamily: FONT, fontSize: '26px', fontStyle: '900', color: T.ink })
+        .setOrigin(0, 0)
+    )
+    // The price lives in the blurb rather than under the pill: the bet is a LADDER, not one number, so
+    // "from N" belongs in the sentence — and a caption under a full-height gold pill would collide with
+    // its pedestal anyway (the shortfall captions above only fit because a ghost pill is shorter).
+    this.hold(
+      this.add
+        .text(166, cy + 6, `From ${SLOT_BETS[0].price} chips · up to ${SLOT_MAX_ROWS} paylines`, {
+          fontFamily: 'Arial, sans-serif',
+          fontSize: '17px',
+          color: T.inkSoft,
+          wordWrap: { width: 330 },
+          lineSpacing: 2,
+        })
+        .setOrigin(0, 0)
+    )
+    this.hold(addPillButton(this, CTRL_CX + 20, cy, 108, 60, 'SPIN', GOLD_PILL, () => startScene(this, 'slots')))
   }
 
   /** Kill every looping tween the current list layer started, recursing into row/button containers. */

@@ -1,5 +1,6 @@
 import { LIVES_MAX } from '../config'
 import { DIFFICULTY } from './difficulty'
+import { JACKPOT_GOAL } from './jackpot'
 import type { BoostType, PromoReward } from './types'
 
 export interface SaveData {
@@ -446,13 +447,23 @@ export function bumpJackpotMeter(): number {
   return save.jackpotMeter
 }
 
-/** Empty the jackpot meter after the wheel has fired, so it recharges from zero. */
-export function resetJackpotMeter(): void {
+/**
+ * Spend one wheel's worth of charge after the wheel has fired; returns what is LEFT on the meter.
+ *
+ * Deducts JACKPOT_GOAL rather than zeroing. For level wins the two are identical — the meter fires the
+ * instant it reaches the goal, so it is always exactly full when this runs — but Lucky Slots pays
+ * jackpot POINTS in batches (core/store.ts buySpin), and a meter sitting at 8 must fire a wheel and
+ * keep 3, not fire a wheel and throw 3 away. The slots deliberately do not cap what they charge, so
+ * this is what makes an over-full meter queue the next wheel instead of evaporating.
+ */
+export function spendJackpotCharge(): number {
   const save = loadSave()
-  if (save.jackpotMeter !== 0) {
-    save.jackpotMeter = 0
+  const left = Math.max(0, save.jackpotMeter - JACKPOT_GOAL)
+  if (save.jackpotMeter !== left) {
+    save.jackpotMeter = left
     persistSave(save)
   }
+  return left
 }
 
 /**

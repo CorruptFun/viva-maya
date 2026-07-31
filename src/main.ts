@@ -10,6 +10,7 @@ import { DailyBonusScene } from './scenes/DailyBonusScene'
 import { GameScene } from './scenes/GameScene'
 import { HomeScene } from './scenes/HomeScene'
 import { LevelSelectScene } from './scenes/LevelSelectScene'
+import { SlotScene } from './scenes/SlotScene'
 import { StoreScene } from './scenes/StoreScene'
 import { installQualityGovernor } from './view/quality'
 import { applyPageChrome, getTheme } from './view/theme'
@@ -169,7 +170,7 @@ function startGame(): void {
       mode: Phaser.Scale.FIT,
       autoCenter: Phaser.Scale.CENTER_BOTH,
     },
-    scene: [BootScene, HomeScene, LevelSelectScene, DailyBonusScene, StoreScene, GameScene],
+    scene: [BootScene, HomeScene, LevelSelectScene, DailyBonusScene, StoreScene, SlotScene, GameScene],
   })
 
   // Stand the 3D room up on Phaser's OWN canvas + WebGL context (view3d/stage.ts): its sim ticks off

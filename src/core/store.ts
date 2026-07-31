@@ -1,4 +1,9 @@
+import { grantCharm } from './charms'
+import type { CharmAward } from './charms'
 import { loadSave, persistSave } from './save'
+import { betFor, spinSlots } from './slots'
+import type { SlotSpin } from './slots'
+import type { Rng } from './rng'
 import type { BoostType } from './types'
 
 /**
@@ -88,4 +93,56 @@ export function buyBoost(item: BoostStoreItem): PurchaseResult {
   save.pendingBoosts.push(item.type)
   persistSave(save)
   return { ok: true, balance: save.chips }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LUCKY SLOTS — the purchased spin (see core/slots.ts for the machine itself).
+//
+// The catalogue above sells CERTAINTY: pay the price, get the boost. This sells a SHOT at more than
+// you paid for, at an expected return below the ticket (core/slots.ts documents why that edge has to
+// exist for both surfaces to stay worth using). It lives here rather than in slots.ts so that module
+// stays pure and Rng-testable — the same split daily.ts/DailyBonusScene and plinko.ts/view use.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** A spin that was actually paid for: the settled reels, what got banked, and the new balance. */
+export interface SlotPurchase {
+  spin: SlotSpin
+  balance: number
+  /** Jackpot notches that landed on the meter, and where the meter now stands. */
+  meter: number
+  /** The charm award, when the scatter hit — a new charm, a completed series, or a duplicate payout. */
+  charm?: CharmAward
+}
+
+export type SlotSpinResult = { ok: true; purchase: SlotPurchase } | { ok: false; reason: 'insufficient' }
+
+/**
+ * Buy and settle one spin. AWARD-FIRST, exactly like the daily spin, the jackpot wheel and the plinko
+ * drop: everything is banked here, before the caller animates a single reel, so closing the app
+ * mid-spin cannot lose a prize.
+ *
+ * ORDERING — the charm is granted BEFORE the chips are taken, and the price is re-checked afterwards
+ * (`grantCharm` re-reads the save, so that is the one point another writer could have moved the
+ * balance underneath us). This mirrors charms.redeemCharms and picks the same direction of error: the
+ * only crash window leaves a player holding the charm AND the chips rather than neither. Every other
+ * prize — boosts, jackpot points, the debit itself — rides ONE load→mutate→persist, so they can never
+ * tear apart from each other.
+ *
+ * Returns `insufficient` with the save completely untouched when the bet can't be afforded.
+ */
+export function buySpin(rows: number, rng: Rng): SlotSpinResult {
+  const bet = betFor(rows)
+  if (loadSave().chips < bet.price) return { ok: false, reason: 'insufficient' }
+
+  const spin = spinSlots(rng, bet.rows)
+  const charm = spin.charm ? grantCharm(rng) : undefined
+
+  const save = loadSave()
+  if (save.chips < bet.price) return { ok: false, reason: 'insufficient' }
+  save.chips -= bet.price
+  save.pendingBoosts.push(...spin.boosts)
+  save.jackpotMeter += spin.points
+  persistSave(save)
+
+  return { ok: true, purchase: { spin, balance: save.chips, meter: save.jackpotMeter, charm } }
 }

@@ -38,15 +38,23 @@ npm run build    # tsc && vite build
 ```
 
 Tests are colocated: `src/core/*.test.ts` (board, merge, hazards, endless,
-plinko rate, cheat, endless pace). Run them — the game logic has real coverage.
+plinko rate, slots rate, cheat, endless pace). Run them — the game logic has
+real coverage.
+
+`slots.rate.test.ts`, `plinko.rate.test.ts` and `endless.pace.test.ts` are
+**economy guards**, not unit tests: they measure what a machine actually pays
+against what it charges, and what the board actually scores against the number
+the race posts. If you retune a strip, a price, a paytable or the pace ceiling,
+the recorded numbers in them are what you re-derive — never what you edit to
+make green.
 
 ## Layout
 
 | path | role |
 |---|---|
 | `src/main.ts`, `src/config.ts` | entry + tunables |
-| `src/scenes/` | Phaser scenes — Boot, Home, Game, LevelSelect, Store, DailyBonus |
-| `src/core/` | game logic + its tests — board, merge, levels, endless, daily, hazards, analytics, push, cheat |
+| `src/scenes/` | Phaser scenes — Boot, Home, Game, LevelSelect, Store, DailyBonus, Slot |
+| `src/core/` | game logic + its tests — board, merge, levels, endless, daily, slots, hazards, analytics, push, cheat |
 | `src/view3d/stage.ts` | the only three.js usage |
 | `supabase/migrations/` | `0001_saves` → `0020_race_day_key_repair` |
 | `scripts/verify-rls.sh` | RLS audit — run after any migration |

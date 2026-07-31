@@ -35,7 +35,7 @@ import { EVENTS, track } from '../core/analytics'
 import { devSetLives, formatCountdown, grantLife, refreshLives, spendLifeFor } from '../core/lives'
 import { levelProgress, maya, pendingOccasion, warmLoseLine, warmWinSubtitle, wasNearMiss } from '../core/maya'
 import { mulberry32 } from '../core/rng'
-import { addChips, addFreeSpins, bumpJackpotMeter, bumpWinStreak, freeSpinRoom, loadSave, markFinaleSeen, markOccasionSeen, persistSave, recordResult, recordScore, resetJackpotMeter, resetWinStreak, spendChips, takePendingBoosts } from '../core/save'
+import { addChips, addFreeSpins, bumpJackpotMeter, bumpWinStreak, freeSpinRoom, loadSave, markFinaleSeen, markOccasionSeen, persistSave, recordResult, recordScore, resetWinStreak, spendChips, spendJackpotCharge, takePendingBoosts } from '../core/save'
 import { LIFE_REFILL_PRICE, POWER_ITEMS } from '../core/store'
 import type { PowerItem } from '../core/store'
 import { jackpotReady } from '../core/jackpot'
@@ -4687,8 +4687,10 @@ export class GameScene extends Phaser.Scene {
           }
         : undefined,
       onClaim: result => {
-        resetJackpotMeter()
-        this.jackpotHud?.update(0, false)
+        // Deducts one wheel's worth rather than emptying the meter, so a surplus bought from Lucky
+        // Slots (which pays jackpot points in batches) queues the next wheel instead of evaporating.
+        // Identical to the old reset for a level win, where the meter is always exactly full here.
+        this.jackpotHud?.update(spendJackpotCharge(), false)
         pill?.container.setDepth(50) // back to the ChipPill's native HUD depth
         this.chipHud?.update(result.newTotal)
         this.chipBanked = result.newTotal
