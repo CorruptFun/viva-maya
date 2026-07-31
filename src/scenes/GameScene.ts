@@ -6579,6 +6579,10 @@ export class GameScene extends Phaser.Scene {
         // ask — an x6+ chain spends all 6 of it on its own. Asking the daily cap here restruck both
         // SPIN wells as ×8 on essentially every numbered-level drop. See save.FreeSpinSource.
         allowTickets: !this.endless && freeSpinRoom(todayKey(), 'plinko') > 0,
+        // Picks the WEIGHT table, not the ticket rule — endless rolls fatter ×10 edges because it is
+        // the raced mode. Kept separate from allowTickets on purpose: a numbered-level player with a
+        // full spin bank also has allowTickets false, and must not inherit the endless odds.
+        endless: this.endless,
         hitstop: ms => this.hitstop(ms),
         onClaim: result => {
           if (result.kind === 'mult' && result.points > 0) {

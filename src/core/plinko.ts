@@ -39,10 +39,11 @@ export const PLINKO_CHANCE = 0.5
  * precisely because the thing that made x4 too generous on numbered levels (~1-1.9 qualifying chains
  * per level) does not hold without hazards: endless yields ~0.36 passive, ~0.92 typical.
  *
- * Endless also pays BETTER per drop — `allowTickets` is false there, so the two SPIN wells are
- * restruck as ×8 and every landing is a multiplier (~3.98x on the triggering chain, against ~3.44x
- * once the ticket wells pay a spin instead). That is the whole point: the weekly race is scored on
- * one number, so the drop has to be reachable to matter.
+ * Endless also pays BETTER per drop, twice over. `allowTickets` is false there, so the two SPIN wells
+ * are restruck as ×8 and every landing is a multiplier; and it rolls its own weight table
+ * (PLINKO_ENDLESS_SLOTS) with fatter ×10 edges. Together that is ~4.28x on the triggering chain,
+ * against ~3.61x where the ticket wells pay a spin instead. That is the whole point: the weekly race
+ * is scored on one number, so the drop has to be both reachable and worth reaching.
  *
  * Guarded by the endless half of plinko.rate.test.ts. Re-run it if you touch these.
  */
@@ -70,23 +71,68 @@ export type PlinkoPrize =
 /**
  * The 9 slots, left to right. Symmetric, with value rising OUTWARD and the weights shaped like the
  * binomial a real peg board would produce — the centre is where a fair ball usually lands, so it is
- * both the commonest (30%) and the cheapest (×2), and the ×10 edges are a ~2% thrill apiece. That
+ * both the commonest (28%) and the cheapest (×2), and the ×10 edges are a 3% thrill apiece. That
  * shape is what lets the rigged landing still read as honest: the ball ends up where a ball tends to
  * end up. Weights sum to 100, so each reads directly as a percentage.
  *
  * The two TICKET slots sit just inside the edges — a different currency (a free wheel pull) rather
  * than a bigger number, so they punctuate the ×2→×3→×5→×10 ramp without breaking it.
+ *
+ * On the ×10 edges: they were 2% apiece (4% of drops) and players reported the top prize as
+ * effectively unreachable — correctly, because the edge weight is only half the story. A drop is
+ * itself capped at one per level and offered in 13.9%/21.3% of levels (passive/typical, measured in
+ * plinko.rate.test.ts), so the rate a player actually LIVES is P(drop) × P(edge): a ×10 once every
+ * ~180 levels passively, ~117 played well. 3% apiece (6%) roughly halves both without touching what
+ * makes the board work — the edges stay the rarest wells on it, and stay wildly more generous than
+ * the 0.39% a true 8-row binomial would put there. The cost comes off the ×2 centre (30 → 28), which
+ * is still where the ball usually lands and still within a point of that binomial's 27.3%.
+ *
+ * Endless bumps them further again — see PLINKO_ENDLESS_SLOTS.
  */
 export const PLINKO_SLOTS: PlinkoPrize[] = [
-  { kind: 'mult', mult: 10, label: '×10', weight: 2 },
+  { kind: 'mult', mult: 10, label: '×10', weight: 3 },
   { kind: 'ticket', spins: 1, label: 'SPIN', weight: 6 },
   { kind: 'mult', mult: 5, label: '×5', weight: 10 },
   { kind: 'mult', mult: 3, label: '×3', weight: 17 },
-  { kind: 'mult', mult: 2, label: '×2', weight: 30 },
+  { kind: 'mult', mult: 2, label: '×2', weight: 28 },
   { kind: 'mult', mult: 3, label: '×3', weight: 17 },
   { kind: 'mult', mult: 5, label: '×5', weight: 10 },
   { kind: 'ticket', spins: 1, label: 'SPIN', weight: 6 },
-  { kind: 'mult', mult: 10, label: '×10', weight: 2 },
+  { kind: 'mult', mult: 10, label: '×10', weight: 3 },
+]
+
+/**
+ * ENDLESS runs a SECOND weight table, for the same reason it runs its own trigger pair above: it is
+ * the one mode scored purely on points and raced on a shared weekly board, so the drop has to be able
+ * to move the number the mode is about.
+ *
+ * The ×10 edges go to 4% apiece (8% of drops, double the pre-2026-07-31 4%). Against the measured
+ * endless offer rate (27.3% of runs passive, 58.8% typical) that is a ×10 in ~1 run in 46 played
+ * passively and ~1 in 21 played well, against ~1 in 92 / ~1 in 43 before — a headline prize a racer
+ * meets inside a session rather than inside a month. The extra 2 points come off the two ×3
+ * shoulders (17 → 16), not the centre, so the ×2 stays at 28 and the curve keeps its peak instead of
+ * flattening toward uniform.
+ *
+ * The ladder still falls monotonically outward in WEIGHT (10 → 6 → 4) as it climbs in VALUE, which is
+ * the property that makes the rigged landing read as a real peg board. It is deliberately only one
+ * point above the numbered table: endless already pays better per drop (`allowTickets` is false, so
+ * both SPIN wells are restruck as ×8), and this is meant to be the same prize arriving sooner, not a
+ * different economy.
+ *
+ * Only the ×10 and ×3 weights differ from PLINKO_SLOTS. Everything else — order, labels, kinds, the
+ * sum of 100 — is identical, and plinko.test.ts pins every one of those invariants across BOTH
+ * tables so the two cannot drift into different boards.
+ */
+export const PLINKO_ENDLESS_SLOTS: PlinkoPrize[] = [
+  { kind: 'mult', mult: 10, label: '×10', weight: 4 },
+  { kind: 'ticket', spins: 1, label: 'SPIN', weight: 6 },
+  { kind: 'mult', mult: 5, label: '×5', weight: 10 },
+  { kind: 'mult', mult: 3, label: '×3', weight: 16 },
+  { kind: 'mult', mult: 2, label: '×2', weight: 28 },
+  { kind: 'mult', mult: 3, label: '×3', weight: 16 },
+  { kind: 'mult', mult: 5, label: '×5', weight: 10 },
+  { kind: 'ticket', spins: 1, label: 'SPIN', weight: 6 },
+  { kind: 'mult', mult: 10, label: '×10', weight: 4 },
 ]
 
 /**
@@ -114,11 +160,18 @@ export const PLINKO_TICKET_SUBSTITUTE_MULT = 8
  *
  * Substituting fixes that at the source — every well the player can see is a well they can win.
  * Weights are untouched, so the table still sums to 100 and each weight still reads directly as a
- * percentage (the zeroing version quietly summed to 88). Multiplier EV goes ~3.44x → ~3.98x.
+ * percentage (the zeroing version quietly summed to 88). Multiplier EV goes ~3.61x → ~4.14x.
+ *
+ * The two flags are ORTHOGONAL and must stay that way. `endless` picks the base weight table;
+ * `allowTickets` decides whether the SPIN wells can be paid. It is tempting to collapse them —
+ * endless always passes allowTickets false — but the converse does not hold: a numbered-level player
+ * whose free-spin BANK is full also gets allowTickets false, and that player must keep the numbered
+ * table's odds. Keying the weights off allowTickets would quietly hand them the endless board.
  */
-export function plinkoSlots(allowTickets: boolean): PlinkoPrize[] {
-  if (allowTickets) return PLINKO_SLOTS
-  return PLINKO_SLOTS.map(p =>
+export function plinkoSlots(allowTickets: boolean, endless = false): PlinkoPrize[] {
+  const base = endless ? PLINKO_ENDLESS_SLOTS : PLINKO_SLOTS
+  if (allowTickets) return base
+  return base.map(p =>
     p.kind === 'ticket'
       ? { kind: 'mult', mult: PLINKO_TICKET_SUBSTITUTE_MULT, label: `×${PLINKO_TICKET_SUBSTITUTE_MULT}`, weight: p.weight }
       : p
@@ -137,9 +190,13 @@ export function plinkoQualifies(cascade: number, endless = false): boolean {
  * Rolls over the EFFECTIVE table (`plinkoSlots`), so when a ticket can't be honoured those two wells
  * are still live — they have simply been restruck as ×5. Nobody is ever shown a prize that can't be
  * paid, and nobody is shown a well they cannot win either.
+ *
+ * `endless` must be the SAME value the caller passed to `plinkoSlots` when it built the board it is
+ * about to paint, or the ball lands by one table's odds and gets paid off the other's face.
+ * `view/plinko.ts` derives both from one `opts.endless`, which is what keeps that honest.
  */
-export function rollSlotIndex(rng: Rng, allowTickets: boolean): number {
-  const slots = plinkoSlots(allowTickets)
+export function rollSlotIndex(rng: Rng, allowTickets: boolean, endless = false): number {
+  const slots = plinkoSlots(allowTickets, endless)
   const total = slots.reduce((sum, p) => sum + p.weight, 0)
   let roll = rng() * total
   for (let i = 0; i < slots.length; i++) {

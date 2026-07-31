@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { PLINKO_MIN_CASCADE, PLINKO_ROWS, PLINKO_SLOTS, dropPath, plinkoSlots, rollSlotIndex, shouldOfferPlinko } from './plinko'
+import {
+  PLINKO_ENDLESS_SLOTS,
+  PLINKO_MIN_CASCADE,
+  PLINKO_ROWS,
+  PLINKO_SLOTS,
+  dropPath,
+  plinkoSlots,
+  rollSlotIndex,
+  shouldOfferPlinko,
+} from './plinko'
 import { mulberry32 } from './rng'
 
 /**
@@ -15,31 +24,89 @@ import { mulberry32 } from './rng'
  * save.freeSpinRoom's business, guarded in save.freespins.test.ts.)
  */
 
-describe('the slot table', () => {
+/**
+ * Two base tables ship: the numbered-level one and the more generous ENDLESS one. Every structural
+ * invariant below is asserted against BOTH, so the two boards can never drift into different shapes —
+ * only into different odds, which is the single thing endless is allowed to change.
+ */
+const TABLES = [
+  { name: 'numbered', slots: PLINKO_SLOTS },
+  { name: 'endless', slots: PLINKO_ENDLESS_SLOTS },
+]
+
+const edgeShare = (slots: typeof PLINKO_SLOTS): number =>
+  slots.filter(p => p.kind === 'mult' && p.mult >= 10).reduce((s, p) => s + p.weight, 0)
+
+describe.each(TABLES)('the $name slot table', ({ slots }) => {
   it('has one slot per landing position — rows + 1', () => {
-    expect(PLINKO_SLOTS).toHaveLength(PLINKO_ROWS + 1)
+    expect(slots).toHaveLength(PLINKO_ROWS + 1)
   })
 
   it('weights sum to 100, so each reads directly as a percentage', () => {
-    expect(PLINKO_SLOTS.reduce((sum, p) => sum + p.weight, 0)).toBe(100)
+    expect(slots.reduce((sum, p) => sum + p.weight, 0)).toBe(100)
   })
 
   it('is symmetric about the centre — neither side of the board is luckier', () => {
-    for (let i = 0; i < PLINKO_SLOTS.length >> 1; i++) {
-      const left = PLINKO_SLOTS[i]
-      const right = PLINKO_SLOTS[PLINKO_SLOTS.length - 1 - i]
+    for (let i = 0; i < slots.length >> 1; i++) {
+      const left = slots[i]
+      const right = slots[slots.length - 1 - i]
       expect(left, `slot ${i} vs its mirror`).toEqual(right)
     }
   })
 
   it('is cheapest in the middle and richest at the edges (the binomial shape)', () => {
-    const mid = PLINKO_SLOTS.length >> 1
-    const centre = PLINKO_SLOTS[mid]
-    const edge = PLINKO_SLOTS[0]
+    const mid = slots.length >> 1
+    const centre = slots[mid]
+    const edge = slots[0]
     expect(centre.kind).toBe('mult')
     expect(edge.kind).toBe('mult')
     if (centre.kind === 'mult' && edge.kind === 'mult') expect(edge.mult).toBeGreaterThan(centre.mult)
     expect(centre.weight).toBeGreaterThan(edge.weight)
+  })
+
+  /**
+   * The property that makes a RIGGED landing read as a real peg board: as value climbs outward,
+   * likelihood must fall outward. Break this and the ball is visibly settling where a ball wouldn't.
+   */
+  it('gets steadily less likely as it gets more valuable, outward from the centre', () => {
+    const mid = slots.length >> 1
+    for (let i = mid; i > 0; i--) {
+      expect(slots[i].weight, `left half rises outward at ${i - 1}`).toBeGreaterThanOrEqual(slots[i - 1].weight)
+    }
+    for (let i = mid; i < slots.length - 1; i++) {
+      expect(slots[i].weight, `right half rises outward at ${i + 1}`).toBeGreaterThanOrEqual(slots[i + 1].weight)
+    }
+  })
+
+  /**
+   * The ×10 edges are the headline prize and the whole reason the board is worth watching, so they
+   * get a band of their own. Too thin and the top prize is a rumour — that is exactly the state the
+   * 2026-07-31 bump fixed, when 4% of drops behind a once-per-level latch put a ×10 out of reach for
+   * most players. Too fat and the outward ramp stops meaning anything.
+   */
+  it('keeps the ×10 edges a real but rare prize', () => {
+    const share = edgeShare(slots)
+    expect(share, '×10 has become a rumour again').toBeGreaterThanOrEqual(6)
+    expect(share, '×10 is no longer the rare thing the board is built around').toBeLessThanOrEqual(12)
+  })
+})
+
+describe('the endless table', () => {
+  /**
+   * Endless is the mode scored purely on points and raced weekly, so its ×10 edges are deliberately
+   * fatter — that is the ONE difference it is allowed. Pinned as a strict inequality so a future edit
+   * that "tidies" the two tables back into one has to fail here rather than silently un-fix the
+   * complaint that the top prize was unreachable on the raced mode.
+   */
+  it('pays the ×10 edges more often than the numbered board', () => {
+    expect(edgeShare(PLINKO_ENDLESS_SLOTS)).toBeGreaterThan(edgeShare(PLINKO_SLOTS))
+  })
+
+  it('differs from the numbered board ONLY in weight — same wells, same order, same prizes', () => {
+    PLINKO_ENDLESS_SLOTS.forEach((p, i) => {
+      const base = PLINKO_SLOTS[i]
+      expect({ ...p, weight: 0 }, `slot ${i} is a different prize in endless`).toEqual({ ...base, weight: 0 })
+    })
   })
 })
 
@@ -48,9 +115,11 @@ describe('rollSlotIndex', () => {
     const bad: string[] = []
     for (let seed = 1; seed <= 500; seed++) {
       for (const allow of [true, false]) {
-        const i = rollSlotIndex(mulberry32(seed), allow)
-        if (!Number.isInteger(i) || i < 0 || i >= PLINKO_SLOTS.length) {
-          if (bad.length < 20) bad.push(`seed ${seed} allowTickets=${allow} → ${i}`)
+        for (const endless of [true, false]) {
+          const i = rollSlotIndex(mulberry32(seed), allow, endless)
+          if (!Number.isInteger(i) || i < 0 || i >= PLINKO_SLOTS.length) {
+            if (bad.length < 20) bad.push(`seed ${seed} allowTickets=${allow} endless=${endless} → ${i}`)
+          }
         }
       }
     }
@@ -125,27 +194,44 @@ describe('rollSlotIndex', () => {
     })
   })
 
-  it('keeps the table summing to 100 in BOTH modes, so a weight still reads as a percentage', () => {
+  it('keeps the table summing to 100 in EVERY mode, so a weight still reads as a percentage', () => {
     for (const allow of [true, false]) {
-      const total = plinkoSlots(allow).reduce((s, p) => s + p.weight, 0)
-      expect(total, `allowTickets=${allow}`).toBe(100)
+      for (const endless of [true, false]) {
+        const total = plinkoSlots(allow, endless).reduce((s, p) => s + p.weight, 0)
+        expect(total, `allowTickets=${allow} endless=${endless}`).toBe(100)
+      }
     }
   })
 
-  it('pays out close to the declared weights over many rolls', () => {
-    const rng = mulberry32(12345)
-    const N = 20_000
-    const counts = new Array(PLINKO_SLOTS.length).fill(0)
-    for (let i = 0; i < N; i++) counts[rollSlotIndex(rng, true)]++
-    const bad: string[] = []
-    PLINKO_SLOTS.forEach((slot, i) => {
-      const pct = (counts[i] / N) * 100
-      // Generous band — this catches a transposed/typo'd weight, not sampling noise.
-      if (Math.abs(pct - slot.weight) > Math.max(1.5, slot.weight * 0.25)) {
-        bad.push(`slot ${i} (${slot.label}): declared ${slot.weight}%, rolled ${pct.toFixed(2)}%`)
-      }
-    })
-    expect(bad).toEqual([])
+  it('pays out close to the declared weights over many rolls, on both boards', () => {
+    for (const endless of [false, true]) {
+      const table = plinkoSlots(true, endless)
+      const rng = mulberry32(12345)
+      const N = 20_000
+      const counts = new Array(table.length).fill(0)
+      for (let i = 0; i < N; i++) counts[rollSlotIndex(rng, true, endless)]++
+      const bad: string[] = []
+      table.forEach((slot, i) => {
+        const pct = (counts[i] / N) * 100
+        // Generous band — this catches a transposed/typo'd weight, not sampling noise.
+        if (Math.abs(pct - slot.weight) > Math.max(1.5, slot.weight * 0.25)) {
+          bad.push(`slot ${i} (${slot.label}): declared ${slot.weight}%, rolled ${pct.toFixed(2)}%`)
+        }
+      })
+      expect(bad, `endless=${endless}`).toEqual([])
+    }
+  })
+
+  /**
+   * The load-bearing consequence of keeping `endless` and `allowTickets` orthogonal: a numbered-level
+   * player whose free-spin bank is full ALSO passes allowTickets false, and must keep the numbered
+   * odds. Collapsing the two flags — the obvious "simplification", since endless always suppresses
+   * tickets — would hand that player the endless board without anything else failing.
+   */
+  it('does not leak the endless odds to a numbered player whose spin bank is full', () => {
+    const suppressed = plinkoSlots(false, false)
+    expect(edgeShare(suppressed)).toBe(edgeShare(PLINKO_SLOTS))
+    expect(edgeShare(suppressed)).toBeLessThan(edgeShare(PLINKO_ENDLESS_SLOTS))
   })
 })
 

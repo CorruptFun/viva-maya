@@ -166,10 +166,25 @@ detonates all; Jackpot+Jackpot → whole board.
 
 ### Plinko bonus drop — `src/core/plinko.ts`, `src/view/plinko.ts`, `GameScene.offerPlinko`
 A settled chain of **x5+** can hand the board off to a ball drop: 8 peg rows into 9 slots
-(`×10 · SPIN · ×5 · ×3 · ×2 · ×3 · ×5 · SPIN · ×10`, weights `2/6/10/17/30/17/10/6/2`, summing to
+(`×10 · SPIN · ×5 · ×3 · ×2 · ×3 · ×5 · SPIN · ×10`, weights `3/6/10/17/28/17/10/6/3`, summing to
 100 so each reads as a percentage). A multiplier slot pays **the triggering chain's points × the
 multiplier** as a one-shot bonus; a SPIN slot banks a free wheel pull. Tap DROP to release, tap again
 to skip to the payoff, CLAIM is the only exit and hands the board straight back.
+
+**The ×10 edges are per-mode** (retuned 2026-07-31). Endless rolls a second base table,
+`PLINKO_ENDLESS_SLOTS` — `4/6/10/16/28/16/10/6/4`, identical wells in identical order, only fatter
+edges (**8%** of drops against the numbered board's **6%**). Both were 4%, and the top prize being
+unreachable was the standing player complaint: the edge weight is only half the story, because a drop
+is itself capped at one per level/run, so what a player LIVES is P(drop) × P(edge). Measured, that was
+a ×10 once every ~180 numbered levels passive / ~117 played well, and ~1 endless run in 92 / ~1 in 43.
+Now ~1 in 120 / ~1 in 78 numbered, and ~1 in 46 / ~1 in 21 endless. The numbered bump is paid for out
+of the ×2 centre (30 → 28, still within a point of a true binomial's 27.3%); endless takes its extra
+two points off the ×3 shoulders instead, so the peak survives. Both tables keep every structural
+invariant — sum 100, symmetric, value climbing outward while weight falls outward — and
+`plinko.test.ts` asserts all of them against **both**, so the boards can differ in odds and in nothing
+else. The table is keyed off **`endless`, not `allowTickets`**: endless always suppresses tickets, but
+so does a full spin bank on a numbered level, and collapsing the two flags would silently hand that
+player the endless odds (pinned by its own test).
 
 **Frequency is the design, and it is PER-MODE.** Three gates keep it a treat on a numbered level: the
 x5 bar, a 1-in-2 roll, and one drop per level. x5 (not the x4 MEGA bar) because it was **measured** —
@@ -182,7 +197,8 @@ The numbered-level pair is calibrated against a board endless never plays: endle
 (which deepen chains) and a flat `ENDLESS_MOVES` of 30, so x5/0.5 quietly halved the rate on the one
 mode scored purely on points and raced on a shared daily board — **5.4%** of runs passive / **11.1%**
 typical, against **~27%** / **~59%** now. The per-run latch is untouched, so it is still at most one
-drop per run. Endless also pays better per drop (`allowTickets` false → pure multiplier, ~3.4× EV).
+drop per run. Endless also pays better per drop, twice over: `allowTickets` false → pure multiplier,
+*and* its own fatter-edged weight table — **~4.28× EV**, against ~3.61× where the tickets pay a spin.
 
 A chain at `PLINKO_GUARANTEED_CASCADE` (**x8 UNREAL**) skips the roll in both modes — at ~1 run in 67
 even for a strong endless player, losing a coin flip on top reads as the game welching. ~+0.7pp.
@@ -194,7 +210,7 @@ difficulty-curve change ever makes either routine (or so rare nobody sees it).
 pixel moves, then `dropPath` synthesises the bounce. Quitting mid-drop cannot lose the prize.
 
 **When a ticket can't be honoured** (endless, or the daily/bank cap is full — see `freeSpinRoom`) the
-two SPIN wells are **restruck as ×8**, not switched off. `plinkoSlots(allowTickets)` returns the
+two SPIN wells are **restruck as ×8**, not switched off. `plinkoSlots(allowTickets, endless)` returns the
 effective table and the cabinet paint, the slot labels and the payout all read from that one source,
 so they cannot disagree. The earlier behaviour zeroed their weight, which kept the ball out of them
 but left the view painting two **unwinnable "SPIN" faces** — 2 of 9 wells advertising a prize the
@@ -549,7 +565,7 @@ Last verified **2026-07-25**.
 | Check | Command | Result |
 |---|---|---|
 | Type check | `npx tsc --noEmit` | **PASS** — exit 0, no errors |
-| Unit tests | `npm test` | **PASS** — 124 tests across 12 files (`board`, `board.hazards`, `daily`, `endless`, `feasibility`, `hazards`, `leaderboard`, `levels`, `merge`, `plinko`, `plinko.rate`, `view3d/space`) |
+| Unit tests | `npm test` | **PASS** — 320 tests across 20 files (colocated `*.test.ts`; the count above was stale from the 12-file era — re-derive it, don't trust it) |
 | Production build | `npm run build` | **PASS** — exit 0; 90 modules transformed, `dist/` + SW written in ~3 s |
 
 Build output of note: the main JS chunk is **1,507.62 kB (gzip 425.19 kB)** — over

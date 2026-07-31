@@ -68,6 +68,13 @@ export interface PlinkoOpenOpts {
    * gate this — see save.FreeSpinSource for why plinko answers to the bank cap alone.
    */
   allowTickets: boolean
+  /**
+   * Whether this drop belongs to an ENDLESS run. Picks the weight table (`PLINKO_ENDLESS_SLOTS` —
+   * fatter ×10 edges, because endless is the raced mode), NOT the ticket substitution. Deliberately
+   * separate from `allowTickets`: endless always implies allowTickets false, but a numbered-level
+   * player with a full spin bank ALSO has allowTickets false and must keep the numbered odds.
+   */
+  endless: boolean
   /** Called once, on CLAIM, after the overlay has torn itself down. The host resumes play here. */
   onClaim: (result: PlinkoResult) => void
   /** Optional graded-freeze hook — GameScene passes its `hitstop` so the landing rides one authority. */
@@ -484,8 +491,8 @@ export function openPlinko(scene: Phaser.Scene, opts: PlinkoOpenOpts): void {
   const rng = mulberry32((Math.random() * 2 ** 31) | 0)
   // The EFFECTIVE table for this drop — when a spin can't be paid the two ticket wells arrive here
   // already restruck as ×5, so paint, labels and payout all read from ONE source and cannot disagree.
-  const slots = plinkoSlots(opts.allowTickets)
-  let slot = rollSlotIndex(rng, opts.allowTickets)
+  const slots = plinkoSlots(opts.allowTickets, opts.endless)
+  let slot = rollSlotIndex(rng, opts.allowTickets, opts.endless)
   if (import.meta.env.DEV) {
     // ?slot=N — pin the landing slot so automated checks can exercise every payoff deterministically.
     const s = Number(new URLSearchParams(location.search).get('slot'))

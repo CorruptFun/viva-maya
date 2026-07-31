@@ -70,10 +70,17 @@ clears a RANDOM present color. Swap-combos (both consumed, epicenter = drag dest
 - UNREAL override: a chain at PLINKO_GUARANTEED_CASCADE (x8) skips the roll entirely in BOTH modes —
   at that rarity a lost coin flip reads as the game welching. Costs ~+0.7pp in endless.
 - Board: 8 peg rows → 9 slots. Ball breaks left/right once per row, so "right N times" = "slot N".
-- Slots (l→r): x10 · SPIN · x5 · x3 · x2 · x3 · x5 · SPIN · x10, weights 2/6/10/17/30/17/10/6/2
-  (sum 100). Symmetric, binomial-shaped — cheap+common in the middle, x10 a 2% thrill at each edge.
+- Slots (l→r): x10 · SPIN · x5 · x3 · x2 · x3 · x5 · SPIN · x10, weights 3/6/10/17/28/17/10/6/3
+  (sum 100). Symmetric, binomial-shaped — cheap+common in the middle, x10 a 3% thrill at each edge.
+- ENDLESS rolls its OWN weight table (PLINKO_ENDLESS_SLOTS): 4/6/10/16/28/16/10/6/4, same wells and
+  same order, only fatter x10 edges (8% of drops vs 6%). Retuned 2026-07-31 because the top prize was
+  the standing complaint: at the old 4% on both boards, and with only one drop per run, a ×10 landed
+  ~1 run in 92 passively / ~1 in 43 played well. Now ~1 in 46 / ~1 in 21. The extra weight comes off
+  the x3 shoulders, not the x2 centre, so the curve keeps its peak. The table choice is keyed off
+  ENDLESS, deliberately NOT off allowTickets — endless always suppresses tickets, but so does a full
+  spin bank on a numbered level, and that player must keep the numbered odds.
 - SUBSTITUTION when a spin can't be paid (endless, or the daily/bank cap is full): the two SPIN wells
-  are RESTRUCK as x8 keeping their weight — `plinkoSlots(allowTickets)` returns the effective table
+  are RESTRUCK as x8 keeping their weight — `plinkoSlots(allowTickets, endless)` returns the effective table
   and paint/labels/payout all read from it. They used to be weight-zeroed instead, which kept the ball
   out but left the view painting two unwinnable "SPIN" faces — 2 of 9 wells advertising a prize the
   player could never land. Effective ramp x2·x3·x5·x8·x10 outward — x8 sits above its x5 neighbour so
