@@ -1,7 +1,12 @@
+import { POINTS_PER_PIECE } from '../config'
 import { Board } from './board'
+import { ENDLESS_MOVES } from './endless'
 import { levelSpec } from './levels'
 import { hazardPlan } from './hazards'
+import { plinkoSlots, rollSlotIndex, shouldOfferPlinko } from './plinko'
 import { mulberry32 } from './rng'
+import type { Rng } from './rng'
+import { SYMBOLS } from './types'
 import type { Coord, Piece, SymbolType } from './types'
 
 /**
@@ -273,3 +278,108 @@ export function sampleLevel(level: number, seeds: number, policy: Policy): {
 
 /** Unused-import guard for the goal-value helper when policies change. */
 export { goalValue as __goalValue, resolveSwap as __resolveSwap }
+
+// ------------------------------------------------------------------ endless
+
+export interface EndlessRun {
+  /** Final score, exactly as GameScene would have counted it — Plinko award included. */
+  score: number
+  /** Settled chain depth for each move played. */
+  chains: number[]
+  /** The one Plinko drop a run can earn, if this one earned it. */
+  plinko: { stake: number; mult: number } | null
+}
+
+/**
+ * Play one full ENDLESS run and report the score it would actually have posted.
+ *
+ * Deliberately NOT `playLevel` with a level number: endless never goes through `levelSpec` at all
+ * (GameScene builds its own spec), it has no hazards, no objectives and a flat ENDLESS_MOVES budget,
+ * and it is the one mode scored purely on points. Everything scoring-relevant is mirrored from
+ * GameScene here — the per-wave `cleared × POINTS_PER_PIECE × cascade`, the once-per-run Plinko
+ * latch, and the fact that endless passes `allowTickets: false` so every well pays a multiplier.
+ *
+ * `roll` is the Plinko stream (GameScene uses `Math.random`); seeding it explicitly is what makes a
+ * measurement built on this reproducible.
+ *
+ * On the reshuffle: an unplayable board is regenerated and the move is then PLAYED, not skipped.
+ * That mirrors the real loop, where `reshuffle()` runs at the tail of the move that emptied the
+ * board — so a player never loses a move to it. (plinko.rate.test.ts has an older endless walker
+ * that consumes the move instead. It is left alone on purpose: its bands are calibrated numbers,
+ * and the case is vanishingly rare on a 6-symbol hazard-free board either way.)
+ */
+export function playEndless(seed: number, policy: Policy, roll: Rng = mulberry32(seed ^ 0x9e3779b9)): EndlessRun {
+  const b = new Board(8, 8, SYMBOLS.length, mulberry32(seed))
+  const goals = new Set<SymbolType>() // endless has no objectives — 'banker' collapses to 'greedy'
+  const chains: number[] = []
+  let score = 0
+  let plinko: { stake: number; mult: number } | null = null
+
+  for (let m = 0; m < ENDLESS_MOVES; m++) {
+    let moves = everyValidMove(b)
+    if (moves.length === 0) {
+      b.regenerate()
+      moves = everyValidMove(b)
+      if (moves.length === 0) break
+    }
+
+    let pick = moves[0]
+    if (policy !== 'first') {
+      const snap = snapshot(b)
+      let best = -Infinity
+      for (const mv of moves) {
+        const v = previewValue(b, mv.a, mv.to, goals, policy)
+        restore(b, snap)
+        if (v > best) {
+          best = v
+          pick = mv
+        }
+      }
+    }
+
+    const { cascade, points } = scoreSwap(b, pick.a, pick.to)
+    chains.push(cascade)
+    score += points
+
+    // The chain settled: it may buy the run's one Plinko drop, which pays a multiplier on the
+    // points that chain just scored (`chainPoints` in GameScene).
+    if (!plinko && points > 0 && shouldOfferPlinko(cascade, roll, true)) {
+      const slot = plinkoSlots(false)[rollSlotIndex(roll, false)]
+      const mult = slot.kind === 'mult' ? slot.mult : 1
+      plinko = { stake: points, mult }
+      score += points * mult
+    }
+  }
+
+  return { score, chains, plinko }
+}
+
+/** resolveSwap, but totting up points the way GameScene's playWave does. */
+function scoreSwap(b: Board, a: Coord, to: Coord): { cascade: number; points: number } {
+  b.swap(a, to)
+  let wave = b.swapActivation(a, to)
+  if (!wave) {
+    if (b.findRuns().length === 0) {
+      b.swap(a, to)
+      return { cascade: 0, points: 0 }
+    }
+    wave = b.matchWave([to, a])
+  }
+  let cascade = 0
+  let points = 0
+  while (wave) {
+    cascade++
+    points += wave.cleared.length * POINTS_PER_PIECE * cascade
+    b.applyGravity()
+    b.refill()
+    wave = b.matchWave()
+  }
+  return { cascade, points }
+}
+
+/** Ascending-sorted percentile of a sample (p in 0..1). */
+export function percentile(sorted: number[], p: number): number {
+  if (sorted.length === 0) return 0
+  const i = Math.min(sorted.length - 1, Math.max(0, Math.round(p * (sorted.length - 1))))
+  return sorted[i]
+}

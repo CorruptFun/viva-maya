@@ -3,25 +3,30 @@
  *
  * A hidden strip of dead space under the endless board (nothing is drawn there — endless has no
  * helper shelf, that being a numbered-levels-only surface) reads swipes. Enter the pattern below and
- * the board erupts into a MEGA WIN: a free, move-less blast that pays at a multiplied rate, so the
- * score can be run up as far as patience allows.
+ * the board erupts into a MEGA WIN: a free, move-less blast that pays at a multiplied rate and ends
+ * in a Plinko drop of its own, so the score can be run up as far as patience allows.
  *
  * Kept here, PURE, rather than inline in GameScene for the usual reason this codebase splits logic
  * out: a gesture recogniser is exactly the kind of thing that is miserable to verify by hand on a
  * phone and trivial to pin in a test. The scene owns the strip's geometry and the spectacle; this
  * file owns "was that the code?".
  *
- * FAIRNESS. A run that fires this is UNRANKED — see `recordEndless`'s `ranked` option, which is the
- * one place that is enforced. Two independent reasons, and the second stands even if the mega win
- * paid nothing at all:
+ * WHAT THE RACE SEES. A cheat run does reach the daily leaderboard, deliberately — a board with no
+ * top line, or one nobody can see, gives no one a reason to come back tomorrow. What it posts is a
+ * PACE SCORE: `recordEndless({ paced: true })` clamps it to ENDLESS_PACE_SCORE, a number measured
+ * off the real board at the 85th percentile of a typical player's run, so the top line stays one
+ * that gets taken down about one run in seven. The mega win can therefore set the pace and can never
+ * run away with the board. That clamp is the only place this is enforced; everything downstream
+ * reads the clamped number.
  *
- *   1. The daily race's entire premise is that one day key means one board for everyone, scored on
- *      a fixed 30-move budget (core/endless.ts). A free blast is not that budget.
+ * The clamp is not decoration. Two things make a cheat run's raw score meaningless as a race entry,
+ * and the second holds even with the multiplier and the extra Plinko drops taken away:
+ *
+ *   1. The race's premise is one day key, one board, a fixed 30-move budget for everyone
+ *      (core/endless.ts). A free blast is not that budget.
  *   2. The blast plants specials and detonates through the board's own RNG — the stream seeded from
  *      the shared day key. From the first fire onward the refills diverge, so the run is physically
- *      on a board no one else is playing. There is nothing left to compare it to.
- *
- * So the cheat is a toy for the player's own screen, and the leaderboard never hears about it.
+ *      on a board no one else is playing.
  */
 
 /** The four axis-aligned swipes the strip can read. */

@@ -19,10 +19,14 @@ Live: <https://corruptfun.github.io/viva-maya/>
 - **`base: './'`** in `vite.config.ts` — relative asset paths, required for
   GitHub Pages. Don't "fix" it to `/`.
 - **Endless has a cheat code**, and it is meant to be there — a secret swipe
-  pattern on the dead strip below the board mints a free "mega win"
-  (`src/core/cheat.ts`). A run that fires it is UNRANKED: `recordEndless` takes
-  `{ ranked: false }` and writes nothing, so the leaderboard never sees it. That
-  one call is the whole fairness gate; don't route a cheat score around it.
+  pattern on the dead strip below the board mints a free "mega win", each one
+  paying its own Plinko drop (`src/core/cheat.ts`). A run that fires it posts to
+  the daily race as a **pace score**: `recordEndless` takes `{ paced: true }` and
+  clamps it to `ENDLESS_PACE_SCORE` — a top line worth chasing that a typical
+  player beats about one run in seven, so it can never run away with the board.
+  That clamp is the only place it happens; don't route a cheat score around it.
+  The cap is measured, not chosen — `endless.pace.test.ts` re-derives it from the
+  real board and fails if a tuning change puts it out of human reach.
 
 ## Run it
 
@@ -34,7 +38,7 @@ npm run build    # tsc && vite build
 ```
 
 Tests are colocated: `src/core/*.test.ts` (board, merge, hazards, endless,
-plinko rate, cheat). Run them — the game logic has real coverage.
+plinko rate, cheat, endless pace). Run them — the game logic has real coverage.
 
 ## Layout
 

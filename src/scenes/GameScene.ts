@@ -387,8 +387,10 @@ export class GameScene extends Phaser.Scene {
   private cheatFrom: { x: number; y: number } | null = null
   /** One swipe per touch: set once this gesture has been read, so a long drag can't feed the code twice. */
   private cheatConsumed = false
-  /** Mega wins fired this run. Non-zero makes the run UNRANKED — the single fairness gate. */
+  /** Mega wins fired this run. Non-zero makes the run a PACED one — see finishEndless. */
   private cheatFires = 0
+  /** A mega win is owed its Plinko drop: the next offer bypasses the latch and the roll. */
+  private cheatDropPending = false
 
   /** The live over-board banner (boosts / MEGA WIN), so a second one replaces rather than stacks. */
   private boardBanner?: Phaser.GameObjects.Container
@@ -496,6 +498,7 @@ export class GameScene extends Phaser.Scene {
     this.cheatFrom = null
     this.cheatConsumed = false
     this.cheatFires = 0
+    this.cheatDropPending = false
     this.boardBanner = undefined // its GameObject died with the previous scene
     // §G1 — a swap booked during the LAST level's final cascade must never fire into this one.
     this.bookedSwap = null
@@ -3098,6 +3101,9 @@ export class GameScene extends Phaser.Scene {
    * `movesLeft`, exactly as the purchased bomb doesn't), which is what makes the score runnable: the
    * budget is untouched, so the code can be entered as often as the player has patience for.
    *
+   * And every fire ends in a Plinko drop. The run's ordinary once-per-run latch is left standing for
+   * ordinary chains; `cheatDropPending` is what lets the cheat stack them, one drop per mega win.
+   *
    * The `state` handoff mirrors `detonatePurchasedBomb`: lock to `resolving` before anything can
    * await, and let `resolveLoop` own the way back to idle — including the run's end, if this was
    * fired on the last move.
@@ -3107,6 +3113,7 @@ export class GameScene extends Phaser.Scene {
     this.cheatFires++
     this.log('MEGA WIN', this.cheatFires)
     this.state = 'resolving'
+    this.cheatDropPending = true // every mega win ends in a Plinko drop, however many that is
     this.clearSelection()
     this.disarmHint()
     this.disarmTwinkle()
@@ -5364,12 +5371,19 @@ export class GameScene extends Phaser.Scene {
     this.state = 'ended'
     this.clearBookedSwap() // §G1
     this.stopMovesPulse()
-    // A run that fired the cheat strip's mega win is recorded READ-ONLY: it moves neither the day's
-    // best nor the week, so core/cloud.ts never mirrors it to the race. See core/cheat.ts.
-    const ranked = this.cheatFires === 0
-    const { best, isRecord, week } = recordEndless(this.score, this.endlessDayKey, { ranked })
-    track(EVENTS.ENDLESS_END, { score: this.score, is_record: isRecord, days: week.days, cheats: this.cheatFires })
-    this.time.delayedCall(450, () => this.showEndlessOverlay(this.score, best, isRecord, week, ranked))
+    // A run that fired the cheat strip's mega win still reaches the race, but only as a PACE score —
+    // clamped to ENDLESS_PACE_SCORE inside recordEndless, which is the one place it happens. `posted`
+    // is what actually went to the board, and it is what the card has to talk about.
+    const paced = this.cheatFires > 0
+    const { best, isRecord, week, posted } = recordEndless(this.score, this.endlessDayKey, { paced })
+    track(EVENTS.ENDLESS_END, {
+      score: this.score,
+      posted,
+      is_record: isRecord,
+      days: week.days,
+      cheats: this.cheatFires,
+    })
+    this.time.delayedCall(450, () => this.showEndlessOverlay(this.score, best, isRecord, week, paced ? posted : null))
   }
 
   /**
@@ -6207,7 +6221,8 @@ export class GameScene extends Phaser.Scene {
     best: number,
     isRecord: boolean,
     week: WeekStanding,
-    ranked = true
+    /** What a CHEAT run put on the board, or null on an ordinary run (which posts its score as-is). */
+    posted: number | null = null
   ): void {
     this.log('showEndlessOverlay', 'score', score, 'best', best, 'isRecord', isRecord, 'week', week.total, week.days)
     this.overlayScrim()
@@ -6222,11 +6237,11 @@ export class GameScene extends Phaser.Scene {
       // "Time's up" is a finish line, not a failure — a gentle close, no lose-wah.
       sfx.starDing(0)
     }
-    // An unranked (cheat) run wedges one extra line into the middle of the card, so the season block
-    // and the buttons below it slide down by `drop`, and the card grows DOWNWARD by the same amount
-    // (centre and half-height both +drop/2 → the top edge does not move). Everything above the note
-    // is untouched, so a ranked card is pixel-for-pixel the card that has always shipped.
-    const drop = ranked ? 0 : 30
+    // A cheat run wedges one extra line into the middle of the card, so the season block and the
+    // buttons below it slide down by `drop`, and the card grows DOWNWARD by the same amount (centre
+    // and half-height both +drop/2 → the top edge does not move). Everything above the note is
+    // untouched, so an ordinary card is pixel-for-pixel the card that has always shipped.
+    const drop = posted === null ? 0 : 30
     this.overlayCard(cx, cy + drop / 2, 262 + drop / 2)
 
     this.add
@@ -6271,13 +6286,14 @@ export class GameScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setDepth(42)
 
-    // An unranked (cheat) run says so as a CAPTION on the best it just failed to move — close under
-    // that number, at arm's length from the season block below. Without it the card is an unreadable
-    // scoreboard after a mega win (a five-figure score over a best and a week total that both sat
-    // still), and this line is the only place the player is ever told the rule.
-    if (!ranked) {
+    // A cheat run says what it actually put on the board, as a CAPTION on the best above it — close
+    // under that number, at arm's length from the season block below. Without it the card is an
+    // unreadable scoreboard after a mega win (a six-figure score over a best that barely moved), and
+    // this line is the only place the player is told their run went up capped. When the run came in
+    // under the ceiling nothing was clamped, so it says so plainly instead of naming a cap.
+    if (posted !== null) {
       this.add
-        .text(cx, cy + 68, 'CHEAT RUN  ·  NOT RANKED', {
+        .text(cx, cy + 68, posted < score ? `CHEAT RUN  ·  CAPPED TO ${posted.toLocaleString()}` : 'CHEAT RUN', {
           fontFamily: FONT,
           fontSize: '16px',
           fontStyle: '900',
@@ -6767,10 +6783,16 @@ export class GameScene extends Phaser.Scene {
    * the board in 'resolving' forever (UI_COOKBOOK §11).
    */
   private offerPlinko(cascade: number, force = false): boolean {
-    if (this.plinkoUsedThisLevel && !force) return false
-    if (!force && !shouldOfferPlinko(cascade, Math.random, this.endless)) return false
+    // A MEGA WIN buys its own drop outright (core/cheat.ts): both the once-per-run latch and the
+    // qualification roll are bypassed, so a cheat run stacks one drop per mega win it fires instead
+    // of the single drop a run is otherwise allowed. Consumed only once the offer really opens, so
+    // a chain that somehow scored nothing leaves the owed drop for the next one.
+    const forced = force || this.cheatDropPending
+    if (this.plinkoUsedThisLevel && !forced) return false
+    if (!forced && !shouldOfferPlinko(cascade, Math.random, this.endless)) return false
     const stake = this.chainPoints
     if (stake <= 0) return false
+    this.cheatDropPending = false
     this.plinkoUsedThisLevel = true
     // The 2026-07-28 endless retune (5.4% → ~27% passive) was tuned entirely against a simulated
     // board — plinko.rate.test.ts guards the model, not reality. This is the first field measurement

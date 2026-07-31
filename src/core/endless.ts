@@ -287,6 +287,31 @@ export function formatWeekStanding(s: WeekStanding): string {
   return `${s.total.toLocaleString()} · ${s.days}d`
 }
 
+/**
+ * The ceiling a CHEAT run may post to the race — the "pace score".
+ *
+ * The endless cheat code (core/cheat.ts) mints score by the hundred thousand, and a run that fired it
+ * still belongs on the board: an empty leaderboard, or one whose top line is unreachable, gives
+ * nobody a reason to come back tomorrow. What it must never do is put a number up there that kills
+ * the chase. So a cheat run posts `min(score, this)` and honest runs are untouched.
+ *
+ * MEASURED, not guessed — the number is the 85th percentile of a typical player's run, from a
+ * headless sweep of the real board core (`sim.playEndless`, 400 runs, Plinko included; the guard in
+ * endless.pace.test.ts re-derives it and fails if the board ever drifts away from it). The
+ * distribution behind it, on the 'greedy' policy that models someone playing quickly without
+ * lookahead:
+ *
+ *     p50 7,080 · p75 10,500 · p85 13,020 · p95 17,220 · longest tail 62,660
+ *
+ * p85 is the pick because of what it means in play, not because it is a nice number: a typical
+ * player already beats it about one run in seven, and a careful one — 'greedy' has no lookahead, so
+ * it UNDERSTATES a human paying attention — beats it a good deal more often. That is a top line that
+ * reads as a real score worth chasing and gets taken down most days. p95 would be beaten a couple of
+ * times a month, which is the "unrealistically high" this exists to avoid; the median would not be
+ * worth chasing at all.
+ */
+export const ENDLESS_PACE_SCORE = 13000
+
 /** Endless unlocks once the player has cleared ENDLESS_UNLOCK_LEVEL numbered levels. */
 export function endlessUnlocked(save: SaveData): boolean {
   return save.unlocked > ENDLESS_UNLOCK_LEVEL
@@ -305,37 +330,41 @@ function pruneDays(save: SaveData): void {
  * the week's total only ever grows. Returns the day's (new) best, whether it beat it, and the
  * resulting weekly standing.
  *
- * `ranked: false` makes the call READ-ONLY: it reports where the day and the week already stand and
- * writes nothing at all — not the day's best, not `save.best`, and so (since core/cloud.ts mirrors
- * the leaderboard row straight off `endlessDays` after each save push) not the race either. This is
- * the ONE enforcement point for the endless cheat code, and the reason it can exist on a shared
- * board at all; core/cheat.ts carries the full argument, but the short version is that a cheat run
- * is not on the same board as everyone else — planting and blasting consumes the day-seeded RNG,
- * so its refills diverge from the first fire onward and there is nothing left to compare.
+ * `paced: true` marks a run that fired the endless cheat code (core/cheat.ts). Such a run DOES reach
+ * the race — a top line nobody can see is worth nothing to the players it is meant to draw back —
+ * but only at `min(score, ENDLESS_PACE_SCORE)`, so the cheat can set the pace and can never run away
+ * with the board. This clamp is the ONE place that happens: everything downstream, including the
+ * leaderboard mirror core/cloud.ts fires off `endlessDays` after each save push, reads the clamped
+ * number and has no idea a cheat was involved. Don't route a cheat score around it.
+ *
+ * The clamp cuts BOTH ways by design. It cannot lower a day whose honest best already stands above
+ * it (that best simply wins the `isRecord` comparison, as any lower score would), and a cheat run
+ * under the ceiling posts exactly what it scored — the pace score is a ceiling, never a floor, so it
+ * can never invent a number the run did not reach.
+ *
+ * Returns `posted` alongside the rest: what this run actually put on the board, which the result
+ * card needs so it can say so rather than showing a six-figure score above a best that did not move.
  */
 export function recordEndless(
   score: number,
   day: string,
-  opts: { ranked?: boolean } = {}
-): { best: number; isRecord: boolean; week: WeekStanding } {
+  opts: { paced?: boolean } = {}
+): { best: number; isRecord: boolean; week: WeekStanding; posted: number } {
   const save = loadSave()
-  if (opts.ranked === false) {
-    return {
-      best: endlessBestForDay(save, day),
-      isRecord: false,
-      week: endlessWeekStanding(save, weekKeyOfDay(day) ?? weekKey()),
-    }
-  }
+  const posted = opts.paced ? Math.min(score, ENDLESS_PACE_SCORE) : score
   const prev = endlessBestForDay(save, day)
-  const isRecord = score > prev
-  if (isRecord) save.endlessDays[day] = Math.floor(score)
-  // Endless score can still be a personal all-time BEST across the whole game.
-  if (score > save.best) save.best = score
+  const isRecord = posted > prev
+  if (isRecord) save.endlessDays[day] = Math.floor(posted)
+  // Endless score can still be a personal all-time BEST across the whole game — of the POSTED score,
+  // never the raw one: `save.best` is shown on Home and rides cloud sync, so a cheat's raw total
+  // would leak past the clamp into a number the player is invited to read as their own record.
+  if (posted > save.best) save.best = posted
   pruneDays(save)
   persistSave(save)
   return {
     best: endlessBestForDay(save, day),
     isRecord,
     week: endlessWeekStanding(save, weekKeyOfDay(day) ?? weekKey()),
+    posted,
   }
 }
