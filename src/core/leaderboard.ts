@@ -379,10 +379,22 @@ interface WeeklyRow {
 // fought excluded from its own week. Nobody would have been told; the crown would just have gone to
 // the wrong player, and the people who raced Monday to Wednesday would have got nothing for it.
 //
-// So every week up to and including the cutover is settled the OLD way: top score on the shared
-// weekly board, straight out of `endless_scores`, exactly as those players were promised when they
-// set the score. The summed-daily season starts clean at the next week boundary. Daily boards and
-// daily purses are unaffected and run from the switch onward — they take nothing from anyone.
+// The first repair read the cutover week ONLY from `endless_scores`, which fixed that victim and
+// created the mirror of it: from Wednesday to Sunday every daily board a player won added NOTHING to
+// the week on screen. The season readout sat frozen on a board nothing writes to any more, so the
+// game spent five days telling players their daily scores counted toward a total that could not
+// move. Reported from production on 2026-07-31 — the daily board had reset, ten players were on it,
+// and not one of their scores had reached the week.
+//
+// BOTH HALVES COUNT. A transition week's total is the frozen shared-board score PLUS the summed
+// daily bests — everything that player actually earned inside the week, under whichever rules were
+// live when they earned it. Neither cohort loses anything: the Monday-to-Wednesday racers keep the
+// score they set under the promise they set it under, and every daily board from Wednesday on adds
+// to the week exactly as the game says it does. Only the ONE purse is paid, as always.
+//
+// The merge is client-side on purpose. `endless_scores` is frozen (0012 stopped writing it; 0006's
+// guard refuses anything but the current week), so its half cannot change under us, and a view that
+// UNIONs a dead table would outlive the fortnight it is for by years.
 //
 // This is a DATED, SELF-EXPIRING branch. Once the cutover week is in the past it only serves the
 // crown row and any late claim, and it can be deleted outright when `endless_scores` is retired.
@@ -400,77 +412,181 @@ export function isLegacyWeek(week: string): boolean {
   return week <= LEGACY_WEEK_CUTOVER
 }
 
-/** One week's standings off the frozen weekly board — the pre-0012 ranking, unchanged. */
-async function fetchLegacyWeekBoard(week: string, limit: number): Promise<RaceBoard> {
-  const empty: RaceBoard = { key: week, entries: [], myRank: null, myScore: null }
-  try {
-    const c = await client()
-    if (!c) return empty
-    const s = cloudSession()
-    const { data, error } = await c
-      .from('endless_scores')
-      .select('user_id, display_name, score')
-      .eq('week_key', week)
-      .order('score', { ascending: false })
-      .order('scored_at', { ascending: true })
-      .limit(limit)
-    if (error || !data) return empty
-    const rows = data as Array<{ user_id: string; display_name: string; score: number }>
-    const entries: LeaderboardEntry[] = rows.map((r, i) => ({
-      rank: i + 1,
-      name: sanitizeName(r.display_name),
-      score: r.score,
-      you: !!s && r.user_id === s.userId,
-    }))
-    let myRank: number | null = null
-    let myScore: number | null = null
-    const mine = entries.find(e => e.you)
-    if (mine) {
-      myRank = mine.rank
-      myScore = mine.score
-    } else if (s) {
-      const own = await c
-        .from('endless_scores')
-        .select('score')
-        .eq('week_key', week)
-        .eq('user_id', s.userId)
-        .maybeSingle()
-      const score = (own.data as { score: number } | null)?.score
-      if (typeof score === 'number') {
-        myScore = score
-        const { count } = await c
-          .from('endless_scores')
-          .select('user_id', { count: 'exact', head: true })
-          .eq('week_key', week)
-          .gt('score', score)
-        myRank = typeof count === 'number' ? count + 1 : null
-      }
-    }
-    return { key: week, entries, myRank, myScore }
-  } catch {
-    return empty
-  }
+/** A row of the frozen pre-daily weekly board (`public.endless_scores`) — one best run per player. */
+export interface LegacyWeekRow {
+  user_id: string
+  display_name: string
+  score: number
+  scored_at: string
 }
 
-/** The champion of a legacy week — top score, earliest to reach it. */
-async function fetchLegacyWeekChampion(week: string): Promise<Champion | null> {
+/** A row of the summed-daily view (`public.endless_weekly_totals`) — the post-switch half. */
+export interface DailyWeekRow {
+  user_id: string
+  display_name: string
+  total: number
+  days_played: number
+  last_scored_at: string
+}
+
+/** One player's whole transition week: both halves added, ready to rank. */
+export interface TransitionWeekRow {
+  user_id: string
+  display_name: string
+  /** Shared-board score + summed daily bests — everything earned inside the week. */
+  total: number
+  /** Daily boards raced. The shared-board half has no per-day grain, so it contributes none. */
+  days_played: number
+  /** Latest activity across both halves — the final tiebreak. */
+  last_scored_at: string
+}
+
+/** Timestamp → ms, tolerant of a missing or malformed value (treated as the epoch, i.e. earliest). */
+function atMs(ts: string | null | undefined): number {
+  const t = Date.parse(ts ?? '')
+  return Number.isNaN(t) ? 0 : t
+}
+
+/**
+ * Add a transition week's two halves together and rank the result — PURE, so the rule that decides
+ * a 1,000-chip payout is unit-testable without a network.
+ *
+ * Ranking is the season's own: total desc, then turnout, then first-to-get-there. Turnout counts
+ * only the daily half because that is the only half with days in it; a shared-board-only player
+ * therefore sits behind a daily player they are exactly level with, which is the behaviour the whole
+ * format exists to reward.
+ *
+ * The NAME follows the most recent activity, matching `endless_weekly_totals`' own "most recent day"
+ * rule — so a player who renamed after the switch shows their new name here too.
+ *
+ * Non-positive scores are dropped from both halves (the view already filters them; a hand-crafted
+ * zero must not buy a row on the board either).
+ */
+export function mergeTransitionWeek(
+  legacy: readonly LegacyWeekRow[],
+  daily: readonly DailyWeekRow[]
+): TransitionWeekRow[] {
+  const byUser = new Map<string, TransitionWeekRow>()
+
+  const fold = (
+    userId: string,
+    displayName: string,
+    total: number,
+    days: number,
+    at: string
+  ): void => {
+    if (!userId || !Number.isFinite(total) || total <= 0) return
+    const cur = byUser.get(userId)
+    if (!cur) {
+      byUser.set(userId, {
+        user_id: userId,
+        display_name: displayName,
+        total: Math.floor(total),
+        days_played: days,
+        last_scored_at: at,
+      })
+      return
+    }
+    cur.total += Math.floor(total)
+    cur.days_played += days
+    // The newer half owns the name and the tiebreak timestamp.
+    if (atMs(at) > atMs(cur.last_scored_at)) {
+      cur.last_scored_at = at
+      cur.display_name = displayName
+    }
+  }
+
+  for (const r of legacy) fold(r.user_id, r.display_name, r.score, 0, r.scored_at)
+  for (const r of daily) fold(r.user_id, r.display_name, r.total, r.days_played, r.last_scored_at)
+
+  return [...byUser.values()].sort(
+    (a, b) =>
+      b.total - a.total ||
+      b.days_played - a.days_played ||
+      atMs(a.last_scored_at) - atMs(b.last_scored_at)
+  )
+}
+
+/**
+ * How many rows to pull from each half. Ranking a client-side merge means reading the WHOLE week —
+ * a top-N of each half cannot be ranked against each other, and cannot place a player who is outside
+ * both. The real boards are tens of rows and this branch dies at the cutover, so a cap this generous
+ * is a runaway guard, not a limit anyone reaches.
+ */
+const TRANSITION_ROW_CAP = 500
+
+/**
+ * Every player's transition-week standing, already ranked — the ONE source the board, the crown row
+ * and the payout all read, so they cannot disagree about who won.
+ *
+ * Returns null when the read FAILED, empty when the week genuinely has nobody on it. The callers
+ * need that apart: a half-read merge would rank people against scores it never saw, and paying the
+ * 1,000 on it would be worse than paying it a day late.
+ */
+async function fetchTransitionWeekRows(week: string): Promise<TransitionWeekRow[] | null> {
   try {
     const c = await client()
     if (!c) return null
-    const s = cloudSession()
-    const { data, error } = await c
-      .from('endless_scores')
-      .select('user_id, display_name, score')
-      .eq('week_key', week)
-      .order('score', { ascending: false })
-      .order('scored_at', { ascending: true })
-      .limit(1)
-      .maybeSingle()
-    if (error || !data) return null
-    const row = data as { user_id: string; display_name: string; score: number }
-    return { key: week, name: sanitizeName(row.display_name), score: row.score, you: !!s && row.user_id === s.userId }
+    const [legacy, daily] = await Promise.all([
+      c
+        .from('endless_scores')
+        .select('user_id, display_name, score, scored_at')
+        .eq('week_key', week)
+        .limit(TRANSITION_ROW_CAP),
+      c
+        .from('endless_weekly_totals')
+        .select('user_id, display_name, total, days_played, last_scored_at')
+        .eq('week_key', week)
+        .limit(TRANSITION_ROW_CAP),
+    ])
+    if (legacy.error || daily.error) return null
+    return mergeTransitionWeek(
+      (legacy.data ?? []) as LegacyWeekRow[],
+      (daily.data ?? []) as DailyWeekRow[]
+    )
   } catch {
     return null
+  }
+}
+
+/**
+ * A transition week's standings. No `valueText`: "· 5d" would describe the daily half only, and
+ * putting it beside a total that also contains a shared-board score would be a smaller lie than the
+ * one this whole branch exists to stop, but a lie all the same. The bare total is the honest readout.
+ */
+async function fetchTransitionWeekBoard(week: string, limit: number): Promise<RaceBoard> {
+  const empty: RaceBoard = { key: week, entries: [], myRank: null, myScore: null }
+  const rows = await fetchTransitionWeekRows(week)
+  if (!rows) return empty
+  const s = cloudSession()
+  const entries: LeaderboardEntry[] = rows.slice(0, limit).map((r, i) => ({
+    rank: i + 1,
+    name: sanitizeName(r.display_name),
+    score: r.total,
+    you: !!s && r.user_id === s.userId,
+  }))
+  // Own rank comes from the FULL merged list, not the page above: the merge is client-side, so the
+  // count-greater-than query the other boards lean on has nothing server-side to count against.
+  const mine = s ? rows.findIndex(r => r.user_id === s.userId) : -1
+  return {
+    key: week,
+    entries,
+    myRank: mine >= 0 ? mine + 1 : null,
+    myScore: mine >= 0 ? rows[mine].total : null,
+  }
+}
+
+/** The champion of a transition week — the top merged total, ranked exactly as the board ranks. */
+async function fetchTransitionWeekChampion(week: string): Promise<Champion | null> {
+  const rows = await fetchTransitionWeekRows(week)
+  const top = rows?.[0]
+  if (!top) return null
+  const s = cloudSession()
+  return {
+    key: week,
+    name: sanitizeName(top.display_name),
+    score: top.total,
+    you: !!s && top.user_id === s.userId,
   }
 }
 
@@ -488,7 +604,7 @@ async function fetchLegacyWeekChampion(week: string): Promise<Champion | null> {
  */
 export async function fetchWeeklyBoard(limit = 25, now = new Date()): Promise<RaceBoard> {
   const week = weekKey(now)
-  if (isLegacyWeek(week)) return fetchLegacyWeekBoard(week, limit)
+  if (isLegacyWeek(week)) return fetchTransitionWeekBoard(week, limit)
   const empty: RaceBoard = { key: week, entries: [], myRank: null, myScore: null }
   try {
     const c = await client()
@@ -771,7 +887,7 @@ export async function fetchDailyChampion(day: string = previousDayKey()): Promis
  * disagree about who won. Null when dormant / empty / offline; never throws.
  */
 export async function fetchWeeklyChampion(week: string = previousWeekKey()): Promise<Champion | null> {
-  if (isLegacyWeek(week)) return fetchLegacyWeekChampion(week)
+  if (isLegacyWeek(week)) return fetchTransitionWeekChampion(week)
   try {
     const c = await client()
     if (!c) return null
@@ -907,10 +1023,10 @@ export async function checkWeeklyPrize(
     if (!c) return null
     const s = cloudSession()
     if (!s) return null
-    // The transition weeks pay out on the board they were actually raced on. Without this the crown
-    // for the week the switch landed in goes to whoever won the days AFTER it, and the players who
-    // spent that week battling the old shared board are simply skipped.
-    if (isLegacyWeek(week)) return checkLegacyWeekPrize(week, s.userId, c)
+    // A transition week pays on BOTH boards it was raced on, added — the crown cannot skip the
+    // players who spent Monday to Wednesday on the shared board, nor the ones who won the daily
+    // boards after the switch. Ranked by the same merge the board and the crown row read.
+    if (isLegacyWeek(week)) return checkTransitionWeekPrize(week, s.userId)
     const own = await c
       .from('endless_weekly_totals')
       .select('total, days_played')
@@ -946,37 +1062,21 @@ export async function checkWeeklyPrize(
 }
 
 /**
- * The legacy weekly payout: competition rank on the shared weekly board, ties to whoever reached the
- * score FIRST — byte-for-byte the rule those players were racing under before the format changed.
- * Takes the already-resolved client + user id so the caller's dormancy checks are not repeated.
+ * The transition-week payout: rank straight off the merged standings, so the chips can never go to
+ * someone the board did not show winning. Null when the read failed (retried on the next open), when
+ * the player raced neither half, or when their rank is out of the money.
+ *
+ * No separate tiebreak pass is needed — `mergeTransitionWeek` has already broken ties by turnout and
+ * then by who got there first, so position in the list IS the rank.
  */
-async function checkLegacyWeekPrize(
-  week: string,
-  userId: string,
-  c: SupabaseClient
-): Promise<RacePrizeWin | null> {
-  const own = await c
-    .from('endless_scores')
-    .select('score')
-    .eq('week_key', week)
-    .eq('user_id', userId)
-    .maybeSingle()
-  const score = (own.data as { score: number } | null)?.score
-  if (typeof score !== 'number' || score <= 0) return null
-  const { count } = await c
-    .from('endless_scores')
-    .select('user_id', { count: 'exact', head: true })
-    .eq('week_key', week)
-    .gt('score', score)
-  if (typeof count !== 'number') return null
-  let rank = count + 1
-  if (rank === 1) {
-    const champ = await fetchLegacyWeekChampion(week)
-    if (champ && !champ.you) rank = 2
-  }
-  const tier = prizeForRank(rank, PRIZE_TIERS)
+async function checkTransitionWeekPrize(week: string, userId: string): Promise<RacePrizeWin | null> {
+  const rows = await fetchTransitionWeekRows(week)
+  if (!rows) return null
+  const idx = rows.findIndex(r => r.user_id === userId)
+  if (idx === -1) return null
+  const tier = prizeForRank(idx + 1, PRIZE_TIERS)
   if (!tier) return null
-  return { scope: 'week', key: week, rank, score, tier }
+  return { scope: 'week', key: week, rank: idx + 1, score: rows[idx].total, tier }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -166,11 +166,12 @@ const BOARDS: Record<BoardMode, BoardSpec> = {
     // Says the ranking rule out loud, because it is not guessable from the numbers: this board is
     // every day's best ADDED UP, so a player looking at a total bigger than any run they have ever
     // had should be able to see why without asking.
-    // The transition week is still settled on the old shared weekly board (core/leaderboard.ts
-    // LEGACY_WEEK_CUTOVER), so it must NOT claim to be a sum of daily bests — that would be telling
-    // the players mid-race that their week works in a way it doesn't. Self-expires with the cutover.
+    // The transition week counts BOTH boards it was raced on — the frozen shared board plus the
+    // daily bests since the switch (core/leaderboard.ts LEGACY_WEEK_CUTOVER). It must say so: naming
+    // only one half would tell players mid-race that half their week doesn't count, which is the
+    // exact confusion this branch exists to end. Self-expires with the cutover.
     subtitle: b =>
-      `${b.key}  ·  ${isLegacyWeek(b.key) ? 'the shared weekly board' : 'daily bests added up'}  ·  ${formatRaceRemaining(weekEndsAt().getTime() - Date.now())} left`,
+      `${b.key}  ·  ${isLegacyWeek(b.key) ? 'shared board + daily bests' : 'daily bests added up'}  ·  ${formatRaceRemaining(weekEndsAt().getTime() - Date.now())} left`,
     crownLabel: 'last week’s champion',
     loading: 'adding up this week’s boards…',
     signedOut: 'sign in to join the weekly race',

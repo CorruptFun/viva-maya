@@ -7,10 +7,12 @@ import {
   getHandle,
   isLegacyWeek,
   levelStanding,
+  mergeTransitionWeek,
   preferredName,
   sanitizeName,
   setHandle,
 } from './leaderboard'
+import type { DailyWeekRow, LegacyWeekRow } from './leaderboard'
 import { coerceSave, loadSave, type SaveData } from './save'
 
 /**
@@ -273,5 +275,111 @@ describe('isLegacyWeek — which weeks the old board still settles', () => {
 
   it('is set to the week the switch actually landed in', () => {
     expect(LEGACY_WEEK_CUTOVER).toBe('2026-W31')
+  })
+})
+
+/**
+ * THE TRANSITION MERGE. A cutover week was raced under two rule sets, and both have to count: the
+ * shared board its players were promised Monday to Wednesday, and every daily board since. Reading
+ * only the shared half froze the week for five days while ten players raced it (production,
+ * 2026-07-31); reading only the daily half would have thrown away the race that came before it.
+ *
+ * This is the function that decides who gets 1,000 chips, so every rule in it is pinned.
+ */
+describe('mergeTransitionWeek — both halves of the cutover week count', () => {
+  const legacy = (user: string, score: number, at: string): LegacyWeekRow => ({
+    user_id: user,
+    display_name: user,
+    score,
+    scored_at: at,
+  })
+  const daily = (user: string, total: number, days: number, at: string): DailyWeekRow => ({
+    user_id: user,
+    display_name: user,
+    total,
+    days_played: days,
+    last_scored_at: at,
+  })
+
+  it('adds a player’s shared-board score to their summed daily bests', () => {
+    const [row] = mergeTransitionWeek(
+      [legacy('loading', 12_000, '2026-07-28T18:00:00Z')],
+      [daily('loading', 8_204, 2, '2026-07-30T23:00:00Z')]
+    )
+    expect(row.total).toBe(20_204)
+    expect(row.days_played).toBe(2)
+  })
+
+  it('keeps a player who raced only ONE half — neither cohort is dropped', () => {
+    const rows = mergeTransitionWeek(
+      [legacy('mondayracer', 15_000, '2026-07-28T18:00:00Z')],
+      [daily('newcomer', 9_000, 3, '2026-07-30T23:00:00Z')]
+    )
+    expect(rows.map(r => r.user_id)).toEqual(['mondayracer', 'newcomer'])
+    expect(rows[0].total).toBe(15_000)
+    expect(rows[1].days_played).toBe(3)
+  })
+
+  it('ranks on the COMBINED total, not on either half alone', () => {
+    // Alone, the daily half would crown `sprinter`; the shared half would crown `grinder`.
+    const rows = mergeTransitionWeek(
+      [legacy('grinder', 14_000, '2026-07-28T12:00:00Z')],
+      [daily('sprinter', 15_000, 2, '2026-07-30T12:00:00Z'), daily('grinder', 6_000, 2, '2026-07-30T13:00:00Z')]
+    )
+    expect(rows.map(r => r.user_id)).toEqual(['grinder', 'sprinter'])
+    expect(rows[0].total).toBe(20_000)
+  })
+
+  it('breaks a level total on turnout, then on who got there first', () => {
+    const tied = mergeTransitionWeek(
+      [],
+      [daily('spread', 10_000, 4, '2026-07-30T23:00:00Z'), daily('burst', 10_000, 2, '2026-07-29T09:00:00Z')]
+    )
+    expect(tied.map(r => r.user_id)).toEqual(['spread', 'burst'])
+
+    const level = mergeTransitionWeek(
+      [],
+      [daily('later', 10_000, 3, '2026-07-30T23:00:00Z'), daily('earlier', 10_000, 3, '2026-07-29T09:00:00Z')]
+    )
+    expect(level.map(r => r.user_id)).toEqual(['earlier', 'later'])
+  })
+
+  it('takes the name from the most recent half, so a rename after the switch shows', () => {
+    const [row] = mergeTransitionWeek(
+      [{ user_id: 'u1', display_name: 'old name', score: 5_000, scored_at: '2026-07-28T18:00:00Z' }],
+      [
+        {
+          user_id: 'u1',
+          display_name: 'new name',
+          total: 1_000,
+          days_played: 1,
+          last_scored_at: '2026-07-30T23:00:00Z',
+        },
+      ]
+    )
+    expect(row.display_name).toBe('new name')
+    expect(row.last_scored_at).toBe('2026-07-30T23:00:00Z')
+  })
+
+  it('drops non-positive and malformed rows rather than seating them on the board', () => {
+    const rows = mergeTransitionWeek(
+      [legacy('zero', 0, '2026-07-28T18:00:00Z')],
+      [daily('nan', Number.NaN, 1, '2026-07-30T23:00:00Z'), daily('real', 500, 1, '2026-07-30T23:00:00Z')]
+    )
+    expect(rows.map(r => r.user_id)).toEqual(['real'])
+  })
+
+  it('survives an unparseable timestamp instead of ranking on NaN', () => {
+    const rows = mergeTransitionWeek(
+      [],
+      [daily('a', 100, 1, 'not-a-date'), daily('b', 100, 1, '2026-07-30T23:00:00Z')]
+    )
+    expect(rows).toHaveLength(2)
+    // The junk timestamp sorts as the epoch — earliest — rather than poisoning the comparison.
+    expect(rows[0].user_id).toBe('a')
+  })
+
+  it('is empty when the week was raced by nobody', () => {
+    expect(mergeTransitionWeek([], [])).toEqual([])
   })
 })
