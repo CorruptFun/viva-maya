@@ -136,10 +136,14 @@ describe('the deck rig', () => {
     }
   })
 
-  it('pays the ROLLED face for EVERY possible pick order — the rig is order-independent', () => {
+  it('pays the ROLLED face for EVERY possible pick order — the rig is order-independent', { timeout: 30_000 }, () => {
     // The strongest statement of correctness available: enumerate a large sample of pick orders and
     // assert the face that reaches three is always the one rolled up front. If the deck construction
     // ever regressed, some order would resolve to a decoy and this would catch it.
+    //
+    // Every face x 60 decks x 40 orders is ~1s alone but 3-4s alongside the rest of the suite, close
+    // enough to Vitest's 5s default to go red on CPU contention rather than on merit. The budget buys
+    // the coverage room to stay exhaustive; thinning the sweep would cost real correctness instead.
     for (const winner of IDS) {
       for (let seed = 0; seed < 60; seed++) {
         const deck = buildDeck(mulberry32(seed), winner)

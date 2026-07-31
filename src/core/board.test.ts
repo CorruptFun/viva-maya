@@ -229,7 +229,11 @@ function resolve(b: Board, first: ClearWave, tag: string, bad: string[]): void {
 }
 
 describe('every activation path keeps the board and the view in step', () => {
-  it('survives a fuzz over swipes, activations, cascades and the purchased bomb', () => {
+  /** 120 seeds x every legal swap on the board: ~1s on a quiet machine, but 4-5s once `npm test`
+   *  saturates the cores, because wall clock here scales with whatever else is running. That put it
+   *  under Vitest's 5s default only sometimes — a red that says "the machine was busy", not "the
+   *  board broke". Same reasoning as the budgets in `feasibility.test.ts` / `plinko.rate.test.ts`. */
+  it('survives a fuzz over swipes, activations, cascades and the purchased bomb', { timeout: 30_000 }, () => {
     const bad: string[] = []
     for (let seed = 1; seed <= 120; seed++) {
       for (let r = 0; r < 8; r++) {
