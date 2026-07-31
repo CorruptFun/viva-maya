@@ -6592,6 +6592,24 @@ export class GameScene extends Phaser.Scene {
           } else if (result.spins > 0) {
             this.freeSpinTicket(result.spins) // reuse the existing golden-ticket beat
           }
+          // The other half of the funnel, and the ONLY field check on the slot table. `plinko_played`
+          // was in the vocabulary and charted on the dashboard from the start but never actually
+          // fired, so "Offered → Dropped" read as a permanent 0% — which looks exactly like real
+          // player abandonment. Fired here rather than at roll time, matching DEAL_WON: a drop the
+          // player walks out of is genuinely not a drop they played.
+          //
+          // `endless` is the load-bearing prop. The two modes now roll DIFFERENT weight tables (6% vs
+          // 8% on the ×10 edges), so a slot histogram pooled across both measures neither. The admin
+          // RPC does not split on it yet — but props are jsonb and cost nothing to carry, and this is
+          // the half that cannot be reconstructed later. `mult` is what makes the histogram readable
+          // without a copy of the table; `payout` is points, which the ticket wells pay as 0.
+          track(EVENTS.PLINKO_PLAYED, {
+            slot: result.slot,
+            mult: result.mult,
+            payout: result.points,
+            spins: result.spins,
+            endless: this.endless,
+          })
           this.handBackBoard()
         },
       })

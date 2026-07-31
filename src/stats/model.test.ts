@@ -62,6 +62,65 @@ describe('funnel definitions', () => {
     }
   })
 
+  /**
+   * THE PIN THAT ACTUALLY BITES — and the reason the one above is not enough.
+   *
+   * The test above proves a funnel step is a REAL name. It cannot prove anything SENDS that name,
+   * because both sides of the comparison are the same TypeScript constant: a step referencing a
+   * perfectly canonical event that no code path ever fires passes it easily. That is not
+   * hypothetical. `plinko_played` was declared, charted, aggregated by the admin RPC — and never
+   * fired by anything, for the whole life of the dashboard. "Offered → Dropped" rendered a permanent
+   * 0%, which is the worst failure mode available here: it does not look broken, it looks like every
+   * player abandoning the drop.
+   *
+   * So this one reads the OTHER SIDE'S SOURCE TEXT — every non-test .ts under src/ — and asks
+   * whether a `track(...)` call mentioning the constant exists at all. Source text, not imports,
+   * because the senders are spread across scenes, views and lazily-imported core modules, and two of
+   * them fire through `import('./analytics').then(a => a.track(a.EVENTS.X))`, which no amount of
+   * static importing from this file would reveal.
+   *
+   * Read via Vite's `?raw` glob rather than node:fs deliberately — this project compiles with
+   * `types: ["vite/client"]` and no @types/node, so a `node:fs` import here type-checks fine under
+   * vitest and then fails `npm run build`, which runs tsc over the same file.
+   */
+  it('every funnel step is actually FIRED somewhere in the app, not merely declared', () => {
+    /**
+     * Events charted but genuinely unsent as of 2026-07-31. Listed, not silently tolerated: each is
+     * a real dashboard funnel reading 0% for want of a `track()` call, and the point of naming them
+     * is that this test fails the moment a SIXTH one appears. Delete entries as they get wired.
+     */
+    const KNOWN_UNSENT = new Set<string>([
+      EVENTS.SIGNIN_SHOWN, // the sign-in funnel's own denominator
+      EVENTS.INSTALL_SHOWN, // whole PWA-install funnel: both steps
+      EVENTS.INSTALL_ACCEPTED,
+      EVENTS.REFERRAL_CAPTURED, // invite.ts fires SHARE_CLICKED, referrals.ts REFERRAL_REGISTERED
+    ])
+
+    const modules = import.meta.glob('/src/**/*.ts', { query: '?raw', import: 'default', eager: true })
+    const source = Object.entries(modules as Record<string, string>)
+      .filter(([p]) => !p.endsWith('.test.ts'))
+      .filter(([p]) => !p.startsWith('/src/stats/')) // the dashboard READS names; it never sends them
+      .map(([, text]) => text)
+      .join('\n')
+
+    // `a.track(a.EVENTS.X)` and `track(EVENTS.X, {...})` both have to count.
+    const fired = new Set<string>()
+    for (const m of source.matchAll(/track\(\s*(?:\w+\.)?EVENTS\.([A-Z0-9_]+)/g)) {
+      const value = (EVENTS as Record<string, string>)[m[1]]
+      if (value) fired.add(value)
+    }
+    expect(fired.size, 'no track() calls found at all — the scan regex has drifted').toBeGreaterThan(10)
+
+    const names = FUNNEL_DEFS.flatMap(d => [...d.steps, ...(d.aside ?? [])].map(s => s.name))
+    const unsent = [...new Set(names)].filter(n => !fired.has(n) && !KNOWN_UNSENT.has(n))
+    expect(unsent, 'charted on the dashboard but nothing fires it — it will read as a real 0%').toEqual([])
+
+    // And the list stays honest in the other direction: an entry that HAS been wired must be removed,
+    // or it goes on excusing a step that no longer needs excusing.
+    const staleExcuses = [...KNOWN_UNSENT].filter(n => fired.has(n))
+    expect(staleExcuses, 'these are sent now — delete them from KNOWN_UNSENT').toEqual([])
+  })
+
   it('builds ordered steps with conversion against first and previous', () => {
     const funnels = buildFunnels([
       { name: EVENTS.SIGNIN_SHOWN, events: 40, devices: 10 },

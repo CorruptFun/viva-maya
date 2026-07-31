@@ -93,7 +93,19 @@ export const EVENTS = {
   REFERRAL_CAPTURED: 'referral_captured',
   REFERRAL_REGISTERED: 'referral_registered',
 
-  /** {cascade} / {slot, payout} — the 2026-07-28 endless retune has no field data behind it yet. */
+  /**
+   * {cascade, endless, stake} on offer → {slot, mult, payout, spins, endless} on claim.
+   *
+   * `plinko_played` is the only field check on the slot table, and the 2026-07-31 ×10 retune (edges
+   * 4% → 6% numbered / 8% endless) is the first thing it has to answer for. `endless` rides on BOTH
+   * halves because the two modes roll different weight tables now — a slot histogram pooled across
+   * them describes neither board.
+   *
+   * ⚠️ It was declared here and charted in the dashboard funnel from the start, but nothing fired it
+   * until 2026-07-31, so "Offered → Dropped" sat at a permanent 0% that was indistinguishable from
+   * real abandonment. `model.test.ts` now pins every funnel step against the source text of its
+   * senders, which is the check that would have caught it.
+   */
   PLINKO_OFFERED: 'plinko_offered',
   PLINKO_PLAYED: 'plinko_played',
 

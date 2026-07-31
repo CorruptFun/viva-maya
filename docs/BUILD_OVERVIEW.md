@@ -186,6 +186,14 @@ else. The table is keyed off **`endless`, not `allowTickets`**: endless always s
 so does a full spin bank on a numbered level, and collapsing the two flags would silently hand that
 player the endless odds (pinned by its own test).
 
+**Every number above is simulated.** The field check is `plinko_played` — which was declared and
+charted but fired by nothing until 2026-07-31; see the "a declared event is not a sent event" warning
+in `ANALYTICS_AND_PUSH.md`. It now sends `{slot, mult, payout, spins, endless}` on claim, and the
+admin RPC already aggregates a slot histogram from it. **`endless` is carried but not yet read**: the
+RPC groups by `slot` alone, so today's histogram pools both boards and therefore measures neither
+tuning on its own. Splitting it needs a migration (the prop is jsonb, so the data is accumulating in
+the meantime and the split can be applied retroactively).
+
 **Frequency is the design, and it is PER-MODE.** Three gates keep it a treat on a numbered level: the
 x5 bar, a 1-in-2 roll, and one drop per level. x5 (not the x4 MEGA bar) because it was **measured** —
 `plinko.rate.test.ts` plays the real board core headlessly across the difficulty curve and found x4

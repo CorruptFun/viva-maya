@@ -37,6 +37,32 @@ history. Read it from the SQL editor (service role bypasses RLS); never add a SE
 anything about the device or person. `user_id` is set only while signed in and RLS pins it to
 `auth.uid()`, so it cannot be forged. Disclosed in `public/privacy.html`, with a working opt-out.
 
+### ⚠️ A declared event is not a sent event
+
+A name can be in `EVENTS`, drawn as a funnel step in `src/stats/model.ts`, and aggregated by the
+admin RPC — and still be fired by **nothing**. The funnel then renders a permanent **0%**, which is
+the worst available failure here: it does not look broken, it looks like real player abandonment.
+`plinko_played` sat in exactly that state for the whole life of the dashboard (declared, charted,
+and given a whole slot histogram in the RPC), and was only wired up on 2026-07-31.
+
+The old vocabulary test could not catch it — it compared `FUNNEL_DEFS` against `EVENTS`, both
+TypeScript, so a step naming a perfectly canonical event that nothing sends passed easily. The pin
+that bites is in `src/stats/model.test.ts` ("every funnel step is actually FIRED somewhere"): it
+globs the **source text** of every non-test `.ts` under `src/` and looks for a real `track()` call.
+Source text, because senders are spread across scenes, views and lazily-imported core modules — two
+of them fire through `import('./analytics').then(a => a.track(a.EVENTS.X))`, which no static import
+would reveal.
+
+It carries a `KNOWN_UNSENT` list, and that list is the current debt — **still unsent as of
+2026-07-31**: `signin_shown`, `install_shown`, `install_accepted`, `referral_captured`. So the
+sign-in funnel is missing its own denominator, the whole PWA-install funnel is dead, and invites
+show only `share_clicked` → `referral_registered`. Read those four as "no data", never as 0%. The
+test fails if a fifth appears, and also fails if a listed one gets wired and is left on the list.
+
+Reading the events it DOES have is a Vite `?raw` glob, not `node:fs`: this project compiles with
+`types: ["vite/client"]` and no `@types/node`, so a `node:fs` import type-checks under vitest and
+then breaks `npm run build`.
+
 **Reading it — the dashboard.** The everyday read path is
 <https://corruptfun.github.io/viva-maya/stats.html> — daily actives, the level funnel with a wall
 detector, every conversion funnel (sign-in, install, push, continue, invites, update toast, Deal,
