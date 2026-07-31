@@ -304,12 +304,28 @@ function pruneDays(save: SaveData): void {
  * it was actually played on). Keeps the max for that day and leaves every other day untouched, so
  * the week's total only ever grows. Returns the day's (new) best, whether it beat it, and the
  * resulting weekly standing.
+ *
+ * `ranked: false` makes the call READ-ONLY: it reports where the day and the week already stand and
+ * writes nothing at all — not the day's best, not `save.best`, and so (since core/cloud.ts mirrors
+ * the leaderboard row straight off `endlessDays` after each save push) not the race either. This is
+ * the ONE enforcement point for the endless cheat code, and the reason it can exist on a shared
+ * board at all; core/cheat.ts carries the full argument, but the short version is that a cheat run
+ * is not on the same board as everyone else — planting and blasting consumes the day-seeded RNG,
+ * so its refills diverge from the first fire onward and there is nothing left to compare.
  */
 export function recordEndless(
   score: number,
-  day: string
+  day: string,
+  opts: { ranked?: boolean } = {}
 ): { best: number; isRecord: boolean; week: WeekStanding } {
   const save = loadSave()
+  if (opts.ranked === false) {
+    return {
+      best: endlessBestForDay(save, day),
+      isRecord: false,
+      week: endlessWeekStanding(save, weekKeyOfDay(day) ?? weekKey()),
+    }
+  }
   const prev = endlessBestForDay(save, day)
   const isRecord = score > prev
   if (isRecord) save.endlessDays[day] = Math.floor(score)

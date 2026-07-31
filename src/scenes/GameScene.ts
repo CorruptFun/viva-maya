@@ -21,6 +21,7 @@ import {
   SWAP_MS,
 } from '../config'
 import { Board } from '../core/board'
+import { CheatSwipeCode, swipeDir } from '../core/cheat'
 import { awardFreeSpinsFor, todayKey } from '../core/daily'
 import { DAYS_PER_WEEK, ENDLESS_MOVES, dayKey, endlessBestForDay, endlessRngForDay, recordEndless } from '../core/endless'
 import type { WeekStanding } from '../core/endless'
@@ -141,6 +142,28 @@ const SWEEP_FLIES = 22
 const SWEEP_STAGGER_MS = 150
 const SWEEP_ARC_MS = 250
 const SWEEP_FADE_MS = 360
+
+/**
+ * Top edge (design-box y) of the endless cheat strip — the hidden swipe surface the mega win is
+ * entered on. See core/cheat.ts for the code itself and why a run that fires it is unranked.
+ *
+ * Everything from here down is dead space in endless, and only in endless: the numbered levels
+ * spend it on the jackpot meter (y 1086) and the HELPERS shelf (1136–1240), while the race — a
+ * boost-free fairness board — builds neither. The one thing endless does draw below the board is
+ * the standing brief at y 988, so the strip starts clear of it. It has no bottom edge: a tall
+ * phone's reclaimed height pools at the bottom (config.ts contentOffsetY), and that extra room is
+ * strip too, which is why the hit test is a bare `y >=` rather than a fixed rectangle.
+ */
+const CHEAT_ZONE_TOP = 1012
+
+/**
+ * What the mega win multiplies the blast's points by. The cheat pays through the SAME chokepoint as
+ * every other score in the game (`addScore`'s `scoreMult`) rather than adding a flat lump: the
+ * cascade the blast sets off is genuinely worth ~1–2k, and ×12 turns that into the five-figure
+ * eruption "MEGA WIN" promises, sized by how well the blast actually landed instead of by a magic
+ * number. Composes with any multiplier already running (endless has none today).
+ */
+const MEGA_WIN_MULT = 12
 
 export class GameScene extends Phaser.Scene {
   private level = 1
@@ -356,6 +379,19 @@ export class GameScene extends Phaser.Scene {
   private endless = false
   private endlessBest = 0
   private endlessDayKey = ''
+
+  // --- The endless cheat strip (core/cheat.ts) — dead space under the board that reads swipes ---
+  /** Rolling matcher for the secret pattern; fed one swipe at a time, fires the mega win on a hit. */
+  private cheatCode = new CheatSwipeCode()
+  /** Where the live strip gesture started (world space), or null when no finger is on the strip. */
+  private cheatFrom: { x: number; y: number } | null = null
+  /** One swipe per touch: set once this gesture has been read, so a long drag can't feed the code twice. */
+  private cheatConsumed = false
+  /** Mega wins fired this run. Non-zero makes the run UNRANKED — the single fairness gate. */
+  private cheatFires = 0
+
+  /** The live over-board banner (boosts / MEGA WIN), so a second one replaces rather than stacks. */
+  private boardBanner?: Phaser.GameObjects.Container
   /** A move was consumed this level — so a mid-level quit costs a life (numbered levels only). */
   private moveMade = false
   private apSched = 0
@@ -454,6 +490,13 @@ export class GameScene extends Phaser.Scene {
     this.twinkleTween = null
     this.nextTwinkleAt = 0
     this.dragFrom = null
+    // Cheat strip — a restart re-runs create() but NOT the field initializers, so a half-entered
+    // code (and the unranked verdict a previous run earned) must never carry into a fresh board.
+    this.cheatCode.reset()
+    this.cheatFrom = null
+    this.cheatConsumed = false
+    this.cheatFires = 0
+    this.boardBanner = undefined // its GameObject died with the previous scene
     // §G1 — a swap booked during the LAST level's final cascade must never fire into this one.
     this.bookedSwap = null
     this.bufferFrom = null
@@ -983,17 +1026,33 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  /**
-   * Level-start banner announcing the daily-spin boosts. A self-sizing gold pill
-   * that pops in over the top of the board, holds, then fades up — sits below the
-   * HUD so it never collides with the moves/objective chips (the old flat toast at
-   * BOARD_Y-44 overlapped that row). Scales down if the label runs wider than the board.
-   */
+  /** Level-start banner announcing the daily-spin boosts. */
   private showBoostBanner(boosts: BoostType[]): void {
+    this.showBoardBanner(`🎁  ${boosts.map(b => this.boostLabel(b)).join('   ·   ')}`)
+  }
+
+  /**
+   * A self-sizing gold pill that pops in over the top of the board, holds, then fades up — sits
+   * below the HUD so it never collides with the moves/objective chips (the old flat toast at
+   * BOARD_Y-44 overlapped that row). Scales down if the label runs wider than the board.
+   *
+   * Shared by the boost announcement and the cheat strip's MEGA WIN: the two are the same beat — a
+   * thing just happened TO this board, before you touched it — and should read as one. Only one is
+   * ever up, so a second banner replaces the first rather than stacking on it (two mega wins in
+   * quick succession being the case that can actually reach this).
+   */
+  private showBoardBanner(label: string): void {
     const T = getTheme()
+    // Tweens first: Phaser 3.90 does not sweep tweens whose target has been destroyed, so the
+    // outgoing banner's pending pop/fade pair has to be killed before the object goes.
+    if (this.boardBanner) {
+      this.tweens.killTweensOf(this.boardBanner)
+      this.boardBanner.destroy()
+    }
     const banner = this.add.container(DESIGN_W / 2, BOARD_Y + 72).setDepth(31)
+    this.boardBanner = banner
     const text = this.add
-      .text(0, 0, `🎁  ${boosts.map(b => this.boostLabel(b)).join('   ·   ')}`, {
+      .text(0, 0, label, {
         fontFamily: FONT,
         fontSize: '26px',
         fontStyle: '900',
@@ -1019,7 +1078,10 @@ export class GameScene extends Phaser.Scene {
       y: banner.y - 26,
       delay: 2400,
       duration: 500,
-      onComplete: () => banner.destroy(),
+      onComplete: () => {
+        if (this.boardBanner === banner) this.boardBanner = undefined
+        banner.destroy()
+      },
     })
   }
 
@@ -2800,6 +2862,16 @@ export class GameScene extends Phaser.Scene {
 
   private onDown(p: Phaser.Input.Pointer): void {
     if (this.introOpen) return // §E14 — ignore board taps while the first-run card is up
+    // The cheat strip claims every gesture that starts below the board (endless, settled board
+    // only). Claimed BEFORE the board paths below because it must not read as one: the strip is
+    // outside the grid, so `xyToCell` would return null and the tap would silently clear the
+    // player's selection seven times over while they entered the code.
+    if (this.cheatStripLive(p.worldY)) {
+      this.cheatFrom = { x: p.worldX, y: p.worldY }
+      this.cheatConsumed = false
+      this.dragFrom = null // a strip gesture is never a board drag
+      return
+    }
     // Bomb aim mode: the tap PLACES the purchased blast instead of selecting a piece. A tap off the
     // board (e.g. the Cancel pill below it) resolves to no cell → the bomb stays armed. Armed only from
     // idle, but guard state anyway so a stray tap can never start a resolve on an unsettled board.
@@ -2845,6 +2917,17 @@ export class GameScene extends Phaser.Scene {
   }
 
   private onMove(p: Phaser.Input.Pointer): void {
+    // Cheat strip: one swipe per touch, read the instant it clears the distance bar (so the code
+    // can be entered as a fast rhythm of flicks without waiting for each finger-up).
+    if (this.cheatFrom) {
+      if (this.cheatConsumed) return
+      const dir = swipeDir(p.worldX - this.cheatFrom.x, p.worldY - this.cheatFrom.y)
+      if (!dir) return
+      this.cheatConsumed = true
+      this.cheatTick(this.cheatFrom.x, this.cheatFrom.y)
+      if (this.cheatCode.feed(dir, this.time.now)) this.fireMegaWin()
+      return
+    }
     // §G1 — a swipe completed during a resolve books the swap for the moment the board settles.
     if (this.state === 'resolving' && this.bufferFrom && !this.bufferConsumed) {
       const bdx = p.worldX - this.bufferStartX
@@ -2878,6 +2961,12 @@ export class GameScene extends Phaser.Scene {
 
   private onUp(p: Phaser.Input.Pointer): void {
     void p
+    // Cheat strip: the finger lifts, the gesture is over. Never falls through to the board paths —
+    // a tap on the strip is not a selection, and the code's rhythm must not disturb the board.
+    if (this.cheatFrom) {
+      this.cheatFrom = null
+      return
+    }
     // §G1 — a tap-tap pair completed mid-resolve books its swap too, so the two input idioms stay
     // equivalent. A lone tap during a resolve only arms the pair; it never paints a selection ring
     // (the ring is an idle affordance and would sit over a moving board).
@@ -2957,6 +3046,97 @@ export class GameScene extends Phaser.Scene {
     this.clearSelection()
     void this.trySwap(booked.from, booked.to)
     return true
+  }
+
+  // -------------------------------------------------------- the cheat strip (core/cheat.ts)
+
+  /**
+   * Is `worldY` on a strip that is currently listening? Endless only, below CHEAT_ZONE_TOP, and only
+   * while the board RESTS.
+   *
+   * The idle requirement is doing real work, not just being tidy. It is what keeps the strip from
+   * ever colliding with something else that owns the screen: every modal this scene can raise over
+   * the board — the Plinko drop, the Lucky Deal, the result card, a reshuffle — holds the state at
+   * `resolving` or `ended` for exactly as long as it is up. So one condition retires the whole class
+   * of "the code fired underneath an overlay" bugs, and it means a mega win can never be requested
+   * while a previous one is still cascading.
+   */
+  private cheatStripLive(worldY: number): boolean {
+    return this.endless && this.state === 'idle' && !this.introOpen && worldY >= CHEAT_ZONE_TOP
+  }
+
+  /**
+   * The strip's ONE affordance: a soft gold bloom under the finger, plus the lightest haptic tick.
+   *
+   * Fires on EVERY swipe the strip reads, right or wrong, and says nothing about progress — so it
+   * confirms "that registered" to someone entering the code without hinting to anyone else that
+   * there is a code, which is the whole point of a secret. It is mostly there for the haptic: on a
+   * phone the player's own thumb covers the bloom, and a blind gesture surface with no feedback at
+   * all is indistinguishable from a broken one.
+   */
+  private cheatTick(x: number, y: number): void {
+    this.vibrate(8)
+    const dot = this.add.circle(x, y, 7, getTheme().gold, 0.42).setDepth(30)
+    this.tweens.add({
+      targets: dot,
+      alpha: 0,
+      scale: this.reducedMotion ? 1 : 2.4,
+      duration: 420,
+      ease: 'Cubic.easeOut',
+      onComplete: () => dot.destroy(),
+    })
+  }
+
+  /**
+   * MEGA WIN — the cheat's payoff. Plants a jackpot chip, a row reel, a column reel and a dice bomb
+   * across the middle of the board, then detonates a 5×5 over the lot, so all four chain at once:
+   * two whole symbols leave the board, a full row and a full column blow out, and the crater
+   * cascades on refill. Paid at MEGA_WIN_MULT for the duration.
+   *
+   * Deliberately routed through the ORDINARY machinery — `board.plant`, `board.detonate`, then
+   * `resolveLoop` — rather than a bespoke scoring path. It costs no move (nothing here touches
+   * `movesLeft`, exactly as the purchased bomb doesn't), which is what makes the score runnable: the
+   * budget is untouched, so the code can be entered as often as the player has patience for.
+   *
+   * The `state` handoff mirrors `detonatePurchasedBomb`: lock to `resolving` before anything can
+   * await, and let `resolveLoop` own the way back to idle — including the run's end, if this was
+   * fired on the last move.
+   */
+  private fireMegaWin(): void {
+    if (this.state !== 'idle') return // belt-and-braces; cheatStripLive already checked
+    this.cheatFires++
+    this.log('MEGA WIN', this.cheatFires)
+    this.state = 'resolving'
+    this.clearSelection()
+    this.disarmHint()
+    this.disarmTwinkle()
+
+    const centre: Coord = { row: 4, col: 4 }
+    const plants: { at: Coord; kind: PieceKind }[] = [
+      { at: { row: 3, col: 3 }, kind: 'jackpot' },
+      { at: { row: 3, col: 4 }, kind: 'wildReelRow' },
+      { at: { row: 4, col: 3 }, kind: 'wildReelCol' },
+      { at: centre, kind: 'diceBomb' },
+    ]
+    for (const p of plants) {
+      this.board.plant(p.at, p.kind)
+      this.specialBirth(p.at)
+    }
+
+    this.showBoardBanner('★  MEGA WIN  ★')
+    sfx.powerOn()
+    sfx.jackpotStrike()
+    this.vibrate([50, 40, 110])
+    const pos = this.cellToXY(centre)
+    this.punch({ trauma: 0.45, flash: { x: pos.x, y: pos.y, size: CELL * 2.4 } })
+
+    const base = this.scoreMult
+    this.scoreMult = base * MEGA_WIN_MULT
+    // `resolveLoop` swallows its own errors and always settles, so the multiplier is always handed
+    // back — a leaked ×12 would silently re-price every ordinary match for the rest of the run.
+    void this.resolveLoop(this.board.detonate(centre, 2)).then(() => {
+      this.scoreMult = base
+    })
   }
 
   private select(at: Coord): void {
@@ -5180,13 +5360,16 @@ export class GameScene extends Phaser.Scene {
   }
 
   private finishEndless(): void {
-    this.log('finishEndless')
+    this.log('finishEndless', 'cheats', this.cheatFires)
     this.state = 'ended'
     this.clearBookedSwap() // §G1
     this.stopMovesPulse()
-    const { best, isRecord, week } = recordEndless(this.score, this.endlessDayKey)
-    track(EVENTS.ENDLESS_END, { score: this.score, is_record: isRecord, days: week.days })
-    this.time.delayedCall(450, () => this.showEndlessOverlay(this.score, best, isRecord, week))
+    // A run that fired the cheat strip's mega win is recorded READ-ONLY: it moves neither the day's
+    // best nor the week, so core/cloud.ts never mirrors it to the race. See core/cheat.ts.
+    const ranked = this.cheatFires === 0
+    const { best, isRecord, week } = recordEndless(this.score, this.endlessDayKey, { ranked })
+    track(EVENTS.ENDLESS_END, { score: this.score, is_record: isRecord, days: week.days, cheats: this.cheatFires })
+    this.time.delayedCall(450, () => this.showEndlessOverlay(this.score, best, isRecord, week, ranked))
   }
 
   /**
@@ -6019,7 +6202,13 @@ export class GameScene extends Phaser.Scene {
    * card rather than a screen away — the run that just ended visibly moved a season total, and a
    * player who has raced 2 of 7 days can see what the other five are worth.
    */
-  private showEndlessOverlay(score: number, best: number, isRecord: boolean, week: WeekStanding): void {
+  private showEndlessOverlay(
+    score: number,
+    best: number,
+    isRecord: boolean,
+    week: WeekStanding,
+    ranked = true
+  ): void {
     this.log('showEndlessOverlay', 'score', score, 'best', best, 'isRecord', isRecord, 'week', week.total, week.days)
     this.overlayScrim()
     const cx = DESIGN_W / 2
@@ -6033,7 +6222,12 @@ export class GameScene extends Phaser.Scene {
       // "Time's up" is a finish line, not a failure — a gentle close, no lose-wah.
       sfx.starDing(0)
     }
-    this.overlayCard(cx, cy, 262)
+    // An unranked (cheat) run wedges one extra line into the middle of the card, so the season block
+    // and the buttons below it slide down by `drop`, and the card grows DOWNWARD by the same amount
+    // (centre and half-height both +drop/2 → the top edge does not move). Everything above the note
+    // is untouched, so a ranked card is pixel-for-pixel the card that has always shipped.
+    const drop = ranked ? 0 : 30
+    this.overlayCard(cx, cy + drop / 2, 262 + drop / 2)
 
     this.add
       .text(cx, cy - 190, isRecord ? 'NEW BEST!' : "TIME'S UP", {
@@ -6077,10 +6271,27 @@ export class GameScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setDepth(42)
 
+    // An unranked (cheat) run says so as a CAPTION on the best it just failed to move — close under
+    // that number, at arm's length from the season block below. Without it the card is an unreadable
+    // scoreboard after a mega win (a five-figure score over a best and a week total that both sat
+    // still), and this line is the only place the player is ever told the rule.
+    if (!ranked) {
+      this.add
+        .text(cx, cy + 68, 'CHEAT RUN  ·  NOT RANKED', {
+          fontFamily: FONT,
+          fontSize: '16px',
+          fontStyle: '900',
+          color: css(getTheme().rose),
+        })
+        .setOrigin(0.5)
+        .setDepth(42)
+        .setLetterSpacing(1)
+    }
+
     // The season line. `days of DAYS_PER_WEEK` is the nudge: it names the boards still on the table
     // this week without ever scolding a player for the ones they missed.
     this.add
-      .text(cx, cy + 84, `THIS WEEK  ·  ${week.total.toLocaleString()}`, {
+      .text(cx, cy + 84 + drop, `THIS WEEK  ·  ${week.total.toLocaleString()}`, {
         fontFamily: FONT,
         fontSize: '22px',
         fontStyle: '900',
@@ -6090,7 +6301,7 @@ export class GameScene extends Phaser.Scene {
       .setDepth(42)
       .setLetterSpacing(1)
     this.add
-      .text(cx, cy + 116, `${week.days} of ${DAYS_PER_WEEK} boards raced`, {
+      .text(cx, cy + 116 + drop, `${week.days} of ${DAYS_PER_WEEK} boards raced`, {
         fontFamily: 'Arial, sans-serif',
         fontSize: '19px',
         color: getTheme().inkFaint,
@@ -6098,10 +6309,10 @@ export class GameScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setDepth(42)
 
-    addPillButton(this, cx, cy + 176, 300, 72, 'PLAY AGAIN', ROSE_PILL, () =>
+    addPillButton(this, cx, cy + 176 + drop, 300, 72, 'PLAY AGAIN', ROSE_PILL, () =>
       startScene(this,'game', { endless: true })
     ).setDepth(42)
-    addPillButton(this, cx, cy + 176 + 80, 300, 60, 'LEVELS', GHOST_PILL, () =>
+    addPillButton(this, cx, cy + 176 + 80 + drop, 300, 60, 'LEVELS', GHOST_PILL, () =>
       startScene(this,'levelselect')
     ).setDepth(42)
   }

@@ -18,6 +18,11 @@ Live: <https://corruptfun.github.io/viva-maya/>
   validation to the client for convenience.
 - **`base: './'`** in `vite.config.ts` — relative asset paths, required for
   GitHub Pages. Don't "fix" it to `/`.
+- **Endless has a cheat code**, and it is meant to be there — a secret swipe
+  pattern on the dead strip below the board mints a free "mega win"
+  (`src/core/cheat.ts`). A run that fires it is UNRANKED: `recordEndless` takes
+  `{ ranked: false }` and writes nothing, so the leaderboard never sees it. That
+  one call is the whole fairness gate; don't route a cheat score around it.
 
 ## Run it
 
@@ -29,7 +34,7 @@ npm run build    # tsc && vite build
 ```
 
 Tests are colocated: `src/core/*.test.ts` (board, merge, hazards, endless,
-plinko rate). Run them — the game logic has real coverage.
+plinko rate, cheat). Run them — the game logic has real coverage.
 
 ## Layout
 
@@ -37,7 +42,7 @@ plinko rate). Run them — the game logic has real coverage.
 |---|---|
 | `src/main.ts`, `src/config.ts` | entry + tunables |
 | `src/scenes/` | Phaser scenes — Boot, Home, Game, LevelSelect, Store, DailyBonus |
-| `src/core/` | game logic + its tests — board, merge, levels, endless, daily, hazards, analytics, push |
+| `src/core/` | game logic + its tests — board, merge, levels, endless, daily, hazards, analytics, push, cheat |
 | `src/view3d/stage.ts` | the only three.js usage |
 | `supabase/migrations/` | `0001_saves` → `0020_race_day_key_repair` |
 | `scripts/verify-rls.sh` | RLS audit — run after any migration |
