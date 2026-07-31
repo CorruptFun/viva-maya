@@ -129,12 +129,16 @@ export function openCloudModal(): void {
   let restoreError = ''
   let nameValue = getHandle() ?? ''
   let unsub: (() => void) | null = null
-  // signin_shown is the funnel's DENOMINATOR, so it has to count offers, not renders. render()
-  // re-runs on every cloud-state change and on errors that have nothing to do with auth (a bad
-  // backup code re-renders the whole card), and counting those would inflate the denominator the
-  // same way counting INITIAL_SESSION once inflated signin_completed to 242 against 13 starts —
-  // see the note in core/cloud.ts. One per modal open; a re-open is a genuinely new offer.
-  let signinOfferTracked = false
+  // ONE OFFER, ONE IMPRESSION — for both funnels below, for the same reason. render() rebuilds
+  // every block on each cloud-state change, including changes with nothing to do with the block
+  // being counted (a sign-in resolving, a bad backup code re-rendering the whole card). Tracking
+  // from inside a builder therefore counts one offer several times, which inflates a denominator
+  // and understates the conversion hanging off it — the same shape of error as counting
+  // INITIAL_SESSION once inflating signin_completed to 242 against 13 starts (see core/cloud.ts).
+  //
+  // Per modal open, not per app session: re-opening the modal is a genuinely new offer.
+  let signinOfferTracked = false // signin_shown — the OAuth funnel's denominator
+  let pushOfferTracked = false // push_shown — was previously fired on every render
 
   // ── Overlay (scrim) + card shell ──────────────────────────────────────────────────────────
   const overlay = mk('div', {
@@ -366,7 +370,12 @@ export function openCloudModal(): void {
       paint()
     })
     paint()
-    track(EVENTS.PUSH_SHOWN)
+    // Below the two early returns above on purpose: a player who can't be offered push at all was
+    // not offered anything, and belongs outside the funnel's denominator, not at 0% of it.
+    if (!pushOfferTracked) {
+      pushOfferTracked = true
+      track(EVENTS.PUSH_SHOWN)
+    }
 
     btn.addEventListener('click', () => {
       btn.disabled = true
