@@ -1,7 +1,7 @@
 import Phaser from 'phaser'
 import { sfx } from '../audio/sfx'
 import { DESIGN_W, restScrollY, viewportCenterY, worldH } from '../config'
-import { spinAvailable, todayKey } from '../core/daily'
+import { hasAnySpin, todayKey } from '../core/daily'
 import {
   DAYS_PER_WEEK,
   endlessUnlocked,
@@ -537,17 +537,23 @@ export class HomeScene extends Phaser.Scene {
       menuButtons.push(store)
     }
 
-    // Daily bonus entry: glowing when the spin is ready, quiet when claimed. NEVER deferred — day
-    // one is exactly when the spin pays (it seeds the streak and boosts the first level), so this is
-    // the one first-run entry that can already do something.
+    // LUCKY SLOTS entry — the machine, front and centre by name ("It's cool in the gift store but
+    // we should make a subtle button to play it on the main screen"). One free pull a day, banked
+    // free spins, and the paid bet ladder all live behind this one door (SlotScene). Gold whenever
+    // the machine holds ANY free pull — today's daily spin OR banked free spins (hasAnySpin) — and a
+    // quiet ghost once the gifts are spent; the marquee-stud row across the crown (decorateSlotsPill)
+    // carries the "this is the slots" identity in both postures, while the streak flame at the top of
+    // the screen keeps carrying the day count. NEVER deferred — day one is exactly when the daily
+    // spin pays (it seeds the streak and boosts the first level), so this is the one first-run entry
+    // that can already do something.
     // NOTE: no emoji in pill labels — addPillButton's letterSpacing splits
     // surrogate pairs in Phaser's glyph renderer (renders tofu).
-    const ready = spinAvailable(save)
-    const label = ready ? 'DAILY BONUS' : `SPUN · DAY ${Math.max(1, save.streak)}`
+    const playable = hasAnySpin(save)
     const dailyY = seatRow()
-    const daily = addPillButton(this, DESIGN_W / 2, dailyY, 340, 76, label, ready ? GOLD_PILL : GHOST_PILL, () =>
-      startScene(this,'daily')
+    const daily = addPillButton(this, DESIGN_W / 2, dailyY, 340, 76, 'LUCKY SLOTS', playable ? GOLD_PILL : GHOST_PILL, () =>
+      startScene(this, 'slots')
     )
+    this.decorateSlotsPill(daily, playable)
     menuButtons.push(daily)
     // The daily's ARRIVAL beat is fired after the entrance (see the stagger below) — it no longer
     // breathes, so PLAY owns the only perpetual "tap me" on the screen.
@@ -614,12 +620,12 @@ export class HomeScene extends Phaser.Scene {
         repeat: -1,
         ease: 'Sine.easeInOut',
       })
-      if (ready) {
-        // A ready daily still has to say "there's something here" — so it says it ONCE, in the
+      if (playable) {
+        // A playable machine still has to say "there's something here" — so it says it ONCE, in the
         // ARRIVAL channel rather than the idle one: a single knock a beat after it has settled (far
         // enough after that it reads as its own gesture, not entrance overshoot), then stillness.
         // What carries the state from then on is static and always legible: the gold face against
-        // its spun GHOST twin, the label, and the free-spins badge with its own glow pulse.
+        // its spent GHOST twin, the label, the lit stud row, and the free-spins badge's glow pulse.
         this.tweens.add({
           targets: daily,
           scale: 1.05,
@@ -1561,7 +1567,48 @@ export class HomeScene extends Phaser.Scene {
   }
 
   /**
-   * Glowing "×N FREE SPINS" badge for the DAILY BONUS pill's corner — banked wheel spins waiting.
+   * The marquee-stud row that brands the LUCKY SLOTS pill: seven small bulbs along the cap's crown,
+   * alternating gold/rose exactly like the machine's own cabinet ring, so the Home button and the
+   * cabinet read as the same physical sign. Playable → lit, with a slow travelling chase lapping the
+   * row (reduce-flashing: the same wave at a gentler period ≥520ms half-cycle; reduced motion:
+   * statically lit). Spent → dim and still, so the ghost pill keeps its slot-machine identity
+   * without claiming there's anything to pull. Rides the outer container (not the sinking face),
+   * the same seat the free-spins badge uses.
+   */
+  private decorateSlotsPill(pill: Phaser.GameObjects.Container, playable: boolean): void {
+    const T = getTheme()
+    const reduced = this.prefersReducedMotion()
+    const n = 7
+    const runW = 250
+    const bulbY = -41 // the cap's crown: cap centre ≈ −5 (pillGeom ext 9 on h=76), half-height 38
+    for (let i = 0; i < n; i++) {
+      const bulb = this.add
+        .image(-runW / 2 + (runW * i) / (n - 1), bulbY, 'bulb')
+        .setDisplaySize(11, 11)
+        .setTint(i % 2 === 0 ? T.gold : T.rose)
+      pill.add(bulb)
+      if (!playable) {
+        bulb.setAlpha(0.3)
+      } else if (reduced) {
+        bulb.setAlpha(0.9)
+      } else {
+        const period = reduceFlashing() ? 2200 : 1500
+        bulb.setAlpha(0.45)
+        this.tweens.add({
+          targets: bulb,
+          alpha: 1,
+          duration: period / 2,
+          yoyo: true,
+          repeat: -1,
+          ease: 'Sine.easeInOut',
+          delay: (i / n) * period,
+        })
+      }
+    }
+  }
+
+  /**
+   * Glowing "×N FREE SPINS" badge for the LUCKY SLOTS pill's corner — banked machine spins waiting.
    * A rose tab (rose = the "special" accent, distinct on the gold pill) with a soft gold glow:
    * pulse gated by reduceFlashing (static soft glow) and reduced motion (static badge, no pop).
    */

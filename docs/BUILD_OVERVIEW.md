@@ -88,7 +88,7 @@ data (`ClearWave`, `FallMove[]`, `Spawn[]`, `BlastEvent[]`). Tuning happens in
 | `src/core/plinko.ts` | Plinko bonus drop: the weighted slot table, `rollSlotIndex`, and `dropPath` — the RIG that builds a bounce sequence guaranteed to reach the pre-chosen slot |
 | `src/core/levels.ts` | `LEVEL_COUNT=300`; deterministic `levelSpec(n)` — seeded per-level objectives, symbol count, and move budget |
 | `src/core/save.ts` | `localStorage` save (key `viva-maya:v1`, schema **v8**): load/persist, shape-tolerant migrations, `recordResult`/`recordScore`/`takePendingBoosts` |
-| `src/core/daily.ts` | Daily-spin logic: `todayKey`, streak math, weighted `PRIZES` table, `performSpin` (award-before-animate) |
+| `src/core/daily.ts` | Daily check-in logic: `todayKey`, streak math (`advanceDailyRitual` + `milestoneDue`), `CHECKIN_CHIPS` ladder, and the classic `PRIZES` table (now the slots' gift floor — see `freeSlotSpin` in `store.ts`) |
 | `src/core/endless.ts` | Endless race: `dayKey`/`weekKey` (**fixed `RACE_TZ = America/Edmonton`**), `dayEndsAt`/`weekEndsAt`/`formatRaceRemaining`, `weekKeyOfDay` (the daily→weekly rollup), `seedForKey` (FNV-1a), shared seeded RNG, `endlessWeekStanding` (daily bests summed), `recordEndless`, `endlessUnlocked` (after L20) |
 | `src/core/lives.ts` | Lives/energy pool: wall-clock regen banking, `spendLife`/`grantLife`/`refreshLives`, `devSetLives`, `formatCountdown` |
 
@@ -97,9 +97,8 @@ data (`ClearWave`, `FallMove[]`, `Spawn[]`, `BlastEvent[]`). Tuning happens in
 | File | Purpose |
 |---|---|
 | `src/scenes/BootScene.ts` | Builds all textures, then routes to `home` (or a DEV-param destination) |
-| `src/scenes/HomeScene.ts` | Home: heart emblem, marquee, lives HUD + streak flame, PLAY / LEVELS / DAILY BONUS / ENDLESS entries, help + sound chips |
+| `src/scenes/HomeScene.ts` | Home: heart emblem, marquee, lives HUD + streak flame, PLAY / LEVELS / LUCKY SLOTS / ENDLESS entries, help + sound chips |
 | `src/scenes/LevelSelectScene.ts` | Masked, drag-scrollable 5-wide grid of 100 level chips (stars/locks), auto-scrolled to current; endless banner; from-win chip celebration |
-| `src/scenes/DailyBonusScene.ts` | 3-reel always-wins slot cabinet, spin animation, prize celebration, "come back tomorrow" state |
 | `src/scenes/GameScene.ts` | The game: turn state machine, input (swipe + tap-tap), resolve/cascade loop, HUD, boosts, lives gate, win/lose/endless endings, win-sequence celebration |
 
 **View (shared rendering)**
@@ -289,11 +288,15 @@ appears when one regenerates); the gate is checked **before** boosts are consume
 gated entry never wastes a pending boost. **Endless is never gated.** The v5→v6 save
 upgrade does a one-time **grace refill to full** (see [§4](#4-save-schema--migrations)).
 
-### Daily bonus spin — `src/core/daily.ts`, `DailyBonusScene`
-One spin per **local calendar day** (`lastSpinDate` `YYYY-MM-DD`). A 3-reel slot that
-**always** lands 3-of-a-kind of the prize (gift, not gambling). Prize + streak are
-computed and persisted in `performSpin` **before** the animation, so closing the app
-mid-celebration loses nothing. Weighted prize table:
+### Daily bonus spin — `src/core/daily.ts` + `freeSlotSpin` (`store.ts`), on `SlotScene`
+One free pull per **local calendar day** (`lastSpinDate` `YYYY-MM-DD`), taken on the
+LUCKY SLOTS cabinet at the full four paylines. Banked free spins spend the same way.
+A free pull carries the **gift floor** — when the reels alone pay nothing, one prize
+off the classic table below is added, so the daily stays a gift, not a gamble — and
+the daily also advances the streak, banks the `CHECKIN_CHIPS` ladder, and pays a
+double prize every 5th day (`milestoneDue`). Everything is settled and persisted in
+`freeSlotSpin` **before** the animation, so closing the app mid-celebration loses
+nothing. The classic (gift-floor) prize table:
 
 | Prize | `BoostType` | Weight |
 |---|---|---|
@@ -527,8 +530,7 @@ All gated behind `import.meta.env.DEV` (stripped from production). Appended to t
 | `?plinko[=PTS]` | Open the Plinko drop on demand (waits for a settled board). `PTS` is the stake the multiplier applies to (default 2000) |
 | `?slot=N` | Pin the Plinko landing slot 0-8 — every payoff, deterministically (read in `view/plinko.ts`) |
 | `?repro=upgrade\|upgrade-col` | Plant the "special swallowed by its own upgrade" case: a gapped column of three + a reel at `(3,4)`. **Swipe it LEFT** into the gap → match-4. The reel must blast its line on the way out |
-| `?spin=1` | Force the daily spin available |
-| `?autospin=1` | Auto-trigger the spin |
+| `?seed=N` | Pin the next slots pull's rng stream (stage a charm / heat beat on demand) |
 | `?help` / `?sound` | Auto-open the help / sound panel (Home) |
 
 **Verification harness.** In DEV, `GameScene` mirrors model state two ways: an

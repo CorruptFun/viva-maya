@@ -39,8 +39,8 @@ Google OAuth must be enabled in Supabase Auth (see `CLOUD_SAVE_GOOGLE_SIGNIN.md`
 2. `?ref=<your code>` in a fresh profile → sign in → reach level 5 → referrer gets the
    friend-joined toast (+300 + hearts), friend gets the welcome (+150) in the store.
 3. Win levels until the jackpot meter fills → wheel fires, payout lands in balance.
-4. Trigger a MEGA WIN (cascade ×4) → "+3 FREE SPINS" ticket → DAILY BONUS badge →
-   chained free spins at the cabinet.
+4. Trigger a MEGA WIN (cascade ×4) → "+3 FREE SPINS" ticket → LUCKY SLOTS badge →
+   free full-cabinet spins at the machine.
 5. After midnight Mountain time (06:00 UTC on MDT / 07:00 on MST), yesterday's #1 sees the DAILY
    WINNER coronation once (+150); after the ISO
    week rolls over (Mon midnight Mountain), the closed week's #1 sees the WEEKLY CHAMPION one

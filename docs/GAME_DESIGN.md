@@ -297,18 +297,23 @@ clears a RANDOM present color. Swap-combos (both consumed, epicenter = drag dest
   countdown, PLAY appears when one regenerates). Gate is checked BEFORE boosts are consumed, so a
   gated entry never wastes a pending boost. Hearts HUD (addLivesHud) on Home + the lose overlay.
 
-## Daily Bonus (src/core/daily.ts + DailyBonusScene)
-- One spin per LOCAL calendar day (lastSpinDate 'YYYY-MM-DD'; device clock trusted — offline toy).
-- 3-reel slot machine that ALWAYS lands 3-of-a-kind of the prize (gift, not gambling).
-  Prize + streak computed & persisted BEFORE the animation (performSpin) — closing app loses nothing.
-- Prize table (weights): Wild Reel 30, Dice Bomb 25, +5 Moves 20, Double Score 15, Jackpot Chip 10.
-- Streak: consecutive days (+1 if yesterday spun, else reset to 1). Every 5th streak day = TWO prizes.
+## Daily Bonus (src/core/daily.ts + store.ts freeSlotSpin, on SlotScene)
+- One FREE pull per LOCAL calendar day (lastSpinDate 'YYYY-MM-DD'; device clock trusted — offline
+  toy), taken on the LUCKY SLOTS cabinet with all four paylines lit. Banked free spins (MEGA
+  cascades / plinko) spend the same way. Result settled & persisted BEFORE the animation
+  (freeSlotSpin) — closing the app loses nothing.
+- GIFT FLOOR: a free pull never pays NOTHING — an empty spin is topped with one prize off the
+  classic table (Wild Reel 30, Dice Bomb 25, +5 Moves 20, Double Score 15, Jackpot Chip 10),
+  so the daily stays a gift even on a machine with a real house edge. Paid spins have no floor.
+- Streak: consecutive days (+1 if yesterday spun, else reset to 1); pays the CHECKIN_CHIPS ladder
+  (10→150 across the week). Every 5th streak day = a bonus prize on top (milestoneDue).
 - Prizes land in save.pendingBoosts; GameScene.applyBoosts consumes ALL on the next NUMBERED
   level start (win or lose; endless never consumes them): plants specials at random cells rows
   3–7 (board.plant keeps cell's symbol), +5 moves each, ×2 scoreMult. Shown at level start as a
   self-sizing gold banner over the top of the board (GameScene.showBoostBanner — pops in, holds,
   fades up) plus a ×2 badge. (Was a flat toast at BOARD_Y−44 that overlapped the objective row.)
-- Home button: gold+pulse when ready ("DAILY BONUS"), ghost "SPUN · DAY N" after.
+- Home button: "LUCKY SLOTS" — gold with a chasing marquee-stud crown while any FREE pull waits
+  (daily or banked), quiet ghost with dim studs once the gifts are spent; opens SlotScene.
   NOTE: no emoji in pill labels — letterSpacing splits surrogate pairs (renders tofu).
 
 ## In-level helpers / power bar (src/core/store.ts POWER_ITEMS + GameScene.buildPowerBar)
@@ -357,8 +362,8 @@ vibrate 80 · loseWah · reshuffleSwirl.
 
 ## Scenes & UI
 Boot (textures) → Home (streak flame badge when streak>0, heart emblem, marquee, PLAY→current
-level, LEVELS, DAILY BONUS, ENDLESS when unlocked) → LevelSelect (5×6 chips, stars, locks,
-back‹, mute, ENDLESS banner when unlocked) → Game (numbered or endless) → DailyBonus.
+level, LEVELS, LUCKY SLOTS, ENDLESS when unlocked) → LevelSelect (5×6 chips, stars, locks,
+back‹, mute, ENDLESS banner when unlocked) → Game (numbered or endless) → SlotScene.
 Shared: ui.ts (addMarquee, addPillButton, addMuteChip, addStreakBadge, GOLD/GHOST/ROSE pill
 styles — ROSE marks the endless "special mode"; streak flame keeps 🔥 in its own text object
 to dodge the letterSpacing surrogate-pair bug),
@@ -383,9 +388,9 @@ icon.html → 5×5 emoji board + VIVA MAYA banner (checkerboard = (row+col)%2). 
 ≥180px; 16/32/48 + favicon.ico are board-only (#plain hash). og.html → 1200×630 poster.
 `npm run icons` regenerates all of public/. favicon.svg is hand-authored.
 
-## Dev/test knobs (DEV builds only; see GameScene/BootScene/DailyBonusScene create)
+## Dev/test knobs (DEV builds only; see GameScene/BootScene/SlotScene create)
 ?level=N jump · ?endless=1 boot today's race · ?lives=N set the life pool (test the gate) ·
-?scene=daily|home|levelselect · ?auto=MS autoplay hinted moves · ?turbo=N scale tween/timer
+?scene=slots|home|levelselect · ?auto=MS autoplay hinted moves · ?turbo=N scale tween/timer
 clocks · ?goal=N ?moves=N override level · ?plant=1 seed specials · ?spin=1 force spin ·
 ?autospin=1 auto-trigger spin · ?plinko[=PTS] open the bonus drop · ?slot=N pin its landing slot ·
 ?deal open the Lucky Deal · ?face=cherry|clover|bell|bar|diamond|seven|heart pin its winning face

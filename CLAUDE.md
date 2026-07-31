@@ -53,7 +53,7 @@ make green.
 | path | role |
 |---|---|
 | `src/main.ts`, `src/config.ts` | entry + tunables |
-| `src/scenes/` | Phaser scenes — Boot, Home, Game, LevelSelect, Store, DailyBonus, Slot |
+| `src/scenes/` | Phaser scenes — Boot, Home, Game, LevelSelect, Store, Slot |
 | `src/core/` | game logic + its tests — board, merge, levels, endless, daily, slots, hazards, analytics, push, cheat |
 | `src/view3d/stage.ts` | the only three.js usage |
 | `supabase/migrations/` | `0001_saves` → `0020_race_day_key_repair` |

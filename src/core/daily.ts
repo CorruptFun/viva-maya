@@ -1,13 +1,14 @@
 import type { BoostType } from './types'
 import type { SaveData } from './save'
-import { FREE_SPIN_BANK_CAP, FREE_SPIN_DAILY_CAP, persistSave } from './save'
+import { FREE_SPIN_BANK_CAP, FREE_SPIN_DAILY_CAP } from './save'
 import type { Rng } from './rng'
 
 /**
- * Daily bonus spin — pure logic (no Phaser). One spin per local calendar day.
- * The machine ALWAYS pays out (it's a gift, not gambling): a weighted prize
- * applied as a boost to the next level started. Consecutive days build a
- * streak; every 5th streak day the spin pays double.
+ * The daily check-in — pure logic (no Phaser). One free pull per local calendar day, taken on the
+ * LUCKY SLOTS cabinet (core/store.ts freeSlotSpin; SlotScene presents it). A free pull is a gift,
+ * not gambling — the GIFT FLOOR in freeSlotSpin guarantees it never pays nothing, with this module's
+ * classic PRIZES table as the floor. Consecutive days build a streak; the streak scales the check-in
+ * chips (CHECKIN_CHIPS) and every 5th day pays a double prize (milestoneDue).
  */
 export interface Prize {
   type: BoostType
@@ -112,38 +113,28 @@ export function checkinChipsFor(streak: number): number {
 }
 
 /**
- * Perform today's spin: updates streak, awards prize(s) into pendingBoosts, banks the streak-scaled
- * daily check-in chips, stamps the date, and persists — all BEFORE any animation, so closing the app
- * mid-celebration can't lose the prize. Returns the chips awarded so the caller can size the "+N CHIPS"
- * beat honestly.
+ * Advance the daily check-in ritual on the passed save: streak (consecutive-day +1, else back to 1),
+ * the `lastSpinDate` latch, and the streak-scaled check-in chips — banked onto the SAME save object
+ * (never via addChips(), whose fresh loadSave()→persist would clobber the caller's own persist).
+ *
+ * Deliberately does NOT persist and does NOT roll a prize: it is the RITUAL half of the daily spin,
+ * extracted so exactly one definition of "what a daily check-in does" exists now that the spin
+ * itself lives on the Lucky Slots cabinet (core/store.ts freeSlotSpin — which persists once, after
+ * banking everything). Returns what it advanced so the caller can present it honestly.
+ *
+ * The 5th-streak-day DOUBLE PRIZE is the caller's to pay (milestoneDue below) — this half only ever
+ * moves the calendar and the chips.
  */
-export function performSpin(save: SaveData, rng: Rng, now = new Date()): { prizes: Prize[]; streak: number; chips: number } {
+export function advanceDailyRitual(save: SaveData, now = new Date()): { streak: number; chips: number } {
   const today = todayKey(now)
   save.streak = save.lastSpinDate && daysBetween(save.lastSpinDate, today) === 1 ? save.streak + 1 : 1
   save.lastSpinDate = today
-  const prizes = [rollPrize(rng)]
-  if (save.streak > 0 && save.streak % 5 === 0) prizes.push(rollPrize(rng))
-  save.pendingBoosts.push(...prizes.map(p => p.type))
-  // Bank the check-in chips onto the SAME save object this persists below — never via addChips(), whose
-  // fresh loadSave()→persist would be clobbered by the persistSave() here (and lose the boosts/streak).
   const chips = checkinChipsFor(save.streak)
   save.chips += chips
-  persistSave(save)
-  return { prizes, streak: save.streak, chips }
+  return { streak: save.streak, chips }
 }
 
-/**
- * Spend one BANKED free spin — the daily latch's sibling. Decrements save.freeSpins, awards a single
- * prize into pendingBoosts, and persists BEFORE any animation (same crash-safety as performSpin).
- * Deliberately does NOT touch lastSpinDate or streak (free spins ride alongside the daily rhythm,
- * they never substitute for it) and never pays the streak double. Returns null when the bank is
- * empty — the save is left untouched, so a caller can never double-spend a race.
- */
-export function performFreeSpin(save: SaveData, rng: Rng): { prizes: Prize[]; remaining: number } | null {
-  if (save.freeSpins <= 0) return null
-  save.freeSpins -= 1
-  const prizes = [rollPrize(rng)]
-  save.pendingBoosts.push(...prizes.map(p => p.type))
-  persistSave(save)
-  return { prizes, remaining: save.freeSpins }
+/** True on the streak days the daily spin pays DOUBLE (every 5th day — the week strip's starred dot). */
+export function milestoneDue(streak: number): boolean {
+  return streak > 0 && streak % 5 === 0
 }

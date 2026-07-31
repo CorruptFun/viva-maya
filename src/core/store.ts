@@ -1,7 +1,9 @@
 import { grantCharm } from './charms'
 import type { CharmAward } from './charms'
+import { advanceDailyRitual, milestoneDue, rollPrize, spinAvailable } from './daily'
+import type { Prize } from './daily'
 import { loadSave, persistSave } from './save'
-import { betFor, spinSlots } from './slots'
+import { SLOT_MAX_ROWS, betFor, spinSlots } from './slots'
 import type { SlotSpin } from './slots'
 import type { Rng } from './rng'
 import type { BoostType } from './types'
@@ -145,4 +147,94 @@ export function buySpin(rows: number, rng: Rng): SlotSpinResult {
   persistSave(save)
 
   return { ok: true, purchase: { spin, balance: save.chips, meter: save.jackpotMeter, charm } }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FREE PULLS — the daily spin and the banked free-spin currency, taken on the
+// SAME cabinet the paid bets run on. "This is the new daily spin: one free a
+// day; want more, you buy them." A free pull always lights the FULL cabinet
+// (SLOT_MAX_ROWS paylines — the gift is the machine at its best odds), banks
+// exactly what a paid spin banks, and adds one rule a paid spin doesn't have:
+//
+//   THE GIFT FLOOR — a free pull never pays NOTHING. When the reels alone come
+//   up empty (no line, no points, no charm), the house adds one prize off the
+//   classic daily table (core/daily.ts PRIZES). The daily bonus was always "a
+//   gift, not gambling"; the floor is what keeps that true now that the gift
+//   rides a machine with a real house edge. Bounded and inflation-safe: at most
+//   one comp boost per free pull, and free pulls are capped by the calendar
+//   (one daily) and the bank caps (FREE_SPIN_DAILY_CAP / FREE_SPIN_BANK_CAP).
+//
+// The DAILY pull also carries the whole check-in ritual — streak, latch, the
+// CHECKIN_CHIPS ladder (advanceDailyRitual), and the every-5th-day DOUBLE
+// prize (milestoneDue) the week strip always promised. A BANKED pull touches
+// none of that, by the same contract banked spins have always had.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type FreeSlotKind = 'daily' | 'banked'
+
+export interface FreeSlotSpinResult {
+  spin: SlotSpin
+  /** The gift floor: the classic prize added because the reels alone paid nothing (else null). */
+  comp: Prize | null
+  /** The every-5th-streak-day double prize (daily pulls only, else null). */
+  milestone: Prize | null
+  /** Where the jackpot meter now stands. */
+  meter: number
+  /** The charm award, when the scatter hit. */
+  charm?: CharmAward
+  /** Daily ritual receipts — present on 'daily' pulls only. */
+  streak?: number
+  checkinChips?: number
+  /** Free spins still banked — present on 'banked' pulls only. */
+  remaining?: number
+}
+
+/**
+ * Take one FREE pull (the daily spin, or one banked free spin). AWARD-FIRST like buySpin: the whole
+ * result — reels, boosts, points, charm, gift floor, ritual receipts — is settled and persisted here,
+ * before the caller animates anything. Returns null when the pull isn't actually available (daily
+ * already claimed / bank empty), leaving the save untouched, so a caller can never double-spend a
+ * race. The charm is granted before the main persist in buySpin's exact ordering, accepting the same
+ * player-favouring crash window.
+ */
+export function freeSlotSpin(kind: FreeSlotKind, rng: Rng): FreeSlotSpinResult | null {
+  const probe = loadSave()
+  if (kind === 'daily' && !spinAvailable(probe)) return null
+  if (kind === 'banked' && probe.freeSpins <= 0) return null
+
+  const spin = spinSlots(rng, SLOT_MAX_ROWS)
+  const charm = spin.charm ? grantCharm(rng) : undefined
+
+  const save = loadSave()
+  let streak: number | undefined
+  let checkinChips: number | undefined
+  let remaining: number | undefined
+  let milestone: Prize | null = null
+  if (kind === 'daily') {
+    if (!spinAvailable(save)) return null
+    const ritual = advanceDailyRitual(save)
+    streak = ritual.streak
+    checkinChips = ritual.chips
+    if (milestoneDue(ritual.streak)) {
+      milestone = rollPrize(rng)
+      save.pendingBoosts.push(milestone.type)
+    }
+  } else {
+    if (save.freeSpins <= 0) return null
+    save.freeSpins -= 1
+    remaining = save.freeSpins
+  }
+
+  save.pendingBoosts.push(...spin.boosts)
+  save.jackpotMeter += spin.points
+  // THE GIFT FLOOR — decided off the reels alone (a milestone double never suppresses it: the day-5
+  // promise is a bonus ON TOP of the pull, not a substitute for it paying).
+  let comp: Prize | null = null
+  if (spin.boosts.length === 0 && spin.points === 0 && !spin.charm) {
+    comp = rollPrize(rng)
+    save.pendingBoosts.push(comp.type)
+  }
+  persistSave(save)
+
+  return { spin, comp, milestone, meter: save.jackpotMeter, charm, streak, checkinChips, remaining }
 }

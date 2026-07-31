@@ -6,7 +6,6 @@ import { bootstrapCloud, cloudAccessToken, cloudUserId, pushCloudSave } from './
 import { captureRefFromUrl } from './core/referrals'
 import { setPersistListener } from './core/save'
 import { BootScene } from './scenes/BootScene'
-import { DailyBonusScene } from './scenes/DailyBonusScene'
 import { GameScene } from './scenes/GameScene'
 import { HomeScene } from './scenes/HomeScene'
 import { LevelSelectScene } from './scenes/LevelSelectScene'
@@ -170,7 +169,7 @@ function startGame(): void {
       mode: Phaser.Scale.FIT,
       autoCenter: Phaser.Scale.CENTER_BOTH,
     },
-    scene: [BootScene, HomeScene, LevelSelectScene, DailyBonusScene, StoreScene, SlotScene, GameScene],
+    scene: [BootScene, HomeScene, LevelSelectScene, StoreScene, SlotScene, GameScene],
   })
 
   // Stand the 3D room up on Phaser's OWN canvas + WebGL context (view3d/stage.ts): its sim ticks off
