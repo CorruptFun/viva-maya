@@ -98,6 +98,25 @@ export const EVENTS = {
   INSTALL_SHOWN: 'install_shown',
   INSTALL_ACCEPTED: 'install_accepted',
 
+  /**
+   * The game's OWN install sheet (view/installsheet.ts), added 2026-08-03 — distinct from the pair
+   * above, which track the *browser's* events. Keeping them separate is what preserves the older
+   * funnel's meaning across this change: `install_shown` still counts "a Chromium install became
+   * available", while these two count "we offered it" and "what the player did".
+   *
+   * `install_sheet` props: {source, mode} — mode is core/install.ts's InstallState, so the iOS
+   * guide ('manual-ios') and the real one-tap prompt ('ready') stay separable. THIS is the event
+   * that finally makes iOS installs measurable: `install_result` with outcome 'guided' means a
+   * player read the Share → Add to Home Screen steps to the end, which is the closest signal iOS
+   * permits (Apple fires no appinstalled). Confirm the install itself against APP_OPEN's
+   * `standalone` prop on a LATER session — that remains the only ground truth on iOS.
+   *
+   * `install_result` props: {outcome, source} — 'accepted' | 'dismissed' (the real Chromium
+   * choice), 'guided' (read the iOS steps), 'not_now' | 'scrim' (declined).
+   */
+  INSTALL_SHEET: 'install_sheet',
+  INSTALL_RESULT: 'install_result',
+
   /** Push opt-in funnel. */
   PUSH_SHOWN: 'push_shown',
   PUSH_ENABLED: 'push_enabled',

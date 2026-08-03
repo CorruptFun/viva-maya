@@ -5,6 +5,7 @@ import { EVENTS, initAnalytics, track } from './core/analytics'
 import { bootstrapCloud, cloudAccessToken, cloudUserId, pushCloudSave } from './core/cloud'
 import { endlessBoardRng } from './core/boardpick'
 import { dayKey } from './core/endless'
+import { initInstallCapture } from './core/install'
 import { ensureSalt } from './core/racesalt'
 import { captureRefFromUrl } from './core/referrals'
 import { setPersistListener } from './core/save'
@@ -72,10 +73,16 @@ async function applyUpdate(): Promise<void> {
 // mints the session id, and initAnalytics uses `??=` so the event keeps the session it opened,
 // exactly as the update toast already does.
 //
-// ⚠️ BOTH LISTENERS ARE PASSIVE — do NOT call preventDefault() on beforeinstallprompt here. That
-// suppresses the browser's own install affordance, and with no in-game install button to replace
-// it, capturing the prompt would delete the very thing this funnel exists to measure. Measuring a
-// UI must not become changing it.
+// ⚠️ THIS USED TO BE PASSIVE, and the warning here said: do NOT preventDefault() beforeinstallprompt,
+// because with no in-game install button to replace it, capturing the prompt would delete the very
+// thing the funnel measures. That warning named its own release condition — build the button — and
+// as of 2026-08-03 the button exists (view/installsheet.ts), so `initInstallCapture()` below now
+// captures the event and the game owns the offer. The measurement did not get worse: `install_shown`
+// still fires on exactly the same browser event (an install became available), and the new
+// `install_sheet` / `install_result` pair covers what the game then did with it — including on iOS,
+// which the Chromium-only pair could never see. Reason for the change: 5 of 60 real players were
+// installed, and on iOS an install is the only route to a web push, so the daily-race callback loop
+// was gated behind an action nothing in the game had ever explained.
 //
 // ⚠️ CHROMIUM ONLY, and that shapes how the funnel reads. Safari fires neither event, so on iOS —
 // where installing is a manual Share → "Add to Home Screen" gesture — this funnel is blind, and its
@@ -85,6 +92,32 @@ async function applyUpdate(): Promise<void> {
 // `standalone` prop (core/analytics.ts), which every client reports on every open; this pair is the
 // narrower question of whether players who are offered the install take it.
 window.addEventListener('beforeinstallprompt', () => track(EVENTS.INSTALL_SHOWN))
+// Take custody of the prompt so the game can offer it from its own button (core/install.ts). Ordered
+// AFTER the tracking listener purely for readability — both run, since preventDefault() stops the
+// browser's default UI, not the event's own propagation to other listeners on the same target.
+initInstallCapture()
+
+// DEV-only verification hook, in the spirit of leaderboardpanel's devRaceOpts/devSeedRaceLine: the
+// install sheet has two mutually exclusive modes and a real device can only ever show you one of
+// them. `beforeinstallprompt` also refuses to fire on most dev setups (it needs the browser's own
+// installability + engagement heuristics), so without this the 'ready' path is unverifiable locally.
+// Stripped from production builds by the DEV guard.
+if (import.meta.env.DEV) {
+  void import('./view/installsheet').then(m => {
+    ;(window as unknown as Record<string, unknown>).__vmInstall = {
+      open: (source = 'dev') => m.openInstallSheet(undefined, source),
+      /** Spoof the UA so the iOS guide can be inspected on a desktop browser. Call, then open(). */
+      fakeIos: (browser = 'safari') => {
+        const ua =
+          browser === 'chrome'
+            ? 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 CriOS/120 Mobile/15E148 Safari/604.1'
+            : 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Version/17.0 Mobile/15E148 Safari/604.1'
+        Object.defineProperty(navigator, 'userAgent', { value: ua, configurable: true })
+        return ua
+      },
+    }
+  })
+}
 // Ground truth: the install actually completed. It fires in the page the player installed FROM, so
 // it carries the same device_id as the install_shown that preceded it.
 window.addEventListener('appinstalled', () => track(EVENTS.INSTALL_ACCEPTED))

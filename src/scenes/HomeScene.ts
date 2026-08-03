@@ -32,6 +32,7 @@ import {
 } from '../view/leaderboardpanel'
 import { addScreenGloss } from '../view/fx'
 import { maybeShowInstallNudge } from '../view/installnudge'
+import { maybeShowInstallOffer } from '../view/installsheet'
 import { addJackpotMeter } from '../view/jackpot'
 import { D, E, OVERSHOOT, backOut, fadeRise, heartbeat, popIn } from '../view/motion'
 import { quality } from '../view/quality'
@@ -161,9 +162,16 @@ export class HomeScene extends Phaser.Scene {
     // §E9 — stamp first/last open dates (safe: touches only those two fields). Enables future
     // "welcome back" warmth; never alters progress.
     const today = touchOpen(todayKey()).lastOpenDate ?? todayKey()
-    // Gentle one-off nudge: a browser player (not installed) with progress + not signed in is invited to
-    // save/sync before adding to the home screen (an installed iOS PWA gets its own storage). Self-guards.
-    maybeShowInstallNudge(this)
+    // Two bottom-of-Home invitations, both self-guarding, and ORDER IS THE COORDINATION between them:
+    // the install offer is asked first and wins the slot, because it is the one that answers "how do I
+    // even do this" — measured 2026-08-03, only 5 of 60 real players were running installed, and on
+    // iOS an install is the sole route to a web push, so the daily-race callback is gated behind it.
+    // The older sign-in nudge (save/sync BEFORE installing, since an installed iOS PWA gets its own
+    // storage) then yields while any install surface is up, so the two can never stack.
+    // NB: branch on the RETURN VALUE, not on installUiOpen() — the offer mounts on a delay, so the
+    // DOM is still empty here and a DOM check would let both schedule. See its doc comment.
+    const offeringInstall = maybeShowInstallOffer(this)
+    if (!offeringInstall) maybeShowInstallNudge(this)
     const currentLevel = Math.min(save.unlocked, LEVEL_COUNT)
     const reduced = this.prefersReducedMotion()
     // ── Progressive reveal ───────────────────────────────────────────────────────────────────────
