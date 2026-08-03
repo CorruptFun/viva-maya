@@ -6,6 +6,7 @@ import { bootstrapCloud, cloudAccessToken, cloudUserId, pushCloudSave } from './
 import { endlessBoardRng } from './core/boardpick'
 import { dayKey } from './core/endless'
 import { initInstallCapture } from './core/install'
+import { installResumeGuard } from './core/resumeguard'
 import { ensureSalt } from './core/racesalt'
 import { captureRefFromUrl } from './core/referrals'
 import { setPersistListener } from './core/save'
@@ -283,6 +284,18 @@ function startGame(): void {
       else game.loop?.wake()
     })
   }
+
+  // ⚠️ Registered AFTER the sleep/wake pair above, and the order matters: listeners fire in
+  // registration order, so `wake()` has already run by the time the guard starts watching. A guard
+  // that checked first would measure a loop nobody had tried to restart yet and report a stall on
+  // every single resume.
+  //
+  // What it is for: a player on a Galaxy S25 reported the game frozen after switching apps and back,
+  // needing a force-quit. Three different faults produce that one symptom (a GPU context Android
+  // reclaimed, a requestAnimationFrame that never restarted, a cascade hung on a tween promise), and
+  // they are indistinguishable from here — so this watches the symptom they share, recovers from it,
+  // and reports which one it was. See core/resumeguard.ts.
+  installResumeGuard(game)
 
   // DEV-only game handle: expose the Phaser game on `window.__vm` so an in-browser UI audit can pump
   // frames manually (`game.step(t, dt)`) when the preview pane throttles requestAnimationFrame. Stripped from prod.

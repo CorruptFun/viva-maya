@@ -117,6 +117,24 @@ export const EVENTS = {
   INSTALL_SHEET: 'install_sheet',
   INSTALL_RESULT: 'install_result',
 
+  /**
+   * Resume health (core/resumeguard.ts), added 2026-08-03 after a Galaxy S25 player reported the
+   * game frozen after switching apps and back, needing a force-quit.
+   *
+   * `resume_stall` fires ONLY when the game loop failed to advance a frame after a resume — never on
+   * a healthy one, or it would be the noisiest row in the table and say nothing. Props carry the
+   * diagnosis: `stage` ('detected' | 'recovered_by_wake' | 'reloading'), plus `contextLost`,
+   * `running`, `sleeping`, `scenes` and `boardState`. Those five fields separate the three causes
+   * that share this symptom — a lost GPU context, a wedged requestAnimationFrame, and a resolve loop
+   * hung on a tween promise (`boardState: 'resolving'` is the tell for the last one).
+   *
+   * `context_lost` is the WebGL context going away and coming back, which on Android is a memory-
+   * pressure eviction rather than a bug. Worth counting separately: it is the one cause the game
+   * cannot repair in place, since every texture here is baked at runtime with no file to reload.
+   */
+  RESUME_STALL: 'resume_stall',
+  CONTEXT_LOST: 'context_lost',
+
   /** Push opt-in funnel. */
   PUSH_SHOWN: 'push_shown',
   PUSH_ENABLED: 'push_enabled',
