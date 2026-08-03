@@ -30,7 +30,8 @@ import { addJackpotMeter } from '../view/jackpot'
 import type { JackpotMeter } from '../view/jackpot'
 import { D, E, OVERSHOOT, backOut, fadeRise, popIn } from '../view/motion'
 import { quality } from '../view/quality'
-import { css, getTheme, hapticsOff, prefersReducedMotion, reduceFlashing } from '../view/theme'
+import { css, getTheme, hapticsOff, prefersReducedMotion, reduceFlashing, rgbMarquee } from '../view/theme'
+import { attachRgbChase, type RgbChase } from '../view/rgbmarquee'
 import { ensureGlyphTexture } from '../view/textures'
 import type { ChipPill } from '../view/ui'
 import { FONT, GHOST_PILL, GOLD_PILL, addChipPill, addPillButton, applyEntrance, startScene } from '../view/ui'
@@ -130,6 +131,8 @@ export class SlotScene extends Phaser.Scene {
   private bulbTints: number[] = []
   /** Which choreography currently owns the bulb ring — guards delayed mode handoffs (win → idle). */
   private marqueeMode: 'idle' | 'spin' | 'heat' | 'win' = 'idle'
+  /** The RGB chase driving the ring (§RGB), or undefined when the player has it switched off. */
+  private rgb?: RgbChase
   /** The LCD attract-loop timer (a periodic shine across the glass) — killed the moment a pull starts. */
   private attractTimer?: Phaser.Time.TimerEvent
   /** Transients of the HEAT beat (the pending-reel glow) — swept by the final reel's landing. */
@@ -153,6 +156,10 @@ export class SlotScene extends Phaser.Scene {
     this.spinning = false
     this.bulbs = []
     this.bulbTints = []
+    // §RGB — unhook the old ring's clock before the refs above are dropped, or a re-entered scene
+    // leaves it painting destroyed bulbs (and a second clock fighting the new one).
+    this.rgb?.destroy()
+    this.rgb = undefined
     this.marqueeMode = 'idle'
     this.attractTimer = undefined
     this.heatFx = []
@@ -344,6 +351,14 @@ export class SlotScene extends Phaser.Scene {
    */
   private setMarquee(mode: 'idle' | 'spin' | 'heat' | 'win'): void {
     this.marqueeMode = mode
+    // §RGB — the chase implements all four looks itself (see PROFILES in view/rgbmarquee.ts), so the
+    // choreographer just re-rates one clock instead of rebuilding 32 tweens. It stays the SINGLE
+    // authority either way: `marqueeMode` is still set above, so the delayed win → idle handoff
+    // guards identically, and the chase's own mode is a pure restatement of it.
+    if (this.rgb) {
+      this.rgb.setMode(mode)
+      return
+    }
     const reduced = prefersReducedMotion()
     const soft = reduceFlashing()
     const n = this.bulbs.length
@@ -469,12 +484,17 @@ export class SlotScene extends Phaser.Scene {
     for (let i = 1; i <= bulbRows; i++) ring.push({ x: CAB_X + CAB_W, y: sideY(i) }) // right edge, T→B
     for (let i = bulbCols - 1; i >= 0; i--) ring.push({ x: topX(i), y: CAB_Y + CAB_H }) // bottom edge, R→L
     for (let i = bulbRows; i >= 1; i--) ring.push({ x: CAB_X, y: sideY(i) }) // left edge, B→T
+    const rgb = rgbMarquee()
     ring.forEach((p, i) => {
       const tint = i % 2 === 0 ? T.gold : T.rose
       const bulb = this.add.image(p.x, p.y, 'bulb').setDisplaySize(15, 15).setTint(tint)
       cabinet.add(bulb)
       this.bulbs.push(bulb)
       this.bulbTints.push(tint)
+      // §RGB — the chase owns tint + alpha, including the power-on: it lands the ring lit on its
+      // first frame, so the staggered light-up below would only fight it. `bulbTints` is still
+      // recorded because the HEAT pass reads it back when the player switches RGB off.
+      if (rgb) return
       if (reduced) {
         bulb.setAlpha(0.85)
         return
@@ -510,6 +530,9 @@ export class SlotScene extends Phaser.Scene {
         })
       }
     })
+    // One clock for the whole 32-bulb ring, replacing 32 per-bulb tweens. (The previous entry's
+    // clock is already unhooked in create()'s per-entry reset.)
+    if (rgb) this.rgb = attachRgbChase(this, this.bulbs, { mode: this.marqueeMode })
     fadeRise(this, cabinet, { rise: 18, duration: D.pop, ease: backOut(OVERSHOOT.gentle) })
   }
 

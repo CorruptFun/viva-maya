@@ -18,6 +18,17 @@ Live: <https://corruptfun.github.io/viva-maya/>
   validation to the client for convenience.
 - **`base: './'`** in `vite.config.ts` — relative asset paths, required for
   GitHub Pages. Don't "fix" it to `/`.
+- **The RGB cabinet marquee is driven by ONE clock, deliberately.** The chasing
+  rainbow ring on the board and slots bezels (`src/view/rgbmarquee.ts`) paints all
+  48 + 32 bulbs' hue *and* brightness from a single `UPDATE` hook. It replaced 80
+  per-bulb tweens, which is the whole reason the richer effect is also the cheaper
+  one — a board scene runs 5 tweens with it on and 53 with it off. Do not "fix" it
+  by tweening bulbs individually, and do not reach for a shader or three.js: the
+  `bulb` texture is baked alpha-only precisely so `setTint` stays hue-true. Colour
+  comes from per-theme hue arcs (`rgbHueFrom`/`rgbHueSpan`/`rgbSat` in `theme.ts`),
+  narrow on the rose/gold themes so the ring never fights a theme's identity;
+  `rgb.test.ts` guards the arcs and the seam-free wrap. Players can switch it off
+  (Settings → RGB Marquee), which restores the original gold/rose bulbs exactly.
 - **Endless has a cheat code**, and it is meant to be there — a secret swipe
   pattern on the dead strip below the board mints a free "mega win", each one
   paying its own Plinko drop (`src/core/cheat.ts`). A run that fires it posts to
@@ -38,7 +49,7 @@ npm run build    # tsc && vite build
 ```
 
 Tests are colocated: `src/core/*.test.ts` (board, merge, hazards, endless,
-plinko rate, slots rate, cheat, endless pace). Run them — the game logic has
+plinko rate, slots rate, cheat, endless pace, rgb). Run them — the game logic has
 real coverage.
 
 `slots.rate.test.ts`, `plinko.rate.test.ts` and `endless.pace.test.ts` are
@@ -54,7 +65,8 @@ make green.
 |---|---|
 | `src/main.ts`, `src/config.ts` | entry + tunables |
 | `src/scenes/` | Phaser scenes — Boot, Home, Game, LevelSelect, Store, Slot |
-| `src/core/` | game logic + its tests — board, merge, levels, endless, daily, slots, hazards, analytics, push, cheat |
+| `src/core/` | game logic + its tests — board, merge, levels, endless, daily, slots, hazards, analytics, push, cheat, rgb |
+| `src/view/rgbmarquee.ts` | the RGB cabinet chase — see the note above before touching it |
 | `src/view3d/stage.ts` | the only three.js usage |
 | `supabase/migrations/` | `0001_saves` → `0020_race_day_key_repair` |
 | `scripts/verify-rls.sh` | RLS audit — run after any migration |
