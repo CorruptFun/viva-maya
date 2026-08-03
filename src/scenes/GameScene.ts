@@ -27,6 +27,7 @@ import { DAYS_PER_WEEK, dayKey, endlessBestForDay, endlessRngForDay, recordEndle
 import type { WeekStanding } from '../core/endless'
 import { endlessLockPlan, endlessShapeFor } from '../core/endlessramp'
 import type { EndlessShape } from '../core/endlessramp'
+import { cachedSalt } from '../core/racesalt'
 import { LEVEL_COUNT, levelSpec, starsFor } from '../core/levels'
 import { hazardPlan } from '../core/hazards'
 import { ensureHazardTexture } from '../view/textures'
@@ -469,7 +470,15 @@ export class GameScene extends Phaser.Scene {
       // move budget, the lock count and the lock cells are all shared, exactly as the layout is.
       this.endlessShape = endlessShapeFor(this.endlessDayKey)
       this.spec = { level: 0, moves: this.endlessShape.moves, symbolCount: SYMBOLS.length, objectives: [] }
-      this.board = new Board(ROWS, COLS, SYMBOLS.length, endlessRngForDay(this.endlessDayKey))
+      // The salt (core/racesalt.ts) is what stops this board being computable before the day opened.
+      // Read synchronously from the prefetch cache; null falls back to the original unsalted board,
+      // which stays playable and simply does not post — see `playedRealBoard`.
+      this.board = new Board(
+        ROWS,
+        COLS,
+        SYMBOLS.length,
+        endlessRngForDay(this.endlessDayKey, cachedSalt(this.endlessDayKey))
+      )
       // Seeded AFTER the board, from its own stream, so the locks land on top of the shared layout
       // instead of displacing it — see endlessramp.ts on the determinism trap.
       this.board.seedHazards(endlessLockPlan(this.endlessDayKey, ROWS, COLS))

@@ -3,6 +3,8 @@ import { registerSW } from 'virtual:pwa-register'
 import { DESIGN_W, restScrollY, setSafeTopInset, updateWorldH, worldH } from './config'
 import { EVENTS, initAnalytics, track } from './core/analytics'
 import { bootstrapCloud, cloudAccessToken, cloudUserId, pushCloudSave } from './core/cloud'
+import { dayKey } from './core/endless'
+import { ensureSalt } from './core/racesalt'
 import { captureRefFromUrl } from './core/referrals'
 import { setPersistListener } from './core/save'
 import { BootScene } from './scenes/BootScene'
@@ -144,6 +146,11 @@ void Promise.all([bootstrapCloud(), prepareStage()]).then(() => {
   // anonymous and understate the signed-in cohort in exactly the funnel it exists to measure.
   // Dormant (no-op) when VITE_SUPABASE_* isn't configured, like every other network path here.
   initAnalytics(cloudUserId, cloudAccessToken)
+  // Warm today's board salt (core/racesalt.ts). Fire-and-forget on purpose: GameScene reads the
+  // cache SYNCHRONOUSLY when it builds the board, so this only needs to have landed by the time
+  // someone reaches the race — which is many taps away — and must never be able to delay boot.
+  // No-ops entirely before SALT_ACTIVE_FROM.
+  void ensureSalt(dayKey())
   startGame()
 })
 

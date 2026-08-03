@@ -239,9 +239,50 @@ export function seedForKey(key: string): number {
   return h >>> 0
 }
 
-/** RNG for a specific day's board — identical for everyone playing that day. */
-export function endlessRngForDay(day: string): Rng {
-  return mulberry32(seedForKey(day))
+/**
+ * The first race day whose board is SALTED — i.e. seeded from a random string the server does not
+ * reveal until the day has opened (migration 0023).
+ *
+ * ── WHY A DATE AND NOT A FLAG ───────────────────────────────────────────────────────────────────
+ * This game is an installed PWA in `prompt` update mode, so a player keeps running the bundle they
+ * have cached until they accept an update. A green deploy is not "players are on it". If salting
+ * switched on the instant this shipped, every client still on the old bundle would generate the
+ * UNSALTED board — a completely different layout — and post it into the same day partition as
+ * everyone racing the real one. A leaderboard mixing two boards looks exactly like normal results.
+ *
+ * So the change ships DORMANT and activates on a date chosen far enough out that clients update
+ * first. Before this day the seed is byte-identical to what it always was; nothing is fetched and
+ * nothing can differ. Migration 0024 (held) then rejects any score that did not carry the day's
+ * salt, which closes the window for whoever never updated — they stop posting instead of quietly
+ * corrupting the board.
+ *
+ * Move this date and 0024's release note moves with it.
+ */
+export const SALT_ACTIVE_FROM = '2026-08-13'
+
+/** True once `day` is on or past the salt activation date. */
+export function daySaltApplies(day: string): boolean {
+  return DAY_RE.test(day) && day >= SALT_ACTIVE_FROM
+}
+
+/**
+ * RNG for a specific day's board — identical for everyone playing that day.
+ *
+ * `salt` is the server's per-day secret, fetched by `core/cloud.ts` and cached in the save. Passing
+ * null/empty reproduces the original unsalted board EXACTLY, which is the behaviour every day before
+ * SALT_ACTIVE_FROM must keep, and the fallback when the salt cannot be fetched.
+ *
+ * ── ON THE FALLBACK ─────────────────────────────────────────────────────────────────────────────
+ * An offline player on a salted day gets the unsalted board. That is deliberate, and it is the
+ * gentler of the two options: the alternative is refusing to open the race at all, which takes a
+ * mode away from someone whose only mistake was being on a plane. They play a real board and keep
+ * their local best; what they cannot do is POST it, because 0024's guard will refuse a score whose
+ * salt does not match. The mode stays playable offline, the leaderboard stays honest, and the
+ * player's score still posts the moment they are back on the real board.
+ */
+export function endlessRngForDay(day: string, salt?: string | null): Rng {
+  const key = salt && daySaltApplies(day) ? `${day}:${salt}` : day
+  return mulberry32(seedForKey(key))
 }
 
 /** Best for a specific day key; 0 if that board was never played (or the entry is junk). */

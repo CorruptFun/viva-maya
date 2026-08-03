@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { cloudSession, flushCloudSaveNow, isCloudConfigured, sbClient } from './cloud'
 import { dayKey, endlessBestForDay, formatWeekStanding, previousDayKey, previousWeekKey, weekKey } from './endless'
+import { cachedSalt, playedRealBoard } from './racesalt'
 import { loadSave, persistSave, type SaveData } from './save'
 
 /**
@@ -275,6 +276,12 @@ export async function maybeSubmitEndless(save: SaveData, now = new Date()): Prom
     const day = dayKey(now)
     const score = endlessBestForDay(save, day)
     if (score <= 0) return
+    // A run played on the OFFLINE FALLBACK board is not a race entry. On a salted day the board is
+    // seeded from the server's salt (core/racesalt.ts); without it the client builds the original
+    // unsalted layout, which nobody else is playing. Migration 0024's guard refuses such a score
+    // anyway — this just declines to ask, so a fallback run does not spend a request per save push
+    // getting rejected for the rest of the day.
+    if (!playedRealBoard(day)) return
     if (lastSent && lastSent.day === day && lastSent.score >= score) return
     const c = await client()
     if (!c) return
@@ -284,6 +291,9 @@ export async function maybeSubmitEndless(save: SaveData, now = new Date()): Prom
         day_key: day,
         score,
         display_name: preferredName(),
+        // What board this was actually played on. Null before SALT_ACTIVE_FROM, which is exactly
+        // what the guard expects for an unsalted day.
+        board_salt: cachedSalt(day),
       },
       { onConflict: 'user_id,day_key' }
     )

@@ -1,0 +1,1 @@
+0024  Rejects every score from a pre-salt cached PWA client. Apply only once the build carrying SALT_ACTIVE_FROM (src/core/endless.ts) has reached players, ideally on the activation day itself.
