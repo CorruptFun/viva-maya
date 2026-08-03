@@ -45,6 +45,30 @@ Live: <https://corruptfun.github.io/viva-maya/>
   identity. `rgb.test.ts` guards the arcs, the seam-free wrap and the even
   arc-length spacing. Players can switch it off (Settings → RGB Marquee), which
   restores the original gold/rose bulb ring exactly.
+- **The daily race board is SALTED and NORMALISED, and both are load-bearing.**
+  Until 2026-08-04 the board was `mulberry32(seedForKey(day))` — a plain FNV-1a
+  hash of the date string, so any future day's board could be generated and
+  solved in advance by anyone (the repo's visibility was never the issue; the
+  same function ships in the bundle). Two mechanisms now sit in front of it, in
+  this order, and the order matters:
+  - **The salt** (`core/racesalt.ts`, migrations 0023/0024) — a random string the
+    server mints only once a day has OPENED and refuses to hand out before then.
+    Mixed into the seed, it makes the board unknowable in advance rather than
+    unsolvable. `SALT_ACTIVE_FROM` in `core/endless.ts` and `v_salt_from` in
+    0024 are **the same switch on two sides of the wire — change one, change
+    both.** A score must carry the day's salt or the guard refuses it, which is
+    what stops a stale cached client posting an old-board score.
+  - **The normalisation** (`core/boardpick.ts`) — deterministic rejection
+    sampling that walks `day`, `day#1`, `day#2` … until a board scores inside
+    [8000, 16000] on the greedy sim. Raw day boards spanned **6.1x** (2,940 to
+    18,060), so "how big a score is possible today" was mostly the hash's
+    decision, not the player's; normalised it is 1.9x.
+  ⚠️ Normalisation couples the chosen board to `sim.playEndless`, and therefore
+  to Board mechanics, scoring and the Plinko trigger. `boardpick.test.ts` pins
+  the chosen offsets as GOLDEN values. **A failure there means the race boards
+  moved** — do not re-record it; ship the change behind a new activation date
+  the way the salt shipped, so the handover lands on a day boundary for
+  everyone at once.
 - **Endless has a cheat code**, and it is meant to be there — a secret swipe
   pattern on the dead strip below the board mints a free "mega win", each one
   paying its own Plinko drop (`src/core/cheat.ts`). A run that fires it posts to
@@ -84,7 +108,7 @@ make green.
 | `src/core/` | game logic + its tests — board, merge, levels, endless, daily, slots, hazards, analytics, push, cheat, rgb |
 | `src/view/rgbmarquee.ts` | the RGB cabinet chase — see the note above before touching it |
 | `src/view3d/stage.ts` | the only three.js usage |
-| `supabase/migrations/` | `0001_saves` → `0020_race_day_key_repair` |
+| `supabase/migrations/` | `0001_saves` → `0024_race_board_salt_enforced` |
 | `scripts/verify-rls.sh` | RLS audit — run after any migration |
 | `scripts/send-push.mjs` | push sender |
 | `scripts/gen-icons.mjs` | `npm run icons` |

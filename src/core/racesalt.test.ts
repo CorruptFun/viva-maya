@@ -12,7 +12,7 @@ import { SALT_ACTIVE_FROM, daySaltApplies, endlessRngForDay, seedForKey } from '
  * normal results and would never surface on its own.
  */
 
-const BEFORE = '2026-08-12'
+const BEFORE = '2026-08-03'
 const ON = SALT_ACTIVE_FROM
 const AFTER = '2026-08-20'
 

@@ -257,8 +257,19 @@ export function seedForKey(key: string): number {
  * corrupting the board.
  *
  * Move this date and 0024's release note moves with it.
+ *
+ * ── WHY TOMORROW AND NOT TODAY ──────────────────────────────────────────────────────────────────
+ * Set to the NEXT day boundary rather than the current day (owner decision, 2026-08-03: ship now,
+ * accept some stale sessions, players will be told to refresh). It cannot be today: today's board
+ * has already been raced for hours and four scores are posted against it, and salting mid-day would
+ * swap the layout out from under a race in progress — every score already on the board would belong
+ * to a board nobody could play any more. The day rolls at midnight in RACE_TZ, so "tomorrow" is
+ * tonight, and the handover happens at exactly the moment the board was going to change anyway.
+ *
+ * MIRRORED by `v_salt_from` in migration 0024. Change one, change both — a disagreement between the
+ * two sides is the one way this fails silently.
  */
-export const SALT_ACTIVE_FROM = '2026-08-13'
+export const SALT_ACTIVE_FROM = '2026-08-04'
 
 /** True once `day` is on or past the salt activation date. */
 export function daySaltApplies(day: string): boolean {

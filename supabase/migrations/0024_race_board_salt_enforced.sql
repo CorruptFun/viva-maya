@@ -1,45 +1,51 @@
 -- ============================================================================
 -- 0024_race_board_salt_enforced.sql
+-- PHASE 2 of 2 (phase 1 is 0023). Makes the board salt MANDATORY: from
+-- SALT_ACTIVE_FROM onward a score must carry the salt of the board that day
+-- actually dealt, or it is refused.
 --
---   ⚠️  DO NOT APPLY UNTIL THE SALT-AWARE CLIENT HAS REACHED PLAYERS.  ⚠️
+-- ── APPLY ON OR AFTER THE ACTIVATION DATE BELOW ────────────────────────────
+-- `v_salt_from` MIRRORS `SALT_ACTIVE_FROM` in src/core/endless.ts. Change one,
+-- change both — they are the same switch on two sides of the wire, and a
+-- disagreement between them is the one way this mechanism fails silently.
 --
--- PHASE 2 of 2 (phase 1 is 0023). This migration makes the board salt
--- MANDATORY: once a day has a salt, a score for that day must carry the
--- matching one or it is refused.
+-- Applying this BEFORE the activation date is harmless: every day before it
+-- skips the check entirely. Applying it after leaves a window in which a stale
+-- client can post an old-board score into the same partition as everyone
+-- racing the real one — corruption that looks exactly like normal results.
 --
--- THE CONSEQUENCE, SPELLED OUT. This game is an installed PWA using
--- vite-plugin-pwa in PROMPT mode, so a player keeps running the bundle they
--- have cached until they accept an update toast. A green deploy is not "players
--- are on it". Every client older than the salt-aware build sends no board_salt,
--- so from the moment this is applied those clients' scores are REJECTED. The
--- client swallows submit errors by design (core/leaderboard.ts
--- `maybeSubmitEndless` only memoises on success), so the player sees no error —
--- their score simply never appears on the board.
+-- THE COST, SPELLED OUT. This is a prompt-mode PWA, so players keep a cached
+-- bundle until they accept an update. From the activation date, any client
+-- older than the salt-aware build sends no board_salt and is REJECTED. The
+-- client swallows submit errors (core/leaderboard.ts `maybeSubmitEndless` only
+-- memoises on success), so such a player sees no error — their score simply
+-- never appears. That is the deliberate, safe side of the fork.
 --
--- That is the deliberate trade, and it is the safe side of the fork. The
--- alternative is worse and silent in the other direction: a stale client
--- generates the UNSALTED board, plays a completely different layout, and posts
--- into the same day partition as everyone racing the real one. A leaderboard
--- mixing two different boards is corruption that looks exactly like normal
--- results, and there is nothing on screen — for the player or the owner — that
--- would ever reveal it.
+-- ── TWO CORRECTNESS FIXES OVER THE FIRST DRAFT ─────────────────────────────
+--  1. THE CHECK RUNS ON SCORE RISES, NOT JUST INSERTS. `maybeSubmitEndless`
+--     UPSERTs, so only a player's FIRST submission of a day is an INSERT —
+--     every improvement after that is an UPDATE. Gating the salt check on
+--     `tg_op = 'INSERT'` (the shape the day check uses) therefore verified the
+--     first score of the day and waved through every one that beat it, which
+--     is exactly backwards: the big score is the last one. It now fires on any
+--     UPDATE that RAISES the score. A rename still claims no board and is
+--     still exempt, which is what the day check's narrowing was protecting.
 --
--- BEFORE APPLYING, CHECK ALL THREE:
---   1. The client carrying `SALT_ACTIVE_FROM` (src/core/endless.ts) is
---      deployed, and that date has arrived or is imminent.
---   2. Analytics show app_open traffic on the new build — compare the live
---      bundle hash against what clients actually load; a deploy is not adoption.
---   3. Ideally apply on the activation day itself. Applied EARLY it rejects
---      honest scores on days that are not salted yet; applied LATE it leaves
---      the mixed-board window open. The `v_salt is not null` guard below makes
---      early application harmless for unsalted days, so erring early is the
---      cheaper mistake.
+--  2. THE DAY IS SALTED BY DATE, NOT BY WHETHER A ROW EXISTS. Reading
+--     `race_day_salts` directly meant a day only became enforceable once
+--     someone had fetched its salt — so the FIRST submitter of a day, before
+--     any modern client had loaded, hit `v_salt is null` and was accepted on
+--     the unsalted board. Every later (salted) score then joined it, and the
+--     board silently mixed two layouts. Calling `race_salt()` instead mints on
+--     demand, so the day's identity exists the instant it is needed and does
+--     not depend on who turned up first. The submitter gains nothing by
+--     triggering the mint: the salt is server-generated randomness they cannot
+--     predict, so causing it to exist only guarantees their own rejection.
 --
 -- Release with:  sb unhold 0024
 --
--- ROLLBACK: re-run 0017's body of `endless_daily_guard` (it is the definition
--- this file extends — everything below the salt block is carried forward from
--- it verbatim).
+-- ROLLBACK: re-run 0017's body of `endless_daily_guard` (this file is that
+-- definition plus the salt block).
 -- ============================================================================
 
 create or replace function public.endless_daily_guard()
@@ -49,6 +55,8 @@ security definer
 set search_path = public, pg_temp
 as $$
 declare
+    -- MIRRORS src/core/endless.ts SALT_ACTIVE_FROM. See the header.
+    v_salt_from constant text := '2026-08-04';
     v_salt text;
 begin
     -- 0012/0013 + 0017: judge the day only when the submitter is actually choosing one. An UPDATE
@@ -61,17 +69,13 @@ begin
                 new.day_key, public.race_day_key(now())
                 using errcode = 'check_violation';
         end if;
+    end if;
 
-        -- 0024: ...and it must be a score from the board that day actually dealt.
-        --
-        -- Read directly from the table rather than through `race_salt()`: that function MINTS on
-        -- miss, and a guard that created the day's salt as a side effect of the first submission
-        -- would hand the board's identity to whoever posted first. If no salt exists the day was
-        -- never salted, and the score is accepted exactly as it was before this migration — which
-        -- is what makes applying this early harmless rather than destructive.
-        select salt into v_salt from public.race_day_salts where day_key = new.day_key;
-
-        if v_salt is not null and new.board_salt is distinct from v_salt then
+    -- 0024: ...and any real score claim must come from the board that day dealt. INSERT or a rise —
+    -- see fix (1) in the header for why "INSERT only" verified precisely the wrong submission.
+    if (tg_op = 'INSERT' or new.score > old.score) and new.day_key >= v_salt_from then
+        v_salt := public.race_salt(new.day_key);
+        if new.board_salt is distinct from v_salt then
             raise exception
                 'endless_daily_scores: score for % was not played on that day''s board', new.day_key
                 using errcode = 'check_violation';

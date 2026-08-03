@@ -3,6 +3,7 @@ import { registerSW } from 'virtual:pwa-register'
 import { DESIGN_W, restScrollY, setSafeTopInset, updateWorldH, worldH } from './config'
 import { EVENTS, initAnalytics, track } from './core/analytics'
 import { bootstrapCloud, cloudAccessToken, cloudUserId, pushCloudSave } from './core/cloud'
+import { endlessBoardRng } from './core/boardpick'
 import { dayKey } from './core/endless'
 import { ensureSalt } from './core/racesalt'
 import { captureRefFromUrl } from './core/referrals'
@@ -150,7 +151,13 @@ void Promise.all([bootstrapCloud(), prepareStage()]).then(() => {
   // cache SYNCHRONOUSLY when it builds the board, so this only needs to have landed by the time
   // someone reaches the race — which is many taps away — and must never be able to delay boot.
   // No-ops entirely before SALT_ACTIVE_FROM.
-  void ensureSalt(dayKey())
+  // …then warm the board pick off the back of it (core/boardpick.ts). The normalisation search runs
+  // up to two dozen 30-move simulations, which is cheap once and noticeable if it lands on a scene
+  // transition — doing it here means it is already cached by the time anyone reaches the race. Both
+  // steps are best-effort: GameScene recomputes synchronously if it has to.
+  void ensureSalt(dayKey()).then(salt => {
+    endlessBoardRng(dayKey(), salt)
+  })
   startGame()
 })
 

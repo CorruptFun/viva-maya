@@ -23,10 +23,11 @@ import {
 import { Board } from '../core/board'
 import { CheatSwipeCode, swipeDir } from '../core/cheat'
 import { awardFreeSpinsFor, todayKey } from '../core/daily'
-import { DAYS_PER_WEEK, dayKey, endlessBestForDay, endlessRngForDay, recordEndless } from '../core/endless'
+import { DAYS_PER_WEEK, dayKey, endlessBestForDay, recordEndless } from '../core/endless'
 import type { WeekStanding } from '../core/endless'
 import { endlessLockPlan, endlessShapeFor } from '../core/endlessramp'
 import type { EndlessShape } from '../core/endlessramp'
+import { endlessBoardRng } from '../core/boardpick'
 import { cachedSalt } from '../core/racesalt'
 import { LEVEL_COUNT, levelSpec, starsFor } from '../core/levels'
 import { hazardPlan } from '../core/hazards'
@@ -477,7 +478,7 @@ export class GameScene extends Phaser.Scene {
         ROWS,
         COLS,
         SYMBOLS.length,
-        endlessRngForDay(this.endlessDayKey, cachedSalt(this.endlessDayKey))
+        endlessBoardRng(this.endlessDayKey, cachedSalt(this.endlessDayKey))
       )
       // Seeded AFTER the board, from its own stream, so the locks land on top of the shared layout
       // instead of displacing it — see endlessramp.ts on the determinism trap.
