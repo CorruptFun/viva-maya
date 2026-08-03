@@ -297,6 +297,27 @@ export class StoreScene extends Phaser.Scene {
         .setOrigin(0, 0)
         .setAlpha(afford ? 1 : 0.66)
     )
+    // OWNED collar — the store sells the SAME objects Lucky Slots gives away, and a player who has
+    // just won one and is now looking at a price tag for something with its exact name has no way to
+    // tell they already have it. That ambiguity is what produced "I'm still getting charged coins for
+    // using perks I've won" (2026-08-03). Saying the quiet part out loud costs one small pill.
+    const ownedCount = loadSave().pendingBoosts.filter(b => b === item.type).length
+    if (ownedCount > 0) {
+      const collar = this.add.graphics()
+      collar.fillStyle(T.goldBezel, 1)
+      collar.fillRoundedRect(124, cy - 54, 116, 22, 11)
+      row.add(collar)
+      row.add(
+        this.add
+          .text(182, cy - 43, ownedCount > 1 ? `YOU OWN ${ownedCount}` : 'YOU OWN 1', {
+            fontFamily: FONT,
+            fontSize: '13px',
+            fontStyle: '900',
+            color: '#fffdf7',
+          })
+          .setOrigin(0.5)
+      )
+    }
     row.add(
       this.add
         .text(124, cy + 4, item.blurb, {
