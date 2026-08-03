@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { PRIZES } from './daily'
 import { DIFFICULTY } from './difficulty'
-import { BOOST_META, BOOST_ORDER, hasSurplus, stash, stashTotal, usingNextCount } from './inventory'
-import { coerceSave, loadSave, persistSave, promoteBoost, splitPendingBoosts, takePendingBoosts } from './save'
+import { BOOST_META, BOOST_ORDER, freeSourceFor, freeStockFor, hasSurplus, stash, stashTotal, usingNextCount } from './inventory'
+import { coerceSave, consumeBoost, loadSave, persistSave, promoteBoost, splitPendingBoosts, takePendingBoosts } from './save'
 import { BOOST_ITEMS } from './store'
 import type { BoostType } from './types'
 
@@ -158,6 +158,55 @@ describe('promoteBoost — choosing what goes in next', () => {
     persistSave(save(['wildReel', 'diceBomb']))
     expect(promoteBoost('wildReel')).toBe(true)
     expect(loadSave().pendingBoosts).toEqual(['wildReel', 'diceBomb'])
+  })
+})
+
+describe('freeSourceFor — paying with something you already own', () => {
+  it('maps the +5 shelf item to the +5 boost, the one honest equivalence', () => {
+    expect(freeSourceFor('moves5')).toBe('extraMoves')
+  })
+
+  /**
+   * ⚠️ These NEGATIVE cases are the point of the test. BLAST and DICE BOMB sound like the same
+   * thing and are not — a Dice Bomb is a piece planted on the board that you then have to match,
+   * BLAST is an immediate 3×3 you aim. Offering one as the other would rebuild the exact
+   * same-name-different-thing confusion this whole change set exists to undo, one layer deeper.
+   * And spending a +5 boost to satisfy a +1 item would be a worse deal than the 8 chips it saved.
+   */
+  it('refuses the tempting-but-wrong mappings', () => {
+    expect(freeSourceFor('bomb')).toBeNull() // NOT diceBomb — different mechanic, similar name
+    expect(freeSourceFor('move1')).toBeNull() // no boost grants one move; burning a +5 is worse
+    expect(freeSourceFor('nonsense')).toBeNull()
+  })
+
+  it('counts only stock that can actually stand in', () => {
+    expect(freeStockFor(save(['extraMoves', 'extraMoves']), 'moves5')).toBe(2)
+    expect(freeStockFor(save(['wildReel', 'diceBomb']), 'moves5')).toBe(0)
+    expect(freeStockFor(save(['diceBomb']), 'bomb')).toBe(0) // owning a Dice Bomb does not buy BLAST
+    expect(freeStockFor(coerceSave({}), 'moves5')).toBe(0)
+  })
+})
+
+describe('consumeBoost — spending one outright', () => {
+  beforeEach(stubStorage)
+  afterEach(dropStorage)
+
+  it('removes exactly one and leaves the rest', () => {
+    persistSave(save(['extraMoves', 'extraMoves', 'wildReel']))
+    expect(consumeBoost('extraMoves')).toBe(true)
+    expect(loadSave().pendingBoosts).toEqual(['extraMoves', 'wildReel'])
+  })
+
+  it('drains the same end of the queue the level start does, so nothing goes stale', () => {
+    persistSave(save(['extraMoves', 'wildReel', 'extraMoves']))
+    consumeBoost('extraMoves')
+    expect(loadSave().pendingBoosts).toEqual(['wildReel', 'extraMoves'])
+  })
+
+  it('reports false when the player owns none, so the caller can fall through to paying', () => {
+    persistSave(save(['wildReel']))
+    expect(consumeBoost('extraMoves')).toBe(false)
+    expect(loadSave().pendingBoosts).toEqual(['wildReel'])
   })
 })
 

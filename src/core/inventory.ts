@@ -95,6 +95,39 @@ export function usingNextCount(save: SaveData): number {
 }
 
 /**
+ * ── USING A STASHED BOOST INSTEAD OF PAYING ──────────────────────────────────
+ * Which owned boost, if any, delivers the same thing an in-level HELPER shelf item sells. Returns
+ * null when nothing the player owns is genuinely equivalent.
+ *
+ * ⚠️ EXACTLY ONE mapping is honest, and the temptation to add more should be resisted:
+ *
+ *   moves5 (+5 MOVES, 30 chips) ← extraMoves.  Identical effect — five more swaps. The only
+ *       difference is timing, and timing is precisely what this feature hands to the player.
+ *
+ *   move1 (+1 MOVE, 8 chips)    ← nothing. No boost grants one move, and quietly burning a +5 for
+ *       a +1 would be a worse deal than the 8 chips it "saved".
+ *
+ *   bomb (BLAST, 35 chips)      ← NOT diceBomb, despite the names. A Dice Bomb is a PIECE planted
+ *       on the board that you then have to match; BLAST is an immediate 3×3 you aim. Same-sounding
+ *       names for different mechanics is the exact confusion this whole change set exists to undo
+ *       (see the header of view/stash.ts) — offering one as the other would re-create it one layer
+ *       deeper, where it would be even harder to explain.
+ *
+ * The single mapping is also the one the player who reported this actually hit: they owned "+5
+ * MOVES" and were looking at "+5 MOVES" with a price on it.
+ */
+export function freeSourceFor(powerType: string): BoostType | null {
+  return powerType === 'moves5' ? 'extraMoves' : null
+}
+
+/** How many owned boosts could stand in for this shelf item. 0 when none, or when none can. */
+export function freeStockFor(save: SaveData, powerType: string): number {
+  const src = freeSourceFor(powerType)
+  if (!src) return 0
+  return (save.pendingBoosts ?? []).filter(b => b === src).length
+}
+
+/**
  * True when the player owns more than the next level can take — the one state the stash has to
  * explain, because a surplus is invisible otherwise and looks like a boost went missing.
  *

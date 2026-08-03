@@ -705,6 +705,23 @@ export function takePendingBoosts(): BoostType[] {
  *
  * Returns false when there is nothing of that type to promote, so the UI can no-op quietly.
  */
+/**
+ * Spend ONE owned boost outright, outside the level-start path — how the in-level helper shelf lets
+ * a player use something they already own instead of paying chips for it.
+ *
+ * Deliberately removes the FIRST match rather than the last, so it drains the same end of the queue
+ * `takePendingBoosts` does and a player can never be left holding a stale prize forever behind
+ * newer ones. Returns false when they own none, so the caller can fall through to the paid path.
+ */
+export function consumeBoost(type: BoostType): boolean {
+  const save = loadSave()
+  const at = save.pendingBoosts.indexOf(type)
+  if (at < 0) return false
+  save.pendingBoosts.splice(at, 1)
+  persistSave(save)
+  return true
+}
+
 export function promoteBoost(type: BoostType): boolean {
   const save = loadSave()
   const at = save.pendingBoosts.indexOf(type)

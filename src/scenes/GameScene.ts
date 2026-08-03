@@ -39,7 +39,8 @@ import { EVENTS, track } from '../core/analytics'
 import { devSetLives, formatCountdown, grantLife, refreshLives, spendLifeFor } from '../core/lives'
 import { levelProgress, maya, pendingOccasion, warmLoseLine, warmWinSubtitle, wasNearMiss } from '../core/maya'
 import { mulberry32 } from '../core/rng'
-import { addChips, addFreeSpins, bumpJackpotMeter, bumpWinStreak, freeSpinRoom, loadSave, markFinaleSeen, markOccasionSeen, persistSave, recordResult, recordScore, resetWinStreak, spendChips, spendJackpotCharge, takePendingBoosts } from '../core/save'
+import { addChips, addFreeSpins, bumpJackpotMeter, consumeBoost, bumpWinStreak, freeSpinRoom, loadSave, markFinaleSeen, markOccasionSeen, persistSave, recordResult, recordScore, resetWinStreak, spendChips, spendJackpotCharge, takePendingBoosts } from '../core/save'
+import { freeSourceFor, freeStockFor } from '../core/inventory'
 import { LIFE_REFILL_PRICE, POWER_ITEMS } from '../core/store'
 import type { PowerItem } from '../core/store'
 import { jackpotReady } from '../core/jackpot'
@@ -373,6 +374,8 @@ export class GameScene extends Phaser.Scene {
   private powerBar?: Phaser.GameObjects.Container
   /** The rebuildable layer of item buttons inside `powerBar` (affordability re-renders swap gold↔ghost). */
   private powerItemsLayer?: Phaser.GameObjects.Container
+  /** The shelf caption — held because its wording changes with free stock (see renderPowerItems). */
+  private powerCaption?: Phaser.GameObjects.Text
   /** Transient "+N moves" / "Not enough chips" toast over the bar. */
   private powerToastText?: Phaser.GameObjects.Text
   /** Moves bought this level — SUBTRACTED from the win's star/bonus/reward math so buys can't farm stars/chips. */
@@ -569,6 +572,7 @@ export class GameScene extends Phaser.Scene {
     // In-level helpers — drop any stale refs (scene.restart re-runs create, not field inits) + reset counters.
     this.powerBar = undefined
     this.powerItemsLayer = undefined
+    this.powerCaption = undefined
     this.powerToastText = undefined
     this.purchasedMoves = 0
     this.pendingSpecialTeach = null // §G11 — never carry a queued card into the next level
@@ -2305,18 +2309,20 @@ export class GameScene extends Phaser.Scene {
   private buildPowerBar(): void {
     const T = getTheme()
     this.powerBar = this.add.container(0, 0).setDepth(34)
-    this.powerBar.add(
-      this.add
-        .text(DESIGN_W / 2, 1136, 'HELPERS · SPEND CHIPS TO WIN THIS LEVEL', {
-          fontFamily: FONT,
-          fontSize: '18px',
-          fontStyle: '900',
-          color: T.goldText,
-        })
-        .setOrigin(0.5)
-        .setLetterSpacing(2)
-        .setShadow(0, 2, 'rgba(90,70,20,0.18)', 3, false, true)
-    )
+    // Held on the scene so renderPowerItems can retitle it: while something on the shelf is free,
+    // "SPEND CHIPS" is the exact mixed message that produced "I'm still getting charged coins for
+    // using perks I've won" (2026-08-03). A caption must not contradict the item beneath it.
+    this.powerCaption = this.add
+      .text(DESIGN_W / 2, 1136, 'HELPERS · SPEND CHIPS TO WIN THIS LEVEL', {
+        fontFamily: FONT,
+        fontSize: '18px',
+        fontStyle: '900',
+        color: T.goldText,
+      })
+      .setOrigin(0.5)
+      .setLetterSpacing(2)
+      .setShadow(0, 2, 'rgba(90,70,20,0.18)', 3, false, true)
+    this.powerBar.add(this.powerCaption)
     this.powerItemsLayer = this.add.container(0, 0)
     this.powerBar.add(this.powerItemsLayer)
     this.renderPowerItems()
@@ -2329,7 +2335,13 @@ export class GameScene extends Phaser.Scene {
     this.killPowerTweens()
     layer.removeAll(true)
     const T = getTheme()
-    const chips = loadSave().chips
+    const save = loadSave()
+    const chips = save.chips
+    // Retitle when anything on the shelf is free — see the note where the caption is created.
+    const anyFree = POWER_ITEMS.some(it => freeStockFor(save, it.type) > 0)
+    this.powerCaption?.setText(
+      anyFree ? 'HELPERS · USE YOURS, OR SPEND CHIPS' : 'HELPERS · SPEND CHIPS TO WIN THIS LEVEL'
+    )
     const n = POWER_ITEMS.length
     const pillW = 200
     const pillH = 58
@@ -2338,11 +2350,32 @@ export class GameScene extends Phaser.Scene {
     const cx0 = DESIGN_W / 2 - rowW / 2 + pillW / 2
     POWER_ITEMS.forEach((item, i) => {
       const cx = cx0 + i * (pillW + gap)
-      const afford = chips >= item.price
+      // Owning the equivalent boost makes the item reachable regardless of the chip balance — a
+      // player holding a free +5 must never see it ghosted for being broke.
+      const freeStock = freeStockFor(save, item.type)
+      const afford = freeStock > 0 || chips >= item.price
       const btn = addPillButton(this, cx, 1188, pillW, pillH, item.label, afford ? GOLD_PILL : GHOST_PILL, () =>
         this.buyPower(item, btn)
       )
       layer.add(btn)
+      // FREE line — the player owns something that does exactly this, so the shelf offers it instead
+      // of a price. This is the in-level half of the 2026-08-03 report ("I'm still getting charged
+      // coins for using perks I've won"): the stash and the Gift Store now show ownership, but this
+      // shelf is where the player was standing when they felt it, so it has to answer here too.
+      // No chip token, because showing one next to the word FREE is exactly the mixed signal that
+      // started this.
+      if (freeStock > 0) {
+        const freeText = this.add
+          .text(cx, 1240, freeStock > 1 ? `FREE · YOU OWN ${freeStock}` : 'FREE · YOU OWN 1', {
+            fontFamily: FONT,
+            fontSize: '20px',
+            fontStyle: '900',
+            color: T.goldText,
+          })
+          .setOrigin(0.5)
+        layer.add(freeText)
+        return
+      }
       // Price line beneath the button: chip token + amount, centred under `cx` (gold when affordable).
       const priceText = this.add
         .text(0, 1240, item.price.toLocaleString(), {
@@ -2385,6 +2418,20 @@ export class GameScene extends Phaser.Scene {
     if (n > 0 && this.purchasedMoveRoom() < n) {
       sfx.invalidThud()
       this.powerToast('Move top-ups maxed for this level', 'bad')
+      return
+    }
+    // ── Spend a stashed boost before spending chips ──
+    // The cap above is checked FIRST and applies either way, deliberately. It governs how far a
+    // level's difficulty can be bought down mid-flight, and a free boost buys it down by exactly as
+    // much as a paid top-up does — so paying with something you won changes the PRICE, never the
+    // ceiling. (A boost applied at level start is a different thing and rightly bypasses this: it
+    // was part of the level's shape from the first move rather than a rescue at move 3.)
+    const freeSource = freeSourceFor(item.type)
+    if (freeSource && consumeBoost(freeSource)) {
+      this.grantMoves(n)
+      sfx.winFanfare()
+      this.powerToast(`+${n} moves — used your own, no chips spent`, 'good')
+      this.renderPowerItems() // the free stock just dropped; the line may revert to a price
       return
     }
     const balance = spendChips(item.price)
