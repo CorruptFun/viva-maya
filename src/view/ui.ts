@@ -1253,14 +1253,33 @@ export function addPillButton(
     },
     opts
   )
+  let size = Math.round(height * 0.42)
   const text = scene.add
-    .text(0, 0, label, { fontFamily: FONT, fontSize: `${Math.round(height * 0.42)}px`, fontStyle: '900', color: style.textColor })
+    .text(0, 0, label, { fontFamily: FONT, fontSize: `${size}px`, fontStyle: '900', color: style.textColor })
     .setOrigin(0.5)
     .setLetterSpacing(2)
     .setShadow(0, 2, tok.emboss, 2, false, true)
+  // SHRINK TO FIT. The label used to be laid out at a fixed 0.42×height and simply allowed to bleed
+  // past the caps when it was too long — "FREE DAILY SPIN" measured 371px inside a 320px pill and
+  // hung out both ends. Re-rendering at a smaller font (rather than scaling the Text) keeps the
+  // glyphs crisp, and the baked pill geometry and press animation are untouched either way.
+  //
+  // This only ever engages when a label WOULD overflow, so every label that already fits is
+  // unchanged — across Home, the board and the slots, nothing else exceeded 64% of its pill.
+  const inner = width - Math.max(14, height * 0.18) * 2
+  if (text.width > inner) {
+    // One proportional jump lands close; the `letterSpacing` is a fixed 2px per character and so
+    // does NOT scale with the font, which is exactly the residue the correction loop mops up.
+    size = Math.max(MIN_PILL_FONT, Math.floor((size * inner) / text.width))
+    text.setFontSize(size)
+    while (text.width > inner && size > MIN_PILL_FONT) text.setFontSize(--size)
+  }
   face.add(text)
   return container
 }
+
+/** Floor for the shrink-to-fit above — below this a pill label stops being legible on a phone. */
+const MIN_PILL_FONT = 14
 
 /**
  * Shared round-chip builder — a GHOST-subtle circular twin of the pill button (same beveled
