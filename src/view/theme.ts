@@ -57,6 +57,16 @@ export interface Theme {
   bokehCool: number
   marqueeDim: number
   marqueeBright: number
+  /**
+   * RGB chase arc (§RGB) — the hue band the cabinet's chasing ring sweeps, per theme, so a rainbow
+   * never fights a theme's own identity. `rgbHueFrom` is where the arc starts (degrees) and
+   * `rgbHueSpan` is how far it travels: `>= 360` is a full wheel that wraps seamlessly, anything
+   * narrower ping-pongs back across the arc so the ring still closes with no hue seam at the wrap.
+   * `rgbSat` holds saturation just under neon — cabinet lighting, not a gaming keyboard.
+   */
+  rgbHueFrom: number
+  rgbHueSpan: number
+  rgbSat: number
   sparkleTint: number
   moteTint: number
   suitWatermark: number
@@ -160,6 +170,12 @@ const golden: Theme = {
   bokehCool: 0xff92ab,
   marqueeDim: 0xbf7f00,
   marqueeBright: 0xffb51f,
+  // The default wears the FULL wheel — the brief's "vibrant, fluid RGB colour chasing". Saturation
+  // sits at 0.82 rather than 1.0 because the warm light wash gives the ring nothing to glow against;
+  // full neon here reads as plastic, and 0.82 keeps the bulbs looking lit rather than printed.
+  rgbHueFrom: 0,
+  rgbHueSpan: 360,
+  rgbSat: 0.82,
   sparkleTint: 0xfff0c0,
   moteTint: 0xe09a12,
   suitWatermark: 0x9a7f45,
@@ -253,6 +269,11 @@ const mayaHeart: Theme = {
   bokehCool: 0xff8fa8,
   marqueeBright: 0xff6b86,
   marqueeDim: 0xc93f5e,
+  // Blush theme → a rose ARC, never a rainbow: magenta → this theme's own ~348° rose → coral. A green
+  // bulb on the valentine wash would read as a bug, so the arc simply never reaches one.
+  rgbHueFrom: 310,
+  rgbHueSpan: 70,
+  rgbSat: 0.72,
   sparkleTint: 0xffd6dd,
   moteTint: 0xf07d92,
   suitWatermark: 0xa8656f,
@@ -285,6 +306,12 @@ const roseMidnight: Theme = {
   bokehCool: 0xe61f4d,
   marqueeBright: 0xffdc5c,
   marqueeDim: 0x8a5e06,
+  // Gold+rose aurora on plum → the arc sweeps exactly that pair and nothing else: crimson (this
+  // theme's own ~346° accent) through red and orange up to gold (~39°). Both accents sit ON the arc,
+  // so the chase reads as this room's own lighting moving rather than as an effect laid over it.
+  rgbHueFrom: 340,
+  rgbHueSpan: 60,
+  rgbSat: 0.85,
   sparkleTint: 0xffe8b0,
   moteTint: 0xd494dd,
   suitWatermark: 0x574468,
@@ -316,6 +343,11 @@ const neonVegas: Theme = {
   bokehCool: 0x1fdcf0,
   marqueeBright: 0x1fdcf0,
   marqueeDim: 0xff2b78,
+  // The strip at night takes the full wheel at full electric saturation — the one theme where a
+  // literal rainbow IS the brand. Starts at 180° so the ring's first bulb lights on its signature cyan.
+  rgbHueFrom: 180,
+  rgbHueSpan: 360,
+  rgbSat: 0.95,
   sparkleTint: 0x9be8ff,
   moteTint: 0x35d0e0,
   suitWatermark: 0x2a4a7a,
@@ -445,9 +477,20 @@ interface A11yPrefs {
   reduceFlashing: boolean
   /** Opt out of haptic vibration. */
   hapticsOff: boolean
+  /**
+   * RGB marquee chase (§RGB) — the ONE pref in this shape that defaults ON, because it is a look
+   * rather than a comfort opt-out: the cabinets ship wearing it. Off falls the board + slots back to
+   * their original alternating gold/rose bulbs, so this is a true toggle, not a degraded mode.
+   */
+  rgbMarquee: boolean
 }
 
-const A11Y_DEFAULTS: A11yPrefs = { reduceMotion: false, reduceFlashing: false, hapticsOff: false }
+const A11Y_DEFAULTS: A11yPrefs = {
+  reduceMotion: false,
+  reduceFlashing: false,
+  hapticsOff: false,
+  rgbMarquee: true,
+}
 
 /** Read + validate the persisted prefs. Shape-tolerant; any bad/absent value → all-off default. */
 function readA11y(): A11yPrefs {
@@ -459,6 +502,9 @@ function readA11y(): A11yPrefs {
       reduceMotion: v.reduceMotion === true,
       reduceFlashing: v.reduceFlashing === true,
       hapticsOff: v.hapticsOff === true,
+      // Inverted test on purpose: this one defaults ON, so only an explicit `false` turns it off.
+      // A player who saved prefs before this key existed keeps the new default instead of losing it.
+      rgbMarquee: v.rgbMarquee !== false,
     }
   } catch {
     return { ...A11Y_DEFAULTS }
@@ -512,6 +558,17 @@ export function setReduceMotion(v: boolean): void {
 /** Set + persist the in-app Reduce-Flashing switch. */
 export function setReduceFlashing(v: boolean): void {
   _a11y.reduceFlashing = v
+  writeA11y()
+}
+
+/** RGB marquee chase (§RGB) — the chasing rainbow ring on the board + slots cabinets. Default ON. */
+export function rgbMarquee(): boolean {
+  return _a11y.rgbMarquee
+}
+
+/** Set + persist the RGB marquee switch. */
+export function setRgbMarquee(v: boolean): void {
+  _a11y.rgbMarquee = v
   writeA11y()
 }
 

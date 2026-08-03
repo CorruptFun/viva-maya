@@ -21,9 +21,11 @@ import {
   hapticsOff,
   prefersReducedMotion,
   reduceFlashing,
+  rgbMarquee,
   setHapticsOff,
   setReduceFlashing,
   setReduceMotion,
+  setRgbMarquee,
   setTheme,
   themeUnlocked,
 } from './theme'
@@ -1869,13 +1871,14 @@ function buildToggleRow(
 }
 
 /**
- * Settings / Accessibility overlay (§E8): a scrim + cream card titled "SETTINGS" with five labelled
- * ON/OFF toggle rows — Reduce Motion, Reduce Flashing, Haptics, High-Contrast Board, Ambient sound —
- * plus a CLOUD & BACKUP pill below them that opens the DOM cloud sign-in / backup modal (openCloudModal).
- * Each row reads its live pref and persists on tap via the shared authority. Restart-affecting toggles (Reduce
- * Motion + High-Contrast Board change the CURRENT paint) are snapshotted at open; on CLOSE, if either
- * changed, the calling scene restarts so its art repaints — mirroring the theme picker's pattern.
- * Reduce Flashing / Haptics are read live at effect time, so they need no restart.
+ * Settings / Accessibility overlay (§E8): a scrim + cream card titled "SETTINGS" with six labelled
+ * ON/OFF toggle rows — Reduce Motion, Reduce Flashing, Haptics, High-Contrast Board, RGB Marquee,
+ * Ambient sound — plus a CLOUD & BACKUP pill below them that opens the DOM cloud sign-in / backup modal
+ * (openCloudModal). Each row reads its live pref and persists on tap via the shared authority.
+ * Restart-affecting toggles (Reduce Motion, High-Contrast Board and RGB Marquee all change the CURRENT
+ * paint) are snapshotted at open; on CLOSE, if any changed, the calling scene restarts so its art
+ * repaints — mirroring the theme picker's pattern. Reduce Flashing / Haptics are read live at effect
+ * time, so they need no restart.
  */
 export function openSettingsPanel(scene: Phaser.Scene): void {
   const W = 720
@@ -1885,20 +1888,22 @@ export function openSettingsPanel(scene: Phaser.Scene): void {
 
   const px = 40
   const pw = W - 80
-  // Height sized for FIVE toggle rows + the CLOUD & BACKUP pill above DONE: rows start pyTop+176,
-  // step 104 → last row centre pyTop+592 (bottom pyTop+637); the cloud pill sits at pyTop+696 (72 tall,
-  // bottom pyTop+732) and DONE at pyTop+ph-62 (top edge pyTop+ph-96) clears it with ph=860.
-  const ph = 860
-  const pyTop = (H - ph) / 2 // stays vertically centred: (1280-800)/2 = 240px margins
+  // Height sized for SIX toggle rows + the CLOUD & BACKUP pill above DONE: rows start pyTop+176,
+  // step 104 → last row centre pyTop+696 (bottom pyTop+741); the cloud pill sits at pyTop+800 (72 tall,
+  // bottom pyTop+836) and DONE at pyTop+ph-62 (top edge pyTop+ph-96) clears it with ph=964.
+  const ph = 964
+  const pyTop = (H - ph) / 2 // stays vertically centred: (1280-964)/2 = 158px margins
 
-  // Snapshot the restart-affecting prefs at open (raw in-app reduce-motion + HC board).
+  // Snapshot the restart-affecting prefs at open (raw in-app reduce-motion, HC board, RGB marquee).
   const startedRM = rawReduceMotionPref()
   const startedHC = hcBoard()
+  const startedRGB = rgbMarquee()
 
   const scrim = scene.add.rectangle(W / 2, viewportCenterY(), W, worldH(), 0x2a2417, 0.6).setInteractive()
   const close = (): void => {
     sfx.whoosh() // §E3 B14: airy sweep partners the panel closing
-    const changed = rawReduceMotionPref() !== startedRM || hcBoard() !== startedHC
+    const changed =
+      rawReduceMotionPref() !== startedRM || hcBoard() !== startedHC || rgbMarquee() !== startedRGB
     layer.destroy()
     if (changed) scene.scene.restart()
   }
@@ -1934,6 +1939,9 @@ export function openSettingsPanel(scene: Phaser.Scene): void {
     { label: 'Reduce Flashing', sub: 'Soften flashes & impacts', get: reduceFlashing, set: setReduceFlashing },
     { label: 'Haptics', sub: 'Vibrate on big moments', get: () => !hapticsOff(), set: v => setHapticsOff(!v) },
     { label: 'High-Contrast Board', sub: 'Bolder tiles & outlines', get: hcBoard, set: setHcBoard },
+    // §RGB — the one row here that ships ON. Off returns the board + slots to their original
+    // alternating gold/rose bulbs, so it reads as a look you can decline, not an effect you disable.
+    { label: 'RGB Marquee', sub: 'Rainbow chase on the cabinets', get: rgbMarquee, set: setRgbMarquee },
     // §E3-A2 — unlock the built-but-unreached ambient bed. Default OFF (sfx.ambience); toggling it
     // starts/stops the warm per-theme lounge pad and persists exactly like mute.
     { label: 'Ambient sound', sub: 'Warm lounge music', get: () => sfx.ambience, set: () => sfx.toggleAmbience() },
@@ -1949,7 +1957,7 @@ export function openSettingsPanel(scene: Phaser.Scene): void {
   // CLOUD & BACKUP — opens the DOM cloud sign-in / device-backup modal (a high-z overlay above the
   // canvas). Placed between the toggle rows and DONE; the panel height (ph) was grown to make room.
   layer.add(
-    addPillButton(scene, W / 2, pyTop + 696, 460, 72, 'CLOUD & BACKUP', GOLD_PILL, () => {
+    addPillButton(scene, W / 2, pyTop + 800, 460, 72, 'CLOUD & BACKUP', GOLD_PILL, () => {
       sfx.whoosh() // §E3 B14: the airy sweep partners the cloud modal opening
       openCloudModal()
     })
