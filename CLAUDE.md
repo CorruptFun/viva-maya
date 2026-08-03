@@ -12,10 +12,17 @@ Live: <https://corruptfun.github.io/viva-maya/>
   Game screens are Phaser scenes in `src/scenes/`, not HTML.
 - **three.js is used, but barely.** Only `src/view3d/stage.ts`. Don't reach for
   it elsewhere; it's chunked separately in `vite.config.ts` on purpose.
-- **The backend is server-authoritative by design.** Supabase validates game
-  outcomes to prevent score manipulation — see `Supabase_Architecture.md` before
-  touching anything score-, leaderboard-, or reward-related. Do not move
-  validation to the client for convenience.
+- **Score defence is guard rails, not replay — and it lives in the migrations.**
+  Scores are *self-reported*; what the server actually enforces is RLS (a row is
+  writable only by its owner), guard triggers that keep a score monotonic per
+  (user, week/day) and refuse any day but the current one, and the race-day salt
+  check that rejects a score not carrying today's salt. The header comments in
+  `supabase/migrations/` are the authority — 0002, 0006, 0007, 0012 and 0024 each
+  say what they close *and what they deliberately leave open*. Read those, plus
+  the board-salt note below, before touching anything score-, leaderboard-, or
+  reward-related, and don't move a guard to the client for convenience.
+  Server-side deterministic replay (submit the move list, server replays the
+  seeded board) is the known hardening path and is **not** built.
 - **`base: './'`** in `vite.config.ts` — relative asset paths, required for
   GitHub Pages. Don't "fix" it to `/`.
 - **The RGB cabinet marquee is a light TUBE, not bulbs — and it is one clock.**
@@ -152,17 +159,46 @@ commit or paste key material.** Publishable client config belongs in
 
 ## Design docs
 
-In this repo: `Supabase_Architecture.md` (schema + anti-cheat handshake) and
-`Implementation_Roadmap.md`. Read the relevant one before changing economy or
-security behavior.
+In this repo, all under `docs/`: `GAME_DESIGN.md`, `BUILD_OVERVIEW.md`,
+`UI_COOKBOOK.md`, `ANALYTICS_AND_PUSH.md`, `CLOUD_SAVE_SETUP.md`,
+`CLOUD_SAVE_GOOGLE_SIGNIN.md`, `GIFT_STORE.md`, `GO_LIVE_CHECKLIST.md`. For
+schema and score security the authority is the migration header comments, not a
+design doc — see the score-defence bullet at the top.
 
-**Not in this repo — the private vault.** `SOCIAL_AND_ECONOMY.md` (reward loops
-and the fairness "iron rules"), `IN_GAME_PURCHASES.md`, plus the Web3 tokenomics
-docs, moved to `CorruptFun/corrupt-brain-vault` on 2026-07-30. This repo is
-public, and those are product strategy rather than code documentation. Code
-comments in `src/core/charms.ts`, `daily.ts` and `leaderboard.ts` still cite
-`docs/SOCIAL_AND_ECONOMY.md`; that path is gone, but each cite restates its rule
-inline, so nothing is lost by not having it.
+**There is no `Supabase_Architecture.md` or `Implementation_Roadmap.md`, and
+don't recreate them.** Both sat at the repo root until 2026-08-03 and *neither
+was about this game* — they were **Viva Ton**'s plan (ad revenue, a multi-chain
+treasury, `wallets` / `ledger` / `game_sessions`, KMS signing). Viva Ton is a
+separate product that was forked out of this repo and still has a branch here,
+`feature/gift-store`; it is a different game with a different economy. **Never
+merge that branch into `main`** — it renames `package.json` to `viva-ton` and
+trails `main` by well over a hundred commits, so merging it would rebrand the
+live game and revert most of it — and never delete it either; it is the fork's
+history. (It reads as merge-worthy because this repo rebase-merges, so `git
+cherry` marks it `+`. That signal is meaningless here.)
+Nothing about Viva Ton belongs in this repo (owner's call, 2026-08-03).
+The architecture doc described a backend that has never existed here:
+there is no `supabase/functions/` directory, and its schema shares **zero**
+tables with the twelve real ones. This file used to cite both — including a bullet
+sending you to the architecture doc "before touching anything score-,
+leaderboard-, or reward-related" — which is how an agent following these
+instructions ended up reading a different product's crypto design. Moved to the
+vault at `01_Projects/Viva_Ton_Web3/`.
+
+Some comments still cite the moved paths, and that is fine — every one restates
+its point inline, so nothing is lost by the path being gone:
+`supabase/migrations/` 0002, 0006, 0007 and 0012 name `Supabase_Architecture.md`
+for deterministic-replay validation (they each spell out "submit the move list,
+replay the seeded board"), and `src/core/charms.ts`, `daily.ts` and
+`leaderboard.ts` cite `docs/SOCIAL_AND_ECONOMY.md`. Applied migrations are
+historical records — don't rewrite them to chase a link.
+
+**Not in this repo — the private vault** (`CorruptFun/corrupt-brain-vault`).
+`SOCIAL_AND_ECONOMY.md` (reward loops and the fairness "iron rules") and
+`IN_GAME_PURCHASES.md` moved there 2026-07-30; the Web3 docs followed on
+2026-08-03. **The actual Viva Maya roadmap lives there too** —
+`01_Projects/Viva_Maya/RETENTION_AND_POLISH_ROADMAP.md`. It is product strategy,
+so read it there and **do not copy it into this repo.**
 
 Anything describing monetization, tokenomics, or unreleased strategy belongs in
 the vault, not here — it is the one category this repo's visibility makes

@@ -1,12 +1,12 @@
 -- ============================================================================
 -- 0001_saves.sql
--- Minimal per-user cloud-save slice of Supabase_Architecture.md
+-- Minimal per-user cloud save
 --
--- This is the FIRST and smallest piece of the architecture described in
--- Supabase_Architecture.md. It implements ONLY a single-row-per-user cloud
--- save (the entire game SaveData blob stored as JSON). The wallets, ledger,
--- game_sessions and deterministic anti-cheat pieces from that document are
--- intentionally NOT included in this migration yet.
+-- The smallest thing that works: ONE row per user holding the entire game
+-- SaveData blob as JSON. There is no currency, ledger or wallet table in this
+-- schema -- chips and stars are values inside that blob with no monetary
+-- meaning. Score validation is not here either; the guard triggers that
+-- constrain what a client may file arrive with the leaderboard, from 0002 on.
 --
 -- Security model: Row Level Security (RLS) restricts every row to its owner
 -- (auth.uid() = user_id). The Supabase anon / public key is safe to ship in

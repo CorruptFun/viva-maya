@@ -1,9 +1,9 @@
 # Cloud Save Setup (Supabase)
 
 This is the owner-facing checklist for turning on **cloud saves** in Viva Maya.
-It is the first, minimal slice of `Supabase_Architecture.md` — just a single
-saved game per user, synced to the cloud so a player can pick up their progress
-on another device. (Wallets, ledger and anti-cheat come later.)
+It is deliberately small: a single saved game per user, synced to the cloud so a
+player can pick up their progress on another device. That is the whole feature —
+there is no wallet, ledger, or currency behind it.
 
 ## What this does
 

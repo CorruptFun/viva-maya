@@ -6,7 +6,7 @@ import { coerceSave, loadSave, persistSave, type SaveData } from './save'
 export { mergeSaves }
 
 /**
- * Minimal Supabase cloud-save — the first slice of `Supabase_Architecture.md`.
+ * Minimal Supabase cloud-save — one row per user, and the whole of it.
  *
  * Design contract:
  *   - DORMANT until configured: with no VITE_SUPABASE_* env, every export no-ops and the game runs

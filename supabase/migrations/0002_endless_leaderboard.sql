@@ -1,6 +1,6 @@
 -- ============================================================================
 -- 0002_endless_leaderboard.sql
--- Weekly endless-race leaderboard — the second slice of Supabase_Architecture.md.
+-- Weekly endless-race leaderboard.
 --
 -- WHY A SEPARATE TABLE (not a view over public.saves): saves rows are owner-only
 -- by RLS design — the whole SaveData blob is private. A leaderboard needs
