@@ -63,15 +63,19 @@ interface ModeProfile {
 }
 
 const PROFILES: Record<RgbMode, ModeProfile> = {
+  // `lo`/`hi` are the HALO's swing, not the band's — see BAND_MIN. The halo can swing hard because
+  // it is additive glow: at its floor it simply stops spilling onto the gold, which reads as the
+  // light being further away rather than as the tube going out.
+  //
   // The resting cabinet: one slow swell travelling the frame, colour drifting the whole way round.
-  idle: { lapMs: 3600, lo: 0.55, hi: 1, waves: 1, spanScale: 1 },
+  idle: { lapMs: 3600, lo: 0.3, hi: 1, waves: 1, spanScale: 1 },
   // Reels running — the lap roughly doubles and a second crest joins it.
-  spin: { lapMs: 1500, lo: 0.48, hi: 1, waves: 2, spanScale: 1 },
-  // The tension beat: fastest lap, and the arc collapses to ~45% so the ring stops being a rainbow
-  // and becomes one hot colour sweeping — the same job the old all-rose HEAT pass did.
-  heat: { lapMs: 780, lo: 0.45, hi: 1, waves: 2, spanScale: 0.45 },
+  spin: { lapMs: 1500, lo: 0.24, hi: 1, waves: 2, spanScale: 1 },
+  // The tension beat: fastest lap, and the arc collapses to ~45% so the ring stops sweeping its
+  // whole range and burns one hot colour — the same job the old all-rose HEAT pass did.
+  heat: { lapMs: 780, lo: 0.2, hi: 1, waves: 2, spanScale: 0.45 },
   // Payout: three crests at speed, full arc — the ring reads as celebrating rather than working.
-  win: { lapMs: 900, lo: 0.42, hi: 1, waves: 3, spanScale: 1 },
+  win: { lapMs: 900, lo: 0.18, hi: 1, waves: 3, spanScale: 1 },
 }
 
 /** Reduce-flashing (§E8) floors: no lap quicker than this, and never a swing below this alpha. */
@@ -110,8 +114,24 @@ const IDLE_DIM = 0.72
 /** How long a `surge()` takes to decay back to the resting profile. */
 const SURGE_MS = 900
 
+/** Longest frame the lap will advance by — caps a tab-resume spike without stalling a slow device. */
+const MAX_STEP_MS = 100
+
+/**
+ * Floor on the BAND's tint value. Deliberately high, and the pulse is carried by the halo instead.
+ *
+ * The band's brightness IS its tint value, so swinging it wide drags every hue down its value ramp —
+ * and a dark yellow is not "dim gold", it is olive. The gold half of the warm themes' arcs turned to
+ * mud on the dim side of the wave. Holding the band between 0.86 and 1 keeps every hue reading as
+ * the colour it is, while the additive halo swings the full range and does the visible pulsing.
+ */
+const BAND_MIN = 0.86
+
 /** One node lights this many times its own spacing on the halo layer — the spill onto the gold. */
 const HALO_EVERY = 3
+
+/** The milled channel's own colour — a dark warm brown, never black, so it stays in the gold family. */
+const GROOVE_INK = 0x241804
 
 // ---------------------------------------------------------------------------
 // The ring
@@ -127,6 +147,14 @@ export interface RgbRingGeom {
   r: number
   /** Thickness of the hot core — the visible width of the tube. */
   thickness?: number
+  /**
+   * Total width of the glow ACROSS the tube. This is the number that decides whether the ring stays
+   * inside its frame: the halo reaches `haloWidth / 2` either side of the centreline, and anything
+   * it reaches, it lights. Callers must size it against whatever sits just inside the bezel — board
+   * tiles, payline lamps — because nothing here clips it. Defaults to a generous 3.8× thickness,
+   * which is right for a frame with room to spare and far too wide for a tight one.
+   */
+  haloWidth?: number
 }
 
 export interface RgbRingOpts {
@@ -183,7 +211,7 @@ export function attachRgbRing(
   // neighbours overlap generously without needing to be packed tightly. `rgbnode` is radial, so
   // scaling its two axes independently and rotating to the path tangent gives exactly that.
   const bandSize = thickness * 1.6
-  const haloSize = thickness * 3.8
+  const haloSize = geom.haloWidth ?? thickness * 3.8
   const bandAlong = spacing * ALONG_OVERLAP
   const haloAlong = spacing * HALO_EVERY * ALONG_OVERLAP
   /**
@@ -203,17 +231,45 @@ export function attachRgbRing(
     return o
   }
 
-  // --- Layer 1: the groove. Baked once; it never animates. It is what turns "a glow drawn over the
-  // bezel" into "a channel milled through it": a wide soft bed for the light to bleed onto, then a
-  // near-black heart the band sits down inside. It also does colour work — additive light on a
-  // bright gold ground desaturates straight to white, so the light needs something DARK behind it
-  // before a saturated hue can read at all. Depth and colour fidelity are the same fix here.
+  // --- Layer 1: the groove. Static — set once, never touched by the per-frame paint. It turns "a
+  // glow drawn over the bezel" into "a channel milled through it", and it does colour work too:
+  // additive light on a bright gold ground desaturates straight to white, so the light needs
+  // something DARK behind it before a saturated hue can read at all. Depth and colour are one fix.
+  //
+  // Drawn as an explicit CAPSULE CHAIN — a disc at every path sample plus a quad bridging each pair
+  // — rather than by any of the obvious routes, both of which failed visibly:
+  //   • a thick `strokeRoundedRect` tessellates badly where the corner arc meets the straights, and
+  //     threw a dark serration into all four corners;
+  //   • stretched nodes (what the band uses) cannot follow the corner, because an ellipse long
+  //     enough to bridge the halo spacing is far longer than the corner radius, so it juts out
+  //     tangentially as a pair of dark wings.
+  // Discs have no rotation and no joins, so the corners are exact. Every fill is OPAQUE and one flat
+  // colour, which is what lets the pieces overlap freely: the union is seamless, where semi-opaque
+  // fills would compound into lumps at every overlap. It bakes into a SINGLE Graphics — one display
+  // object, no per-frame cost, since the channel itself never animates.
   if (opts.groove !== false) {
+    const hw = (thickness * 2.05) / 2
     const g = scene.add.graphics()
-    g.lineStyle(thickness * 2.4, 0x1a1206, 0.3)
-    g.strokeRoundedRect(geom.x, geom.y, geom.w, geom.h, geom.r)
-    g.lineStyle(thickness * 1.85, 0x0d0904, 0.62)
-    g.strokeRoundedRect(geom.x, geom.y, geom.w, geom.h, geom.r)
+    g.fillStyle(GROOVE_INK, 1)
+    for (let i = 0; i < n; i++) {
+      const a = pts[i]
+      const bnext = pts[(i + 1) % n] // wraps, so the chain closes
+      g.fillCircle(a.x, a.y, hw)
+      const dx = bnext.x - a.x
+      const dy = bnext.y - a.y
+      const len = Math.hypot(dx, dy) || 1
+      const nx = (-dy / len) * hw
+      const ny = (dx / len) * hw
+      g.fillPoints(
+        [
+          { x: a.x + nx, y: a.y + ny },
+          { x: bnext.x + nx, y: bnext.y + ny },
+          { x: bnext.x - nx, y: bnext.y - ny },
+          { x: a.x - nx, y: a.y - ny },
+        ],
+        true
+      )
+    }
     place(g)
   }
 
@@ -263,16 +319,19 @@ export function attachRgbRing(
     const lo = Math.min(1, Math.max(soft ? FLASH_MIN_LO : p.lo, p.lo + s * 0.5))
     const span = hueSpan * p.spanScale
     for (let i = 0; i < n; i++) {
-      const wave = ringAlpha(i, n, phase, lo, p.hi, p.waves) * dim
-      // Brightness rides the VALUE channel; alpha stays pinned so the band never turns translucent
-      // and lets the black groove bleed through as a grey wash.
-      band[i].setTint(hsvToInt(ringHue(i, n, phase, hueFrom, span), sat, wave))
+      // The normalised 0..1 travelling wave; each layer maps it into its own range below.
+      const w = ringAlpha(i, n, phase, 0, 1, p.waves)
+      // Band brightness rides the tint's VALUE, held in a narrow band (see BAND_MIN). Alpha stays
+      // pinned at 1 so the band never turns translucent and lets the groove wash through as grey.
+      // `dim` is deliberately NOT applied here: the idle throttle calms the ring through the halo
+      // alone, because pulling the band's value down is the same move that turns gold into olive.
+      band[i].setTint(hsvToInt(ringHue(i, n, phase, hueFrom, span), sat, BAND_MIN + (1 - BAND_MIN) * w))
     }
     for (let k = 0; k < halo.length; k++) {
       const i = haloIdx[k]
-      const wave = ringAlpha(i, n, phase, lo, p.hi, p.waves) * dim
+      const w = ringAlpha(i, n, phase, 0, 1, p.waves)
       halo[k].setTint(hsvToInt(ringHue(i, n, phase, hueFrom, span), sat, 1))
-      halo[k].setAlpha(wave * haloGain)
+      halo[k].setAlpha((lo + (p.hi - lo) * w) * dim * haloGain)
     }
   }
 
@@ -292,8 +351,12 @@ export function attachRgbRing(
 
   const onUpdate = (_time: number, delta: number): void => {
     if (dead) return
-    // Ignore hitches / background-resume spikes so a returning tab never jumps the ring a half-lap.
-    const dt = delta > 0 && delta < 100 ? delta : 0
+    // CLAMP long frames rather than discarding them. Discarding bounds a background-resume spike
+    // just as well, but it also freezes the ring outright on any device slow enough to miss the
+    // threshold every frame — the failure mode is a dead marquee exactly where the game is already
+    // struggling. Clamping keeps it moving (slowly) there while still stopping a resumed tab from
+    // jumping half a lap in one step.
+    const dt = delta > 0 ? Math.min(delta, MAX_STEP_MS) : 0
     if (!dt) return
 
     const p = PROFILES[mode]

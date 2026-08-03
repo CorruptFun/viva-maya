@@ -476,10 +476,17 @@ export class SlotScene extends Phaser.Scene {
     // §RGB — with the marquee ON the frame carries a continuous band of light instead of studs. It
     // runs the cabinet stroke itself (inset 0, exactly where the bulbs sat), parented INTO `cabinet`
     // so the landing detent kicks the light with the rest of the machine.
+    //
+    // This frame is TIGHT, so the glow is sized against what sits just inside it rather than left at
+    // the default. The payline lamps are circles of r17 (+2.5 stroke) centred on LAMP_X = 53, so
+    // their left edge is at 34.75 — only 8.75px inside the cabinet edge at CAB_X = 26. A 15px halo
+    // reaches 26 ± 7.5 = 18.5…33.5 and the band 26 ± (9 × 1.6)/2 = 18.8…33.2, both clearing the
+    // lamps; the default 3.8× halo would have washed straight over them. Vertically REELS_TOP is 24px
+    // down, which the same 7.5px reach clears comfortably.
     if (rgbMarquee()) {
       this.rgb = attachRgbRing(
         this,
-        { x: CAB_X, y: CAB_Y, w: CAB_W, h: CAB_H, r: CAB_R, thickness: 12 },
+        { x: CAB_X, y: CAB_Y, w: CAB_W, h: CAB_H, r: CAB_R, thickness: 9, haloWidth: 15 },
         { mode: this.marqueeMode, container: cabinet }
       )
       fadeRise(this, cabinet, { rise: 18, duration: D.pop, ease: backOut(OVERSHOOT.gentle) })

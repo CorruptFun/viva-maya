@@ -23,13 +23,18 @@ Live: <https://corruptfun.github.io/viva-maya/>
   light, built from soft `rgbnode` atoms laid along the bezel path and *stretched
   along it* so they overlap into a seamless gradient. Three things are load-bearing
   and easy to undo by accident:
-  - **The stretch.** Nodes are ellipses rotated to the path tangent. Circular nodes
-    need 3× the count to avoid scalloping into visible beads (568 sprites vs 241).
+  - **The stretch.** Nodes are ellipses rotated to the path tangent. Circular ones
+    need roughly 3× the count to avoid scalloping into visible beads.
     `ALONG_OVERLAP` sets smoothness; `TIER_SPACING` only buys back sprite count.
   - **The band is NORMAL blend, the halo is ADD.** Additive light on bright gold
-    desaturates straight to white, so the band carries brightness in the tint's
-    *value* and sits in a dark baked groove. That groove is doing colour work, not
-    just depth — remove it and the hue goes pastel.
+    desaturates straight to white, so the band is opaque colour sitting in a dark
+    baked groove. That groove is doing colour work, not just depth — remove it and
+    the hue goes pastel. The band's brightness barely moves (`BAND_MIN`): pulling a
+    tint's *value* down turns gold to olive, so the **halo** carries the pulse.
+  - **The groove is a baked capsule chain, not a stroke.** A thick
+    `strokeRoundedRect` serrates where the corner arc meets the straights, and
+    stretched nodes jut out as wings on a tight corner. Discs plus bridging quads,
+    all opaque so overlaps don't compound, in one Graphics.
   - **One `UPDATE` hook** drives everything. It replaced 80 per-bulb tweens, so a
     board scene runs 5 tweens with it on and 53 with it off. Never tween nodes
     individually, and don't reach for a shader — the game is `Phaser.AUTO` with no
