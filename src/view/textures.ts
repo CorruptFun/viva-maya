@@ -1089,6 +1089,31 @@ function makeHeartglow(scene: Phaser.Scene): void {
   g.destroy()
 }
 
+/**
+ * RGB light node (§RGB) — the atom the fluid marquee ring is built from. Dozens of these are laid
+ * along the bezel path at roughly half their own radius and blended ADDITIVELY, so their falloffs
+ * SUM into one continuous tube of light: no discrete lamp is ever visible, which is the entire point.
+ *
+ * The falloff profile is what makes that work. Stacked concentric passes (outer = large + faint,
+ * inner = small + strong) accumulate into a hot core with a long, smooth skirt — close enough to a
+ * partition of unity that overlapping copies add to a FLAT bar rather than a string of beads. A hard
+ * -edged disc at the same spacing would scallop visibly. Pure white (alpha-only, like `bulb`) so a
+ * per-node `setTint` carries the hue truthfully.
+ */
+function makeRgbNode(scene: Phaser.Scene): void {
+  if (scene.textures.exists('rgbnode')) return
+  const S = 64
+  const c = S / 2
+  const passes = 14
+  const g = scene.make.graphics({ x: 0, y: 0 }, false)
+  for (let i = passes; i >= 1; i--) {
+    g.fillStyle(0xffffff, 0.028 * (passes + 1 - i))
+    g.fillCircle(c, c, c * (i / passes))
+  }
+  g.generateTexture('rgbnode', S, S)
+  g.destroy()
+}
+
 export function createAllTextures(scene: Phaser.Scene): void {
   for (const [key, glyph] of Object.entries(EMOJI) as Array<[SymbolType, string]>) {
     makeEmoji(scene, key, glyph)
@@ -1105,6 +1130,7 @@ export function createAllTextures(scene: Phaser.Scene): void {
   makeChip(scene)
   makeCard(scene)
   makeBulb(scene)
+  makeRgbNode(scene) // §RGB — the light-node atom the fluid cabinet ring is built from
   makeTile(scene)
   makeTileGloss(scene) // additive glossy sheen overlaid on each cushion (crown catch-light)
   makeRaybeam(scene)

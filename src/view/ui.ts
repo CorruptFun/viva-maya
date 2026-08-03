@@ -1941,7 +1941,7 @@ export function openSettingsPanel(scene: Phaser.Scene): void {
     { label: 'High-Contrast Board', sub: 'Bolder tiles & outlines', get: hcBoard, set: setHcBoard },
     // §RGB — the one row here that ships ON. Off returns the board + slots to their original
     // alternating gold/rose bulbs, so it reads as a look you can decline, not an effect you disable.
-    { label: 'RGB Marquee', sub: 'Rainbow chase on the cabinets', get: rgbMarquee, set: setRgbMarquee },
+    { label: 'RGB Marquee', sub: 'Flowing light on the cabinets', get: rgbMarquee, set: setRgbMarquee },
     // §E3-A2 — unlock the built-but-unreached ambient bed. Default OFF (sfx.ambience); toggling it
     // starts/stops the warm per-theme lounge pad and persists exactly like mute.
     { label: 'Ambient sound', sub: 'Warm lounge music', get: () => sfx.ambience, set: () => sfx.toggleAmbience() },

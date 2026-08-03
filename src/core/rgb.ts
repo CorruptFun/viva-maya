@@ -73,6 +73,77 @@ export function hsvToInt(h: number, s: number, v: number): number {
   )
 }
 
+/** A sampled point on the ring path, with the tangent angle (radians) of the path there. */
+export interface RingPoint {
+  x: number
+  y: number
+  /** Direction of travel along the path — lets a caller orient an elongated sprite along the tube. */
+  angle: number
+}
+
+/**
+ * Sample a rounded-rect perimeter CLOCKWISE from the top-left corner at (near-)even arc length.
+ *
+ * Even arc length is the load-bearing property. The obvious implementation — walk the four straight
+ * edges and the four corner arcs with a fixed count each — bunches points around the corners, which
+ * is exactly what made the OLD bulb ring visibly clump (see the `perSide` note in GameScene). Here
+ * the spacing is derived from the TOTAL perimeter and then divided evenly, so corners and straights
+ * carry the same density and the light tube has uniform brightness the whole way round.
+ *
+ * `spacing` is a target: the real step is the perimeter divided by a whole number of samples, so the
+ * loop always closes exactly rather than leaving a short final segment (a seam in the tube).
+ */
+export function roundedRectPath(
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number,
+  spacing: number
+): RingPoint[] {
+  const rad = Math.max(0, Math.min(r, w / 2, h / 2))
+  const sw = w - rad * 2 // straight run, horizontal
+  const sh = h - rad * 2 // straight run, vertical
+  const arc = (Math.PI * rad) / 2 // one quarter-corner
+
+  // Clockwise: top → TR corner → right → BR → bottom → BL → left → TL.
+  const segs: Array<{ len: number; at: (t: number) => RingPoint }> = [
+    { len: sw, at: t => ({ x: x + rad + sw * t, y, angle: 0 }) },
+    { len: arc, at: t => arcPoint(x + w - rad, y + rad, rad, -Math.PI / 2, t) },
+    { len: sh, at: t => ({ x: x + w, y: y + rad + sh * t, angle: Math.PI / 2 }) },
+    { len: arc, at: t => arcPoint(x + w - rad, y + h - rad, rad, 0, t) },
+    { len: sw, at: t => ({ x: x + w - rad - sw * t, y: y + h, angle: Math.PI }) },
+    { len: arc, at: t => arcPoint(x + rad, y + h - rad, rad, Math.PI / 2, t) },
+    { len: sh, at: t => ({ x, y: y + h - rad - sh * t, angle: -Math.PI / 2 }) },
+    { len: arc, at: t => arcPoint(x + rad, y + rad, rad, Math.PI, t) },
+  ]
+
+  const total = segs.reduce((a, s) => a + s.len, 0)
+  if (!(total > 0) || !(spacing > 0)) return []
+  const n = Math.max(8, Math.round(total / spacing))
+  const step = total / n
+
+  const out: RingPoint[] = []
+  let seg = 0
+  let base = 0 // arc length at the start of `seg`
+  for (let i = 0; i < n; i++) {
+    const s = i * step
+    while (seg < segs.length - 1 && s >= base + segs[seg].len) {
+      base += segs[seg].len
+      seg++
+    }
+    const len = segs[seg].len
+    out.push(segs[seg].at(len > 0 ? (s - base) / len : 0))
+  }
+  return out
+}
+
+/** Point a quarter-turn clockwise from `from` around (cx,cy), at parameter `t` in 0..1. */
+function arcPoint(cx: number, cy: number, r: number, from: number, t: number): RingPoint {
+  const a = from + (Math.PI / 2) * t
+  return { x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r, angle: a + Math.PI / 2 }
+}
+
 /**
  * Travelling brightness for ring position `i` of `n`. `waves` is how many bright crests ride the
  * ring at once — one crest reads as a single lamp walking the frame, three as a running chase.

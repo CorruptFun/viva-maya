@@ -51,7 +51,7 @@ import { D, E, OVERSHOOT, backOut, heartbeat } from '../view/motion'
 import { quality } from '../view/quality'
 import { vibratePattern } from '../view/haptics'
 import { css, getTheme, hapticsOff, prefersReducedMotion, reduceFlashing as prefReduceFlashing, rgbMarquee } from '../view/theme'
-import { attachRgbChase, type RgbChase } from '../view/rgbmarquee'
+import { attachRgbRing, type RgbRing } from '../view/rgbmarquee'
 import { TEX_SIZE, ensurePieceTexture } from '../view/textures'
 import {
   FONT,
@@ -199,8 +199,8 @@ export class GameScene extends Phaser.Scene {
   /** §E14 guard — true while the first-run onboarding card is up, so board taps are ignored under it. */
   private introOpen = false
   private cabinetBulbs: Phaser.GameObjects.Image[] = []
-  /** The RGB chase driving the bezel ring (§RGB), or undefined when the player has it switched off. */
-  private cabinetRgb?: RgbChase
+  /** The fluid RGB light ring on the bezel (§RGB), or undefined when the player has it switched off. */
+  private cabinetRgb?: RgbRing
   private cabinetGlow?: Phaser.GameObjects.Image
   /** True while a win surge (flashCabinet) briefly owns cabinetGlow's alpha, so the heartbeat drive in update() yields (C1). */
   private cabinetSurge = false
@@ -1862,10 +1862,10 @@ export class GameScene extends Phaser.Scene {
    * the 8×8 grid so it never covers a piece. Bulbs are stored so a win can flash them (flashCabinet /
    * celebrateBoard).
    *
-   * §RGB — the ring is built in CLOCKWISE order (top → right → bottom → left) because the chase
-   * derives each bulb's phase from its index; a scattered order would scatter the lap. When the RGB
-   * marquee is on, ONE `attachRgbChase` clock drives all 48 bulbs' hue AND brightness. When it is
-   * off, the original alternating red/gold bulbs and their 48 per-bulb tweens run exactly as before.
+   * §RGB — with the RGB marquee ON there are no bulbs at all: the gold bezel instead carries a
+   * continuous band of light (`attachRgbRing`), running down the centre of the frame where the bulb
+   * ring used to sit so the cabinet footprint is unchanged. With it OFF the original alternating
+   * red/gold bulbs and their 48 per-bulb tweens are rebuilt exactly as before.
    */
   private buildCabinet(): void {
     this.cabinetRgb?.destroy()
@@ -1873,6 +1873,26 @@ export class GameScene extends Phaser.Scene {
     this.cabinetBulbs = []
     const pad = 18
     const inset = 12
+
+    if (rgbMarquee()) {
+      // The channel's CENTRELINE: the bezel rect pulled in by `inset`, which is the same line the
+      // bulbs were seated on — so the light lands mid-gold, with frame either side of it to catch
+      // the spill. The corner radius shrinks with the inset or the tube would cut the corners.
+      this.cabinetRgb = attachRgbRing(
+        this,
+        {
+          x: BOARD_X - pad + inset,
+          y: BOARD_Y - pad + inset,
+          w: BOARD_W + pad * 2 - inset * 2,
+          h: BOARD_W + pad * 2 - inset * 2,
+          r: 28 - inset,
+          thickness: 11,
+        },
+        { depth: 2 } // the bulbs' old depth: above the baked cabinet, below every gameplay object
+      )
+      return
+    }
+
     const left = BOARD_X - pad + inset
     const right = BOARD_X - pad + (BOARD_W + pad * 2) - inset
     const top = BOARD_Y - pad + inset
@@ -1890,12 +1910,10 @@ export class GameScene extends Phaser.Scene {
     for (let i = 0; i < perSide; i++) pts.push({ x: right - step * i, y: bottom })
     for (let i = 0; i < perSide; i++) pts.push({ x: left, y: bottom - step * i })
 
-    const rgb = rgbMarquee()
-    const period = 1500 // one lap of the legacy chase
+    const period = 1500 // one lap of the chase
     pts.forEach((p, i) => {
       const bulb = this.add.image(p.x, p.y, 'bulb').setDisplaySize(13, 13).setDepth(2)
       this.cabinetBulbs.push(bulb)
-      if (rgb) return // the RGB chase owns tint AND alpha from here — no per-bulb tween at all
       bulb.setTint(i % 2 === 0 ? 0xff5a6a : 0xffd75e) // reddish / gold
       // Traveling bulb chase — gated (§E8): reduced motion rests every bulb statically lit, no chase.
       if (this.reducedMotion) {
@@ -1913,9 +1931,6 @@ export class GameScene extends Phaser.Scene {
         })
       }
     })
-    // One clock for all 48 bulbs, replacing 48 tweens — see view/rgbmarquee.ts on why that swap is
-    // what makes the richer effect the CHEAPER one.
-    if (rgb) this.cabinetRgb = attachRgbChase(this, this.cabinetBulbs)
   }
 
   /**
@@ -1930,8 +1945,9 @@ export class GameScene extends Phaser.Scene {
       const base = bulb.scaleX
       this.tweens.add({ targets: bulb, scaleX: base * bulbScale, scaleY: base * bulbScale, duration: 140, yoyo: true, ease: 'Quad.easeOut' })
     }
-    // §RGB — the pop above is a SCALE punch, which the chase never touches, so the two compose: the
-    // bulbs swell while the ring simultaneously quickens its lap and burns brighter, then both decay.
+    // §RGB — with the light ring on there are no bulbs, so the scale-punch loop above simply finds
+    // an empty array and the ring's own surge (a quickened lap + a brighter floor, self-decaying)
+    // IS the win flash. With it off, the bulbs pop and this is a no-op. Never both.
     this.cabinetRgb?.surge(s)
     if (this.cabinetGlow) {
       // The surge briefly OWNS the glow's alpha; the heartbeat drive in update() yields until it ends.

@@ -18,17 +18,28 @@ Live: <https://corruptfun.github.io/viva-maya/>
   validation to the client for convenience.
 - **`base: './'`** in `vite.config.ts` — relative asset paths, required for
   GitHub Pages. Don't "fix" it to `/`.
-- **The RGB cabinet marquee is driven by ONE clock, deliberately.** The chasing
-  rainbow ring on the board and slots bezels (`src/view/rgbmarquee.ts`) paints all
-  48 + 32 bulbs' hue *and* brightness from a single `UPDATE` hook. It replaced 80
-  per-bulb tweens, which is the whole reason the richer effect is also the cheaper
-  one — a board scene runs 5 tweens with it on and 53 with it off. Do not "fix" it
-  by tweening bulbs individually, and do not reach for a shader or three.js: the
-  `bulb` texture is baked alpha-only precisely so `setTint` stays hue-true. Colour
-  comes from per-theme hue arcs (`rgbHueFrom`/`rgbHueSpan`/`rgbSat` in `theme.ts`),
-  narrow on the rose/gold themes so the ring never fights a theme's identity;
-  `rgb.test.ts` guards the arcs and the seam-free wrap. Players can switch it off
-  (Settings → RGB Marquee), which restores the original gold/rose bulbs exactly.
+- **The RGB cabinet marquee is a light TUBE, not bulbs — and it is one clock.**
+  The board and slots frames (`src/view/rgbmarquee.ts`) carry a continuous band of
+  light, built from soft `rgbnode` atoms laid along the bezel path and *stretched
+  along it* so they overlap into a seamless gradient. Three things are load-bearing
+  and easy to undo by accident:
+  - **The stretch.** Nodes are ellipses rotated to the path tangent. Circular nodes
+    need 3× the count to avoid scalloping into visible beads (568 sprites vs 241).
+    `ALONG_OVERLAP` sets smoothness; `TIER_SPACING` only buys back sprite count.
+  - **The band is NORMAL blend, the halo is ADD.** Additive light on bright gold
+    desaturates straight to white, so the band carries brightness in the tint's
+    *value* and sits in a dark baked groove. That groove is doing colour work, not
+    just depth — remove it and the hue goes pastel.
+  - **One `UPDATE` hook** drives everything. It replaced 80 per-bulb tweens, so a
+    board scene runs 5 tweens with it on and 53 with it off. Never tween nodes
+    individually, and don't reach for a shader — the game is `Phaser.AUTO` with no
+    pipelines, so a fragment shader would strand the Canvas fallback.
+
+  Colour comes from per-theme hue arcs (`rgbHueFrom`/`rgbHueSpan`/`rgbSat` in
+  `theme.ts`), narrow on the rose/gold themes so the ring never fights a theme's
+  identity. `rgb.test.ts` guards the arcs, the seam-free wrap and the even
+  arc-length spacing. Players can switch it off (Settings → RGB Marquee), which
+  restores the original gold/rose bulb ring exactly.
 - **Endless has a cheat code**, and it is meant to be there — a secret swipe
   pattern on the dead strip below the board mints a free "mega win", each one
   paying its own Plinko drop (`src/core/cheat.ts`). A run that fires it posts to

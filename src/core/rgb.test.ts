@@ -8,7 +8,7 @@
  * at one corner of the cabinet forever. `ringHue` earns its ping-pong branch here.
  */
 import { describe, expect, it } from 'vitest'
-import { frac, hsvToInt, ringAlpha, ringHue } from './rgb'
+import { frac, hsvToInt, ringAlpha, ringHue, roundedRectPath } from './rgb'
 // `view/theme.ts` is Phaser-free (it imports only core), so a core test can read the theme table
 // directly — and it should: the arcs are data the maths is meaningless without.
 import { THEMES, THEME_ORDER } from '../view/theme'
@@ -134,6 +134,74 @@ describe('ringAlpha', () => {
 
   it('travels: the crest moves as phase advances', () => {
     expect(ringAlpha(0, 32, 0, 0, 1, 1)).not.toBeCloseTo(ringAlpha(0, 32, 0.25, 0, 1, 1))
+  })
+})
+
+describe('roundedRectPath', () => {
+  // The board cabinet's real light channel: the 676² bezel inset 12, radius 28-12.
+  const G = { x: 34, y: 294, w: 652, h: 652, r: 16 }
+  const path = (spacing: number) => roundedRectPath(G.x, G.y, G.w, G.h, G.r, spacing)
+
+  /** Distance from a point to the rounded-rect boundary — 0 when the point sits exactly on it. */
+  function offBoundary(p: { x: number; y: number }): number {
+    // Fold into one quadrant, then measure against the straight edges / corner arc.
+    const cx = G.x + G.w / 2
+    const cy = G.y + G.h / 2
+    const dx = Math.abs(p.x - cx)
+    const dy = Math.abs(p.y - cy)
+    const ix = G.w / 2 - G.r // corner-centre offsets
+    const iy = G.h / 2 - G.r
+    if (dx <= ix) return Math.abs(dy - G.h / 2) // on a horizontal run
+    if (dy <= iy) return Math.abs(dx - G.w / 2) // on a vertical run
+    return Math.abs(Math.hypot(dx - ix, dy - iy) - G.r) // in a corner
+  }
+
+  it('puts every sample ON the rounded-rect boundary', () => {
+    for (const p of path(8)) expect(offBoundary(p)).toBeLessThan(0.5)
+  })
+
+  it('spaces samples EVENLY, corners included — the old ring clumped there', () => {
+    const pts = path(8)
+    const gaps: number[] = []
+    for (let i = 0; i < pts.length; i++) {
+      const a = pts[i]
+      const b = pts[(i + 1) % pts.length] // includes the wrap gap
+      gaps.push(Math.hypot(b.x - a.x, b.y - a.y))
+    }
+    const min = Math.min(...gaps)
+    const max = Math.max(...gaps)
+    // Chords across a corner arc are a hair shorter than a straight run's; anything under 10% is
+    // invisible once the nodes overlap. A per-edge fixed count would blow way past this.
+    expect(max / min).toBeLessThan(1.1)
+  })
+
+  it('closes the loop — the wrap gap matches the rest', () => {
+    const pts = path(8)
+    const first = pts[0]
+    const last = pts[pts.length - 1]
+    const wrap = Math.hypot(first.x - last.x, first.y - last.y)
+    const typical = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y)
+    expect(Math.abs(wrap - typical)).toBeLessThan(0.6)
+  })
+
+  it('scales sample count with the requested spacing', () => {
+    expect(path(4).length).toBeGreaterThan(path(8).length)
+    expect(path(8).length).toBeGreaterThan(path(16).length)
+  })
+
+  it('runs CLOCKWISE from the top-left, so a lap travels the way the chase expects', () => {
+    const pts = path(8)
+    expect(pts[0].y).toBeCloseTo(G.y, 0) // starts on the top edge
+    expect(pts[1].x).toBeGreaterThan(pts[0].x) // and heads right
+  })
+
+  it('survives degenerate geometry instead of emitting NaNs', () => {
+    expect(roundedRectPath(0, 0, 0, 0, 0, 8)).toEqual([])
+    expect(roundedRectPath(0, 0, 100, 100, 0, 0)).toEqual([])
+    // A radius past half the side clamps rather than inverting the corners.
+    for (const p of roundedRectPath(0, 0, 100, 100, 999, 8)) {
+      expect(Number.isFinite(p.x) && Number.isFinite(p.y)).toBe(true)
+    }
   })
 })
 
