@@ -147,19 +147,43 @@ void Promise.all([bootstrapCloud(), prepareStage()]).then(() => {
   // anonymous and understate the signed-in cohort in exactly the funnel it exists to measure.
   // Dormant (no-op) when VITE_SUPABASE_* isn't configured, like every other network path here.
   initAnalytics(cloudUserId, cloudAccessToken)
-  // Warm today's board salt (core/racesalt.ts). Fire-and-forget on purpose: GameScene reads the
-  // cache SYNCHRONOUSLY when it builds the board, so this only needs to have landed by the time
-  // someone reaches the race — which is many taps away — and must never be able to delay boot.
-  // No-ops entirely before SALT_ACTIVE_FROM.
-  // …then warm the board pick off the back of it (core/boardpick.ts). The normalisation search runs
-  // up to two dozen 30-move simulations, which is cheap once and noticeable if it lands on a scene
-  // transition — doing it here means it is already cached by the time anyone reaches the race. Both
-  // steps are best-effort: GameScene recomputes synchronously if it has to.
-  void ensureSalt(dayKey()).then(salt => {
-    endlessBoardRng(dayKey(), salt)
+  warmRaceBoard()
+  // ⚠️ AND AGAIN ON EVERY RESUME — the boot call alone is not enough.
+  //
+  // A phone keeps this app alive in the background for days, so a session can easily still be the
+  // one that opened yesterday. `warmRaceBoard` reads `dayKey()` at call time, but nothing was
+  // re-reading it: a run started after the midnight handover (00:00 RACE_TZ — 1 AM Central) found no
+  // salt cached for the NEW day, fell back to the unsalted board, and had its score silently refused
+  // by the guard. Silent, because `maybeSubmitEndless` swallows submit errors — the player would just
+  // never appear on the board.
+  //
+  // `visibilitychange` is the right hook rather than a timer: the handover matters exactly when
+  // someone picks the phone up to play, and a resume is precisely that moment. Cheap to over-call —
+  // `ensureSalt` returns the cache on a hit and the board pick is memoised, so a same-day resume
+  // does no work at all.
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) warmRaceBoard()
   })
   startGame()
 })
+
+/**
+ * Warm the current race day's board so GameScene's synchronous build finds it cached.
+ *
+ * Two steps, in order. The SALT (core/racesalt.ts) decides which board today is and cannot be known
+ * before the day opens; the board PICK (core/boardpick.ts) then runs up to two dozen 30-move
+ * simulations to choose a board inside the quality band — cheap once, and very noticeable if it
+ * lands on a scene transition instead.
+ *
+ * Fire-and-forget by design: this must never be able to delay boot, and GameScene recomputes
+ * synchronously if it somehow has to. Both halves no-op entirely before SALT_ACTIVE_FROM.
+ */
+function warmRaceBoard(): void {
+  const day = dayKey()
+  void ensureSalt(day).then(salt => {
+    endlessBoardRng(day, salt)
+  })
+}
 
 function startGame(): void {
   // --- Scaling: stock Phaser FIT --------------------------------------------
