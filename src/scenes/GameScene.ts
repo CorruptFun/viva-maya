@@ -23,8 +23,10 @@ import {
 import { Board } from '../core/board'
 import { CheatSwipeCode, swipeDir } from '../core/cheat'
 import { awardFreeSpinsFor, todayKey } from '../core/daily'
-import { DAYS_PER_WEEK, ENDLESS_MOVES, dayKey, endlessBestForDay, endlessRngForDay, recordEndless } from '../core/endless'
+import { DAYS_PER_WEEK, dayKey, endlessBestForDay, endlessRngForDay, recordEndless } from '../core/endless'
 import type { WeekStanding } from '../core/endless'
+import { endlessLockPlan, endlessShapeFor } from '../core/endlessramp'
+import type { EndlessShape } from '../core/endlessramp'
 import { LEVEL_COUNT, levelSpec, starsFor } from '../core/levels'
 import { hazardPlan } from '../core/hazards'
 import { ensureHazardTexture } from '../view/textures'
@@ -51,6 +53,7 @@ import { D, E, OVERSHOOT, backOut, heartbeat } from '../view/motion'
 import { quality } from '../view/quality'
 import { vibratePattern } from '../view/haptics'
 import { css, getTheme, hapticsOff, prefersReducedMotion, reduceFlashing as prefReduceFlashing, rgbMarquee } from '../view/theme'
+import { addEndlessLeaderStrip } from '../view/leaderboardpanel'
 import { attachRgbRing, type RgbRing } from '../view/rgbmarquee'
 import { TEX_SIZE, ensurePieceTexture } from '../view/textures'
 import {
@@ -150,12 +153,20 @@ const SWEEP_FADE_MS = 360
  *
  * Everything from here down is dead space in endless, and only in endless: the numbered levels
  * spend it on the jackpot meter (y 1086) and the HELPERS shelf (1136–1240), while the race — a
- * boost-free fairness board — builds neither. The one thing endless does draw below the board is
- * the standing brief at y 988, so the strip starts clear of it. It has no bottom edge: a tall
- * phone's reclaimed height pools at the bottom (config.ts contentOffsetY), and that extra room is
- * strip too, which is why the hit test is a bare `y >=` rather than a fixed rectangle.
+ * boost-free fairness board — builds neither. Endless draws two things below the board: the standing
+ * brief at y 988 and the leader strip centred at `ENDLESS_LEADER_Y`, so the zone starts clear of
+ * both. It has no bottom edge: a tall phone's reclaimed height pools at the bottom (config.ts
+ * contentOffsetY), and that extra room is strip too, which is why the hit test is a bare `y >=`
+ * rather than a fixed rectangle.
+ *
+ * It moved down from 1012 when the leader strip landed. The strip is a real control and the zone
+ * swallows whole gestures, so they must not overlap at all — a swipe that began on the strip would
+ * otherwise be read as cheat input AND as a press. Derived, not guessed: the strip's bottom edge is
+ * ENDLESS_LEADER_Y + 26 (half of leaderboardpanel's STRIP_H 52), plus an 18px margin so a thumb
+ * landing just under the strip still belongs to the strip. Re-derive it if either number moves.
  */
-const CHEAT_ZONE_TOP = 1012
+const ENDLESS_LEADER_Y = 1044
+const CHEAT_ZONE_TOP = ENDLESS_LEADER_Y + 26 + 18 // 1088
 
 /**
  * What the mega win multiplies the blast's points by. The cheat pays through the SAME chokepoint as
@@ -382,6 +393,8 @@ export class GameScene extends Phaser.Scene {
   private endless = false
   private endlessBest = 0
   private endlessDayKey = ''
+  /** The week's ramp for this run's board (core/endlessramp.ts). Undefined on a numbered level. */
+  private endlessShape?: EndlessShape
 
   // --- The endless cheat strip (core/cheat.ts) — dead space under the board that reads swipes ---
   /** Rolling matcher for the secret pattern; fed one swipe at a time, fires the mega win on a hit. */
@@ -451,8 +464,15 @@ export class GameScene extends Phaser.Scene {
       // Capture the day key ONCE so the run is scored against the board it was seeded from,
       // even if the midnight handover (core/endless.ts RACE_TZ) passes mid-run.
       this.endlessDayKey = dayKey()
-      this.spec = { level: 0, moves: ENDLESS_MOVES, symbolCount: SYMBOLS.length, objectives: [] }
+      // The week's ramp (core/endlessramp.ts): the board gets harder and less predictable Monday →
+      // Sunday. A pure function of the day key, so every player still races the same board — the
+      // move budget, the lock count and the lock cells are all shared, exactly as the layout is.
+      this.endlessShape = endlessShapeFor(this.endlessDayKey)
+      this.spec = { level: 0, moves: this.endlessShape.moves, symbolCount: SYMBOLS.length, objectives: [] }
       this.board = new Board(ROWS, COLS, SYMBOLS.length, endlessRngForDay(this.endlessDayKey))
+      // Seeded AFTER the board, from its own stream, so the locks land on top of the shared layout
+      // instead of displacing it — see endlessramp.ts on the determinism trap.
+      this.board.seedHazards(endlessLockPlan(this.endlessDayKey, ROWS, COLS))
       this.endlessBest = endlessBestForDay(loadSave(), this.endlessDayKey)
     } else {
       this.spec = levelSpec(this.level)
@@ -1777,10 +1797,19 @@ export class GameScene extends Phaser.Scene {
     const g = this.add.graphics()
     // §R3 chunky under-bezel: a darker gold SIDE WALL peeking a few px below the face, so the slab
     // reads as a thick raised surface (the face fill below covers all but the bottom lip).
-    g.fillStyle(0x8a6206, 1)
-    g.fillRoundedRect(x, y + 7, size, size, 28)
-    g.fillStyle(0x6b4c05, 0.5)
-    g.fillRoundedRect(x + 2, y + 9, size - 4, size, 28)
+    //
+    // §RGB — skipped when the light ring is on. The ring's bottom band ends level with the face, so
+    // this lip is the one part of the cabinet the light does NOT cover: it surfaced as a gold arc
+    // under the band along the bottom edge and both bottom corners, reading as the old bulb bezel
+    // showing through. Widening the ring to cover it only moves the seam inboard (see buildCabinet),
+    // and the lip is hidden either way, so with the ring on it is simply not drawn. Elevation still
+    // comes from the two baked softshadow layers above, which is what actually carries it.
+    if (!rgbMarquee()) {
+      g.fillStyle(0x8a6206, 1)
+      g.fillRoundedRect(x, y + 7, size, size, 28)
+      g.fillStyle(0x6b4c05, 0.5)
+      g.fillRoundedRect(x + 2, y + 9, size - 4, size, 28)
+    }
     // Gold bezel frame (opaque) + a lit inner sheen and a dark outer edge for bevel depth.
     // §V1: the cabinet frame is the largest single block of gold on screen — read it from the theme
     // so it carries the saturated brand instead of the v1 mustard it was frozen at.
@@ -1886,6 +1915,20 @@ export class GameScene extends Phaser.Scene {
       // Change any of pad / RGB_INSET / thickness / haloWidth and this clearance has to be re-derived.
       const RGB_INSET = 7
       const side = BOARD_W + pad * 2 - RGB_INSET * 2
+      // THE RING IS SQUARE TO THE FACE, and buildBoard drops its under-bezel to keep it that way.
+      // That slab is normally filled a second time offset 7px DOWN (plus a half-alpha one at 9px) so
+      // a side wall hangs below the face and it reads as thick — but the ring's bottom band ends at
+      // y+size+0.2, so those 7px of gold ran on underneath the light, along the whole bottom edge and
+      // round both bottom corners. That is the old bulb bezel showing through the new one, which is
+      // the one thing this feature set out to remove, and because it appeared only at the bottom it
+      // read as a defect rather than as depth.
+      //
+      // Growing the ring's height to swallow the lip works, but trades the fault for a subtler one:
+      // the bottom band then sits 7px lower than the side bands, so ~7px of bright face shows between
+      // the well and the light along the bottom only — a second ring again, just on the inside. The
+      // lip is invisible either way once the band covers it, so it is earning nothing here; dropping
+      // it (see buildBoard, gated on the same `rgbMarquee()`) keeps all four channels identical and
+      // leaves the elevation to the two baked softshadow layers, which is where it already came from.
       this.cabinetRgb = attachRgbRing(
         this,
         {
@@ -2210,6 +2253,13 @@ export class GameScene extends Phaser.Scene {
         color: T.onBackdropMuted,
       })
       .setOrigin(0.5)
+
+    // TODAY'S LEADER, under the brief and above the cheat zone. The brief states the RULE ("biggest
+    // score wins today's board"); this states the SCORE that is currently winning it, which is the
+    // question players were actually asking mid-run — and answering it used to mean abandoning the
+    // run to go and look. Endless only: the numbered levels spend this space on the jackpot meter and
+    // the helper shelf, and have no daily board to lead.
+    if (this.endless) this.add.existing(addEndlessLeaderStrip(this, DESIGN_W / 2, ENDLESS_LEADER_Y, loadSave()))
   }
 
   // ------------------------------------------------------- in-level helpers (power bar)

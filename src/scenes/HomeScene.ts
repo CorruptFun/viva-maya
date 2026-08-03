@@ -1029,6 +1029,11 @@ export class HomeScene extends Phaser.Scene {
       // ── The gold burst on crown landing (reduceFlashing → the soft halo swell only) ──
       const burst = (): void => {
         sfx.jackpotStrike()
+        // Layered under the strike, not instead of it: the strike is the crown hitting the halo, the
+        // boom is the room answering. Together they read an order of magnitude bigger than either.
+        later(70, () => sfx.megaBoom())
+        kick(340, 0.011)
+        goldWash(0.3, 420)
         if (!reduced) {
           // The halo swells warm at the landing on EVERY motion path (soft, not a flash).
           this.tweens.add({ targets: halo, alpha: 0.4, duration: calmFlash ? 620 : 220, yoyo: true, ease: E.hero })
@@ -1065,23 +1070,67 @@ export class HomeScene extends Phaser.Scene {
           sparks.explode(quality.count(18), cx, cy - 160)
         }
         // Heart + chip confetti — celebration, not luminance: plays under reduceFlashing too.
-        if (fancy) {
-          for (const tex of ['heart', 'chip'] as const) {
-            const p = this.add.particles(0, 0, tex, {
-              speed: { min: 170, max: 470 },
-              angle: { min: 230, max: 310 },
-              scale: { start: tex === 'chip' ? 0.5 : 0.55, end: 0.1 },
-              alpha: { start: 1, end: 0 },
-              lifespan: { min: 900, max: 1600 },
-              gravityY: 520,
-              rotate: { min: -180, max: 180 },
-              emitting: false,
-            })
-            layer.add(p)
-            transients.push(p)
-            p.explode(quality.count(14), cx, cy - 220)
-          }
+        shower(14, cx)
+        // …and it KEEPS RAINING. One burst reads as "a thing happened"; three overlapping waves,
+        // each wider and off-centre from the last, read as a room throwing money in the air. This is
+        // the cheapest half of "feels like the lottery" and the half players actually describe.
+        later(430, () => shower(11, cx - 150))
+        later(880, () => shower(11, cx + 150))
+      }
+
+      /**
+       * One wave of heart+chip confetti from `x`. Extracted so the landing can rain repeatedly
+       * instead of popping once — see `burst`. Governor-capped like every other emitter here.
+       */
+      const shower = (n: number, x: number): void => {
+        if (!fancy) return
+        for (const tex of ['heart', 'chip'] as const) {
+          const p = this.add.particles(0, 0, tex, {
+            speed: { min: 170, max: 470 },
+            angle: { min: 230, max: 310 },
+            scale: { start: tex === 'chip' ? 0.5 : 0.55, end: 0.1 },
+            alpha: { start: 1, end: 0 },
+            lifespan: { min: 900, max: 1600 },
+            gravityY: 520,
+            rotate: { min: -180, max: 180 },
+            emitting: false,
+          })
+          layer.add(p)
+          transients.push(p)
+          p.explode(quality.count(n), x, cy - 220)
         }
+      }
+
+      /**
+       * A short camera kick. The coronation is the one moment on Home where the ROOM is allowed to
+       * react rather than just the card — a win you can feel in the furniture is the difference
+       * between a notification and a jackpot. Skipped entirely under reduced motion; `shake` is
+       * motion, not luminance, so `reduceFlashing` leaves it alone.
+       */
+      const kick = (ms: number, intensity: number): void => {
+        if (!reduced) this.cameras.main.shake(ms, intensity)
+      }
+
+      /**
+       * Full-screen gold wash — the light of the win reaching past the card. Held inside `layer` so
+       * it dies with the ceremony, and behind both accessibility gates: it is a bright flash, which
+       * is exactly what `reduceFlashing` exists to withhold.
+       */
+      const goldWash = (peak: number, ms: number): void => {
+        if (!fancy || calmFlash) return
+        const wash = this.add
+          .rectangle(cx, viewportCenterY(), DESIGN_W, worldH(), T.goldBright, 0)
+          .setBlendMode(Phaser.BlendModes.ADD)
+        layer.add(wash)
+        transients.push(wash)
+        this.tweens.add({
+          targets: wash,
+          fillAlpha: peak,
+          duration: ms * 0.35,
+          yoyo: true,
+          ease: E.hero,
+          onComplete: () => wash.destroy(),
+        })
       }
 
       // Purse count-up → the award. A plain counter object tween; snap kills it via `counter`.
@@ -1097,6 +1146,22 @@ export class HomeScene extends Phaser.Scene {
           onComplete: () => {
             purseText.setText(purseFinal)
             award()
+            // THE NUMBER IS THE PRIZE. The count-up used to simply stop, which threw away the one
+            // beat everybody actually waits for. It now lands: a ding, a scale punch on the figure
+            // itself, a second wash and one more fall of confetti over the top.
+            sfx.starDing(2) // top rung — G6, the brightest of the three
+            if (!reduced) {
+              this.tweens.add({
+                targets: purseText,
+                scale: 1.24,
+                duration: 150,
+                yoyo: true,
+                ease: E.hero,
+              })
+            }
+            kick(260, 0.008)
+            goldWash(0.22, 380)
+            shower(12, cx)
             // A few chips arc up into the chip pill as the balance lands (pure garnish).
             if (fancy) {
               for (let i = 0; i < 3; i++) {
@@ -1174,33 +1239,70 @@ export class HomeScene extends Phaser.Scene {
         award()
         return
       }
-      sfx.winFanfare()
+      // ── THE DRAW ───────────────────────────────────────────────────────────────────────────────
+      // LEAD is an anticipation beat held BEFORE anything is shown: the room goes dark and a riser
+      // climbs into silence, and only then does the card arrive. It is the single biggest reason this
+      // reads as a draw rather than as a notification — a prize you see arriving has already been
+      // given to you, whereas a prize you WAIT half a second for is won. Every delay below is
+      // expressed against it, so the whole ceremony shifts as one and the skip/snap machinery (which
+      // works off `rest` poses and tracked timers, never off wall-clock) is unaffected.
+      const LEAD = 560
+      // A deep rung on the riser — it is pitched by cascade depth, and this is the biggest moment the
+      // game has. `winFanfare` resolves the riser itself (§E11), so the resolve is NOT fired here:
+      // doing both would overlap the crescendo with the thing it hands off to.
+      sfx.cascadeRiser(6)
       hint.setAlpha(0)
       scrim.setAlpha(0)
       this.tweens.add({ targets: scrim, alpha: 0.68, duration: D.settle, ease: E.settle })
+      halo.setAlpha(0)
+      // A glow blooms alone in the dark during the lead, so the eye is already parked where the crown
+      // is about to land. It lives on `layer`, NOT on cardRoot: the card is held at alpha 0 until the
+      // slam, and anything parented to it is held invisible with it — the first cut of this beat put
+      // the glow on the halo and played 560ms to an empty screen.
+      const leadGlow = this.add
+        .image(cx, cy - 160, 'bgglow')
+        .setBlendMode(Phaser.BlendModes.ADD)
+        .setTint(T.gold)
+        .setDisplaySize(120, 110)
+        .setAlpha(0)
+      layer.add(leadGlow)
+      transients.push(leadGlow)
+      this.tweens.add({
+        targets: leadGlow,
+        alpha: calmFlash ? 0.16 : 0.3,
+        displayWidth: 420,
+        displayHeight: 360,
+        duration: LEAD,
+        ease: E.hero,
+      })
+      // …then the resolve, and the card SLAMS in on it — the glow handing off to the real halo.
+      this.tweens.add({ targets: leadGlow, alpha: 0, duration: 260, delay: LEAD, ease: E.exit })
+      later(LEAD, () => {
+        sfx.winFanfare()
+        kick(220, 0.006)
+      })
       cardRoot.setAlpha(0)
-      this.tweens.add({ targets: cardRoot, alpha: 1, duration: D.base, delay: 60, ease: E.settle })
-      popIn(this, cardRoot, { from: 0.88, delay: 60, duration: D.pop, overshoot: OVERSHOOT.gentle })
+      this.tweens.add({ targets: cardRoot, alpha: 1, duration: D.base, delay: LEAD + 60, ease: E.settle })
+      popIn(this, cardRoot, { from: 0.88, delay: LEAD + 60, duration: D.pop, overshoot: OVERSHOOT.gentle })
       // The crown starts high above the card and drops onto its halo with the big overshoot.
       crown.setY(-430).setAlpha(0)
-      this.tweens.add({ targets: crown, alpha: 1, duration: 200, delay: 360, ease: E.settle })
-      this.tweens.add({ targets: crown, y: -160, duration: 560, delay: 360, ease: backOut(OVERSHOOT.pop) })
-      halo.setAlpha(0)
-      this.tweens.add({ targets: halo, alpha: 0.22, duration: 320, delay: 420, ease: E.settle })
-      later(920, burst)
+      this.tweens.add({ targets: crown, alpha: 1, duration: 200, delay: LEAD + 360, ease: E.settle })
+      this.tweens.add({ targets: crown, y: -160, duration: 560, delay: LEAD + 360, ease: backOut(OVERSHOOT.pop) })
+      this.tweens.add({ targets: halo, alpha: 0.22, duration: 320, delay: LEAD + 420, ease: E.settle })
+      later(LEAD + 920, burst)
       // Bulbs cascade-light left→right behind the title reveal.
       bulbs.forEach((b, i) => {
         b.setAlpha(0.12)
-        this.tweens.add({ targets: b, alpha: 0.62, duration: 220, delay: 640 + i * 45, ease: E.settle })
+        this.tweens.add({ targets: b, alpha: 0.62, duration: 220, delay: LEAD + 640 + i * 45, ease: E.settle })
       })
-      fadeRise(this, banner, { rise: 14, delay: 560, duration: D.settle })
-      fadeRise(this, scoreLine, { delay: 700 })
+      fadeRise(this, banner, { rise: 14, delay: LEAD + 560, duration: D.settle })
+      fadeRise(this, scoreLine, { delay: LEAD + 700 })
       purseText.setText('+0')
-      fadeRise(this, purse, { delay: 820 })
-      fadeRise(this, purseSub, { delay: 880 })
-      later(1250, countUp)
-      this.tweens.add({ targets: hint, alpha: 1, duration: 300, delay: 2500, ease: E.settle })
-      later(2600, () => {
+      fadeRise(this, purse, { delay: LEAD + 820 })
+      fadeRise(this, purseSub, { delay: LEAD + 880 })
+      later(LEAD + 1250, countUp)
+      this.tweens.add({ targets: hint, alpha: 1, duration: 300, delay: LEAD + 2500, ease: E.settle })
+      later(LEAD + 2600, () => {
         if (phase === 'playing') phase = 'rest'
       })
     })

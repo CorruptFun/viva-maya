@@ -26,9 +26,19 @@
  * both renderers, and three.js is fenced to `view3d/stage.ts` by design.
  *
  * COLOUR IS PER THEME, not one global rainbow. `rgbHueFrom` / `rgbHueSpan` / `rgbSat` come off the
- * active theme: Golden Hour and Neon Vegas take the full wheel, while Maya's Heart and Rose Midnight
- * sweep a narrow arc built from their own accents, so the ring never puts a green section on the
- * valentine wash. A sub-360 arc ping-pongs rather than wrapping, so the ring closes with no seam.
+ * active theme, and NO theme takes the full wheel — every arc is cut to that theme's own accents, so
+ * the ring can never put a green section on the valentine wash. Measured 2026-08-03, and each arc
+ * spans exactly the two colours the theme already uses:
+ *
+ *   Golden Hour   345° → 55°  (span  70, sat 0.80)   crimson → red → orange → gold
+ *   Maya's Heart  310° → 20°  (span  70, sat 0.72)   magenta → rose → coral
+ *   Rose Midnight 340° → 50°  (span  70, sat 0.85)   crimson → orange → gold
+ *   Neon Vegas    185° → 340° (span 155, sat 0.95)   cyan → blue → violet → magenta
+ *
+ * A sub-360 arc ping-pongs rather than wrapping, so the ring closes with no seam; the `span >= 360`
+ * branch in `ringHue` is the wrapping path and is currently unused by every theme. The theme is read
+ * at ATTACH time, so a theme swap only repaints because the picker restarts the scene (ui.ts's
+ * close-if-changed) — a live re-tint would need this to re-read `getTheme()`.
  *
  * ACCESSIBILITY. Reduced motion paints the arc ONCE and never ticks — you keep the colour, you lose
  * the travel (a hue gradient is not vestibular motion). Reduce-flashing clamps the lap slow and

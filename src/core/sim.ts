@@ -3,6 +3,7 @@ import { Board } from './board'
 import { ENDLESS_MOVES } from './endless'
 import { levelSpec } from './levels'
 import { hazardPlan } from './hazards'
+import type { HazardPlan } from './hazards'
 import { plinkoSlots, rollSlotIndex, shouldOfferPlinko } from './plinko'
 import { mulberry32 } from './rng'
 import type { Rng } from './rng'
@@ -308,14 +309,27 @@ export interface EndlessRun {
  * that consumes the move instead. It is left alone on purpose: its bands are calibrated numbers,
  * and the case is vanishingly rare on a 6-symbol hazard-free board either way.)
  */
-export function playEndless(seed: number, policy: Policy, roll: Rng = mulberry32(seed ^ 0x9e3779b9)): EndlessRun {
+export function playEndless(
+  seed: number,
+  policy: Policy,
+  roll: Rng = mulberry32(seed ^ 0x9e3779b9),
+  shape?: { moves: number; plan?: HazardPlan }
+): EndlessRun {
   const b = new Board(8, 8, SYMBOLS.length, mulberry32(seed))
+  // The week's ramp (core/endlessramp.ts) gives a real day's board a move budget and a lock layout.
+  // DEFAULTED OFF, deliberately: the economy guards on this function (endless.pace.test.ts,
+  // plinko.rate.test.ts) are calibrated numbers measured against the flat 30-move hazard-free board,
+  // and silently re-pointing them at a ramped one would invalidate every recorded figure without a
+  // single assertion changing. A caller that wants the real board passes the shape explicitly —
+  // endlessramp.test.ts does, which is where the ramp's own measurement lives.
+  const moves = shape?.moves ?? ENDLESS_MOVES
+  if (shape?.plan) b.seedHazards(shape.plan)
   const goals = new Set<SymbolType>() // endless has no objectives — 'banker' collapses to 'greedy'
   const chains: number[] = []
   let score = 0
   let plinko: { stake: number; mult: number } | null = null
 
-  for (let m = 0; m < ENDLESS_MOVES; m++) {
+  for (let m = 0; m < moves; m++) {
     let moves = everyValidMove(b)
     if (moves.length === 0) {
       b.regenerate()

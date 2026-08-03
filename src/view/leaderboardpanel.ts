@@ -39,7 +39,6 @@ import { sfx } from '../audio/sfx'
 import { cloudSession } from '../core/cloud'
 import {
   DAYS_PER_WEEK,
-  ENDLESS_MOVES,
   ENDLESS_UNLOCK_LEVEL,
   dayEndsAt,
   dayKey,
@@ -51,6 +50,7 @@ import {
   weekKey,
   weekEndsAt,
 } from '../core/endless'
+import { endlessWeekBounds } from '../core/endlessramp'
 import {
   CHAMPION_PURSE,
   DAILY_PURSE,
@@ -1353,6 +1353,68 @@ export function addDailyRaceStrip(scene: Phaser.Scene, x: number, y: number, sav
   })
 }
 
+/** Today's leader, cached across scene restarts the way `raceLineCache` caches your own standing. */
+interface LeaderLineData {
+  day: string
+  name: string
+  score: number
+  /** The leader IS the signed-in player — the line says so rather than quoting their own name back. */
+  you: boolean
+}
+let leaderCache: LeaderLineData | null = null
+
+/** A long handle must not push the score under the chevron; the panel behind it shows the full name. */
+const LEADER_NAME_MAX = 14
+
+/**
+ * TODAY'S LEADER — the top of the endless board, on the play screen, while the run is still live.
+ *
+ * `addDailyRaceStrip` answers "where am I", which is the right question on Home, where you are
+ * choosing what to play. Mid-run players ask a different one out loud — "what do I have to beat" —
+ * and until now the only way to answer it was to leave the run. So this strip leads with the score at
+ * the top of the board and names who set it. Same component and the same panel on tap; only the line
+ * differs, which is the point: two questions, one control, no second thing to keep in sync.
+ *
+ * It never opens as a spinner. The cached leader paints synchronously, the fetch replaces it if it
+ * resolves, and signed-out / offline / dormant falls back to the save-local best exactly as the Home
+ * strip does — a strip that blanked while the network thought about it would be worse than a slightly
+ * stale one. The line is a SNAPSHOT taken when the scene builds, not a live poll: a run ends on the
+ * results screen, so the next run rebuilds it, and polling mid-run would spend battery to move a
+ * number the player cannot act on until they finish anyway.
+ */
+export function addEndlessLeaderStrip(
+  scene: Phaser.Scene,
+  x: number,
+  y: number,
+  save: SaveData
+): Phaser.GameObjects.Container {
+  const shortName = (n: string): string =>
+    n.length > LEADER_NAME_MAX ? `${n.slice(0, LEADER_NAME_MAX - 1)}…` : n
+  const lineFor = (d: LeaderLineData | null): string => {
+    if (d) {
+      return d.you
+        ? `you lead  ·  ${d.score.toLocaleString()}`
+        : `#1 ${shortName(d.name)}  ·  ${d.score.toLocaleString()}`
+    }
+    // Offline / signed out / nobody has posted yet — never blank, same ladder as the Home strip.
+    const best = endlessBestToday(save)
+    if (best > 0) return `today’s best ${best.toLocaleString()}`
+    return 'new board today  ·  set the pace'
+  }
+  const cached = leaderCache && leaderCache.day === dayKey() ? leaderCache : null
+  return addRaceStrip(scene, x, y, {
+    initial: lineFor(cached),
+    refresh: async () => {
+      const board = await fetchDailyBoard(25)
+      const top = board.entries[0]
+      if (!top) return null // dormant/empty → keep the fallback line rather than blanking it
+      leaderCache = { day: board.key, name: top.name, score: top.score, you: top.you }
+      return lineFor(leaderCache)
+    },
+    open: () => openRacePanel(scene),
+  })
+}
+
 /**
  * The LEVEL RACE standings row — the campaign ladder's counterpart to the weekly strip, and the same
  * physical component (one definition, so the two can never drift apart the way a copy would).
@@ -1800,15 +1862,20 @@ function raceBeats(): RuleBeat[] {
     {
       n: 1,
       title: 'A NEW BOARD EVERY DAY',
-      body: `Everyone in the world plays the SAME board each day — ${ENDLESS_MOVES} moves, no goals, no boosts. Play it as many times as you like; your best score for the day is the one that counts.`,
+      body: `Everyone in the world plays the SAME board each day — no goals, no boosts. Play it as many times as you like; your best score for the day is the one that counts.`,
     },
     {
       n: 2,
+      title: 'THE WEEK TIGHTENS',
+      body: `Monday opens easy: ${endlessWeekBounds().openMoves} moves on a clean board. Every day after that the board locks up a little more and the budget shortens — by Sunday you get ${endlessWeekBounds().finaleMoves} moves and up to ${endlessWeekBounds().maxLocks} locked squares. The same board for everyone, every day; it just stops being kind.`,
+    },
+    {
+      n: 3,
       title: 'THE TOP SCORE WINS THE DAY',
       body: `At midnight the board closes and the highest score takes ${DAILY_PURSE.toLocaleString()} chips. Then a brand-new board opens and everyone starts level again.`,
     },
     {
-      n: 3,
+      n: 4,
       title: 'YOUR DAYS ADD UP',
       body: `Each day's best is added to your week. Miss a day and you bank nothing for it — no single run can make that back. The biggest total when the week closes on Monday takes ${CHAMPION_PURSE.toLocaleString()} chips.`,
     },
