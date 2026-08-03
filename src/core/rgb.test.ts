@@ -228,8 +228,60 @@ describe('theme hue arcs', () => {
     }
   })
 
-  it('the two full-wheel themes really do sweep the whole wheel', () => {
-    expect(THEMES.golden.rgbHueSpan).toBeGreaterThanOrEqual(360)
-    expect(THEMES.neonVegas.rgbHueSpan).toBeGreaterThanOrEqual(360)
+  it('NO theme sweeps the full wheel — the ring wears the room, not a rainbow', () => {
+    for (const id of THEME_ORDER) {
+      // A full 360 would drag hues no theme uses onto its own board. Every arc is deliberately a
+      // slice. (It also switches `ringHue` to its wrapping branch, which is not what these want.)
+      expect(THEMES[id].rgbHueSpan).toBeLessThan(360)
+    }
+  })
+
+  it("every arc contains that theme's OWN marquee tones — the fitting test", () => {
+    // This is the property that makes the ring read as the cabinet's lighting rather than as an
+    // effect: whatever hue a theme already lights its marquee with must be somewhere on the arc.
+    for (const id of THEME_ORDER) {
+      const t = THEMES[id]
+      for (const tone of [t.marqueeBright, t.marqueeDim]) {
+        expect(arcContains(t.rgbHueFrom, t.rgbHueSpan, hueOf(tone))).toBe(true)
+      }
+    }
+  })
+
+  it('no arc strays into a hue family its theme never uses', () => {
+    // The three warm themes must never reach green/cyan/blue; Neon Vegas must never reach the warm
+    // reds and greens that would fight its navy night.
+    const forbidden: Record<string, [number, number]> = {
+      golden: [70, 290],
+      mayaHeart: [70, 290],
+      roseMidnight: [70, 290],
+      neonVegas: [0, 180],
+    }
+    for (const id of THEME_ORDER) {
+      const t = THEMES[id]
+      const [lo, hi] = forbidden[id]
+      for (let i = 0; i < 64; i++) {
+        for (let phase = 0; phase < 1; phase += 0.1) {
+          const h = frac(ringHue(i, 64, phase, t.rgbHueFrom, t.rgbHueSpan) / 360) * 360
+          expect(h > lo && h < hi).toBe(false)
+        }
+      }
+    }
   })
 })
+
+/** Hue in degrees of a packed `0xRRGGBB` — the inverse of `hsvToInt`'s hue channel. */
+function hueOf(rgb: number): number {
+  const r = ((rgb >> 16) & 0xff) / 255
+  const g = ((rgb >> 8) & 0xff) / 255
+  const b = (rgb & 0xff) / 255
+  const max = Math.max(r, g, b)
+  const d = max - Math.min(r, g, b)
+  if (d === 0) return 0
+  const h = 60 * (max === r ? (((g - b) / d) % 6) : max === g ? (b - r) / d + 2 : (r - g) / d + 4)
+  return h < 0 ? h + 360 : h
+}
+
+/** Does `hue` (0..360) fall on the arc `[from, from + span]`? Checks both wrap directions. */
+function arcContains(from: number, span: number, hue: number): boolean {
+  return [hue, hue + 360, hue - 360].some(c => c >= from - 1e-6 && c <= from + span + 1e-6)
+}

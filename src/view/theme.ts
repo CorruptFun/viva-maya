@@ -170,12 +170,13 @@ const golden: Theme = {
   bokehCool: 0xff92ab,
   marqueeDim: 0xbf7f00,
   marqueeBright: 0xffb51f,
-  // The default wears the FULL wheel — the brief's "vibrant, fluid RGB colour chasing". Saturation
-  // sits at 0.82 rather than 1.0 because the warm light wash gives the ring nothing to glow against;
-  // full neon here reads as plastic, and 0.82 keeps the bulbs looking lit rather than printed.
-  rgbHueFrom: 0,
-  rgbHueSpan: 360,
-  rgbSat: 0.82,
+  // Golden Hour's own arc: rose-red (its ~346° accent) through red and orange up to gold (~40°).
+  // NOT the full wheel — a literal rainbow on the warm parchment wash reads as a gaming peripheral
+  // bolted to a casino cabinet. Every hue here is one the board already wears, so the ring looks
+  // like the frame lighting up rather than like an effect running on top of it.
+  rgbHueFrom: 345,
+  rgbHueSpan: 70,
+  rgbSat: 0.8,
   sparkleTint: 0xfff0c0,
   moteTint: 0xe09a12,
   suitWatermark: 0x9a7f45,
@@ -307,10 +308,10 @@ const roseMidnight: Theme = {
   marqueeBright: 0xffdc5c,
   marqueeDim: 0x8a5e06,
   // Gold+rose aurora on plum → the arc sweeps exactly that pair and nothing else: crimson (this
-  // theme's own ~346° accent) through red and orange up to gold (~39°). Both accents sit ON the arc,
-  // so the chase reads as this room's own lighting moving rather than as an effect laid over it.
+  // theme's own ~346° accent) through red and orange up to its gold marquee tone (~47°). Both
+  // accents sit ON the arc, so the ring reads as this room's own lighting moving through the frame.
   rgbHueFrom: 340,
-  rgbHueSpan: 60,
+  rgbHueSpan: 70,
   rgbSat: 0.85,
   sparkleTint: 0xffe8b0,
   moteTint: 0xd494dd,
@@ -343,10 +344,13 @@ const neonVegas: Theme = {
   bokehCool: 0x1fdcf0,
   marqueeBright: 0x1fdcf0,
   marqueeDim: 0xff2b78,
-  // The strip at night takes the full wheel at full electric saturation — the one theme where a
-  // literal rainbow IS the brand. Starts at 180° so the ring's first bulb lights on its signature cyan.
-  rgbHueFrom: 180,
-  rgbHueSpan: 360,
+  // The widest arc of the four, because this theme's identity IS two far-apart hues: its cyan
+  // (~186°) and its magenta (~338°). The ring sweeps between them the pretty way — cyan → azure →
+  // blue → violet → magenta — so every tone is a neon this theme already uses. Still not the full
+  // wheel: rounding the rest of the way would drag reds and greens onto the navy night, which is
+  // the one thing Neon Vegas doesn't wear. Full saturation, since here neon IS the brand.
+  rgbHueFrom: 185,
+  rgbHueSpan: 155,
   rgbSat: 0.95,
   sparkleTint: 0x9be8ff,
   moteTint: 0x35d0e0,

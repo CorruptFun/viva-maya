@@ -1875,18 +1875,27 @@ export class GameScene extends Phaser.Scene {
     const inset = 12
 
     if (rgbMarquee()) {
-      // The channel's CENTRELINE: the bezel rect pulled in by `inset`, which is the same line the
-      // bulbs were seated on — so the light lands mid-gold, with frame either side of it to catch
-      // the spill. The corner radius shrinks with the inset or the tube would cut the corners.
+      // The channel's CENTRELINE sits `RGB_INSET` in from the cabinet's outer edge, and the corner
+      // radius shrinks with it or the tube would cut across the corners.
+      //
+      // The light must not touch the playfield. The numbers, left to right: the cabinet's outer edge
+      // is at BOARD_X-pad (22); the first tile's LEFT EDGE is at BOARD_X + 1 (41, since the cushions
+      // are drawn CELL-2 wide and centred). With the centreline at 22+7 = 29, the band reaches
+      // 29 ± (9 × 1.6)/2 = 21.8…36.2 and the halo 29 ± 20/2 = 19…39 — so the glow stops 2px short of
+      // the tiles and spills only OUTWARD onto the backdrop, which is where a cabinet's light belongs.
+      // Change any of pad / RGB_INSET / thickness / haloWidth and this clearance has to be re-derived.
+      const RGB_INSET = 7
+      const side = BOARD_W + pad * 2 - RGB_INSET * 2
       this.cabinetRgb = attachRgbRing(
         this,
         {
-          x: BOARD_X - pad + inset,
-          y: BOARD_Y - pad + inset,
-          w: BOARD_W + pad * 2 - inset * 2,
-          h: BOARD_W + pad * 2 - inset * 2,
-          r: 28 - inset,
-          thickness: 11,
+          x: BOARD_X - pad + RGB_INSET,
+          y: BOARD_Y - pad + RGB_INSET,
+          w: side,
+          h: side,
+          r: 28 - RGB_INSET,
+          thickness: 9,
+          haloWidth: 20,
         },
         { depth: 2 } // the bulbs' old depth: above the baked cabinet, below every gameplay object
       )
