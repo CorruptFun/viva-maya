@@ -346,8 +346,9 @@ describe('formatWeekStanding', () => {
 /**
  * `save.unlocked` is "the level you may now play", so it reads n+1 once level n is cleared. The gate
  * is therefore `>` and not `>=`: the race opens when ENDLESS_UNLOCK_LEVEL has been BEATEN, not when
- * it is merely reachable. Pinned because both the retune (30 → 20) and the boundary are easy to get
- * off by one, and a wrong boundary silently locks the leaderboard away from players who earned it.
+ * it is merely reachable. Pinned because every retune (30 → 20 → 10) and the boundary itself are
+ * easy to get off by one, and a wrong boundary silently locks the leaderboard away from players who
+ * earned it.
  */
 describe('endlessUnlocked — who gets onto the leaderboard', () => {
   it('opens the moment ENDLESS_UNLOCK_LEVEL is cleared, not before', () => {
@@ -360,7 +361,15 @@ describe('endlessUnlocked — who gets onto the leaderboard', () => {
     expect(endlessUnlocked(coerceSave({ unlocked: 300 }))).toBe(true)
   })
 
-  it('is set to level 20 — the tuned milestone', () => {
-    expect(ENDLESS_UNLOCK_LEVEL).toBe(20)
+  /**
+   * Not an economy guard — a deliberateness pin. It exists so the gate can never drift by accident,
+   * and it is re-recorded ONLY alongside a documented retune (see the rationale on the constant).
+   *
+   * Now 10 = the end of CHAPTER 1, chosen off the first week of analytics: at the old gate of 20,
+   * 46% of real players never reached the daily race, the leaderboards, or the push loop that calls
+   * them back — while 88% of those who DID clear it went on to race. The gate was the whole story.
+   */
+  it('is set to level 10 — the end of chapter 1, retuned 2026-08-03 off measured reach', () => {
+    expect(ENDLESS_UNLOCK_LEVEL).toBe(10)
   })
 })

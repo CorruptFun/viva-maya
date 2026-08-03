@@ -26,8 +26,44 @@ export const ENDLESS_MOVES = 30
 
 /** Endless opens after this many numbered levels are cleared — a fixed milestone, independent of
  * the total level count (so raising LEVEL_COUNT doesn't push the unlock out of reach). Lowered
- * 30 → 20 so the race (and the leaderboards it feeds) is reachable earlier. */
-export const ENDLESS_UNLOCK_LEVEL = 20
+ * 30 → 20, then 20 → 10 on 2026-08-03.
+ *
+ * ── Why 10, and why this is MEASURED rather than felt ────────────────────────
+ * The first week of analytics (2026-07-28 → 08-03, `public.events`) settled it. Filtering the raw
+ * device list to real players — ≥10 events AND a session span >2 minutes, which strips the 58 of
+ * 123 devices that fired ≤5 events as smoke tests and drive-bys — leaves 48 real players, and:
+ *
+ *   reached L2 100% · L3 98% · L5 88% · L10 69% · L20 54% · L40 23%
+ *
+ * So the old gate at 20 was shutting out **46% of real players** — and what it shut them out of is
+ * not a side mode. It is the daily race, the daily and weekly leaderboards, and the *entire* web
+ * push loop, which exists to call players back to a board that resets every day (core/push.ts).
+ * The come-back-tomorrow apparatus was gated behind a wall half the players never reached.
+ *
+ * The other half of the measurement is what makes this a clear win rather than a guess: of the 26
+ * real players who DID clear 20, **23 went on to play endless — 88%.** There is no discovery
+ * problem here and no appetite problem; the gate was the whole story. Lowering it converts almost
+ * one-for-one.
+ *
+ * 10 specifically, not 5: `save.unlocked > ENDLESS_UNLOCK_LEVEL` means the race opens when level 10
+ * is BEATEN, i.e. exactly when CHAPTER 1 is finished (LevelSelect chapters are 10 levels) — a
+ * boundary the level map already draws and celebrates, so the unlock lands on a moment instead of
+ * an arbitrary number. By then the curve has also handed the player the real game: 3 objectives
+ * from L8 and the full 6-symbol palette (see core/levels.ts). And the race board is *easier* than a
+ * numbered level of the same age — 30 moves, no hazards, no objectives — so a chapter-1 graduate is
+ * not being thrown in early.
+ *
+ * ⚠️ SHIPPED ON A WEEK BOUNDARY, deliberately. 2026-08-03 is day 1 of ISO week 2026-W32. Lowering
+ * the gate admits new racers to an in-flight weekly season, and per the transition-week lesson
+ * (SOCIAL_AND_ECONOMY, vault) a competitive season is a promise with a deadline in it — change the
+ * field mid-race and someone loses a contest they were winning. Landing on day 1 makes that
+ * dilution ~nil. **Any future retune of this constant belongs on a Monday too.**
+ *
+ * Nothing server-side enforces this gate (no migration mirrors it), so this is a pure client
+ * change — but note that the constants below RIDE it: `neonVegas`'s theme unlock (view/theme.ts),
+ * the locked race module's "unlocks at level N" copy, and the help card all read it dynamically, so
+ * they retune themselves. */
+export const ENDLESS_UNLOCK_LEVEL = 10
 
 /** Boards in a week — the denominator of the "N of 7 days" readout, and of a perfect week. */
 export const DAYS_PER_WEEK = 7
