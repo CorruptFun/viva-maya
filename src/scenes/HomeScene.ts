@@ -34,6 +34,7 @@ import { addScreenGloss } from '../view/fx'
 import { maybeShowInstallNudge } from '../view/installnudge'
 import { maybeShowInstallOffer } from '../view/installsheet'
 import { openStash, stashBadgeCount } from '../view/stash'
+import { openRaceUnlockCard } from '../view/raceunlockcard'
 import { addJackpotMeter } from '../view/jackpot'
 import { D, E, OVERSHOOT, backOut, fadeRise, heartbeat, popIn } from '../view/motion'
 import { quality } from '../view/quality'
@@ -836,6 +837,20 @@ export class HomeScene extends Phaser.Scene {
     })
     try {
       const q = import.meta.env.DEV ? new URLSearchParams(location.search) : null
+      // 0 · DAILY RACE UNLOCKED — the one-time reveal, ahead of everything else in this queue.
+      // First because a brand-new racer cannot have won a crown or placed on yesterday's board yet,
+      // and because it is the card that explains every card that could follow it. Before this, the
+      // most repeatable feature in the game introduced itself by a dim signpost silently going live.
+      // The card latches itself in the save, so this can never double-show.
+      const unlockSave = loadSave()
+      if ((q?.has('raceunlock') || (endlessUnlocked(unlockSave) && !unlockSave.seenRaceUnlock)) && alive.on) {
+        const { showBoard } = await openRaceUnlockCard(this)
+        if (!alive.on) return
+        // "SEE THE BOARD" hands them straight to the standings — the whole point is that they end up
+        // looking at the thing, not merely told it exists.
+        if (showBoard) openRacePanel(this)
+      }
+      if (!alive.on) return
       // 1 · CORONATION — did the player win an unclaimed prize for the season that just closed?
       let win: RacePrizeWin | null = null
       if (q?.has('coronation')) {

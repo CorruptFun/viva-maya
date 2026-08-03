@@ -44,6 +44,8 @@ export interface SaveData {
   finaleSeen: boolean
   /** Latch for a future first-run onboarding intro. */
   seenIntro: boolean
+  /** Latch for the one-time DAILY RACE UNLOCKED reveal, shown on Home once endless opens. */
+  seenRaceUnlock: boolean
   // --- v8 Jackpot Wheel field. Defaults to 0; read shape-tolerantly below. ---
   /** Jackpot meter charge — notches filled by level wins; at JACKPOT_GOAL the wheel fires, then resets. */
   jackpotMeter: number
@@ -148,6 +150,7 @@ const DEFAULTS: SaveData = {
   specialIntros: [],
   finaleSeen: false,
   seenIntro: false,
+  seenRaceUnlock: false,
   jackpotMeter: 0,
   championWeeks: [],
   championDays: [],
@@ -240,6 +243,7 @@ export function coerceSave(raw: unknown): SaveData {
       : []
     base.finaleSeen = data.finaleSeen === true
     base.seenIntro = data.seenIntro === true
+    base.seenRaceUnlock = data.seenRaceUnlock === true
     // v8 Jackpot Wheel meter — absent in pre-v8 saves → 0.
     base.jackpotMeter = typeof data.jackpotMeter === 'number' ? Math.max(0, Math.floor(data.jackpotMeter)) : 0
     // Race champion claims (weekly season + daily board) — absent in older saves → none claimed.
@@ -523,6 +527,22 @@ export function markFinaleSeen(): void {
   const save = loadSave()
   if (!save.finaleSeen) {
     save.finaleSeen = true
+    persistSave(save)
+  }
+}
+
+/**
+ * Latch the DAILY RACE UNLOCKED reveal so it can only ever play once.
+ *
+ * Absent in every save written before 2026-08-03, which coerces to false — so players who were
+ * ALREADY past the unlock get the reveal on their next visit rather than never seeing it. That is
+ * the intended behaviour: the gate moved to level 10 the same day, so "already unlocked" describes
+ * a lot of people who have never had the race explained to them.
+ */
+export function markRaceUnlockSeen(): void {
+  const save = loadSave()
+  if (!save.seenRaceUnlock) {
+    save.seenRaceUnlock = true
     persistSave(save)
   }
 }
