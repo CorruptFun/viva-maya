@@ -1,3 +1,4 @@
+import { BOOST_META } from './inventory'
 import type { BoostType } from './types'
 import type { SaveData } from './save'
 import { FREE_SPIN_BANK_CAP, FREE_SPIN_DAILY_CAP } from './save'
@@ -17,13 +18,32 @@ export interface Prize {
   weight: number
 }
 
-export const PRIZES: Prize[] = [
-  { type: 'wildReel', label: 'WILD REEL', blurb: 'Next level starts with a Wild Reel on the board', weight: 30 },
-  { type: 'diceBomb', label: 'DICE BOMB', blurb: 'Next level starts with a Dice Bomb on the board', weight: 25 },
-  { type: 'extraMoves', label: '+5 MOVES', blurb: 'Five bonus moves on your next level', weight: 20 },
-  { type: 'doubleScore', label: 'DOUBLE SCORE', blurb: 'Everything scores 2x on your next level', weight: 15 },
-  { type: 'jackpot', label: 'JACKPOT CHIP', blurb: 'Next level starts with a Jackpot Chip!', weight: 10 },
+/**
+ * Spawn weights, richest rarest. ⚠️ THE ORDER OF THIS LIST IS LOAD-BEARING — `rollPrize` walks it
+ * accumulating weights, so reordering it changes which prize a given RNG roll returns and silently
+ * rewrites every seeded test. Display order is a separate, deliberately different list
+ * (`BOOST_ORDER` in core/inventory.ts); do not conflate them.
+ */
+const PRIZE_WEIGHTS: ReadonlyArray<readonly [BoostType, number]> = [
+  ['wildReel', 30],
+  ['diceBomb', 25],
+  ['extraMoves', 20],
+  ['doubleScore', 15],
+  ['jackpot', 10],
 ]
+
+/**
+ * Labels and blurbs come from `BOOST_META` (core/inventory.ts) rather than being written here. This
+ * table and the Gift Store's `BOOST_ITEMS` used to each carry their own copy of every name, which is
+ * how one object ends up with two names — and a player who wins "+5 MOVES" and is then shown a
+ * differently-worded version of the same thing has no way to know they are the same item.
+ */
+export const PRIZES: Prize[] = PRIZE_WEIGHTS.map(([type, weight]) => ({
+  type,
+  label: BOOST_META[type].label,
+  blurb: BOOST_META[type].blurb,
+  weight,
+}))
 
 export function todayKey(now = new Date()): string {
   const p = (n: number) => String(n).padStart(2, '0')

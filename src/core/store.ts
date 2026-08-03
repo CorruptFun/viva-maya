@@ -2,6 +2,7 @@ import { grantCharm } from './charms'
 import type { CharmAward } from './charms'
 import { advanceDailyRitual, milestoneDue, rollPrize, spinAvailable } from './daily'
 import type { Prize } from './daily'
+import { BOOST_META } from './inventory'
 import { loadSave, persistSave } from './save'
 import { SLOT_MAX_ROWS, betFor, spinSlots } from './slots'
 import type { SlotSpin } from './slots'
@@ -26,11 +27,15 @@ export interface BoostStoreItem {
 
 /** Boost catalogue, cheapest → most powerful. Priced against the ~25–45 chips a win pays. */
 export const BOOST_ITEMS: BoostStoreItem[] = [
-  { type: 'extraMoves', label: '+5 MOVES', blurb: 'Five extra moves on your next level', price: 40 },
-  { type: 'wildReel', label: 'WILD REEL', blurb: 'Start your next level with a Wild Reel', price: 60 },
-  { type: 'diceBomb', label: 'DICE BOMB', blurb: 'Start your next level with a Dice Bomb', price: 75 },
-  { type: 'doubleScore', label: 'DOUBLE SCORE', blurb: 'Everything scores 2× on your next level', price: 90 },
-  { type: 'jackpot', label: 'JACKPOT CHIP', blurb: 'Start your next level with a Jackpot Chip', price: 120 },
+  // Labels + blurbs come from BOOST_META (core/inventory.ts) — the store sells the SAME objects the
+  // slots give away, so they must read identically in both places. A player who owns one already
+  // sees an OWNED badge here rather than a bare price (StoreScene), which is what stops "buy" and
+  // "already won" looking like two different items.
+  { type: 'extraMoves', ...BOOST_META.extraMoves, price: 40 },
+  { type: 'wildReel', ...BOOST_META.wildReel, price: 60 },
+  { type: 'diceBomb', ...BOOST_META.diceBomb, price: 75 },
+  { type: 'doubleScore', ...BOOST_META.doubleScore, price: 90 },
+  { type: 'jackpot', ...BOOST_META.jackpot, price: 120 },
 ]
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -59,10 +64,22 @@ export interface PowerItem {
  * (GameScene.finishWin: stars*8 + earnedLeftover*2): a single move is a cheap nudge, the +5 bundle
  * is better value per move ("don't run out"), and the bomb is the priciest, most decisive help.
  */
+/**
+ * ⚠️ These are NOT the boosts above, and the names must never suggest they are. A shelf item acts on
+ * the level being PLAYED, right now; a boost is a thing you OWN that plants itself at the next
+ * level's start. They are different mechanics from different economies.
+ *
+ * Renamed 2026-08-03 after a player reported "I'm still getting charged coins for using perks I've
+ * won in the slots". They were not — a won boost is applied free and nothing ever charges for one —
+ * but this shelf sat under the board all level captioned "SPEND CHIPS TO WIN THIS LEVEL" offering
+ * "BOMB" for 35 chips, while DICE BOMB was a prize they had just won for nothing. Same word, two
+ * economies, one very reasonable conclusion. `bomb` is now BLAST, which also describes what it
+ * actually does (a 3×3 you aim) rather than borrowing the name of a piece that gets planted.
+ */
 export const POWER_ITEMS: PowerItem[] = [
-  { type: 'move1', label: '+1 MOVE', blurb: 'One more swap', price: 8, moves: 1 },
-  { type: 'moves5', label: '+5 MOVES', blurb: "Don't run out", price: 30, moves: 5 },
-  { type: 'bomb', label: 'BOMB', blurb: 'Blast a 3×3', price: 35 },
+  { type: 'move1', label: '+1 MOVE', blurb: 'One more swap, right now', price: 8, moves: 1 },
+  { type: 'moves5', label: '+5 MOVES', blurb: 'Five more swaps, right now', price: 30, moves: 5 },
+  { type: 'bomb', label: 'BLAST', blurb: 'Aim it — clears a 3×3', price: 35 },
 ]
 
 /**

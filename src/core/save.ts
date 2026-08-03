@@ -658,11 +658,17 @@ export function setReferredByCode(code: string): void {
  * to evaporate on whatever level happened to be next. Ordering is preserved so the oldest prizes are
  * spent first, and jackpots that don't fit this level keep their place in the queue.
  */
-export function takePendingBoosts(): BoostType[] {
-  const save = loadSave()
-  const pending = save.pendingBoosts
-  if (pending.length === 0) return []
-
+/**
+ * The pure split behind `takePendingBoosts` — which of a pending queue the NEXT level would take,
+ * and what stays banked. Exported and side-effect-free so the stash panel (view/stash.ts) can SHOW
+ * the upcoming selection without consuming it.
+ *
+ * ⚠️ This function existing is the point: the stash tells the player "these three are going in next
+ * level", and that promise is only true if the preview and the consumption run the SAME code. Two
+ * implementations of this rule would drift the first time a cap changed, and the symptom would be a
+ * player watching a boost they were promised silently not appear.
+ */
+export function splitPendingBoosts(pending: readonly BoostType[]): { take: BoostType[]; keep: BoostType[] } {
   const take: BoostType[] = []
   const keep: BoostType[] = []
   let jackpots = 0
@@ -676,7 +682,37 @@ export function takePendingBoosts(): BoostType[] {
       keep.push(b)
     }
   }
+  return { take, keep }
+}
+
+export function takePendingBoosts(): BoostType[] {
+  const save = loadSave()
+  if (save.pendingBoosts.length === 0) return []
+  const { take, keep } = splitPendingBoosts(save.pendingBoosts)
   save.pendingBoosts = keep
   persistSave(save)
   return take
+}
+
+/**
+ * Move one instance of `type` to the FRONT of the pending queue — how the stash lets a player choose
+ * what goes into their next level.
+ *
+ * Reordering IS the mechanism, deliberately: `takePendingBoosts` already consumes from the front, so
+ * "arming" a boost needs no new save field, no migration, and nothing added to the blob that rides
+ * every cloud push. A separate `armedBoosts` array would have to be kept consistent with this one
+ * through every grant, spend and device merge — a whole class of desync for no gain.
+ *
+ * Returns false when there is nothing of that type to promote, so the UI can no-op quietly.
+ */
+export function promoteBoost(type: BoostType): boolean {
+  const save = loadSave()
+  const at = save.pendingBoosts.indexOf(type)
+  if (at < 0) return false
+  if (at > 0) {
+    save.pendingBoosts.splice(at, 1)
+    save.pendingBoosts.unshift(type)
+    persistSave(save)
+  }
+  return true
 }

@@ -33,6 +33,7 @@ import {
 import { addScreenGloss } from '../view/fx'
 import { maybeShowInstallNudge } from '../view/installnudge'
 import { maybeShowInstallOffer } from '../view/installsheet'
+import { openStash, stashBadgeCount } from '../view/stash'
 import { addJackpotMeter } from '../view/jackpot'
 import { D, E, OVERSHOOT, backOut, fadeRise, heartbeat, popIn } from '../view/motion'
 import { quality } from '../view/quality'
@@ -572,9 +573,27 @@ export class HomeScene extends Phaser.Scene {
     if (save.pendingBoosts.length > 0) {
       // Rides under the daily pill wherever it was seated (a first-run spin banks a boost while the
       // rows above are still deferred, so this can't key off the full stack's geometry).
-      this.add
-        .text(DESIGN_W / 2, dailyY + 58, `🎁 boost ready for your next level`, { fontFamily: FONT, fontSize: '20px', color: getTheme().goldText })
+      //
+      // This line used to read "🎁 boost ready for your next level" and was INERT. It named neither
+      // what nor how many, and there was nowhere to go and look — which is most of why a player
+      // asked "where does it go? where do you see your stash?" on 2026-08-03. It now counts the
+      // stash and opens it (view/stash.ts). Same slot, same one line of the budgeted band.
+      const n = stashBadgeCount()
+      const stashLine = this.add
+        .text(DESIGN_W / 2, dailyY + 58, `🎁 ${n} ${n === 1 ? 'boost' : 'boosts'} ready  ·  tap to see`, {
+          fontFamily: FONT,
+          fontSize: '20px',
+          color: getTheme().goldText,
+        })
         .setOrigin(0.5)
+        .setInteractive({ useHandCursor: true })
+      stashLine.on('pointerup', () => {
+        sfx.uiTap()
+        // A promotion changes which boosts the next level takes, and PLAY's sub-line and this very
+        // count are both read from the save at build time — so a change repaints Home rather than
+        // leaving a stale readout behind.
+        openStash(this, { onChanged: () => this.scene.restart() })
+      })
     }
 
     // WEEKLY RACE module — the full-width ENDLESS block (replaces the v1 trophy chip). Unlocked:
