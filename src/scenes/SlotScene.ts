@@ -31,7 +31,7 @@ import type { JackpotMeter } from '../view/jackpot'
 import { D, E, OVERSHOOT, backOut, fadeRise, popIn } from '../view/motion'
 import { quality } from '../view/quality'
 import { css, getTheme, hapticsOff, prefersReducedMotion, reduceFlashing, rgbMarquee } from '../view/theme'
-import { attachRgbChase, type RgbChase } from '../view/rgbmarquee'
+import { attachRgbRing, type RgbRing } from '../view/rgbmarquee'
 import { ensureGlyphTexture } from '../view/textures'
 import type { ChipPill } from '../view/ui'
 import { FONT, GHOST_PILL, GOLD_PILL, addChipPill, addPillButton, applyEntrance, startScene } from '../view/ui'
@@ -131,8 +131,8 @@ export class SlotScene extends Phaser.Scene {
   private bulbTints: number[] = []
   /** Which choreography currently owns the bulb ring — guards delayed mode handoffs (win → idle). */
   private marqueeMode: 'idle' | 'spin' | 'heat' | 'win' = 'idle'
-  /** The RGB chase driving the ring (§RGB), or undefined when the player has it switched off. */
-  private rgb?: RgbChase
+  /** The fluid RGB light ring on the cabinet (§RGB), or undefined when the player has it switched off. */
+  private rgb?: RgbRing
   /** The LCD attract-loop timer (a periodic shine across the glass) — killed the moment a pull starts. */
   private attractTimer?: Phaser.Time.TimerEvent
   /** Transients of the HEAT beat (the pending-reel glow) — swept by the final reel's landing. */
@@ -351,7 +351,7 @@ export class SlotScene extends Phaser.Scene {
    */
   private setMarquee(mode: 'idle' | 'spin' | 'heat' | 'win'): void {
     this.marqueeMode = mode
-    // §RGB — the chase implements all four looks itself (see PROFILES in view/rgbmarquee.ts), so the
+    // §RGB — the light ring implements all four looks itself (PROFILES in view/rgbmarquee.ts), so the
     // choreographer just re-rates one clock instead of rebuilding 32 tweens. It stays the SINGLE
     // authority either way: `marqueeMode` is still set above, so the delayed win → idle handoff
     // guards identically, and the chase's own mode is a pure restatement of it.
@@ -473,6 +473,19 @@ export class SlotScene extends Phaser.Scene {
     // (cookbook §2b-ii); the side columns seat at INTERIOR fractions of their run so the corners
     // never double-stud. 11+5+11+5 = 32 bulbs — an even count, so the alternating gold/rose tinting
     // stays alternating across the ring's wrap-around.
+    // §RGB — with the marquee ON the frame carries a continuous band of light instead of studs. It
+    // runs the cabinet stroke itself (inset 0, exactly where the bulbs sat), parented INTO `cabinet`
+    // so the landing detent kicks the light with the rest of the machine.
+    if (rgbMarquee()) {
+      this.rgb = attachRgbRing(
+        this,
+        { x: CAB_X, y: CAB_Y, w: CAB_W, h: CAB_H, r: CAB_R, thickness: 12 },
+        { mode: this.marqueeMode, container: cabinet }
+      )
+      fadeRise(this, cabinet, { rise: 18, duration: D.pop, ease: backOut(OVERSHOOT.gentle) })
+      return
+    }
+
     const bulbCols = 11
     const bulbRows = 5
     const run = CAB_W - CAB_R * 2
@@ -484,17 +497,12 @@ export class SlotScene extends Phaser.Scene {
     for (let i = 1; i <= bulbRows; i++) ring.push({ x: CAB_X + CAB_W, y: sideY(i) }) // right edge, T→B
     for (let i = bulbCols - 1; i >= 0; i--) ring.push({ x: topX(i), y: CAB_Y + CAB_H }) // bottom edge, R→L
     for (let i = bulbRows; i >= 1; i--) ring.push({ x: CAB_X, y: sideY(i) }) // left edge, B→T
-    const rgb = rgbMarquee()
     ring.forEach((p, i) => {
       const tint = i % 2 === 0 ? T.gold : T.rose
       const bulb = this.add.image(p.x, p.y, 'bulb').setDisplaySize(15, 15).setTint(tint)
       cabinet.add(bulb)
       this.bulbs.push(bulb)
       this.bulbTints.push(tint)
-      // §RGB — the chase owns tint + alpha, including the power-on: it lands the ring lit on its
-      // first frame, so the staggered light-up below would only fight it. `bulbTints` is still
-      // recorded because the HEAT pass reads it back when the player switches RGB off.
-      if (rgb) return
       if (reduced) {
         bulb.setAlpha(0.85)
         return
@@ -530,9 +538,6 @@ export class SlotScene extends Phaser.Scene {
         })
       }
     })
-    // One clock for the whole 32-bulb ring, replacing 32 per-bulb tweens. (The previous entry's
-    // clock is already unhooked in create()'s per-entry reset.)
-    if (rgb) this.rgb = attachRgbChase(this, this.bulbs, { mode: this.marqueeMode })
     fadeRise(this, cabinet, { rise: 18, duration: D.pop, ease: backOut(OVERSHOOT.gentle) })
   }
 
