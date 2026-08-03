@@ -1162,6 +1162,19 @@ export function warmButtonTextures(scene: Phaser.Scene): void {
   }
 }
 
+/**
+ * Compact form of a large count — "1.2M", "340K". Only used as the chip pill's last-resort fallback
+ * when even the minimum font will not fit the space (see `addChipPill`), so a normal balance is
+ * never abbreviated and players keep seeing their exact number.
+ */
+export function abbreviateCount(n: number): string {
+  const abs = Math.abs(n)
+  if (abs >= 1e9) return `${(n / 1e9).toFixed(1)}B`
+  if (abs >= 1e6) return `${(n / 1e6).toFixed(1)}M`
+  if (abs >= 1e5) return `${Math.round(n / 1e3)}K` // 5 digits abbreviate whole; 4 still fit in full
+  return n.toLocaleString()
+}
+
 export interface ChipPill {
   container: Phaser.GameObjects.Container
   /** Set the displayed balance, with a small scale-pop (used when a win payout lands). */
@@ -1178,25 +1191,53 @@ export function addChipPill(
   scene: Phaser.Scene,
   x: number,
   y: number,
-  opts: { compact?: boolean } = {}
+  opts: { compact?: boolean; maxWidth?: number } = {}
 ): ChipPill {
   const compact = opts.compact ?? false
   const h = compact ? 44 : 52
   const iconSize = Math.round(h * 0.66)
   const padX = compact ? 15 : 18
   const gap = compact ? 7 : 9
+  const baseFont = Math.round(h * 0.44)
   const container = scene.add.container(x, y).setDepth(50)
   const g = scene.add.graphics()
   const icon = scene.add.image(0, 0, 'chip').setDisplaySize(iconSize, iconSize)
   const label = scene.add
-    .text(0, 1, '', { fontFamily: FONT, fontSize: `${Math.round(h * 0.44)}px`, fontStyle: '900', color: '#4a3305' })
+    .text(0, 1, '', { fontFamily: FONT, fontSize: `${baseFont}px`, fontStyle: '900', color: '#4a3305' })
     .setOrigin(0, 0.5)
   container.add([g, icon, label])
 
   // Self-sizing: the pill background is rebuilt to fit the current count so it never clips as the
   // balance grows (cream fill + gold bezel — the "gold ghost" look, matching the streak badge).
+  //
+  // …but self-sizing alone is only half the problem, because the pill has NEIGHBOURS. In the board
+  // HUD it sits in the gap between the back button and the LEVEL/ENDLESS tab, and growing freely is
+  // exactly how it walked into that tab (measured 2026-08-03: a 2,935 balance overlapped the ENDLESS
+  // pill by 4px, and five digits overflowed the whole gap). `maxWidth` caps it, shrinking the LABEL
+  // the way addPillButton shrinks an over-long button label — same reasoning, same shape: re-render
+  // at a smaller font rather than scale the Text, so the glyphs stay crisp.
   const redraw = (chips: number): void => {
+    label.setFontSize(baseFont)
     label.setText(chips.toLocaleString())
+    if (opts.maxWidth) {
+      // Only the LABEL can give: the icon, the gap and both pads are fixed, so they come out of the
+      // budget first and what remains is what the number has to fit into.
+      const budget = opts.maxWidth - (padX + iconSize + gap + padX)
+      if (label.width > budget && budget > 0) {
+        let size = Math.max(MIN_PILL_FONT, Math.floor((baseFont * budget) / label.width))
+        label.setFontSize(size)
+        while (label.width > budget && size > MIN_PILL_FONT) label.setFontSize(--size)
+        // LAST RESORT: the font floor is a floor, so shrinking alone is NOT actually a bound — a big
+        // enough number still runs past the cap (measured: 99,999,999 overflowed by 3px even at
+        // MIN_PILL_FONT). Abbreviating is what makes `maxWidth` a guarantee rather than a strong
+        // suggestion, and it only ever engages once legibility has already run out — at 14px
+        // "99,999,999" is harder to read than "100.0M" anyway.
+        if (label.width > budget) {
+          label.setText(abbreviateCount(chips))
+          while (label.width > budget && size > 10) label.setFontSize(--size)
+        }
+      }
+    }
     const w = padX + iconSize + gap + label.width + padX
     g.clear()
     drawPillFace(g, -w / 2, -h / 2, w, h, READOUT_STYLE)

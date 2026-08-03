@@ -2083,12 +2083,19 @@ export class GameScene extends Phaser.Scene {
   private buildHud(): void {
     const T = getTheme()
     // Top row: back · LEVEL N (or ENDLESS) · score.
-    addPillButton(this, 64, 84, 84, 56, '‹', GHOST_PILL, () => this.exitToLevels())
+    const BACK_X = 64
+    const BACK_W = 84
+    addPillButton(this, BACK_X, 84, BACK_W, 56, '‹', GHOST_PILL, () => this.exitToLevels())
+    // ONE WIDTH FOR BOTH MODES. Endless used to take 240 against a level's 220, which is what put its
+    // left edge at x=240 and left the chip pill nowhere to go. The extra 20px bought nothing:
+    // "ENDLESS" measures 110px, so even at 220 it keeps 82px of slack — more than "LEVEL 300" (64px).
+    // Matching them also makes the two modes read as the same control, which they are.
+    const TAB_W = 220
     addPillButton(
       this,
       DESIGN_W / 2,
       84,
-      this.endless ? 240 : 220,
+      TAB_W,
       56,
       this.endless ? 'ENDLESS' : `LEVEL ${this.level}`,
       this.endless ? ROSE_PILL : GOLD_PILL,
@@ -2105,9 +2112,23 @@ export class GameScene extends Phaser.Scene {
     // Mute chip nudged to y=34 (from 40) so its lower arc clears the SCORE label.
     addMuteChip(this, 676, 34)
 
-    // Persistent chip balance — compact, tucked into the top row's gap between the back button
-    // and the LEVEL tab. Shows the pre-win total; the win payout flies a chip in to bump it.
-    this.chipHud = addChipPill(this, 182, 84, { compact: true })
+    // Persistent chip balance — compact, tucked into the top row's gap between the back button and
+    // the LEVEL/ENDLESS tab. Shows the pre-win total; the win payout flies a chip in to bump it.
+    //
+    // CENTRED IN THE GAP THAT ACTUALLY EXISTS, and capped to it. It used to sit at a hard-coded
+    // x=182 with no width limit, which failed in both directions: the fixed centre pushed it right,
+    // wasting 14px of clear space on the back-button side, and the pill self-sizes with the balance
+    // so it grew straight into the tab. Measured on the reported screenshot — a 2,935 balance ran to
+    // x=244 against the ENDLESS tab's left edge at 240, a 4px OVERLAP, and five digits (12,935 →
+    // 136px) overflowed the whole 134px gap. Deriving both numbers from the neighbours means the
+    // next change to either pill's width cannot re-open this by hand.
+    const gapFrom = BACK_X + BACK_W / 2
+    const gapTo = DESIGN_W / 2 - TAB_W / 2
+    const BREATH = 10 // clear air either side, so "close enough to touch" never reads as touching
+    this.chipHud = addChipPill(this, (gapFrom + gapTo) / 2, 84, {
+      compact: true,
+      maxWidth: gapTo - gapFrom - BREATH * 2,
+    })
 
     // Jackpot charge meter — a slot-console strip in the space below the board that fills one notch
     // per level win and then "explodes" into the wheel. Numbered levels only (endless has no jackpot).
