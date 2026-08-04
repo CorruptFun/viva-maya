@@ -83,6 +83,7 @@ import {
   specialTeachKey,
 } from '../view/ui'
 import type { ChipPill, SceneFocus } from '../view/ui'
+import { bakePanel } from '../view/platekit'
 
 /**
  * Turn state machine:
@@ -2210,13 +2211,19 @@ export class GameScene extends Phaser.Scene {
       this.add.image(cx, cy + 8, 'softshadow').setDisplaySize(w + 48, h + 48).setAlpha(0.28)
     lift(BOARD_X + 85, cardY, 170, 104) // moves card
     if (this.endless) lift(BOARD_X + BOARD_W - 290 / 2, cardY, 290, 104) // week's-best card
-    const g = this.add.graphics()
-    g.fillStyle(T.shadow, 0.12)
-    g.fillRoundedRect(BOARD_X + 2, cardY - 52 + 5, 170, 104, 20)
-    g.fillStyle(0xffffff, 1)
-    g.fillRoundedRect(BOARD_X, cardY - 52, 170, 104, 20)
-    g.lineStyle(2, T.border, 1)
-    g.strokeRoundedRect(BOARD_X, cardY - 52, 170, 104, 20)
+    // The rail cards are baked plates (platekit) — same size/fill/stroke as the old flat Graphics,
+    // plus the gloss/rim/soft-shadow finish every pressable already wears. Keyed by theme id.
+    this.add.image(
+      BOARD_X + 85,
+      cardY,
+      bakePanel(this, `hud:moves:${T.id}:170x104`, 170, 104, 20, {
+        fill: 0xffffff,
+        bezel: T.border,
+        bezelWidth: 2,
+        shadowAlpha: 0.12,
+        shadowDist: 5,
+      })
+    )
     this.add
       .text(BOARD_X + 85, cardY - 28, 'MOVES', { fontFamily: FONT, fontSize: '18px', color: T.inkMuted })
       .setOrigin(0.5)
@@ -2234,12 +2241,16 @@ export class GameScene extends Phaser.Scene {
       // No objectives in endless — show today's target (BEST to beat) instead.
       const cardW = 290
       const bx = BOARD_X + BOARD_W - cardW
-      g.fillStyle(T.shadow, 0.12)
-      g.fillRoundedRect(bx + 2, cardY - 52 + 5, cardW, 104, 20)
-      g.fillStyle(T.cardFill, 1)
-      g.fillRoundedRect(bx, cardY - 52, cardW, 104, 20)
-      g.lineStyle(2, T.goldBezel, 0.9)
-      g.strokeRoundedRect(bx, cardY - 52, cardW, 104, 20)
+      this.add.image(
+        bx + cardW / 2,
+        cardY,
+        bakePanel(this, `hud:best:${T.id}:290x104`, cardW, 104, 20, {
+          bezel: T.goldBezel,
+          bezelWidth: 2,
+          shadowAlpha: 0.12,
+          shadowDist: 5,
+        })
+      )
       this.add
         .text(bx + cardW / 2, cardY - 28, "TODAY'S BEST", { fontFamily: FONT, fontSize: '18px', color: T.inkMuted })
         .setOrigin(0.5)
@@ -2305,14 +2316,19 @@ export class GameScene extends Phaser.Scene {
             ease: 'Sine.easeInOut',
           })
         }
-        const cg = this.add.graphics()
-        cg.fillStyle(T.shadow, 0.12)
-        cg.fillRoundedRect(-chipW / 2 + 2, -52 + 5, chipW, 104, 20)
-        cg.fillStyle(0xffffff, 1)
-        cg.fillRoundedRect(-chipW / 2, -52, chipW, 104, 20)
-        cg.lineStyle(2, T.border, 1)
-        cg.strokeRoundedRect(-chipW / 2, -52, chipW, 104, 20)
-        chip.add(cg)
+        chip.add(
+          this.add.image(
+            0,
+            0,
+            bakePanel(this, `hud:chip:${T.id}:118x104`, chipW, 104, 20, {
+              fill: 0xffffff,
+              bezel: T.border,
+              bezelWidth: 2,
+              shadowAlpha: 0.12,
+              shadowDist: 5,
+            })
+          )
+        )
         const icon = this.add.image(0, -20, o.symbol)
         icon.setDisplaySize(54, 54)
         chip.add(icon)
@@ -6127,10 +6143,11 @@ export class GameScene extends Phaser.Scene {
       .setLetterSpacing(1)
     const tw = tabLabel.width + 56
     const tg = this.add.graphics()
-    tg.fillStyle(T.gold, 1)
-    tg.fillRoundedRect(-tw / 2, -26, tw, 52, 26)
+    // Real-metal tab, not flat gold — the champion plate's material. r=25 (h/2 − 1, §2c) on the
+    // stroke too, so face and bezel share one radius (§2b).
+    goldFace(tg, -tw / 2, -26, tw, 52, T, 25)
     tg.lineStyle(3, T.goldDeep, 1)
-    tg.strokeRoundedRect(-tw / 2, -26, tw, 52, 26)
+    tg.strokeRoundedRect(-tw / 2, -26, tw, 52, 25)
     tab.add([tg, tabLabel])
     card.add(tab)
 
