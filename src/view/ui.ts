@@ -31,6 +31,7 @@ import {
 } from './theme'
 import type { Theme, ThemeId } from './theme'
 import { openCloudModal } from './cloudmodal'
+import { accentRimTop, dropShadow, safeR } from './platekit'
 import { quality } from './quality'
 import { D, E, OVERSHOOT, backOut } from './motion'
 import { vibratePattern } from './haptics'
@@ -672,123 +673,15 @@ function shade(color: number, t: number): number {
   return (mix(r) << 16) | (mix(g) << 8) | mix(b)
 }
 
-/**
- * Radius clamped to just UNDER half the smallest side. Phaser's `fillRoundedRect`/`strokeRoundedRect`
- * spike at the corners when the radius equals exactly half a side (a perfect semicircle end): the arc
- * tessellation overshoots the tangent and bakes a sharp "ear" into the texture. Staying 1px under the
- * half keeps a hair of straight edge at each end so the arcs never degenerate — visually identical,
- * artifact-free at every DPR.
- */
-function safeR(r: number, w: number, h: number): number {
-  return Math.max(1, Math.min(r, w / 2 - 1, h / 2 - 1))
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
-// Material + lighting law (E7). ONE key light so every baked shadow agrees where the
-// light is (disagreeing shadows are the tell of cheap UI); a canonical real-metal gold
-// face; and a dark-theme-only lit accent rim. All baked, zero runtime cost — the light
-// themes (Golden Hour / Maya's Heart) are visually untouched.
+// Material + lighting law (E7) — moved to platekit.ts so panels, HUD cards and cabinets
+// everywhere can reach the one key light, the shadow/gloss/rim finishes and the gold
+// material without importing the button module. Re-exported here so the existing
+// `from './ui'` import sites keep compiling; new code should import './platekit'.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** The one key light for the whole UI (design-space, above-centre). Every surface casts away from it. */
-export const LIGHT = { x: 360, y: -200 }
-
-/**
- * Soft drop-shadow for a rounded-rect surface (top-left x,y · size w×h). Because LIGHT sits above
- * the scene, every surface casts straight DOWN; a few falling-offset copies build a soft penumbra.
- * Routing the baked UI shadows through this is what makes them all agree on one light direction.
- */
-function dropShadow(
-  g: Phaser.GameObjects.Graphics,
-  x: number,
-  y: number,
-  w: number,
-  h: number,
-  r: number,
-  color: number,
-  opts: { alpha?: number; dist?: number; layers?: number } = {}
-): void {
-  const alpha = opts.alpha ?? 0.08
-  const dist = opts.dist ?? 6
-  const layers = opts.layers ?? 3
-  for (let i = 1; i <= layers; i++) {
-    g.fillStyle(color, alpha)
-    g.fillRoundedRect(x, y + (dist * i) / layers, w, h, r)
-  }
-}
-
-/** Relative luminance (0..1) of a packed RGB — used to tell the dark themes from the cream ones. */
-function luma(color: number): number {
-  const r = ((color >> 16) & 0xff) / 255
-  const g = ((color >> 8) & 0xff) / 255
-  const b = (color & 0xff) / 255
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b
-}
-
-/** Dark themes (Rose Midnight / Neon Vegas) have a near-black wash; the cream themes don't. */
-function isDarkTheme(T: Theme = getTheme()): boolean {
-  return luma(T.washBottom) < 0.4
-}
-
-/**
- * Dark-theme-only lit accent rim along the TOP inner edge of a cream card/pill. A coloured lit rim
- * is what makes neon read expensive; on Golden Hour / Maya's Heart this is a no-op (cost + look
- * unchanged). Draw AFTER the fill/bezel so the rim sits on top of the top edge.
- */
-function accentRimTop(
-  g: Phaser.GameObjects.Graphics,
-  x: number,
-  y: number,
-  w: number,
-  r: number,
-  opts: { thickness?: number; alpha?: number; inset?: number } = {}
-): void {
-  const T = getTheme()
-  if (!isDarkTheme(T)) return
-  const th = opts.thickness ?? 2
-  const inset = opts.inset ?? 3
-  g.fillStyle(T.accent, opts.alpha ?? 0.85)
-  g.fillRoundedRect(x + r, y + inset, w - r * 2, th, th / 2)
-}
-
-/** The gold tokens `goldFace` reads — a subset every Theme already provides. */
-export type GoldTokens = Pick<Theme, 'goldBright' | 'gold' | 'goldDeep' | 'goldDarkest' | 'glossHi'>
-
-/**
- * Canonical real-metal gold face (E7): stacked flat-alpha rounded rects from a bright crown down to
- * a deep belly, plus one thin `glossHi` specular band at ~40% height. Reads as curved metal instead
- * of flat "yellow plastic". Baked into a Graphics — exported so later phases (payline, win-card tab,
- * marquee lozenge, pills) share the exact same material.
- */
-export function goldFace(
-  g: Phaser.GameObjects.Graphics,
-  x: number,
-  y: number,
-  w: number,
-  h: number,
-  tokens: GoldTokens = getTheme(),
-  radius?: number
-): void {
-  const r = safeR(radius ?? Math.min(h / 2, 18), w, h)
-  // Deep belly base.
-  g.fillStyle(tokens.goldDeep, 1)
-  g.fillRoundedRect(x, y, w, h, r)
-  // Bright crown → gold → deep belly: top-anchored falling-height bands (a gradient without a live fill).
-  const bands = 8
-  for (let i = 0; i < bands; i++) {
-    const t = i / (bands - 1)
-    const bh = h * (0.96 - 0.9 * t)
-    g.fillStyle(t < 0.5 ? tokens.goldBright : tokens.gold, 0.16)
-    g.fillRoundedRect(x, y, w, bh, safeR(r, w, bh))
-  }
-  // Deepen the very bottom for a metal belly falloff.
-  g.fillStyle(tokens.goldDarkest, 0.22)
-  g.fillRoundedRect(x, y + h * 0.72, w, h * 0.28, { tl: 0, tr: 0, bl: r, br: r })
-  // One thin specular gloss band at ~40% height (the crown highlight of real metal).
-  const glossH = Math.max(2, h * 0.09)
-  g.fillStyle(tokens.glossHi, 0.5)
-  g.fillRoundedRect(x + r * 0.5, y + h * 0.36, w - r, glossH, safeR(glossH / 2, w, glossH))
-}
+export { LIGHT, goldFace } from './platekit'
+export type { GoldTokens } from './platekit'
 
 interface PillTokens {
   top: number

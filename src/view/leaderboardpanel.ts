@@ -70,8 +70,8 @@ import { openCloudModal } from './cloudmodal'
 import { D, E, OVERSHOOT, backOut, fadeRise, heartbeat, popIn } from './motion'
 import { quality } from './quality'
 import { getTheme, prefersReducedMotion, reduceFlashing } from './theme'
-import type { Theme } from './theme'
 import { FONT, GHOST_PILL, GOLD_PILL, ROSE_PILL, addPillButton, addRoundChip, goldFace, startScene } from './ui'
+import { accentRimTop } from './platekit'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Geometry — one fixed, generous card so EVERY state (board, invite, empty, loading, error) lives
@@ -205,15 +205,6 @@ const BOARDS: Record<BoardMode, BoardSpec> = {
 const CROWN_H = 48
 const CROWN_GAP = 12
 
-/** Dark-wash check (mirrors ui.ts's private `isDarkTheme`): drives the dark-theme accent rim. */
-function isDarkWash(T: Theme): boolean {
-  const c = T.washBottom
-  const r = ((c >> 16) & 0xff) / 255
-  const g = ((c >> 8) & 0xff) / 255
-  const b = (c & 0xff) / 255
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b < 0.4
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Baked row plates. Each signature bakes once per (theme, kind) into the global TextureManager, so
 // ten ranked rows cost ten quads of the same texture — and the #1 plate being an IMAGE is what lets
@@ -260,10 +251,7 @@ function ensurePlate(scene: Phaser.Scene, kind: PlateKind, w: number, h: number)
     g.strokeRoundedRect(x, y, w, h, r)
   }
   // Dark-theme-only lit accent rim along the top inner edge (the neon tell — no-op on cream washes).
-  if (isDarkWash(T)) {
-    g.fillStyle(T.accent, 0.7)
-    g.fillRoundedRect(x + r, y + 3, w - r * 2, 2, 1)
-  }
+  accentRimTop(g, x, y, w, r, { alpha: 0.7 })
   g.generateTexture(key, w + PAD * 2, h + PAD * 2)
   g.destroy()
   return key
@@ -470,10 +458,7 @@ export function openRacePanel(scene: Phaser.Scene, opts: RacePanelOpts = {}): vo
   g.fillRoundedRect(cx, cy, CARD_W, CARD_H, 30)
   g.lineStyle(4, T.goldBezel, 1)
   g.strokeRoundedRect(cx, cy, CARD_W, CARD_H, 30)
-  if (isDarkWash(T)) {
-    g.fillStyle(T.accent, 0.85)
-    g.fillRoundedRect(cx + 30, cy + 3, CARD_W - 60, 2, 1)
-  }
+  accentRimTop(g, cx, cy, CARD_W, 30, { alpha: 0.85 })
   cardRoot.add(g)
 
   // Blocker so taps on the card never fall through to the scrim (which closes).
@@ -1246,10 +1231,7 @@ function ensureModulePlate(scene: Phaser.Scene): string {
   }
   g.lineStyle(3, T.goldBezel, 1)
   g.strokeRoundedRect(x, y, MODULE_W, MODULE_H, r)
-  if (isDarkWash(T)) {
-    g.fillStyle(T.accent, 0.8)
-    g.fillRoundedRect(x + r, y + 3, MODULE_W - r * 2, 2, 1)
-  }
+  accentRimTop(g, x, y, MODULE_W, r, { alpha: 0.8 })
   g.generateTexture(key, MODULE_W + PAD * 2, MODULE_H + PAD * 2)
   g.destroy()
   return key
@@ -1311,10 +1293,7 @@ function ensureRaceStripMarquee(scene: Phaser.Scene): string {
   g.fillRoundedRect(x + 5, y + 3, STRIP_W - 10, MARQUEE_H * 0.34, r * 0.6)
   g.lineStyle(3, T.goldBezel, 1)
   g.strokeRoundedRect(x, y, STRIP_W, MARQUEE_H, r)
-  if (isDarkWash(T)) {
-    g.fillStyle(T.accent, 0.8)
-    g.fillRoundedRect(x + r, y + 3, STRIP_W - r * 2, 2, 1)
-  }
+  accentRimTop(g, x, y, STRIP_W, r, { alpha: 0.8 })
   g.generateTexture(key, STRIP_W + PAD * 2, MARQUEE_H + PAD * 2)
   g.destroy()
   return key
@@ -2245,10 +2224,7 @@ export function openRaceRulesPanel(scene: Phaser.Scene, mode: BoardMode = 'daily
   g.fillRoundedRect(cx, cy, RULES_W, RULES_H, 30)
   g.lineStyle(4, T.goldBezel, 1)
   g.strokeRoundedRect(cx, cy, RULES_W, RULES_H, 30)
-  if (isDarkWash(T)) {
-    g.fillStyle(T.accent, 0.85)
-    g.fillRoundedRect(cx + 30, cy + 3, RULES_W - 60, 2, 1)
-  }
+  accentRimTop(g, cx, cy, RULES_W, 30, { alpha: 0.85 })
   root.add(g)
   root.add(scene.add.rectangle(0, 0, RULES_W, RULES_H, 0xffffff, 0.001).setInteractive())
 
