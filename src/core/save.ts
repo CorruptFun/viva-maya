@@ -112,6 +112,10 @@ export interface SaveData {
    * phone would be silently undone by a tablet that happens to be further progressed.
    */
   handleSetAt: number
+  /** YYYY-MM-DD (local) whose daily MARKER comp has been used — the once-a-day "first busted
+   *  marker is on the house" latch (core/marker.ts). freeSpinsDay's sibling: plain
+   *  winner's-record on merge, no union needed (a stale value only ever re-offers one comp). */
+  markerCompDay: string | null
 }
 
 /** Most free spins the bank ever holds — earning past this is quietly forfeited. */
@@ -184,6 +188,7 @@ const DEFAULTS: SaveData = {
   winStreak: 0,
   handle: null,
   handleSetAt: 0,
+  markerCompDay: null,
 }
 
 function fresh(): SaveData {
@@ -322,6 +327,8 @@ export function coerceSave(raw: unknown): SaveData {
       typeof data.handleSetAt === 'number' && Number.isFinite(data.handleSetAt)
         ? Math.max(0, Math.floor(data.handleSetAt))
         : 0
+    // Slice 0 Marker comp latch — absent in older saves → today's comp unused.
+    base.markerCompDay = typeof data.markerCompDay === 'string' ? data.markerCompDay : null
     // v6 grace refill: the pool grew (3→10) and the break got much shorter — top EVERYONE up to
     // full on upgrade so nobody is left stranded at the old, stingier count (e.g. mid-session).
     const storedVersion = typeof data.v === 'number' ? (data.v as number) : 1
@@ -767,13 +774,18 @@ export function toggleHoldBoost(type: BoostType): boolean {
   return at < 0
 }
 
-export function takePendingBoosts(): BoostType[] {
+export function takePendingBoosts(exclusions: readonly BoostType[] = []): BoostType[] {
   const save = loadSave()
   if (save.pendingBoosts.length === 0) return []
   // ⚠️ `heldBoosts` MUST be passed here. The stash previews the selection with the same call, so
   // omitting it would make the panel promise one thing and the level do another — the exact drift
   // `splitPendingBoosts` was extracted to prevent.
-  const { take, keep } = splitPendingBoosts(save.pendingBoosts, save.heldBoosts)
+  //
+  // `exclusions` are the LEVEL's own refusals (core/levels.ts levelBoostExclusions — a HOUSE
+  // MINIMUM level declines DOUBLE SCORE). They ride the held path deliberately: skipped, never
+  // consumed, never charged a slot — and the stash preview passes the same exclusions for the
+  // level it is previewing, so the promise and the consumption still run one rule.
+  const { take, keep } = splitPendingBoosts(save.pendingBoosts, [...save.heldBoosts, ...exclusions])
   save.pendingBoosts = keep
   persistSave(save)
   return take

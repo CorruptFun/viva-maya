@@ -87,12 +87,34 @@ export const DIFFICULTY = {
      * `plinko.rate.test.ts` at the same time, because that guard reads the same policy.
      */
     coat: true,
-    /** An obstacle that never matches and must be broken by adjacent clears. The sharp instrument. */
-    blocker: false,
+    /**
+     * An obstacle that never matches and must be broken by adjacent clears. The sharp instrument.
+     *
+     * SLICE 0 ROLLOUT ADVANCED (from `false`, 2026-08-04). Blockers were built, arted and
+     * feasibility-gated for band 86 and then held back — which left the ladder introducing nothing
+     * genuinely new between the 2-layer felt at 151 and the end at 300, exactly the range the
+     * mid-game refresh exists to serve. They turn on at their DESIGNED band (86), so the intro ramp,
+     * the caps, the 2-hp escalation at 181 and the teach card all run as originally measured; L86
+     * becomes a real teaching level (+3 moves) instead of the §G12 dead dip it was while the flag
+     * was off. `hazards.test.ts`'s shipped-rollout pin changed in the same commit, on purpose.
+     */
+    blocker: true,
   },
 
   /** The move-budget retune. Independent of `hazards` above. */
   curve: { enabled: true },
+
+  /**
+   * Goal-archetype rollout — the win-condition siblings of the hazard flags above, with the same
+   * contract: per-mechanic boolean, revocable without a git revert, and OFF must mean the spec is
+   * byte-identical to today's.
+   *
+   * `minimum` is HOUSE MINIMUM (Slice 0, 2026-08-04): from `minimumStart`, levels on the fixed
+   * cadence L % 10 ∈ {1, 6} carry a score target as a second win term — the plaque replaces the
+   * third collect objective, never the move budget (see `levelSpec`). The cadence deliberately
+   * avoids every-5th breathers and chapter-closing 10ths.
+   */
+  goals: { minimum: true, minimumStart: 201 },
 
   /** First level at which each mechanic appears. Below `lockStart` the game is untouched. */
   bands: { lockStart: 31, coatStart: 56, blockerStart: 86, lateStart: 121 },
@@ -159,13 +181,15 @@ export const DIFFICULTY = {
  * to explain the dip. With blockers still held back, L86 was exactly that.
  */
 export function isTeachingLevel(level: number): boolean {
-  const { bands, hazards } = DIFFICULTY
-  if (!hazards.enabled) return false
-  return (
-    (hazards.lock && level === bands.lockStart) ||
-    (hazards.coat && level === bands.coatStart) ||
-    (hazards.blocker && level === bands.blockerStart)
-  )
+  const { bands, hazards, goals } = DIFFICULTY
+  const hazardTeach =
+    hazards.enabled &&
+    ((hazards.lock && level === bands.lockStart) ||
+      (hazards.coat && level === bands.coatStart) ||
+      (hazards.blocker && level === bands.blockerStart))
+  // HOUSE MINIMUM's first level teaches a new WIN TERM, so it earns the same gentleness a new
+  // hazard band does — gated on its own flag, not on `hazards.enabled` (it is not a hazard).
+  return hazardTeach || (goals.minimum && level === goals.minimumStart)
 }
 
 /** True when `level` is below every hazard band (or hazards are off) — i.e. the protected early game. */

@@ -82,6 +82,13 @@ export interface LevelSpec {
   moves: number
   symbolCount: number
   objectives: LevelObjective[]
+  /**
+   * HOUSE MINIMUM (Slice 0): win additionally requires `score >= scoreTarget`. Present only on
+   * minimum-cadence levels (core/levels.ts isMinimumLevel); absent everywhere else, so every
+   * pre-existing spec is byte-identical. The plaque REPLACES the third collect objective — the
+   * move budget is still derived from the full 3-objective demand (see levelSpec).
+   */
+  scoreTarget?: number
 }
 
 /** Choreography instructions emitted by the core for the view to render. */

@@ -208,6 +208,16 @@ export const EVENTS = {
   SLOTS_OPENED: 'slots_opened',
   SLOTS_SPUN: 'slots_spun',
 
+  /**
+   * THE MARKER (Slice 0) — the opt-in side bet on numbered levels 151+. `offered` → `taken` is the
+   * appetite read (an offer nobody slides is priced wrong); `won`/`lost` with {stake} sizes the
+   * ladder the way slots_spun's {rows} does, and `lost`'s {comped} watches the daily mercy valve.
+   */
+  MARKER_OFFERED: 'marker_offered',
+  MARKER_TAKEN: 'marker_taken',
+  MARKER_WON: 'marker_won',
+  MARKER_LOST: 'marker_lost',
+
   /** The update toast, which the PWA stale-build trap makes worth watching. */
   UPDATE_SHOWN: 'update_shown',
   UPDATE_APPLIED: 'update_applied',

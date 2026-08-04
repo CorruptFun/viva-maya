@@ -183,35 +183,37 @@ describe('the panic switch', () => {
 })
 
 /**
- * THE SHIPPED ROLLOUT. Staging is deliberate: locks are the cheapest mechanic by measurement
- * (~-4% to a player's collects-per-move, versus roughly 10x that per cell for a blocker), so they
- * were the safest thing to put in front of real players first.
+ * THE SHIPPED ROLLOUT. Staging was deliberate: locks first (cheapest by measurement, ~-4% to a
+ * player's collects-per-move), then §G6 advanced coats (the second objective archetype the ladder
+ * needed), and **Slice 0 (2026-08-04) turned blockers on at their designed band** — the mid-game
+ * refresh's first beat, ending the stretch where the ladder introduced nothing new between the
+ * 2-layer felt at 151 and the end at 300. Blockers stayed off longest because they are the sharp
+ * instrument (a permanently inert cell is ~10x a lock, superlinear); their ramp, caps, 2-hp
+ * escalation and feasibility gates were all measured before the flag flipped.
  *
  * This test exists so the shipped state is a DECISION rather than an accident: changing the
  * rollout means changing this assertion, on purpose, in the same commit. It has now done that job
- * once — §G6 advanced the rollout to locks + coats, and this file failed until the decision was
- * written down here.
- *
- * **Coats are live from L56; blockers are still held back.** Coats are a second objective ARCHETYPE
- * (clear every covered square) and the live game needed one — one goal shape across 300 levels was
- * the ladder's biggest structural weakness. Blockers stay off for now because they are the sharp
- * instrument: a permanently inert cell is ~10x more punishing per cell than a lock and the effect is
- * superlinear, so they are worth their own measured rollout rather than riding along with this one.
+ * twice — §G6 and Slice 0 each failed here until the decision was written down.
  */
 describe('the shipped rollout', () => {
-  it('ships locks + coats, with blockers built but held back', () => {
+  it('ships the full hazard book — locks, coats and blockers', () => {
     expect({
       hazards: DIFFICULTY.hazards.enabled,
       lock: DIFFICULTY.hazards.lock,
       coat: DIFFICULTY.hazards.coat,
       blocker: DIFFICULTY.hazards.blocker,
       curve: DIFFICULTY.curve.enabled,
-    }).toEqual({ hazards: true, lock: true, coat: true, blocker: false, curve: true })
+    }).toEqual({ hazards: true, lock: true, coat: true, blocker: true, curve: true })
   })
 
-  it('means a live board carries clamps and felt, and never a blocker', () => {
-    for (const L of [31, 56, 86, 150, 300]) {
+  it('means a live board carries clamps, felt and lockboxes, each from its own band', () => {
+    // Below the blocker band: never a lockbox.
+    for (const L of [31, 56, DIFFICULTY.bands.blockerStart - 1]) {
       expect({ L, blockers: hazardPlan(L, ROWS, COLS).blockers.length }).toEqual({ L, blockers: 0 })
+    }
+    // From the band on — including the L150 breather (halved, not emptied) and L300.
+    for (const L of [DIFFICULTY.bands.blockerStart, 150, 300]) {
+      expect({ L, present: hazardPlan(L, ROWS, COLS).blockers.length > 0 }).toEqual({ L, present: true })
     }
     expect(hazardPlan(120, ROWS, COLS).locks.length).toBeGreaterThan(0)
     // Coats respect their own band: nothing before `coatStart`, something from it on.

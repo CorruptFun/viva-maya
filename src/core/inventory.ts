@@ -85,10 +85,12 @@ export interface StashEntry {
  * `usingNext` comes from `splitPendingBoosts` — the SAME function the level start consumes with — so
  * the panel's "using next level" promise cannot drift from what actually happens. See its doc.
  */
-export function stash(save: SaveData): StashEntry[] {
+export function stash(save: SaveData, exclusions: readonly BoostType[] = []): StashEntry[] {
   const pending = save.pendingBoosts ?? []
   const held = save.heldBoosts ?? []
-  const { take } = splitPendingBoosts(pending, held)
+  // `exclusions` = the NEXT level's own refusals (core/levels.ts levelBoostExclusions), so the
+  // preview matches what that level's start will actually take. Same rule as takePendingBoosts.
+  const { take } = splitPendingBoosts(pending, [...held, ...exclusions])
   return BOOST_ORDER.map(type => ({
     type,
     meta: BOOST_META[type],
@@ -111,11 +113,11 @@ export function stash(save: SaveData): StashEntry[] {
  * box, so an unbounded join runs off the screen — and a player only needs to recognise the shape of
  * what is queued, not read a manifest. The panel is one tap away for the full picture.
  */
-export function nextLevelSummary(save: SaveData): string {
+export function nextLevelSummary(save: SaveData, exclusions: readonly BoostType[] = []): string {
   const owned = stashTotal(save)
   if (owned === 0) return 'your stash  ·  empty for now'
 
-  const { take } = splitPendingBoosts(save.pendingBoosts ?? [], save.heldBoosts ?? [])
+  const { take } = splitPendingBoosts(save.pendingBoosts ?? [], [...(save.heldBoosts ?? []), ...exclusions])
   if (take.length === 0) return `${owned} held  ·  nothing goes in next level`
 
   const names = take.map(b => BOOST_META[b].label)
@@ -130,8 +132,8 @@ export function stashTotal(save: SaveData): number {
 }
 
 /** How many boosts the next numbered level will consume. Never exceeds `boostApplyMax`. */
-export function usingNextCount(save: SaveData): number {
-  return splitPendingBoosts(save.pendingBoosts ?? [], save.heldBoosts ?? []).take.length
+export function usingNextCount(save: SaveData, exclusions: readonly BoostType[] = []): number {
+  return splitPendingBoosts(save.pendingBoosts ?? [], [...(save.heldBoosts ?? []), ...exclusions]).take.length
 }
 
 /**

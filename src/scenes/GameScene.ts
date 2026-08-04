@@ -31,7 +31,9 @@ import { endlessLockPlan, endlessShapeFor } from '../core/endlessramp'
 import type { EndlessShape } from '../core/endlessramp'
 import { endlessBoardRng } from '../core/boardpick'
 import { cachedSalt } from '../core/racesalt'
-import { CHAPTER_COUNT, CHAPTER_LEVELS, LEVEL_COUNT, levelSpec, starsFor } from '../core/levels'
+import { CHAPTER_COUNT, CHAPTER_LEVELS, LEVEL_COUNT, levelBoostExclusions, levelSpec, starsFor } from '../core/levels'
+import { MARKER_STAKES, markerOfferable, placeMarker, refundMarker, settleMarkerLoss, settleMarkerWin } from '../core/marker'
+import type { MarkerStake } from '../core/marker'
 import { CHAPTER_BOOSTS, CHAPTER_PURSES, claimChapter, trophyFor } from '../core/trophies'
 import type { ChapterGrant } from '../core/trophies'
 import { playChapterCeremony } from '../view/trophyceremony'
@@ -78,6 +80,7 @@ import {
   hcBoard,
   inkShadow,
   openHazardIntro,
+  openMinimumIntro,
   openOnboarding,
   startScene,
   openSpecialIntro,
@@ -426,6 +429,15 @@ export class GameScene extends Phaser.Scene {
   private autoplayDelay = 450
   private activeBoosts: BoostType[] = []
   private scoreMult = 1
+  /** HOUSE MINIMUM: the level's score plaque (0 = no plaque). Second win term beside the collects. */
+  private scoreTarget = 0
+  private minPlaqueText: Phaser.GameObjects.Text | null = null
+  private minPlaqueMet = false
+  /** THE MARKER: the stake riding this level (0 = none). Spent at slide time; settled at the end. */
+  private markerStake: MarkerStake | 0 = 0
+  private markerRow: Phaser.GameObjects.Container | null = null
+  private briefText: Phaser.GameObjects.Text | null = null
+  private briefCopy = ''
   private endless = false
   private endlessBest = 0
   private endlessDayKey = ''
@@ -531,6 +543,8 @@ export class GameScene extends Phaser.Scene {
       this.board.seedHazards(hazardPlan(this.level, ROWS, COLS))
     }
     this.coatsTotal = this.board.coatsRemaining()
+    // HOUSE MINIMUM plaque — endless builds its spec inline with no target, so this is 0 there.
+    this.scoreTarget = this.spec.scoreTarget ?? 0
     this.movesLeft = this.spec.moves
     // Placed AFTER the lives gate returns, so a bounced entry is not counted as an attempt — a level
     // the player couldn't even get into must not drag down its own win rate.
@@ -578,6 +592,13 @@ export class GameScene extends Phaser.Scene {
     this.bufferSelected = null
     this.bufferConsumed = false
     this.scoreMult = 1
+    this.scoreTarget = 0
+    this.minPlaqueText = null
+    this.minPlaqueMet = false
+    this.markerStake = 0
+    this.markerRow = null
+    this.briefText = null
+    this.briefCopy = ''
     this.movesPulse = null
     // Combo readout is a scene GameObject — the old one was destroyed on restart, so drop the stale ref.
     this.comboText = undefined
@@ -617,7 +638,7 @@ export class GameScene extends Phaser.Scene {
     this.bombAimLayer = undefined
     this.bombAimTween = undefined
     this.autoplay = import.meta.env.DEV && new URLSearchParams(location.search).has('auto')
-    if (!this.endless) this.applyBoosts(takePendingBoosts())
+    if (!this.endless) this.applyBoosts(takePendingBoosts(levelBoostExclusions(this.level)))
 
     if (import.meta.env.DEV) {
       // URL knobs for automated checks: ?goal=N ?moves=N ?auto=MS ?plant=1
@@ -763,6 +784,14 @@ export class GameScene extends Phaser.Scene {
         .setOrigin(1, 0)
     }
     if (this.activeBoosts.length > 0) this.showBoostBanner(this.activeBoosts)
+    // A banked DOUBLE SCORE was skipped-not-consumed on a plaque level (levelBoostExclusions) —
+    // say so, or the player watches a promised boost silently not appear. Sequenced after the
+    // boost banner when both fire (showBoardBanner replaces rather than queues).
+    if (this.scoreTarget > 0 && loadSave().pendingBoosts.includes('doubleScore')) {
+      const note = (): void => this.showBoardBanner('HOUSE RULES — NO DOUBLE SCORE ON A MINIMUM')
+      if (this.activeBoosts.length > 0) this.time.delayedCall(1700, note)
+      else note()
+    }
     // §G7 — the goal callout stays HERE, before the idle-handoff check below, because
     // `playLevelIntro` also owns the board deal-in and the handoff itself. The teach cards are what
     // move: they now run on its settle (see `teachAfterIntro`) instead of on top of it.
@@ -919,9 +948,12 @@ export class GameScene extends Phaser.Scene {
 
   private maybeHazardIntro(then: () => void): boolean {
     if (this.endless || this.introOpen) return false
-    const present: HazardKind[] = []
+    // 'minimum' rides the hazard-intro latch machinery (save.hazardIntros, teach-once, one card
+    // per level) but is a WIN TERM, not a hazard — it gets its own card body below.
+    const present: (HazardKind | 'minimum')[] = []
+    if (this.scoreTarget > 0) present.push('minimum')
     if (this.board.coatsRemaining() > 0) present.push('coat')
-    for (let r = 0; r < ROWS && present.length < 3; r++) {
+    for (let r = 0; r < ROWS && present.length < 4; r++) {
       for (let c = 0; c < COLS; c++) {
         const p = this.board.get({ row: r, col: c })
         if (p?.kind === 'blocker' && !present.includes('blocker')) present.push('blocker')
@@ -934,10 +966,12 @@ export class GameScene extends Phaser.Scene {
     save.hazardIntros.push(unseen)
     persistSave(save)
     this.introOpen = true
-    openHazardIntro(this, unseen, () => {
+    const done = (): void => {
       this.introOpen = false
       then() // §G7 — see maybeOnboarding
-    })
+    }
+    if (unseen === 'minimum') openMinimumIntro(this, this.scoreTarget, done)
+    else openHazardIntro(this, unseen, done)
     return true
   }
 
@@ -1046,6 +1080,17 @@ export class GameScene extends Phaser.Scene {
       // Same two events, same two costs: whatever spends a life also breaks the streak, so "what
       // broke my streak" never needs a second rule to explain — and quitting can't dodge it.
       resetWinStreak()
+    }
+    // THE MARKER: backing out before the first move is free (the hand was never dealt); quitting a
+    // played hand is a bust, and the daily comp applies exactly as a loss.
+    const quitStake = this.markerStake
+    if (quitStake !== 0) {
+      if (!this.moveMade) refundMarker(quitStake)
+      else {
+        const settled = settleMarkerLoss(quitStake, todayKey())
+        track(EVENTS.MARKER_LOST, { level: this.level, stake: quitStake, comped: settled.comped })
+      }
+      this.markerStake = 0
     }
     // Tracked separately from level_fail: walking away reads very differently from being beaten, and
     // a level with a high QUIT rate but a normal loss rate is a boredom/confusion problem, not a
@@ -2287,7 +2332,10 @@ export class GameScene extends Phaser.Scene {
     } else {
       const chipW = 118
       const chipGap = 12
-      const n = this.objectives.length
+      // HOUSE MINIMUM: the plaque takes the third slot in the same cluster (minimum levels carry
+      // only 2 collect objectives by construction, so the row never exceeds 3 chips).
+      const plaqueSlots = this.scoreTarget > 0 ? 1 : 0
+      const n = this.objectives.length + plaqueSlots
       // §G8 — the cluster is CENTRED on a fixed anchor, not right-aligned to the board edge.
       //
       // Right-aligning grew the cluster leftwards from the board's right edge, so its width — and
@@ -2360,6 +2408,38 @@ export class GameScene extends Phaser.Scene {
         o.chip = chip
         o.shown = o.remaining // display starts synced; collect-fly lets it lag behind the model
       })
+      // The HOUSE MINIMUM plaque — same chip furniture, deliberately static: no breathing glow
+      // (the number itself is the pressure) and no icon — a brass caption over a live countdown
+      // that flips to MET ✓ when the score crosses the plaque (updateMinimumPlaque).
+      if (plaqueSlots > 0) {
+        const chip = this.add.container(slot(n - 1), cardY)
+        chip.add(this.add.image(0, 8, 'softshadow').setDisplaySize(chipW + 48, 104 + 48).setAlpha(0.28))
+        chip.add(
+          this.add.image(
+            0,
+            0,
+            bakePanel(this, `hud:chip:${T.id}:118x104`, chipW, 104, 20, {
+              fill: 0xffffff,
+              bezel: T.border,
+              bezelWidth: 2,
+              shadowAlpha: 0.12,
+              shadowDist: 5,
+            })
+          )
+        )
+        chip.add(
+          this.add
+            .text(0, -30, 'MINIMUM', { fontFamily: FONT, fontSize: '16px', fontStyle: '900', color: T.goldText })
+            .setOrigin(0.5)
+            .setLetterSpacing(2)
+        )
+        this.minPlaqueText = inkShadow(
+          this.add
+            .text(0, 14, this.scoreTarget.toLocaleString(), { fontFamily: FONT, fontSize: '26px', fontStyle: '900', color: T.ink })
+            .setOrigin(0.5)
+        )
+        chip.add(this.minPlaqueText)
+      }
     }
 
     // The standing brief under the board. It named only the symbols even on a coated level, where
@@ -2368,9 +2448,13 @@ export class GameScene extends Phaser.Scene {
     // of it, and a player could sweep every symbol and still not know what was holding the level open.
     const brief = this.endless
       ? "Biggest score wins today's board"
-      : this.coatsTotal > 0
-        ? 'Match the goal symbols and sweep every felt square'
-        : 'Match the highlighted goal symbols before moves run out'
+      : this.scoreTarget > 0
+        ? this.coatsTotal > 0
+          ? 'Goals, felt, and the house minimum — beat all three'
+          : 'Match the goals and beat the house minimum'
+        : this.coatsTotal > 0
+          ? 'Match the goal symbols and sweep every felt square'
+          : 'Match the highlighted goal symbols before moves run out'
     /**
      * SEATED OFF THE BOARD, not off a literal. It used to read `988 + ENDLESS_BOARD_DROP`, which
      * applied the ENDLESS drop on EVERY level — so on a numbered level the brief fell 84px past the
@@ -2383,7 +2467,8 @@ export class GameScene extends Phaser.Scene {
      * the 48 changes.
      */
     const briefY = this.boardTop + ROWS * CELL + 48
-    inkShadow(
+    this.briefCopy = brief
+    this.briefText = inkShadow(
       this.add
         .text(DESIGN_W / 2, briefY, brief, {
           fontFamily: 'Arial, sans-serif',
@@ -2393,6 +2478,7 @@ export class GameScene extends Phaser.Scene {
         .setOrigin(0.5),
       'onBackdrop'
     )
+    this.maybeOfferMarker(briefY)
 
     // TODAY'S LEADER, now seated ABOVE the board (owner request, 2026-08-03). The brief states the
     // RULE ("biggest score wins today's board"); this states the SCORE currently winning it, which
@@ -3629,6 +3715,10 @@ export class GameScene extends Phaser.Scene {
 
     this.movesLeft--
     this.moveMade = true
+    // First committed move: the marker offer (if still open) leaves the table, and a placed
+    // marker locks in — no backout once the hand is played.
+    if (this.markerRow) this.dismissMarkerRow()
+    if (this.markerStake > 0 && this.briefText?.input) this.lockMarkerTag()
     this.movesText.setText(String(this.movesLeft))
     if (this.movesLeft <= 5) this.movesText.setColor(getTheme().warn)
     // Getting tight — start a gentle looping pulse on the moves number (once, no stacking). Gated
@@ -3677,7 +3767,15 @@ export class GameScene extends Phaser.Scene {
       // Endless never "wins" on objectives (it has none) — it ends when moves run out.
       // Coats add the sweep: collecting every goal is no longer enough if felt is still on the
       // table. `coatsRemaining()` is 0 on every hazard-free level, so this reads as before there.
-      if (!this.endless && this.objectives.every(o => o.remaining <= 0) && this.board.coatsRemaining() === 0) {
+      // HOUSE MINIMUM adds the third term: on plaque levels the collects and the felt are not
+      // enough while the score sits under the brass number. `scoreTarget` is 0 everywhere else,
+      // so this reads exactly as before there.
+      if (
+        !this.endless &&
+        this.objectives.every(o => o.remaining <= 0) &&
+        this.board.coatsRemaining() === 0 &&
+        this.score >= this.scoreTarget
+      ) {
         this.finishWin()
         return
       }
@@ -4931,6 +5029,22 @@ export class GameScene extends Phaser.Scene {
     const meter = isReplay ? prev.jackpotMeter : bumpJackpotMeter()
     this.jackpotHud?.update(meter)
     this.jackpotArmed = jackpotReady(meter)
+    // THE MARKER settles on top of the win's own charge. The stake was spent at slide time (a sink
+    // by construction — core/marker.ts); a win pays pips or a spin, never chips back, so nothing
+    // here touches chipBanked. Replays included: you staked real chips on this hand either way.
+    const wonStake = this.markerStake
+    if (wonStake !== 0) {
+      const settled = settleMarkerWin(wonStake, todayKey())
+      this.jackpotHud?.update(settled.meter)
+      this.jackpotArmed = jackpotReady(settled.meter)
+      this.showBoardBanner(
+        settled.spins > 0
+          ? 'MARKER PAYS — A FREE SPIN'
+          : `MARKER PAYS — +${settled.pips} JACKPOT ${settled.pips === 1 ? 'PIP' : 'PIPS'}`
+      )
+      track(EVENTS.MARKER_WON, { level: this.level, stake: wonStake, pips: settled.pips, spins: settled.spins })
+      this.markerStake = 0
+    }
     // HOT STREAK — every third consecutive win deals the Lucky Deal (core/deal.ts dealReady). Like
     // the jackpot meter directly above, a REPLAY leaves it alone: charging it on replays would make
     // the Deal farmable by re-clearing level 1 on a loop, which is a far better rate than playing
@@ -5723,6 +5837,16 @@ export class GameScene extends Phaser.Scene {
     // says the same thing without making the loss screen the one that says it.
     resetWinStreak()
     recordScore(this.score)
+    // THE MARKER: the House keeps the stake — unless today's comp is unused, in which case it
+    // slides back. Either way the outcome is said out loud; a silent stake is a support ticket.
+    const lostStake = this.markerStake
+    if (lostStake !== 0) {
+      const settled = settleMarkerLoss(lostStake, todayKey())
+      this.chipHud?.update(settled.balance)
+      this.showBoardBanner(settled.comped ? 'MARKER COMPED — ON THE HOUSE' : 'THE HOUSE KEEPS THE MARKER')
+      track(EVENTS.MARKER_LOST, { level: this.level, stake: lostStake, comped: settled.comped })
+      this.markerStake = 0
+    }
     track(EVENTS.LEVEL_FAIL, { level: this.level, reason: 'out_of_moves' })
     this.time.delayedCall(400, () => this.showOverlay(false, 0, 0))
   }
@@ -6722,6 +6846,105 @@ export class GameScene extends Phaser.Scene {
     } else {
       this.scorePunch(gain)
     }
+    this.updateMinimumPlaque()
+  }
+
+  /** HOUSE MINIMUM plaque readout: counts down what the score still owes, flips once to MET ✓. */
+  private updateMinimumPlaque(): void {
+    if (!this.minPlaqueText || this.scoreTarget <= 0) return
+    const owed = this.scoreTarget - this.score
+    if (owed > 0) {
+      this.minPlaqueText.setText(owed.toLocaleString())
+      return
+    }
+    if (this.minPlaqueMet) return
+    this.minPlaqueMet = true
+    this.minPlaqueText.setText('MET ✓').setColor(getTheme().ok)
+    sfx.scoreTick()
+    if (!this.reducedMotion) {
+      this.tweens.add({ targets: this.minPlaqueText, scale: 1.2, duration: 140, yoyo: true, ease: 'Quad.easeOut' })
+    }
+  }
+
+  // ------------------------------------------------------------- THE MARKER (Slice 0)
+
+  /**
+   * The start-of-level offer — a one-line row seated ON the brief's line, because while the offer
+   * is open the marker IS the level's open question, and the brief comes back the moment it is
+   * answered. Arm a stake and it is spent on the spot (core/marker.ts placeMarker — helper-shelf
+   * semantics); back out for free by tapping the tag before your first move; the row dismisses on
+   * ✕ or on the first committed move. Numbered levels ≥ MARKER_FROM only, never breathers, and
+   * only when the smallest stake is affordable (an offer you can't take is a taunt).
+   */
+  private maybeOfferMarker(briefY: number): void {
+    if (!markerOfferable(this.level, this.endless, loadSave().chips)) return
+    const T = getTheme()
+    track(EVENTS.MARKER_OFFERED, { level: this.level, chips: loadSave().chips })
+    const row = this.add.container(DESIGN_W / 2, briefY).setDepth(36)
+    this.markerRow = row
+    this.briefText?.setVisible(false)
+    row.add(
+      this.add
+        .text(-236, 0, 'THE MARKER', { fontFamily: FONT, fontSize: '20px', fontStyle: '900', color: T.goldText })
+        .setOrigin(0.5)
+        .setLetterSpacing(2)
+    )
+    MARKER_STAKES.forEach((stake, i) => {
+      row.add(addPillButton(this, -92 + i * 104, 0, 96, 48, String(stake), GOLD_PILL, () => this.armMarker(stake)))
+    })
+    row.add(addPillButton(this, 236, 0, 60, 48, '✕', GHOST_PILL, () => this.dismissMarkerRow()))
+  }
+
+  private armMarker(stake: MarkerStake): void {
+    if (this.markerStake > 0 || this.moveMade) return
+    const balance = placeMarker(stake)
+    if (balance === null) {
+      this.showBoardBanner('NOT ENOUGH CHIPS FOR THAT MARKER')
+      return
+    }
+    this.markerStake = stake
+    this.chipHud?.update(balance)
+    track(EVENTS.MARKER_TAKEN, { level: this.level, stake })
+    this.dismissMarkerRow(true)
+  }
+
+  /** Close the offer row; `armed` swaps the brief for the MARKER DOWN tag (tappable to back out
+   *  until the first move — armed on pointerdown, per the swipe-surface rule: this line sits under
+   *  the board and a swipe released onto it must never fire it). */
+  private dismissMarkerRow(armed = false): void {
+    this.markerRow?.destroy()
+    this.markerRow = null
+    const t = this.briefText
+    if (!t) return
+    t.setVisible(true)
+    if (armed && this.markerStake > 0) {
+      t.setText(`MARKER DOWN — ${this.markerStake} ON THE TABLE  ·  tap to take back`)
+        .setColor(getTheme().goldText)
+        .setInteractive({ useHandCursor: true })
+      t.on('pointerdown', () => this.backOutMarker())
+    }
+  }
+
+  private backOutMarker(): void {
+    if (this.markerStake === 0 || this.moveMade) return
+    const balance = refundMarker(this.markerStake)
+    this.markerStake = 0
+    this.chipHud?.update(balance)
+    const t = this.briefText
+    if (t) {
+      t.off('pointerdown')
+      t.disableInteractive()
+      t.setText(this.briefCopy).setColor(getTheme().onBackdropMuted)
+    }
+  }
+
+  /** The first move locked the marker in — the tag stops being a button and just states the stake. */
+  private lockMarkerTag(): void {
+    const t = this.briefText
+    if (!t || this.markerStake === 0) return
+    t.off('pointerdown')
+    t.disableInteractive()
+    t.setText(`MARKER DOWN — ${this.markerStake} ON THE TABLE`)
   }
 
   /**

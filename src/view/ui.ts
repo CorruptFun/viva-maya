@@ -2052,7 +2052,10 @@ function paintTeachCard(
     cardH: number
     reduced: boolean
     title: string
-    texture: string
+    /** A real sample of the art, at board scale. Omit for a rule with no piece (HOUSE MINIMUM),
+     *  and `headline` renders where the swatch would sit instead. */
+    texture?: string
+    headline?: string
     blurb: string
     scrim: Phaser.GameObjects.Rectangle
     scrimArt?: Phaser.GameObjects.Image[]
@@ -2083,7 +2086,12 @@ function paintTeachCard(
     .setOrigin(0.5)
     .setLetterSpacing(1)
 
-  const swatch = scene.add.image(cx, cy - 40, o.texture).setDisplaySize(132, 132)
+  const swatch: Phaser.GameObjects.GameObject = o.texture
+    ? scene.add.image(cx, cy - 40, o.texture).setDisplaySize(132, 132)
+    : scene.add
+        .text(cx, cy - 40, o.headline ?? '', { fontFamily: FONT, fontSize: '58px', fontStyle: '900', color: getTheme().goldText })
+        .setOrigin(0.5)
+        .setShadow(0, 3, 'rgba(90,70,20,0.22)', 6, false, true)
 
   const body = scene.add
     .text(cx, cy + 92, o.blurb, {
@@ -2103,6 +2111,37 @@ function paintTeachCard(
     layer.setScale(0.88).setAlpha(0)
     scene.tweens.add({ targets: layer, scale: 1, alpha: 1, duration: 260, ease: backOut(OVERSHOOT.pop) })
   }
+}
+
+/**
+ * Teach-once card for HOUSE MINIMUM (Slice 0) — the first goal archetype that is not a hazard, so
+ * its copy lives here rather than in a hazard skin, and the focal art is the brass number itself
+ * (there is no piece to show; the number IS the mechanic).
+ */
+export function openMinimumIntro(scene: Phaser.Scene, target: number, onClose?: () => void): void {
+  const W = 720
+  const reduced = prefersReducedMotion()
+  const layer = scene.add.container(0, 0).setDepth(65)
+  const scrimKit = addFocusScrim(scene, { alpha: 0.6, ink: 0x2a2417 })
+  const scrim = scrimKit.hit.setInteractive()
+  const close = (): void => {
+    layer.destroy()
+    onClose?.()
+  }
+  scrim.on('pointerup', close)
+  paintTeachCard(scene, layer, close, {
+    cx: W / 2,
+    cy: 560,
+    cardW: 600,
+    cardH: 520,
+    reduced,
+    title: 'HOUSE MINIMUM',
+    headline: target.toLocaleString(),
+    blurb:
+      'This room has a minimum. Finish your goals AND put your score past the brass number — long cascades and specials are what pile up points. House rules: no Double Score in here.',
+    scrim,
+    scrimArt: scrimKit.art,
+  })
 }
 
 /**

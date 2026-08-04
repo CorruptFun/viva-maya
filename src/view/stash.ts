@@ -3,6 +3,7 @@ import { sfx } from '../audio/sfx'
 import { DESIGN_H, DESIGN_W } from '../config'
 import { BOOST_ORDER, hasSurplus, stash, stashTotal, usingNextCount } from '../core/inventory'
 import type { StashEntry } from '../core/inventory'
+import { LEVEL_COUNT, levelBoostExclusions } from '../core/levels'
 import { loadSave, promoteBoost, toggleHoldBoost } from '../core/save'
 import { backOut, D, E, OVERSHOOT } from './motion'
 import { addFocusScrim } from './platekit'
@@ -188,9 +189,12 @@ export function openStash(scene: Phaser.Scene, opts: StashOpts = {}): void {
   const T = getTheme()
   const reduced = prefersReducedMotion() || opts.instant === true
   const save = loadSave()
-  const rows = stash(save)
+  // Preview against the level PLAY would start, including that level's own boost refusals (a HOUSE
+  // MINIMUM level declines DOUBLE SCORE) — the panel's promise must match the level start exactly.
+  const exclusions = levelBoostExclusions(Math.min(save.unlocked, LEVEL_COUNT))
+  const rows = stash(save, exclusions)
   const total = stashTotal(save)
-  const nextCount = usingNextCount(save)
+  const nextCount = usingNextCount(save, exclusions)
   const surplus = hasSurplus(save)
   const W = DESIGN_W
   const layer = scene.add.container(0, 0).setDepth(60)

@@ -2,6 +2,7 @@ import { POINTS_PER_PIECE } from '../config'
 import { Board } from './board'
 import { ENDLESS_MOVES } from './endless'
 import { levelSpec } from './levels'
+import type { LevelSpec } from './types'
 import { hazardPlan } from './hazards'
 import type { HazardPlan } from './hazards'
 import { plinkoSlots, rollSlotIndex, shouldOfferPlinko } from './plinko'
@@ -37,6 +38,9 @@ export interface LevelRun {
   collected: number
   needed: number
   coatsLeft: number
+  /** Final score, counted the way GameScene's playWave does (`cleared × 20 × cascade`). What the
+   *  HOUSE MINIMUM win term reads, and what minimum.rate.test.ts calibrates the plaque against. */
+  score: number
   /** Settled chain depth for each move played. */
   chains: number[]
   maxCascade: number
@@ -166,9 +170,12 @@ function blockersStanding(b: Board): number {
   return n
 }
 
-/** Play one full attempt at `level` and report what happened. */
-export function playLevel(level: number, seed: number, policy: Policy): LevelRun {
-  const spec = levelSpec(level)
+/** Play one full attempt at `level` and report what happened. `specOverride` lets a measurement
+ *  play a VARIANT of the level (minimum.rate.test.ts strips the score target to observe the
+ *  natural full-budget score distribution — pricing the plaque off target-truncated runs is
+ *  circular, since winners stop playing the moment they cross it). */
+export function playLevel(level: number, seed: number, policy: Policy, specOverride?: LevelSpec): LevelRun {
+  const spec = specOverride ?? levelSpec(level)
   const b = buildLevelBoard(level, seed)
   const goals = new Set(spec.objectives.map(o => o.symbol))
   const needed = spec.objectives.reduce((n, o) => n + o.count, 0)
@@ -179,12 +186,14 @@ export function playLevel(level: number, seed: number, policy: Policy): LevelRun
 
   const chains: number[] = []
   let collected = 0
+  let score = 0
   let blockerCellTurns = 0
+  const scoreTarget = spec.scoreTarget ?? 0
   let m = 0
 
   for (; m < spec.moves; m++) {
     blockerCellTurns += blockersStanding(b)
-    if ([...remaining.values()].every(v => v <= 0) && b.coatsRemaining() === 0) break
+    if ([...remaining.values()].every(v => v <= 0) && b.coatsRemaining() === 0 && score >= scoreTarget) break
 
     let moves = everyValidMove(b)
     if (moves.length === 0) {
@@ -211,41 +220,46 @@ export function playLevel(level: number, seed: number, policy: Policy): LevelRun
     const before = new Map(remaining)
     const res = resolveSwapTracking(b, pick.a, pick.to, remaining)
     chains.push(res.cascade)
+    score += res.points
     for (const [s, v] of before) collected += Math.max(0, v - (remaining.get(s) ?? 0))
   }
 
   const objectivesMet = [...remaining.values()].every(v => v <= 0)
   return {
-    won: objectivesMet && b.coatsRemaining() === 0,
+    won: objectivesMet && b.coatsRemaining() === 0 && score >= scoreTarget,
     movesLeft: Math.max(0, spec.moves - m),
     collected,
     needed,
     coatsLeft: b.coatsRemaining(),
+    score,
     chains,
     maxCascade: chains.length > 0 ? Math.max(...chains) : 0,
     blockerCellTurns,
   }
 }
 
-/** resolveSwap, but decrementing per-symbol objective counters as the real scene does. */
+/** resolveSwap, but decrementing per-symbol objective counters — and totting up points — exactly
+ *  as the real scene does (`cleared × POINTS_PER_PIECE × cascade`, the playWave rule). */
 function resolveSwapTracking(
   b: Board,
   a: Coord,
   to: Coord,
   remaining: Map<SymbolType, number>
-): { cascade: number } {
+): { cascade: number; points: number } {
   b.swap(a, to)
   let wave = b.swapActivation(a, to)
   if (!wave) {
     if (b.findRuns().length === 0) {
       b.swap(a, to)
-      return { cascade: 0 }
+      return { cascade: 0, points: 0 }
     }
     wave = b.matchWave([to, a])
   }
   let cascade = 0
+  let points = 0
   while (wave) {
     cascade++
+    points += wave.cleared.length * POINTS_PER_PIECE * cascade
     for (const { piece } of wave.cleared) {
       if (piece.kind === 'jackpot' || piece.kind === 'blocker') continue
       const left = remaining.get(piece.symbol)
@@ -255,18 +269,18 @@ function resolveSwapTracking(
     b.refill()
     wave = b.matchWave()
   }
-  return { cascade }
+  return { cascade, points }
 }
 
 /** Aggregate several seeds of one level. */
-export function sampleLevel(level: number, seeds: number, policy: Policy): {
+export function sampleLevel(level: number, seeds: number, policy: Policy, specOverride?: LevelSpec): {
   winRate: number
   meanMaxCascade: number
   plinkoEligibleRate: number
   runs: LevelRun[]
 } {
   const runs: LevelRun[] = []
-  for (let i = 0; i < seeds; i++) runs.push(playLevel(level, 0xbeef + i * 7919 + level * 104729, policy))
+  for (let i = 0; i < seeds; i++) runs.push(playLevel(level, 0xbeef + i * 7919 + level * 104729, policy, specOverride))
   const wins = runs.filter(r => r.won).length
   const plinko = runs.filter(r => r.chains.some(c => c >= 5)).length
   return {

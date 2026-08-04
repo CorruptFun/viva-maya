@@ -13,7 +13,7 @@ import {
 } from '../core/endless'
 import { DAILY_PRIZE_TIERS, PRIZE_TIERS, checkDailyPrize, checkWeeklyPrize, fetchRaceRecap } from '../core/leaderboard'
 import type { RacePrizeWin, RaceRecap } from '../core/leaderboard'
-import { LEVEL_COUNT } from '../core/levels'
+import { LEVEL_COUNT, levelBoostExclusions } from '../core/levels'
 import { refreshLives } from '../core/lives'
 import { greeting, occasionFor, pendingOccasion, secretNote, withName } from '../core/maya'
 import { REFERRER_CHIPS, claimReferralRewards, fetchPendingRewards } from '../core/referrals'
@@ -595,7 +595,10 @@ export class HomeScene extends Phaser.Scene {
       // information. This is the same fact moved to where the decision actually happens, in the slot
       // the count was using anyway.
       const n = stashBadgeCount()
-      const label = `🎁 ${nextLevelSummary(save)}`
+      // The preview names what the level PLAY will start would take — including that level's own
+      // refusals (a HOUSE MINIMUM level declines DOUBLE SCORE), or the line would promise a boost
+      // the level start then skips.
+      const label = `🎁 ${nextLevelSummary(save, levelBoostExclusions(Math.min(save.unlocked, LEVEL_COUNT)))}`
       const stashLine = this.add
         .text(DESIGN_W / 2, dailyY + 58, label, {
           fontFamily: FONT,

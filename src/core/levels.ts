@@ -1,5 +1,5 @@
 import { SYMBOLS } from './types'
-import type { LevelSpec, SymbolType } from './types'
+import type { BoostType, LevelSpec, SymbolType } from './types'
 import { mulberry32, randInt } from './rng'
 import { DIFFICULTY, isTeachingLevel } from './difficulty'
 
@@ -67,6 +67,56 @@ const PROTECTED_TO = DIFFICULTY.bands.lockStart - 1
  */
 const RATIO_AT_SEAM = 3.0 + 0.27 * Math.log(1 + (PROTECTED_TO - 8) / 52)
 
+/**
+ * HOUSE MINIMUM — the third goal archetype (Slice 0, 2026-08-04). From
+ * `DIFFICULTY.goals.minimumStart`, levels on a fixed cadence carry a brass score plaque as a
+ * second win term: collect the goals, sweep the felt, AND beat the number. The cadence is
+ * L % 10 ∈ {1, 6} — two per decade, never an every-5th breather, never a chapter-closing 10th —
+ * and the band start itself (…01) is the teaching level.
+ */
+export function isMinimumLevel(level: number): boolean {
+  const { goals } = DIFFICULTY
+  return goals.minimum && level >= goals.minimumStart && (level % 10 === 1 || level % 10 === 6)
+}
+
+/**
+ * Banker-proxy points scored per GOAL COLLECT, among runs that FINISH the collect goals — measured
+ * at the middle of the band (L251), where it is remarkably stable (~89–94 across 201–296 while
+ * points-per-MOVE drifts 193→220). Priced against completing runs on purpose: score and collects
+ * are strongly correlated, so a plaque priced off the all-runs mean is free for anyone who would
+ * win anyway — measured, not assumed (the first calibration made exactly that mistake and the
+ * BINDS guard caught it). `minimum.rate.test.ts` re-measures this against the real board and fails
+ * if the mechanics under it drift. Re-derive, never hand-tune (the slots.rate discipline).
+ */
+export const MINIMUM_POINTS_PER_GOAL = 89
+
+/**
+ * The plaque's demand as a fraction of a goal-completing proxy run's expected score. Calibrated
+ * against the banker completer distribution: ~p10 at the band start (a light bind — most runs
+ * that finish the goals also clear the number), rising to ~p25–p40 by the band top (sleepy play
+ * misses it, cascade play clears it). The teaching level sits below p10 — it exists to introduce
+ * the plaque, not to enforce it. Remember the proxy-bias rule: the banker cannot chase points, so
+ * every one of these binds is an UPPER bound on how often a real player misses the number.
+ */
+export function minimumTargetFrac(level: number): number {
+  const start = DIFFICULTY.goals.minimumStart
+  if (level === start) return 0.75
+  const t = Math.max(0, Math.min(1, (level - start) / (LEVEL_COUNT - start)))
+  return 0.88 + 0.16 * t
+}
+
+/**
+ * Boost TYPES a level refuses at start. Refused boosts are SKIPPED, never consumed — they stay
+ * banked (save.ts takePendingBoosts threads these through splitPendingBoosts as extra holds).
+ * A minimum level auto-holds DOUBLE SCORE: 2× scoring against a score target would trivially
+ * delete the plaque. ⚠️ The stash preview must pass the same exclusions for the level it is
+ * previewing — the whole point of splitPendingBoosts is that the promise and the consumption run
+ * one rule.
+ */
+export function levelBoostExclusions(level: number): BoostType[] {
+  return isMinimumLevel(level) ? ['doubleScore'] : []
+}
+
 export function levelSpec(level: number): LevelSpec {
   const L = level
   const rng = mulberry32((0xc0ffee ^ Math.imul(L, 2654435761)) >>> 0)
@@ -74,6 +124,12 @@ export function levelSpec(level: number): LevelSpec {
   // 5 symbols early keeps matches flowing; the 6th tightens the board from level 4.
   const symbolCount = L < 4 ? 5 : 6
   const objectiveCount = L < 3 ? 1 : L < 8 ? 2 : 3
+  // HOUSE MINIMUM: the plaque REPLACES the third collect objective on minimum-cadence levels. The
+  // demand — and therefore the move budget derived from `total` below — still counts all three
+  // shares, so a minimum level is exactly as big as its 3-objective sibling; the third share is
+  // simply asked for in points instead of pieces.
+  const minimum = isMinimumLevel(L)
+  const goalCount = minimum ? Math.min(2, objectiveCount) : objectiveCount
 
   // Collect target per objective: concave growth, no early cap (clamp is a far-off safety rail).
   const perObjective = Math.min(110, Math.max(12, Math.round(32 * Math.pow(L / 10, 0.34))))
@@ -120,12 +176,22 @@ export function levelSpec(level: number): LevelSpec {
   // agnostic since the board fills uniformly from the palette).
   const pool: SymbolType[] = [...SYMBOLS.slice(0, symbolCount)]
   const objectives = []
-  for (let i = 0; i < objectiveCount; i++) {
+  for (let i = 0; i < goalCount; i++) {
     const pick = randInt(rng, pool.length)
     objectives.push({ symbol: pool[pick], count: perObjective })
     pool.splice(pick, 1)
   }
 
+  // The plaque price: a fraction of what a goal-completing proxy run scores, priced off the
+  // COLLECT DEMAND (frac × pts-per-goal × collects owed) rather than the move budget — the demand
+  // is strictly non-decreasing in the level, so the brass ladder is monotone by construction with
+  // no move-rounding wobble. Rounded to a brass-friendly 100; the exact numbers are pinned as
+  // goldens in levels.test.ts and the constant under them is re-measured by minimum.rate.test.ts.
+  if (minimum) {
+    const owed = objectives.reduce((n, o) => n + o.count, 0)
+    const scoreTarget = Math.round((minimumTargetFrac(L) * MINIMUM_POINTS_PER_GOAL * owed) / 100) * 100
+    return { level: L, moves, symbolCount, objectives, scoreTarget }
+  }
   return { level: L, moves, symbolCount, objectives }
 }
 

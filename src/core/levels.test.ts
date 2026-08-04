@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { LEVEL_COUNT, levelSpec, starThresholds, starsFor } from './levels'
+import {
+  LEVEL_COUNT,
+  isMinimumLevel,
+  levelBoostExclusions,
+  levelSpec,
+  minimumTargetFrac,
+  starThresholds,
+  starsFor,
+} from './levels'
 import { DIFFICULTY, isTeachingLevel } from './difficulty'
 import type { SymbolType } from './types'
 
@@ -82,10 +90,15 @@ describe('levelSpec — the climb above the protected band', () => {
   it('never gets easier from one level to the next, except where a mechanic is taught', () => {
     const dips: number[] = []
     for (let L = DIFFICULTY.bands.lockStart + 1; L <= LEVEL_COUNT; L++) {
-      // The three teaching levels are DELIBERATELY softer (+3 moves) — you are meeting a new rule
+      // The teaching levels are DELIBERATELY softer (+3 moves) — you are meeting a new rule
       // for the first time. That dip is intentional and, unlike the old +2 breather, it is visible:
       // it lands on a level that also announces itself with an intro card.
       if (isTeachingLevel(L)) continue
+      // Minimum levels ask for a third of their demand in POINTS, so their collect ratio is lower
+      // by construction — this metric cannot see the plaque. Their own monotone series (the
+      // scoreTarget ladder) is asserted in the HOUSE MINIMUM describe below, and their total
+      // difficulty is measured on the real board by minimum.rate.test.ts.
+      if (isMinimumLevel(L)) continue
       // 0.01 absorbs integer-rounding noise in the move budget; the old +2 breather was 50x larger.
       const delta = required(L) - required(L - 1)
       if (delta < 0) dips.push(delta)
@@ -218,5 +231,85 @@ describe('star thresholds stay achievable', () => {
     // starsFor takes the EARNED leftover; passing the raw remainder is the bug it guards against.
     expect(starsFor(spec, 0)).toBe(1)
     expect(starsFor(spec, spec.moves)).toBe(3)
+  })
+})
+
+/**
+ * HOUSE MINIMUM — the third goal archetype (Slice 0, 2026-08-04). A brass score plaque replaces
+ * the third collect objective on a fixed cadence from L201. Two promises, both cheap to break:
+ * the cadence is exactly where it says it is (a shipped level's win condition is content, like a
+ * golden symbol table), and the plaque REPLACES a goal rather than adding one — the move budget
+ * must be byte-identical to the 3-objective sibling the flag-off game would deal.
+ */
+describe('HOUSE MINIMUM — the plaque cadence', () => {
+  it('runs on L % 10 ∈ {1, 6} from the band start, and nowhere below it', () => {
+    for (let L = 1; L <= 200; L++) {
+      expect(isMinimumLevel(L)).toBe(false)
+      expect(levelSpec(L).scoreTarget).toBeUndefined()
+    }
+    for (let L = 201; L <= LEVEL_COUNT; L++) {
+      const expected = L % 10 === 1 || L % 10 === 6
+      expect({ L, min: isMinimumLevel(L) }).toEqual({ L, min: expected })
+      expect({ L, plaque: levelSpec(L).scoreTarget !== undefined }).toEqual({ L, plaque: expected })
+      if (expected) expect(levelSpec(L).objectives).toHaveLength(2)
+    }
+  })
+
+  it('never lands on an every-5th breather (and so never on a chapter-closing 10th)', () => {
+    for (let L = 201; L <= LEVEL_COUNT; L++) {
+      if (isMinimumLevel(L)) expect(L % 5).not.toBe(0)
+    }
+  })
+
+  it('replaces a goal, never buys moves — the budget is its 3-objective sibling\'s exactly', () => {
+    const g = DIFFICULTY.goals as { minimum: boolean }
+    try {
+      for (const L of [206, 251, 296]) {
+        const on = levelSpec(L)
+        g.minimum = false
+        const off = levelSpec(L)
+        g.minimum = true
+        expect({ L, moves: on.moves }).toEqual({ L, moves: off.moves })
+        expect(off.scoreTarget).toBeUndefined()
+        expect(off.objectives).toHaveLength(3)
+        // The two surviving goals are the sibling's first two — same stream, same order.
+        expect(on.objectives.map(o => o.symbol)).toEqual(off.objectives.slice(0, 2).map(o => o.symbol))
+      }
+    } finally {
+      g.minimum = true
+    }
+  })
+
+  it('teaches at 201: +3 moves over the flag-off budget, and a gentler plaque than the band', () => {
+    const g = DIFFICULTY.goals as { minimum: boolean }
+    const on = levelSpec(201)
+    try {
+      g.minimum = false
+      const off = levelSpec(201)
+      expect(on.moves).toBe(off.moves + 3)
+    } finally {
+      g.minimum = true
+    }
+    expect(minimumTargetFrac(201)).toBeLessThan(minimumTargetFrac(206))
+  })
+
+  it('the brass ladder only ever rises — with GOLDEN anchors from the shipped calibration', () => {
+    let prev = 0
+    for (let L = 201; L <= LEVEL_COUNT; L++) {
+      if (!isMinimumLevel(L)) continue
+      const t = levelSpec(L).scoreTarget as number
+      expect({ L, rises: t >= prev }).toEqual({ L, rises: true })
+      prev = t
+    }
+    // GOLDEN: the plaque numbers as calibrated 2026-08-04 (banker completer distribution — see
+    // minimum.rate.test.ts). A failure here means SHIPPED LEVELS MOVED — retune deliberately and
+    // re-record, never let a target drift as a side effect of touching the curve or the scoring.
+    expect([201, 206, 251, 296].map(L => levelSpec(L).scoreTarget)).toEqual([11900, 14200, 16400, 18600])
+  })
+
+  it('auto-holds DOUBLE SCORE on minimum levels only (skipped, never consumed)', () => {
+    expect(levelBoostExclusions(206)).toEqual(['doubleScore'])
+    expect(levelBoostExclusions(205)).toEqual([])
+    expect(levelBoostExclusions(51)).toEqual([])
   })
 })
