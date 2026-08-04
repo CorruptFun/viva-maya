@@ -6,7 +6,7 @@ import type { StashEntry } from '../core/inventory'
 import { loadSave, promoteBoost, toggleHoldBoost } from '../core/save'
 import { backOut, OVERSHOOT } from './motion'
 import { getTheme, prefersReducedMotion } from './theme'
-import { addPillButton, FONT, GOLD_PILL } from './ui'
+import { addPillButton, addRoundChip, FONT, GOLD_PILL } from './ui'
 
 /**
  * YOUR STASH — the boosts you own, what goes in next, and how to change that.
@@ -45,6 +45,59 @@ export interface StashOpts {
 /** Live badge count for the Home entry point. */
 export function stashBadgeCount(): number {
   return stashTotal(loadSave())
+}
+
+/**
+ * The STASH CHIP — a second door, for LevelSelect.
+ *
+ * Home's text line was the only way in, which meant a player who reached a level from the LEVELS
+ * grid never passed the stash at all: the "choose what goes in before you play" step was entirely
+ * skippable without ever knowing it existed. This is the same idea `addCharmChip` already ships —
+ * a glyph chip with a live count collar that opens its panel — so the two read as siblings rather
+ * than as two unrelated inventions.
+ *
+ * Seated in the 125px gap the LEVELS title row leaves between the back button (right edge 118) and
+ * the wordmark (left edge 243). Measured, not guessed; re-measure if either moves.
+ */
+export function addStashChip(
+  scene: Phaser.Scene,
+  x: number,
+  y: number,
+  size = 52,
+  opts: StashOpts = {}
+): Phaser.GameObjects.Container {
+  const T = getTheme()
+  const n = stashTotal(loadSave())
+  const { container } = addRoundChip(
+    scene,
+    x,
+    y,
+    size,
+    '🎁',
+    { fontFamily: 'sans-serif', fontSize: `${Math.round(size * 0.46)}px` },
+    () => {
+      sfx.uiTap()
+      sfx.whoosh()
+      openStash(scene, opts)
+    }
+  )
+  // Collar mirrors the charm chip's: a count badge on the lower-right, outside the face so the press
+  // sink carries the glyph without dragging the number off the chip. Muted at zero — an empty stash
+  // is still worth a door (it is the only place that explains where winnings go), but it must not
+  // shout for attention it hasn't earned.
+  const badge = scene.add.container(size * 0.36, size * 0.34)
+  const label = scene.add
+    .text(0, 0, String(n), { fontFamily: FONT, fontSize: '15px', fontStyle: '900', color: n > 0 ? T.onRose : T.inkSoft })
+    .setOrigin(0.5)
+  const bw = Math.max(label.width + 14, 24)
+  const bg = scene.add.graphics()
+  bg.fillStyle(n > 0 ? T.rose : T.cardFillAlt, 1)
+  bg.fillRoundedRect(-bw / 2, -11, bw, 22, 11)
+  bg.lineStyle(2, T.cardFill, 0.9)
+  bg.strokeRoundedRect(-bw / 2, -11, bw, 22, 11)
+  badge.add([bg, label])
+  container.add(badge)
+  return container
 }
 
 export function openStash(scene: Phaser.Scene, opts: StashOpts = {}): void {

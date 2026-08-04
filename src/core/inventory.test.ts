@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { PRIZES } from './daily'
 import { DIFFICULTY } from './difficulty'
-import { BOOST_META, BOOST_ORDER, freeSourceFor, freeStockFor, hasSurplus, stash, stashTotal, usingNextCount } from './inventory'
+import { BOOST_META, BOOST_ORDER, freeSourceFor, freeStockFor, hasSurplus, nextLevelSummary, stash, stashTotal, usingNextCount } from './inventory'
 import { coerceSave, consumeBoost, loadSave, persistSave, promoteBoost, splitPendingBoosts, takePendingBoosts, toggleHoldBoost } from './save'
 import { BOOST_ITEMS } from './store'
 import type { BoostType } from './types'
@@ -287,5 +287,39 @@ describe('splitPendingBoosts — the shared rule', () => {
   it('preserves queue order within each partition, so the oldest prizes are spent first', () => {
     const { keep } = splitPendingBoosts(['wildReel', 'diceBomb', 'extraMoves', 'doubleScore', 'jackpot'])
     expect(keep).toEqual(['doubleScore', 'jackpot'])
+  })
+})
+
+describe('nextLevelSummary — what am I about to spend', () => {
+  const s = (pendingBoosts: BoostType[], heldBoosts: BoostType[] = []) =>
+    coerceSave({ pendingBoosts, heldBoosts })
+
+  it('names what is actually going in', () => {
+    expect(nextLevelSummary(s(['extraMoves']))).toContain('+5 MOVES')
+    expect(nextLevelSummary(s(['extraMoves']))).toContain('next level')
+  })
+
+  /** Three 12-character names on a 20px line would run off a 720-wide box. */
+  it('caps at two names and counts the rest', () => {
+    const out = nextLevelSummary(s(['extraMoves', 'wildReel', 'diceBomb']))
+    expect(out).toContain('+1')
+    expect(out).not.toContain('DICE BOMB')
+  })
+
+  it('says so when everything is held, rather than reading as broken', () => {
+    const out = nextLevelSummary(s(['jackpot'], ['jackpot']))
+    expect(out).toContain('nothing goes in next level')
+    expect(out).toContain('1 held')
+  })
+
+  it('teaches the concept when the stash is empty', () => {
+    expect(nextLevelSummary(coerceSave({}))).toContain('empty for now')
+  })
+
+  /** Never contradicts the tiles: the summary and the panel run the same split. */
+  it('agrees with usingNextCount', () => {
+    const save = s(['jackpot', 'wildReel', 'diceBomb', 'extraMoves'], ['jackpot'])
+    expect(usingNextCount(save)).toBe(3)
+    expect(nextLevelSummary(save)).not.toContain('JACKPOT')
   })
 })

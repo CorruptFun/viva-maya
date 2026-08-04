@@ -88,6 +88,32 @@ export function stash(save: SaveData): StashEntry[] {
   }))
 }
 
+/**
+ * One line naming what the NEXT numbered level will actually consume — the answer to "what am I
+ * about to spend", at the moment the player is deciding to press PLAY.
+ *
+ * The level-start banner already names the boosts, but it fires AFTER the level has begun and they
+ * are already gone, which is confirmation rather than information. This is the same fact moved to
+ * where the decision is made, and it costs no new screen real estate because it replaces the count
+ * on Home's existing stash line.
+ *
+ * Two names maximum. Three of these are up to 12 characters each and the line is 20px on a 720-wide
+ * box, so an unbounded join runs off the screen — and a player only needs to recognise the shape of
+ * what is queued, not read a manifest. The panel is one tap away for the full picture.
+ */
+export function nextLevelSummary(save: SaveData): string {
+  const owned = stashTotal(save)
+  if (owned === 0) return 'your stash  ·  empty for now'
+
+  const { take } = splitPendingBoosts(save.pendingBoosts ?? [], save.heldBoosts ?? [])
+  if (take.length === 0) return `${owned} held  ·  nothing goes in next level`
+
+  const names = take.map(b => BOOST_META[b].label)
+  const shown = names.slice(0, 2).join('  ·  ')
+  const rest = names.length - 2
+  return rest > 0 ? `next level: ${shown}  +${rest}` : `next level: ${shown}`
+}
+
 /** Total boosts owned — the badge number, and the gate for showing the stash entry at all. */
 export function stashTotal(save: SaveData): number {
   return (save.pendingBoosts ?? []).length

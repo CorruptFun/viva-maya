@@ -33,6 +33,7 @@ import {
 import { addScreenGloss } from '../view/fx'
 import { maybeShowInstallNudge } from '../view/installnudge'
 import { maybeShowInstallOffer } from '../view/installsheet'
+import { nextLevelSummary } from '../core/inventory'
 import { openStash, stashBadgeCount } from '../view/stash'
 import { openRaceUnlockCard } from '../view/raceunlockcard'
 import { addJackpotMeter } from '../view/jackpot'
@@ -584,8 +585,12 @@ export class HomeScene extends Phaser.Scene {
     // go, and the moment a player most needs to know that is BEFORE they have won anything. Gated
     // only on `preFirstWin`, so a brand-new save still opens uncluttered.
     if (!preFirstWin) {
+      // NAMES what is going in, not just how many. The level-start banner already lists the boosts,
+      // but it fires after the level has begun and they are already spent — confirmation, not
+      // information. This is the same fact moved to where the decision actually happens, in the slot
+      // the count was using anyway.
       const n = stashBadgeCount()
-      const label = n > 0 ? `🎁 ${n} ${n === 1 ? 'boost' : 'boosts'} ready  ·  tap to see` : '🎁 your stash  ·  empty for now'
+      const label = `🎁 ${nextLevelSummary(save)}`
       const stashLine = this.add
         .text(DESIGN_W / 2, dailyY + 58, label, {
           fontFamily: FONT,

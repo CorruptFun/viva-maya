@@ -9,6 +9,7 @@ import { addCasinoBackdrop } from '../view/background'
 import { addLevelRaceStrip, addRaceModule } from '../view/leaderboardpanel'
 import { D, E, OVERSHOOT, backOut } from '../view/motion'
 import { quality } from '../view/quality'
+import { addStashChip } from '../view/stash'
 import { getTheme, prefersReducedMotion, reduceFlashing } from '../view/theme'
 import { FONT, GHOST_PILL, GOLD_PILL, addMuteChip, addPillButton, applyEntrance, goldFace, startScene } from '../view/ui'
 
@@ -256,6 +257,14 @@ export class LevelSelectScene extends Phaser.Scene {
     // no read-out. It sits in the title row (right of the wordmark, clear of the mute chip's band) as a
     // pure readout, never interactive, so it cannot compete with the ‹ back button for a tap.
     this.addStarTally(596, 92, levelStanding(save).stars)
+
+    // THE STASH DOOR, second of two. Home's line was the only way in, so a player who started a
+    // level from this grid never passed the stash and never had the chance to choose what went in
+    // with them. Seated at x=180 — the middle of the 125px gap this row leaves between the back
+    // button (ends 118) and the LEVELS wordmark (starts 243). Measured; re-measure if either moves.
+    // A change repaints the scene, because the collar count and the grid's own chips both read the
+    // save at build time.
+    this.add.existing(addStashChip(this, 180, 92, 52, { onChanged: () => this.scene.restart() }))
 
     const endless = endlessUnlocked(save)
     // 196 (was 156): the header now carries the title row AND the LEVEL RACE strip that used to be the
