@@ -97,6 +97,22 @@ Live: <https://corruptfun.github.io/viva-maya/>
   card row, or `STRIP_H`, **re-derive `CHEAT_ZONE_TOP` too** — it has no anchor
   below the board any more except the standing brief, which moves with the board.
   Verify by round-tripping `cellToXY` → `xyToCell` for all 64 cells.
+  Anything seated *below* the board reads `boardTop` for the same reason. The
+  standing brief did not, until 2026-08-04: it was written `988 +
+  ENDLESS_BOARD_DROP`, which applies the endless drop on **every** level, so on a
+  numbered level it fell 84px past its own board and printed straight through the
+  JACKPOT deck and charge bar at 1086 (owner screenshot). A literal that happens
+  to equal the endless seat is not the endless seat.
+- **LevelSelect's header is a budgeted band, not four literals.** The title row
+  (`HEADER_ROW_Y`), the LEVEL RACE marquee (`RACE_STRIP_Y`, `RACE_MARQUEE_H`
+  tall) and the grid mask sit in ~130px, and the mask top is **derived** from the
+  strip. It went wrong the obvious way: the stash door arrived as a 52px chip
+  with a count badge hanging 29px below its own centre, so its true reach was
+  implicit and it landed on the marquee's top edge with one pixel to spare. The
+  door is now a pill with the count *inside* (`STASH_DOOR_W/H`, exported so this
+  screen can budget against them) — a control next to something else should have
+  a real bounding box, not an overhang. Re-derive the whole band if you add
+  anything up here; don't seat it against a fresh number.
 - **A control next to the board must arm on `pointerdown`, not fire on
   `pointerup`.** Phaser dispatches `pointerup` to whatever is under the finger at
   *release*, however far away the press began — so a swipe off the board fires
@@ -183,7 +199,7 @@ make green.
 | `src/core/install.ts` | "add to home screen" custody; the platform split lives here |
 | `src/core/resumeguard.ts` | recovers a game loop that never restarted after a resume |
 | `src/core/trophies.ts` | chapter trophies — catalog, purse table, tier ladder, the claim latch (see the note above) |
-| `src/view/stash.ts` | the stash panel + its two doors (Home line, LevelSelect chip) |
+| `src/view/stash.ts` | the stash panel + its two doors (Home line, LevelSelect `🎁 N` pill) |
 | `src/view/installsheet.ts` | the install sheet — DOM, so the iOS guide can point at real browser chrome |
 | `src/view/raceunlockcard.ts` | the one-time DAILY RACE UNLOCKED reveal |
 | `src/view/showroom.ts` | THE SHOWROOM trophy case — doors on the LevelSelect chapter ribbons |

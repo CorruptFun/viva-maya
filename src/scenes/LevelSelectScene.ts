@@ -10,10 +10,10 @@ import { openShowroom } from '../view/showroom'
 import { ensureGlyphTexture } from '../view/textures'
 import { addCasinoBackdrop } from '../view/background'
 import { addScreenGloss } from '../view/fx'
-import { addLevelRaceStrip, addRaceModule } from '../view/leaderboardpanel'
+import { RACE_MARQUEE_H, addLevelRaceStrip, addRaceModule } from '../view/leaderboardpanel'
 import { D, E, OVERSHOOT, backOut } from '../view/motion'
 import { quality } from '../view/quality'
-import { addStashChip } from '../view/stash'
+import { addStashDoor } from '../view/stash'
 import { getTheme, prefersReducedMotion, reduceFlashing } from '../view/theme'
 import { FONT, GHOST_PILL, GOLD_PILL, addGoldWordmark, addMuteChip, addPillButton, applyEntrance, goldFace, startScene } from '../view/ui'
 
@@ -34,6 +34,26 @@ const TOP_PAD = 10
  * more", the same one continuous scroll to level 300.
  */
 const ROW_BUFFER = 2
+/**
+ * ── The header band, budgeted in one place ───────────────────────────────────
+ * Three things share the top of this screen and they had drifted into each other: the title row
+ * (back button, stash door, LEVELS wordmark, star tally), the LEVEL RACE marquee under it, and the
+ * grid mask under that. The seats used to be four unrelated literals, and the arithmetic that kept
+ * them apart lived only in comments — so when the stash door arrived with a count badge hanging
+ * 29px below its own centre, it landed on the marquee's top edge with ONE design pixel to spare
+ * (owner screenshot, 2026-08-04) and nothing in the code disagreed.
+ *
+ * Now the row seat and the strip seat are named, and everything below them is derived:
+ *   title row  84 · door art 60–108, star tally 61–107, wordmark + shadow ≈ 59–119
+ *   marquee   166 · art 136–196 (RACE_MARQUEE_H tall) → 17px under the wordmark's shadow
+ *   grid mask 210 · strip bottom + HEADER_AIR
+ * Costs the ladder 14px against the old 196 — about a ninth of a row — and buys every neighbour
+ * real clearance instead of a rounding error. Move a seat and the mask follows on its own; add
+ * anything else up here and budget it against these, not against a fresh literal.
+ */
+const HEADER_ROW_Y = 84
+const RACE_STRIP_Y = 166
+const HEADER_AIR = 14
 /** L2: gold frame band width — a milestone chip's cream face insets this much so the baked `goldFace` rim shows as an ornamental border. */
 const MILESTONE_FRAME = 7
 /**
@@ -249,26 +269,27 @@ export class LevelSelectScene extends Phaser.Scene {
     // numbered chips read as a settings list. A destination scene gets a destination TITLE here (the
     // pattern StoreScene already ships: gold gradient wordmark, letterspaced, one soft drop shadow),
     // and the word matches the button on Home that opens it, so the label carries across the transition.
-    addGoldWordmark(this, DESIGN_W / 2, 92, 'LEVELS', { size: 50 })
+    addGoldWordmark(this, DESIGN_W / 2, HEADER_ROW_Y, 'LEVELS', { size: 50 })
     // Total stars banked. The save has banked one on every win since launch and the all-time LEVEL RACE
     // ladder ranks on them, yet nothing in the app ever showed the number — an accumulated resource with
     // no read-out. It sits in the title row (right of the wordmark, clear of the mute chip's band) as a
     // pure readout, never interactive, so it cannot compete with the ‹ back button for a tap.
-    this.addStarTally(596, 92, levelStanding(save).stars)
+    // x=574 (was 596): the row moved up 8px to open the band below it, which walked the tally's
+    // 140-wide plate into the mute chip's 52px art. Pulling it 22px left restores the gap in x, where
+    // it does not cost the header any height.
+    this.addStarTally(574, HEADER_ROW_Y, levelStanding(save).stars)
 
     // THE STASH DOOR, second of two. Home's line was the only way in, so a player who started a
     // level from this grid never passed the stash and never had the chance to choose what went in
-    // with them. Seated at x=180 — the middle of the 125px gap this row leaves between the back
-    // button (ends 118) and the LEVELS wordmark (starts 243). Measured; re-measure if either moves.
-    // A change repaints the scene, because the collar count and the grid's own chips both read the
-    // save at build time.
-    this.add.existing(addStashChip(this, 180, 92, 52, { onChanged: () => this.scene.restart() }))
+    // with them. Seated in the gap this row leaves between the back button (ends 106) and the LEVELS
+    // wordmark (starts ~243) — the 124-wide door spans 112–236 there, so the two margins are 6px and
+    // 7px. A change repaints the scene, because the door's count and the grid's own chips both read
+    // the save at build time.
+    this.add.existing(addStashDoor(this, 174, HEADER_ROW_Y, { onChanged: () => this.scene.restart() }))
 
     const endless = endlessUnlocked(save)
-    // 196 (was 156): the header now carries the title row AND the LEVEL RACE strip that used to be the
-    // lower of two identical pills at the bottom. It costs the grid ~40px — about a third of a row —
-    // and buys the screen a "where am I" band that is legible before you have scrolled anything.
-    const viewTop = 196
+    // Derived from the strip below the title row, never re-typed — see the HEADER_ROW_Y block.
+    const viewTop = RACE_STRIP_Y + RACE_MARQUEE_H / 2 + HEADER_AIR
     // 1072 when ENDLESS is offered: the footer is now the SAME daily-race module Home seats its
     // ENDLESS pill in (plate + pill + standings strip), so the strip is visibly PART of the endless
     // block instead of a twin of the level strip. Without ENDLESS the footer is empty and the grid
@@ -282,12 +303,12 @@ export class LevelSelectScene extends Phaser.Scene {
     // screen's subject — your campaign climb — so at the top it doubles as the "where am I" line,
     // and the two standings strips stop being twins without being forked (one shared component,
     // shared with Home, which keeps its deliberately-subordinate row face).
-    // y=152 with the 60px face: art spans 122–182, clearing the wordmark's shadow above and the
-    // grid mask at 196 below. Grown to the §E8 touch floor, art untouched: the 84px target reaches
-    // up to y=110, which clips the bottom-left corner of the ‹ back button's own zone —
-    // deliberately the safe way round: the button is depth 50 and wins the overlap, which is the
-    // direction this screen's one real input bug (a chip stealing BACK) taught us to err in.
-    const climb = addLevelRaceStrip(this, DESIGN_W / 2, 152, save)
+    // Seated at RACE_STRIP_Y — art 136–196 — which is the band the header block above budgets.
+    // Grown to the §E8 touch floor, art untouched: the 84px target reaches up to y=124, into the
+    // bottom edge of the back button's and the stash door's own zones — deliberately the safe way
+    // round, because both are depth 50 and win the overlap, and the strip additionally arms on
+    // pointerDOWN (leaderboardpanel), so a press that starts on a neighbour can never open it.
+    const climb = addLevelRaceStrip(this, DESIGN_W / 2, RACE_STRIP_Y, save)
     this.growTouchTarget(climb)
 
     // Scrollable grid of level chips.

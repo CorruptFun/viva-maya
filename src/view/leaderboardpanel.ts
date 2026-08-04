@@ -1196,12 +1196,17 @@ const MODULE_H = 152
 const STRIP_W = MODULE_W - 44
 const STRIP_H = 52
 /**
- * The marquee variant (LevelSelect's header): 60, not the row's 52 — as tall as the title band
- * allows (the art's top edge meets the LEVELS wordmark's shadow around y=120) while staying clear
- * of the grid mask at 196. Prominence past that comes from structure, not pixels: badge, heading
- * deck, module-plate shadow and the 3px bezel.
+ * The marquee variant (LevelSelect's header): 60, not the row's 52. Prominence past that comes from
+ * structure, not pixels: badge, heading deck, module-plate shadow and the 3px bezel.
+ *
+ * EXPORTED because it is a neighbour's constraint as much as this file's: LevelSelect seats the
+ * strip in a band between its title row and the grid mask, and both of those clearances are this
+ * height plus air. Hard-coding 60 over there is how the stash door's count badge came to sit on the
+ * strip's top edge (owner screenshot, 2026-08-04) — see LevelSelectScene's header block, which now
+ * derives the mask top from this.
  */
-const MARQUEE_H = 60
+export const RACE_MARQUEE_H = 60
+const MARQUEE_H = RACE_MARQUEE_H
 
 /** Bake the module's cream plate: soft down-cast shadow + gloss bands + gold bezel (+ dark rim). */
 function ensureModulePlate(scene: Phaser.Scene): string {

@@ -171,10 +171,10 @@ const SWEEP_FADE_MS = 360
  * (`ENDLESS_STRIP_Y`) and the board dropped by `ENDLESS_BOARD_DROP` to make the lane. The old value
  * was keyed off the strip's bottom edge, and that anchor no longer exists down here.
  *
- * The only thing left below the board is the standing brief, which follows the board down to
- * `988 + ENDLESS_BOARD_DROP` = 1072 and is a 22px line, so its bottom sits near 1083. The zone must
- * not overlap a real control: it swallows whole gestures, so a swipe starting on one would read as
- * cheat input AND as a press.
+ * The only thing left below the board is the standing brief, seated 48px under the board's bottom
+ * edge (`boardTop + ROWS * CELL + 48`) — 1072 in endless — and it is a 22px line, so its bottom sits
+ * near 1083. The zone must not overlap a real control: it swallows whole gestures, so a swipe
+ * starting on one would read as cheat input AND as a press.
  *
  * ⚠️ Re-derived a second time on 2026-08-04, when ENDLESS_BOARD_DROP went 60 → 84 to keep board
  * swipes off the leader strip. The brief moved down with the board, so 1080 would now have started
@@ -2371,9 +2371,21 @@ export class GameScene extends Phaser.Scene {
       : this.coatsTotal > 0
         ? 'Match the goal symbols and sweep every felt square'
         : 'Match the highlighted goal symbols before moves run out'
+    /**
+     * SEATED OFF THE BOARD, not off a literal. It used to read `988 + ENDLESS_BOARD_DROP`, which
+     * applied the ENDLESS drop on EVERY level — so on a numbered level the brief fell 84px past the
+     * board it belongs to and landed on the jackpot meter (y=1086, caption from 1049), printing the
+     * sentence straight through the JACKPOT deck and its charge bar (owner screenshot, 2026-08-04).
+     *
+     * `boardTop` already carries the drop, and only in endless (`init()`), so one expression now
+     * gives both seats — 988 numbered, 1072 endless — and the brief cannot come unstuck from the
+     * board a third time. ⚠️ `CHEAT_ZONE_TOP` is budgeted against the ENDLESS seat: re-derive it if
+     * the 48 changes.
+     */
+    const briefY = this.boardTop + ROWS * CELL + 48
     inkShadow(
       this.add
-        .text(DESIGN_W / 2, 988 + ENDLESS_BOARD_DROP, brief, {
+        .text(DESIGN_W / 2, briefY, brief, {
           fontFamily: 'Arial, sans-serif',
           fontSize: '22px',
           color: T.onBackdropMuted,

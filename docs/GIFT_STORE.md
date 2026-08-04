@@ -61,11 +61,17 @@ What changed:
   store's table and the free prize table read from it. Three separate things were once called
   "+5 MOVES". `inventory.test.ts` pins them together.
 - **A stash panel** (`view/stash.ts`) showing what you own, what is marked NEXT, and — when you
-  own more than a level can take — that the surplus is *kept*, not lost.
+  own more than a level can take — that the surplus is *kept*, not lost. Since 2026-08-04 it is
+  five full-width rows rather than a 3×2 tile grid, which is what bought the room for
+  `BOOST_META.blurb` — every boost now says what it *does*, a sentence the model had carried since
+  day one that no screen had ever shown. An unowned boost is drawn as an empty **socket** (name,
+  blurb, `NOT WON YET`), so the panel doubles as the only place that lists what there is to win.
 - **Two doors:** the line under LUCKY SLOTS on Home (which now NAMES what is going in, e.g.
-  `next level: +5 MOVES · WILD REEL +1`), and a gift chip in the LEVELS header, so a player who
-  starts a level from the grid still passes the stash.
-- **Choose what goes in:** tapping a tile flips whether that type is used. Promotion reorders
+  `next level: +5 MOVES · WILD REEL +1`), and a counted `🎁 N` pill in the LEVELS header, so a
+  player who starts a level from the grid still passes the stash. (That door was a round chip with
+  an overhanging count badge until 2026-08-04, when the badge turned out to reach one design pixel
+  short of the LEVEL RACE marquee below it — see `addStashDoor`.)
+- **Choose what goes in:** tapping a row flips whether that type is used. Promotion reorders
   `pendingBoosts` (consumed from the front); exclusion is `heldBoosts`, a set of TYPES. Neither
   introduces a second inventory to keep in sync across grants, spends and device merges. A held
   type **frees its slot** rather than wasting one.

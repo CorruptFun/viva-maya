@@ -1299,6 +1299,29 @@ export function addRoundChip(
 }
 
 /**
+ * The bare chunky-3D pressable — cap, pedestal, press sink, tap flash and release shine — handed
+ * back with its moving `face` so the caller can seat WHATEVER it likes inside and have that sink
+ * with the cap. `addPillButton` is this plus one centred text label; when a control needs two
+ * children (a glyph AND a number, which `addPillButton` cannot carry because its `letterSpacing`
+ * splits emoji surrogate pairs into tofu — see HomeScene), it composes from here instead.
+ *
+ * Exported for the same reason `addRoundChip` is: the control belongs in the module that owns the
+ * panel it opens, and only the material has to live here.
+ */
+export function addPressablePlate(
+  scene: Phaser.Scene,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  style: PillStyle,
+  onPress: () => void,
+  opts: PillOpts = {}
+): { container: PressablePill; face: Phaser.GameObjects.Container } {
+  return buildPressable(scene, x, y, w, h, style, onPress, opts)
+}
+
+/**
  * Round mute-toggle chip (🔊 / 🔇) styled like GHOST_PILL. Toggles + persists the
  * sfx mute flag; plays a tap only when re-enabling sound. Returns the container.
  */
