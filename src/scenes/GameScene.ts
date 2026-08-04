@@ -2036,22 +2036,34 @@ export class GameScene extends Phaser.Scene {
       const bulb = this.add.image(p.x, p.y, 'bulb').setDisplaySize(13, 13).setDepth(2)
       this.cabinetBulbs.push(bulb)
       bulb.setTint(i % 2 === 0 ? 0xff5a6a : 0xffd75e) // reddish / gold
-      // Traveling bulb chase — gated (§E8): reduced motion rests every bulb statically lit, no chase.
-      if (this.reducedMotion) {
-        bulb.setAlpha(0.85)
-      } else {
-        bulb.setAlpha(0.4)
-        this.tweens.add({
-          targets: bulb,
-          alpha: 1,
-          duration: period / 2,
-          yoyo: true,
-          repeat: -1,
-          delay: (i / pts.length) * period,
-          ease: 'Sine.easeInOut',
-        })
-      }
+      bulb.setAlpha(this.reducedMotion ? 0.85 : 0.4)
     })
+    // Traveling bulb chase — gated (§E8): reduced motion rests every bulb statically lit (above).
+    // ONE UPDATE hook drives all 48 bulbs with the exact curve the old 48 looping tweens ran —
+    // 0.4→1→0.4 on Sine.easeInOut legs of period/2, phase-staggered i/N, and resting at 0.4 until
+    // each bulb's stagger comes up (the tween's pre-delay rest, so even the first lap matches).
+    // The marquee's one-clock rule applied to the legacy ring: RGB-off now idles at ~6 tweens
+    // instead of ~53. flashCabinet's scale pops stay tweens — the clock owns only alpha.
+    if (!this.reducedMotion) {
+      const bulbs = this.cabinetBulbs
+      const half = period / 2
+      let t = 0
+      const onUpdate = (_: number, delta: number): void => {
+        t += delta
+        for (let i = 0; i < bulbs.length; i++) {
+          const delay = (i / bulbs.length) * period
+          let a = 0.4
+          if (t >= delay) {
+            const tau = (t - delay) % period
+            const u = tau < half ? tau / half : (period - tau) / half
+            a = 0.4 + 0.6 * 0.5 * (1 - Math.cos(Math.PI * u))
+          }
+          bulbs[i].setAlpha(a)
+        }
+      }
+      this.events.on(Phaser.Scenes.Events.UPDATE, onUpdate)
+      this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.events.off(Phaser.Scenes.Events.UPDATE, onUpdate))
+    }
   }
 
   /**
