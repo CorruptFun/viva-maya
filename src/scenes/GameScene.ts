@@ -83,7 +83,7 @@ import {
   specialTeachKey,
 } from '../view/ui'
 import type { ChipPill, SceneFocus } from '../view/ui'
-import { bakePanel } from '../view/platekit'
+import { addFocusScrim, bakePanel, panelPlate } from '../view/platekit'
 
 /**
  * Turn state machine:
@@ -5863,19 +5863,22 @@ export class GameScene extends Phaser.Scene {
   /** Dim scrim behind an end-of-round overlay (also swallows taps meant for the board). */
   private overlayScrim(): void {
     this.clearSelection()
-    this.add.rectangle(DESIGN_W / 2, viewportCenterY(), DESIGN_W, worldH(), getTheme().scrim, 0.5).setDepth(40).setInteractive()
+    // Spotlight scrim, not a flat ink wall — the card above it sits in a pool of light. The hit
+    // rect keeps the old rectangle's job of swallowing board taps.
+    addFocusScrim(this, { alpha: 0.5, depth: 40 }).hit.setInteractive()
   }
 
   /** Shared rounded result card, centered at (cx, cy) with half-height halfH. */
   private overlayCard(cx: number, cy: number, halfH: number): void {
-    const T = getTheme()
+    // The board slab's elevation cue applied to the result card: a baked softshadow float under a
+    // rich platekit plate. Depth 41 — above the scrim (40), below the card content (42).
+    this.add
+      .image(cx, cy + 26, 'softshadow')
+      .setDisplaySize(520 + 72, halfH * 2 + 72)
+      .setAlpha(0.3)
+      .setDepth(41)
     const g = this.add.graphics().setDepth(41)
-    g.fillStyle(T.shadow, 0.25)
-    g.fillRoundedRect(cx - 260 + 4, cy - halfH + 8, 520, halfH * 2, 34)
-    g.fillStyle(T.cardFill, 1)
-    g.fillRoundedRect(cx - 260, cy - halfH, 520, halfH * 2, 34)
-    g.lineStyle(4, T.goldBezel, 1)
-    g.strokeRoundedRect(cx - 260, cy - halfH, 520, halfH * 2, 34)
+    panelPlate(g, cx - 260, cy - halfH, 520, halfH * 2, 34)
   }
 
   /** Maya's touch: a shower of hearts bursting from (x, y). */
@@ -5923,14 +5926,10 @@ export class GameScene extends Phaser.Scene {
     const card = this.add.container(cx, cy).setDepth(41)
 
     // Card panel (cream + gold bezel) — inlined from overlayCard at container-relative coords so the
-    // backdrop scales together with the contents during the entrance.
+    // backdrop (float shadow included) scales together with the contents during the entrance.
+    card.add(this.add.image(0, 26, 'softshadow').setDisplaySize(w + 72, halfH * 2 + 72).setAlpha(0.3))
     const g = this.add.graphics()
-    g.fillStyle(T.shadow, 0.25)
-    g.fillRoundedRect(-w / 2 + 4, -halfH + 8, w, halfH * 2, 34)
-    g.fillStyle(T.cardFill, 1)
-    g.fillRoundedRect(-w / 2, -halfH, w, halfH * 2, 34)
-    g.lineStyle(4, T.goldBezel, 1)
-    g.strokeRoundedRect(-w / 2, -halfH, w, halfH * 2, 34)
+    panelPlate(g, -w / 2, -halfH, w, halfH * 2, 34)
     card.add(g)
 
     // The lose card's content stagger (below) needs the single-alpha surface every child exposes;
@@ -6125,14 +6124,11 @@ export class GameScene extends Phaser.Scene {
       settleTimers.push(this.time.delayedCall(ms, cb))
     }
 
-    // Card panel (cream + gold bezel).
+    // Card panel (cream + gold bezel) riding a softshadow float; the win card keeps its brighter
+    // `gold` bezel (vs the panels' goldBezel) — that contrast is part of the win read.
+    card.add(this.add.image(0, 26, 'softshadow').setDisplaySize(w + 72, halfH * 2 + 72).setAlpha(0.3))
     const g = this.add.graphics()
-    g.fillStyle(T.shadow, 0.25)
-    g.fillRoundedRect(-w / 2 + 4, -halfH + 8, w, halfH * 2, 34)
-    g.fillStyle(T.cardFill, 1)
-    g.fillRoundedRect(-w / 2, -halfH, w, halfH * 2, 34)
-    g.lineStyle(4, T.gold, 1)
-    g.strokeRoundedRect(-w / 2, -halfH, w, halfH * 2, 34)
+    panelPlate(g, -w / 2, -halfH, w, halfH * 2, 34, { bezel: T.gold })
     card.add(g)
 
     // "LEVEL N" gold pill tab straddling the top edge.
