@@ -35,7 +35,7 @@ import { css, getTheme, hapticsOff, prefersReducedMotion, reduceFlashing, rgbMar
 import { attachRgbRing, type RgbRing } from '../view/rgbmarquee'
 import { ensureGlyphTexture } from '../view/textures'
 import type { ChipPill } from '../view/ui'
-import { FONT, GHOST_PILL, GOLD_PILL, addChipPill, addPillButton, applyEntrance, startScene } from '../view/ui'
+import { FONT, GHOST_PILL, GOLD_PILL, addChipPill, addGoldWordmark, addPillButton, applyEntrance, inkShadow, startScene } from '../view/ui'
 
 /**
  * LUCKY SLOTS — the purchased spin, and the first machine in this game the player can reach for.
@@ -180,12 +180,7 @@ export class SlotScene extends Phaser.Scene {
     addPillButton(this, 64, 84, 84, 56, '‹', GHOST_PILL, () => {
       if (!this.spinning) startScene(this, 'home', undefined, 'back')
     })
-    this.add
-      .text(DESIGN_W / 2, 130, 'LUCKY SLOTS', { fontFamily: FONT, fontSize: '54px', fontStyle: '900', color: '#ffffff' })
-      .setOrigin(0.5)
-      .setLetterSpacing(4)
-      .setShadow(0, 3, 'rgba(90,70,20,0.25)', 6, false, true)
-      .setTint(T.goldBright, T.goldBright, T.goldDeep, T.goldDeep)
+    addGoldWordmark(this, DESIGN_W / 2, 130, 'LUCKY SLOTS')
     this.subtitle = this.add
       .text(DESIGN_W / 2, 184, '', {
         fontFamily: FONT,
@@ -1385,25 +1380,31 @@ export class SlotScene extends Phaser.Scene {
       : spin.lines.some(l => l.run >= SLOT_REELS) ? 'BIG WIN!'
       : spin.lines.length > 0 ? 'WIN!'
       : 'A GIFT!' // the floor / milestone paid while the reels themselves missed
-    const title = this.add
-      .text(DESIGN_W / 2, RESULT_Y - 16, headline, {
-        fontFamily: FONT,
-        fontSize: '30px',
-        fontStyle: '900',
-        color: T.goldText,
-      })
-      .setOrigin(0.5)
-      .setLetterSpacing(2)
-    const body = this.add
-      .text(DESIGN_W / 2, RESULT_Y + 24, parts.join('  ·  '), {
-        fontFamily: FONT,
-        fontSize: '22px',
-        color: T.onBackdropInk,
-        align: 'center',
-        wordWrap: { width: 620 },
-        lineSpacing: 4,
-      })
-      .setOrigin(0.5)
+    const title = inkShadow(
+      this.add
+        .text(DESIGN_W / 2, RESULT_Y - 16, headline, {
+          fontFamily: FONT,
+          fontSize: '30px',
+          fontStyle: '900',
+          color: T.goldText,
+        })
+        .setOrigin(0.5)
+        .setLetterSpacing(2),
+      'onBackdrop'
+    )
+    const body = inkShadow(
+      this.add
+        .text(DESIGN_W / 2, RESULT_Y + 24, parts.join('  ·  '), {
+          fontFamily: FONT,
+          fontSize: '22px',
+          color: T.onBackdropInk,
+          align: 'center',
+          wordWrap: { width: 620 },
+          lineSpacing: 4,
+        })
+        .setOrigin(0.5),
+      'onBackdrop'
+    )
     // Where the prize actually went — only claimed when a boost really was banked, so a points-only or
     // charm-only spin never promises a power-up that isn't there.
     const note = this.add
@@ -1569,15 +1570,18 @@ export class SlotScene extends Phaser.Scene {
     layer.add(this.add.rectangle(DESIGN_W / 2, cy, cardW, cardH, 0xffffff, 0.001).setInteractive())
 
     layer.add(
-      this.add
-        .text(DESIGN_W / 2, top + 54, 'WHAT IT PAYS', {
-          fontFamily: FONT,
-          fontSize: '34px',
-          fontStyle: '900',
-          color: T.goldText,
-        })
-        .setOrigin(0.5)
-        .setLetterSpacing(2)
+      inkShadow(
+        this.add
+          .text(DESIGN_W / 2, top + 54, 'WHAT IT PAYS', {
+            fontFamily: FONT,
+            fontSize: '34px',
+            fontStyle: '900',
+            color: T.goldText,
+          })
+          .setOrigin(0.5)
+          .setLetterSpacing(2),
+        'title'
+      )
     )
     layer.add(
       this.add

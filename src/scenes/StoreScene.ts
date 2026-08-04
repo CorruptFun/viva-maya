@@ -19,7 +19,7 @@ import { quality } from '../view/quality'
 import { getTheme, prefersReducedMotion, reduceFlashing } from '../view/theme'
 import { ensurePieceTexture } from '../view/textures'
 import type { ChipPill } from '../view/ui'
-import { FONT, GHOST_PILL, GOLD_PILL, addChipPill, addPillButton, applyEntrance, startScene } from '../view/ui'
+import { FONT, GHOST_PILL, GOLD_PILL, addChipPill, addGoldWordmark, addPillButton, applyEntrance, inkShadow, startScene } from '../view/ui'
 
 const CARD_X = 36
 const CARD_W = 648
@@ -71,12 +71,7 @@ export class StoreScene extends Phaser.Scene {
     }
     if (codeFixture) this.time.delayedCall(400, () => this.openCodeEntry())
 
-    this.add
-      .text(DESIGN_W / 2, 130, 'GIFT STORE', { fontFamily: FONT, fontSize: '54px', fontStyle: '900', color: '#ffffff' })
-      .setOrigin(0.5)
-      .setLetterSpacing(4)
-      .setShadow(0, 3, 'rgba(90,70,20,0.25)', 6, false, true)
-      .setTint(T.goldBright, T.goldBright, T.goldDeep, T.goldDeep)
+    addGoldWordmark(this, DESIGN_W / 2, 130, 'GIFT STORE')
     this.add
       .text(DESIGN_W / 2, 184, 'Treat yourself — boosts for your next level', {
         fontFamily: FONT,
@@ -298,10 +293,12 @@ export class StoreScene extends Phaser.Scene {
       })
     }
     row.add(
-      this.add
-        .text(124, cy - 30, item.label, { fontFamily: FONT, fontSize: '26px', fontStyle: '900', color: T.ink })
-        .setOrigin(0, 0)
-        .setAlpha(afford ? 1 : 0.66)
+      inkShadow(
+        this.add
+          .text(124, cy - 30, item.label, { fontFamily: FONT, fontSize: '26px', fontStyle: '900', color: T.ink })
+          .setOrigin(0, 0)
+          .setAlpha(afford ? 1 : 0.66)
+      )
     )
     // OWNED collar — the store sells the SAME objects Lucky Slots gives away, and a player who has
     // just won one and is now looking at a price tag for something with its exact name has no way to

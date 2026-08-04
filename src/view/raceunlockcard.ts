@@ -6,7 +6,7 @@ import { markRaceUnlockSeen } from '../core/save'
 import { backOut, OVERSHOOT } from './motion'
 import { addFocusScrim, panelPlate } from './platekit'
 import { getTheme, prefersReducedMotion } from './theme'
-import { addPillButton, FONT, GHOST_PILL, GOLD_PILL } from './ui'
+import { addPillButton, FONT, GHOST_PILL, GOLD_PILL, inkShadow } from './ui'
 
 /**
  * DAILY RACE UNLOCKED — the one-time reveal, shown on Home the first time endless is open.
@@ -83,26 +83,31 @@ export function openRaceUnlockCard(scene: Phaser.Scene): Promise<RaceUnlockResul
     layer.add(trophy)
 
     layer.add(
-      scene.add
-        .text(W / 2, pyTop + 182, 'DAILY RACE', {
-          fontFamily: FONT,
-          fontSize: '52px',
-          fontStyle: '900',
-          color: T.goldText,
-        })
-        .setOrigin(0.5)
-        .setLetterSpacing(2)
+      inkShadow(
+        scene.add
+          .text(W / 2, pyTop + 182, 'DAILY RACE', {
+            fontFamily: FONT,
+            fontSize: '52px',
+            fontStyle: '900',
+            color: T.goldText,
+          })
+          .setOrigin(0.5)
+          .setLetterSpacing(2),
+        'title'
+      )
     )
     layer.add(
-      scene.add
-        .text(W / 2, pyTop + 232, 'UNLOCKED', {
-          fontFamily: FONT,
-          fontSize: '30px',
-          fontStyle: '900',
-          color: T.ink,
-        })
-        .setOrigin(0.5)
-        .setLetterSpacing(6)
+      inkShadow(
+        scene.add
+          .text(W / 2, pyTop + 232, 'UNLOCKED', {
+            fontFamily: FONT,
+            fontSize: '30px',
+            fontStyle: '900',
+            color: T.ink,
+          })
+          .setOrigin(0.5)
+          .setLetterSpacing(6)
+      )
     )
 
     // The three rules that make the race make sense. Kept to three, and phrased as facts rather than

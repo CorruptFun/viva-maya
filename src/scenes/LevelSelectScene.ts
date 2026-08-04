@@ -14,7 +14,7 @@ import { D, E, OVERSHOOT, backOut } from '../view/motion'
 import { quality } from '../view/quality'
 import { addStashChip } from '../view/stash'
 import { getTheme, prefersReducedMotion, reduceFlashing } from '../view/theme'
-import { FONT, GHOST_PILL, GOLD_PILL, addMuteChip, addPillButton, applyEntrance, goldFace, startScene } from '../view/ui'
+import { FONT, GHOST_PILL, GOLD_PILL, addGoldWordmark, addMuteChip, addPillButton, applyEntrance, goldFace, startScene } from '../view/ui'
 
 const GRID_COLS = 5
 const CHIP = 108
@@ -234,7 +234,6 @@ export class LevelSelectScene extends Phaser.Scene {
     this.winFirst = -1
     this.winLast = -1
     const save = loadSave()
-    const T = getTheme()
     addCasinoBackdrop(this, 'menu')
     // Depth 50 puts the scene chrome above the scrolling grid for input as well as drawing — the same
     // rank addMuteChip already takes. The chip hit areas are clipped to the viewport (see buildChip),
@@ -248,12 +247,7 @@ export class LevelSelectScene extends Phaser.Scene {
     // numbered chips read as a settings list. A destination scene gets a destination TITLE here (the
     // pattern StoreScene already ships: gold gradient wordmark, letterspaced, one soft drop shadow),
     // and the word matches the button on Home that opens it, so the label carries across the transition.
-    this.add
-      .text(DESIGN_W / 2, 92, 'LEVELS', { fontFamily: FONT, fontSize: '50px', fontStyle: '900', color: '#ffffff' })
-      .setOrigin(0.5)
-      .setLetterSpacing(4)
-      .setShadow(0, 3, 'rgba(90,70,20,0.25)', 6, false, true)
-      .setTint(T.goldBright, T.goldBright, T.goldDeep, T.goldDeep)
+    addGoldWordmark(this, DESIGN_W / 2, 92, 'LEVELS', { size: 50 })
     // Total stars banked. The save has banked one on every win since launch and the all-time LEVEL RACE
     // ladder ranks on them, yet nothing in the app ever showed the number — an accumulated resource with
     // no read-out. It sits in the title row (right of the wordmark, clear of the mute chip's band) as a

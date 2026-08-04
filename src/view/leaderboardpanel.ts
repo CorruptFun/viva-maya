@@ -70,7 +70,7 @@ import { openCloudModal } from './cloudmodal'
 import { D, E, OVERSHOOT, backOut, fadeRise, heartbeat, popIn } from './motion'
 import { quality } from './quality'
 import { getTheme, prefersReducedMotion, reduceFlashing } from './theme'
-import { FONT, GHOST_PILL, GOLD_PILL, ROSE_PILL, addPillButton, addRoundChip, goldFace, startScene } from './ui'
+import { FONT, GHOST_PILL, GOLD_PILL, ROSE_PILL, addPillButton, addRoundChip, goldFace, inkShadow, startScene } from './ui'
 import { accentRimTop, addFocusScrim, panelPlate } from './platekit'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -677,8 +677,10 @@ export function openRacePanel(scene: Phaser.Scene, opts: RacePanelOpts = {}): vo
       const name = scene.add
         .text(nameX, 0, e.name, { fontFamily: FONT, fontSize: `${nameSize}px`, fontStyle: '900', color: nameColor })
         .setOrigin(0, 0.5)
-      // Emboss on the gold plate so the champion's name reads etched into the metal.
+      // Emboss on the gold plate so the champion's name reads etched into the metal; everyone
+      // else's sits on the plate under the shared soft ink shadow.
       if (onGold) name.setShadow(0, 2, 'rgba(74,51,5,0.35)', 2, false, true)
+      else inkShadow(name)
       // Trophy-tier badge (core/trophies.ts ladder) — worn between the name and the YOU tag, the
       // slot the champion's crown established. Below the first rung there is no glyph at all, so a
       // board of new players looks exactly as it did before badges existed.
@@ -718,19 +720,20 @@ export function openRacePanel(scene: Phaser.Scene, opts: RacePanelOpts = {}): vo
           )
         }
       }
-      row.add(
-        scene.add
-          // `valueText` lets a board render its own readout (the level ladder shows "47 · ★118"
-          // and the season "18,204 · 5d", where the daily board shows a bare score). Undefined on
-          // daily rows → the score formats itself.
-          .text(ROW_W / 2 - 26, 0, e.valueText ?? e.score.toLocaleString(), {
-            fontFamily: FONT,
-            fontSize: `${kind === 'gold' ? 30 : kind === 'podium' ? 25 : 22}px`,
-            fontStyle: '900',
-            color: onGold ? T.goldPillText : T.goldText,
-          })
-          .setOrigin(1, 0.5)
-      )
+      const score = scene.add
+        // `valueText` lets a board render its own readout (the level ladder shows "47 · ★118"
+        // and the season "18,204 · 5d", where the daily board shows a bare score). Undefined on
+        // daily rows → the score formats itself.
+        .text(ROW_W / 2 - 26, 0, e.valueText ?? e.score.toLocaleString(), {
+          fontFamily: FONT,
+          fontSize: `${kind === 'gold' ? 30 : kind === 'podium' ? 25 : 22}px`,
+          fontStyle: '900',
+          color: onGold ? T.goldPillText : T.goldText,
+        })
+        .setOrigin(1, 0.5)
+      if (onGold) score.setShadow(0, 2, 'rgba(74,51,5,0.35)', 2, false, true)
+      else inkShadow(score)
+      row.add(score)
       b.add(row)
       return row
     }

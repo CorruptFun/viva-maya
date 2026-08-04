@@ -38,6 +38,50 @@ import { vibratePattern } from './haptics'
 
 export const FONT = '"Arial Black", "Helvetica Neue", Arial, sans-serif'
 
+/**
+ * Tokenized text drop-shadows — E7's one key light, for type. Four kinds:
+ *  - 'soft'       row labels / small counters on a card (warm, tight)
+ *  - 'numeral'    big counters on a card (warm, a touch deeper)
+ *  - 'title'      hero + panel titles on a card (the overlay-title values)
+ *  - 'onBackdrop' anything sitting on the wash (darker — the wash flips near-black on dark themes)
+ * Chainable. Shadows pad the Text's canvas, not its glyph metrics, so layouts measuring `.width`
+ * are unaffected. Never shadow `inkFaint` captions — a shadowed whisper reads as smudge.
+ */
+export function inkShadow<Txt extends Phaser.GameObjects.Text>(
+  t: Txt,
+  kind: 'soft' | 'numeral' | 'title' | 'onBackdrop' = 'soft'
+): Txt {
+  const k = {
+    soft: { y: 2, color: 'rgba(42,36,23,0.16)', blur: 3 },
+    numeral: { y: 3, color: 'rgba(42,36,23,0.2)', blur: 5 },
+    title: { y: 3, color: 'rgba(0,0,0,0.15)', blur: 6 },
+    onBackdrop: { y: 2, color: 'rgba(0,0,0,0.3)', blur: 4 },
+  }[kind]
+  t.setShadow(0, k.y, k.color, k.blur, false, true)
+  return t
+}
+
+/**
+ * The gold gradient wordmark every destination scene titles itself with (LEVELS / GIFT STORE /
+ * LUCKY SLOTS): white 900 text carrying a 4-corner goldBright→goldDeep tint over one soft warm
+ * shadow. One definition so the doors all read in the same brand voice.
+ */
+export function addGoldWordmark(
+  scene: Phaser.Scene,
+  x: number,
+  y: number,
+  text: string,
+  opts: { size?: number; letterSpacing?: number } = {}
+): Phaser.GameObjects.Text {
+  const T = getTheme()
+  return scene.add
+    .text(x, y, text, { fontFamily: FONT, fontSize: `${opts.size ?? 54}px`, fontStyle: '900', color: '#ffffff' })
+    .setOrigin(0.5)
+    .setLetterSpacing(opts.letterSpacing ?? 4)
+    .setShadow(0, 3, 'rgba(90,70,20,0.25)', 6, false, true)
+    .setTint(T.goldBright, T.goldBright, T.goldDeep, T.goldDeep)
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // High-Contrast board flag (§E12). Kept OUT of theme.ts (owned by that module's a11y block) but
 // following the same shape-tolerant one-key pattern: a self-contained localStorage flag the

@@ -7,7 +7,7 @@ import { loadSave, promoteBoost, toggleHoldBoost } from '../core/save'
 import { backOut, OVERSHOOT } from './motion'
 import { addFocusScrim, panelPlate } from './platekit'
 import { getTheme, prefersReducedMotion } from './theme'
-import { addPillButton, addRoundChip, FONT, GOLD_PILL } from './ui'
+import { addPillButton, addRoundChip, FONT, GOLD_PILL, inkShadow } from './ui'
 
 /**
  * YOUR STASH — the boosts you own, what goes in next, and how to change that.
@@ -170,15 +170,18 @@ export function openStash(scene: Phaser.Scene, opts: StashOpts = {}): void {
   layer.add(scene.add.rectangle(W / 2, pyTop + ph / 2, pw, ph, 0xffffff, 0.001).setInteractive())
 
   layer.add(
-    scene.add
-      .text(W / 2, pyTop + 52, 'YOUR STASH', {
-        fontFamily: FONT,
-        fontSize: '44px',
-        fontStyle: '900',
-        color: T.goldText,
-      })
-      .setOrigin(0.5)
-      .setLetterSpacing(2)
+    inkShadow(
+      scene.add
+        .text(W / 2, pyTop + 52, 'YOUR STASH', {
+          fontFamily: FONT,
+          fontSize: '44px',
+          fontStyle: '900',
+          color: T.goldText,
+        })
+        .setOrigin(0.5)
+        .setLetterSpacing(2),
+      'title'
+    )
   )
 
   // THE SENTENCE THE WHOLE PANEL EXISTS FOR. A player who thinks they are being billed for their own

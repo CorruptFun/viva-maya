@@ -76,6 +76,7 @@ import {
   consumeFocus,
   goldFace,
   hcBoard,
+  inkShadow,
   openHazardIntro,
   openOnboarding,
   startScene,
@@ -2228,14 +2229,17 @@ export class GameScene extends Phaser.Scene {
       .text(BOARD_X + 85, cardY - 28, 'MOVES', { fontFamily: FONT, fontSize: '18px', color: T.inkMuted })
       .setOrigin(0.5)
       .setLetterSpacing(3)
-    this.movesText = this.add
-      .text(BOARD_X + 85, cardY + 12, String(this.movesLeft), {
-        fontFamily: FONT,
-        fontSize: '48px',
-        fontStyle: '900',
-        color: T.ink,
-      })
-      .setOrigin(0.5)
+    this.movesText = inkShadow(
+      this.add
+        .text(BOARD_X + 85, cardY + 12, String(this.movesLeft), {
+          fontFamily: FONT,
+          fontSize: '48px',
+          fontStyle: '900',
+          color: T.ink,
+        })
+        .setOrigin(0.5),
+      'numeral'
+    )
 
     if (this.endless) {
       // No objectives in endless — show today's target (BEST to beat) instead.
@@ -2255,14 +2259,17 @@ export class GameScene extends Phaser.Scene {
         .text(bx + cardW / 2, cardY - 28, "TODAY'S BEST", { fontFamily: FONT, fontSize: '18px', color: T.inkMuted })
         .setOrigin(0.5)
         .setLetterSpacing(2)
-      this.add
-        .text(bx + cardW / 2, cardY + 12, this.endlessBest > 0 ? this.endlessBest.toLocaleString() : '—', {
-          fontFamily: FONT,
-          fontSize: '40px',
-          fontStyle: '900',
-          color: T.goldText,
-        })
-        .setOrigin(0.5)
+      inkShadow(
+        this.add
+          .text(bx + cardW / 2, cardY + 12, this.endlessBest > 0 ? this.endlessBest.toLocaleString() : '—', {
+            fontFamily: FONT,
+            fontSize: '40px',
+            fontStyle: '900',
+            color: T.goldText,
+          })
+          .setOrigin(0.5),
+        'numeral'
+      )
       // Free-spins counter parks in the rail gap between the moves card and this one.
       this.freeSpinSpot = { x: (BOARD_X + 170 + bx) / 2, y: cardY }
     } else {
@@ -2332,9 +2339,11 @@ export class GameScene extends Phaser.Scene {
         const icon = this.add.image(0, -20, o.symbol)
         icon.setDisplaySize(54, 54)
         chip.add(icon)
-        o.text = this.add
-          .text(0, 27, String(o.remaining), { fontFamily: FONT, fontSize: '30px', fontStyle: '900', color: T.ink })
-          .setOrigin(0.5)
+        o.text = inkShadow(
+          this.add
+            .text(0, 27, String(o.remaining), { fontFamily: FONT, fontSize: '30px', fontStyle: '900', color: T.ink })
+            .setOrigin(0.5)
+        )
         chip.add(o.text)
         o.chip = chip
         o.shown = o.remaining // display starts synced; collect-fly lets it lag behind the model
@@ -2350,13 +2359,16 @@ export class GameScene extends Phaser.Scene {
       : this.coatsTotal > 0
         ? 'Match the goal symbols and sweep every felt square'
         : 'Match the highlighted goal symbols before moves run out'
-    this.add
-      .text(DESIGN_W / 2, 988 + ENDLESS_BOARD_DROP, brief, {
-        fontFamily: 'Arial, sans-serif',
-        fontSize: '22px',
-        color: T.onBackdropMuted,
-      })
-      .setOrigin(0.5)
+    inkShadow(
+      this.add
+        .text(DESIGN_W / 2, 988 + ENDLESS_BOARD_DROP, brief, {
+          fontFamily: 'Arial, sans-serif',
+          fontSize: '22px',
+          color: T.onBackdropMuted,
+        })
+        .setOrigin(0.5),
+      'onBackdrop'
+    )
 
     // TODAY'S LEADER, now seated ABOVE the board (owner request, 2026-08-03). The brief states the
     // RULE ("biggest score wins today's board"); this states the SCORE currently winning it, which
