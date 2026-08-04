@@ -1,10 +1,11 @@
 import Phaser from 'phaser'
 import { sfx } from '../audio/sfx'
-import { DESIGN_W, viewportCenterY, worldH } from '../config'
+import { DESIGN_W } from '../config'
 import { BOOST_ORDER, hasSurplus, stash, stashTotal, usingNextCount } from '../core/inventory'
 import type { StashEntry } from '../core/inventory'
 import { loadSave, promoteBoost, toggleHoldBoost } from '../core/save'
 import { backOut, OVERSHOOT } from './motion'
+import { addFocusScrim, panelPlate } from './platekit'
 import { getTheme, prefersReducedMotion } from './theme'
 import { addPillButton, addRoundChip, FONT, GOLD_PILL } from './ui'
 
@@ -134,9 +135,10 @@ export function openStash(scene: Phaser.Scene, opts: StashOpts = {}): void {
     })
   }
 
-  const scrim = scene.add.rectangle(W / 2, viewportCenterY(), W, worldH() + 400, T.scrim, 0.62).setInteractive()
+  const scrimKit = addFocusScrim(scene, { alpha: 0.62 })
+  const scrim = scrimKit.hit.setInteractive()
   scrim.on('pointerup', close)
-  layer.add(scrim)
+  layer.add([scrim, ...scrimKit.art])
 
   // ── Layout ──
   const CELL_W = 196
@@ -161,10 +163,7 @@ export function openStash(scene: Phaser.Scene, opts: StashOpts = {}): void {
   const ph = HEAD + rowsNeeded * CELL_H + (rowsNeeded - 1) * GAP + FOOT
 
   const g = scene.add.graphics()
-  g.fillStyle(T.cardFill, 1)
-  g.fillRoundedRect(px, pyTop, pw, ph, 30)
-  g.lineStyle(4, T.goldBezel, 1)
-  g.strokeRoundedRect(px, pyTop, pw, ph, 30)
+  panelPlate(g, px, pyTop, pw, ph, 30)
   layer.add(g)
 
   // Blocker so taps on the card don't fall through to the scrim (which closes).

@@ -1,9 +1,10 @@
 import Phaser from 'phaser'
 import { sfx } from '../audio/sfx'
-import { DESIGN_W, viewportCenterY, worldH } from '../config'
+import { DESIGN_W, viewportCenterY } from '../config'
 import { ENDLESS_MOVES, ENDLESS_UNLOCK_LEVEL } from '../core/endless'
 import { markRaceUnlockSeen } from '../core/save'
 import { backOut, OVERSHOOT } from './motion'
+import { addFocusScrim, panelPlate } from './platekit'
 import { getTheme, prefersReducedMotion } from './theme'
 import { addPillButton, FONT, GHOST_PILL, GOLD_PILL } from './ui'
 
@@ -62,9 +63,10 @@ export function openRaceUnlockCard(scene: Phaser.Scene): Promise<RaceUnlockResul
       resolve({ showBoard })
     }
 
-    const scrim = scene.add.rectangle(W / 2, viewportCenterY(), W, worldH() + 400, T.scrim, 0.72).setInteractive()
+    const scrimKit = addFocusScrim(scene, { alpha: 0.72 })
+    const scrim = scrimKit.hit.setInteractive()
     scrim.on('pointerup', () => finish(false))
-    layer.add(scrim)
+    layer.add([scrim, ...scrimKit.art])
 
     const px = 46
     const pw = W - 92
@@ -72,10 +74,7 @@ export function openRaceUnlockCard(scene: Phaser.Scene): Promise<RaceUnlockResul
     const pyTop = viewportCenterY() - ph / 2
 
     const g = scene.add.graphics()
-    g.fillStyle(T.cardFill, 1)
-    g.fillRoundedRect(px, pyTop, pw, ph, 30)
-    g.lineStyle(4, T.goldBezel, 1)
-    g.strokeRoundedRect(px, pyTop, pw, ph, 30)
+    panelPlate(g, px, pyTop, pw, ph, 30)
     layer.add(g)
     // Blocker so taps on the card don't fall through to the scrim.
     layer.add(scene.add.rectangle(W / 2, pyTop + ph / 2, pw, ph, 0xffffff, 0.001).setInteractive())

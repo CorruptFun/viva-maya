@@ -1,12 +1,13 @@
 import Phaser from 'phaser'
 import { sfx } from '../audio/sfx'
-import { DESIGN_W, viewportCenterY, worldH } from '../config'
+import { DESIGN_W } from '../config'
 import type { CharmExchangeItem } from '../core/charms'
 import { CHARMS, CHARM_EXCHANGE, LUCK_CAP, SERIES_SIZE, canAfford, luckOf, redeemCharms, seriesLabel } from '../core/charms'
 import { todayKey } from '../core/daily'
 import { loadSave } from '../core/save'
 import { openDeal } from './deal'
 import { backOut, E, OVERSHOOT } from './motion'
+import { addFocusScrim, panelPlate } from './platekit'
 import { css, getTheme, prefersReducedMotion } from './theme'
 import { ensureGlyphTexture } from './textures'
 import { addPillButton, addRoundChip, FONT, GHOST_PILL, GOLD_PILL } from './ui'
@@ -124,7 +125,8 @@ export function openCharmAlbum(scene: Phaser.Scene, opts: CharmAlbumOpts = {}): 
     openCharmAlbum(scene, { ...opts, instant: true, dirty: true })
   }
 
-  const scrim = scene.add.rectangle(W / 2, viewportCenterY(), W, worldH() + 400, T.scrim, 0.62).setInteractive()
+  const scrimKit = addFocusScrim(scene, { alpha: 0.62 })
+  const scrim = scrimKit.hit.setInteractive()
   scrim.on('pointerup', close)
 
   // ── Layout, derived from the grid so the card can never crop it ──
@@ -150,15 +152,7 @@ export function openCharmAlbum(scene: Phaser.Scene, opts: CharmAlbumOpts = {}): 
   const footTop = gridTop + GRID_H + 14
 
   const g = scene.add.graphics()
-  // Drop shadow — three stacked copies nudged straight down, all agreeing with the one key light.
-  for (let i = 0; i < 3; i++) {
-    g.fillStyle(T.shadow, 0.06)
-    g.fillRoundedRect(px - i, pyTop + 6 + i * 4, pw + i * 2, ph, 30)
-  }
-  g.fillStyle(T.cardFill, 1)
-  g.fillRoundedRect(px, pyTop, pw, ph, 30)
-  g.lineStyle(4, T.goldBezel, 1)
-  g.strokeRoundedRect(px, pyTop, pw, ph, 30)
+  panelPlate(g, px, pyTop, pw, ph, 30)
 
   // Blocker so taps on the card don't fall through to the scrim (which closes).
   const block = scene.add.rectangle(W / 2, pyTop + ph / 2, pw, ph, 0xffffff, 0.001).setInteractive()
@@ -181,7 +175,7 @@ export function openCharmAlbum(scene: Phaser.Scene, opts: CharmAlbumOpts = {}): 
     .setOrigin(0.5)
     .setLetterSpacing(2)
 
-  layer.add([scrim, g, block, title, plate, seriesLabelText])
+  layer.add([scrim, ...scrimKit.art, g, block, title, plate, seriesLabelText])
 
   // ── The nine slots ──
   const slots: Phaser.GameObjects.Container[] = []

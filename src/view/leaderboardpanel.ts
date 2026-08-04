@@ -34,7 +34,7 @@
  * audits); `opts.simulate` freezes the loading shimmer or forces the error card (DEV harness).
  */
 import Phaser from 'phaser'
-import { DESIGN_W, viewportCenterY, worldH } from '../config'
+import { DESIGN_W } from '../config'
 import { sfx } from '../audio/sfx'
 import { cloudSession } from '../core/cloud'
 import {
@@ -71,7 +71,7 @@ import { D, E, OVERSHOOT, backOut, fadeRise, heartbeat, popIn } from './motion'
 import { quality } from './quality'
 import { getTheme, prefersReducedMotion, reduceFlashing } from './theme'
 import { FONT, GHOST_PILL, GOLD_PILL, ROSE_PILL, addPillButton, addRoundChip, goldFace, startScene } from './ui'
-import { accentRimTop } from './platekit'
+import { accentRimTop, addFocusScrim, panelPlate } from './platekit'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Geometry — one fixed, generous card so EVERY state (board, invite, empty, loading, error) lives
@@ -424,7 +424,8 @@ export function openRacePanel(scene: Phaser.Scene, opts: RacePanelOpts = {}): vo
   const layer = scene.add.container(0, 0).setDepth(60)
 
   // ── Shell: scrim + cream card + title + CLOSE (shared by every state) ──────────────────────
-  const scrim = scene.add.rectangle(W / 2, viewportCenterY(), W, worldH(), T.scrim, 0.6).setInteractive()
+  const scrimKit = addFocusScrim(scene, { alpha: 0.6 })
+  const scrim = scrimKit.hit.setInteractive()
   let alive = true
   const close = (): void => {
     if (!alive) return
@@ -434,7 +435,7 @@ export function openRacePanel(scene: Phaser.Scene, opts: RacePanelOpts = {}): vo
     layer.destroy()
   }
   scrim.on('pointerup', close)
-  layer.add(scrim)
+  layer.add([scrim, ...scrimKit.art])
   // The scene can be torn down under us (theme restart / navigation) — release the latch + flag.
   layer.once(Phaser.GameObjects.Events.DESTROY, () => {
     alive = false
@@ -449,16 +450,8 @@ export function openRacePanel(scene: Phaser.Scene, opts: RacePanelOpts = {}): vo
   const g = scene.add.graphics()
   const cx = -CARD_W / 2
   const cy = -CARD_H / 2
-  // Card shadow falls straight down from the one key light (three-pass penumbra, ui.ts recipe).
-  for (let i = 3; i >= 1; i--) {
-    g.fillStyle(T.shadow, 0.08)
-    g.fillRoundedRect(cx, cy + i * 3, CARD_W, CARD_H, 30)
-  }
-  g.fillStyle(T.cardFill, 1)
-  g.fillRoundedRect(cx, cy, CARD_W, CARD_H, 30)
-  g.lineStyle(4, T.goldBezel, 1)
-  g.strokeRoundedRect(cx, cy, CARD_W, CARD_H, 30)
-  accentRimTop(g, cx, cy, CARD_W, 30, { alpha: 0.85 })
+  // Same three-pass down-cast penumbra as before (0.08 × offsets 3/6/9), now with the plate finish.
+  panelPlate(g, cx, cy, CARD_W, CARD_H, 30, { shadowAlpha: 0.08, rimAlpha: 0.85 })
   cardRoot.add(g)
 
   // Blocker so taps on the card never fall through to the scrim (which closes).
@@ -2207,24 +2200,17 @@ export function openRaceRulesPanel(scene: Phaser.Scene, mode: BoardMode = 'daily
     rulesOpen = false
   })
 
-  const scrim = scene.add.rectangle(W / 2, viewportCenterY(), W, worldH(), T.scrim, 0.62).setInteractive()
+  const scrimKit = addFocusScrim(scene, { alpha: 0.62 })
+  const scrim = scrimKit.hit.setInteractive()
   scrim.on('pointerup', close)
-  layer.add(scrim)
+  layer.add([scrim, ...scrimKit.art])
 
   const root = scene.add.container(W / 2, H / 2)
   layer.add(root)
   const cx = -RULES_W / 2
   const cy = -RULES_H / 2
   const g = scene.add.graphics()
-  for (let i = 3; i >= 1; i--) {
-    g.fillStyle(T.shadow, 0.08)
-    g.fillRoundedRect(cx, cy + i * 3, RULES_W, RULES_H, 30)
-  }
-  g.fillStyle(T.cardFill, 1)
-  g.fillRoundedRect(cx, cy, RULES_W, RULES_H, 30)
-  g.lineStyle(4, T.goldBezel, 1)
-  g.strokeRoundedRect(cx, cy, RULES_W, RULES_H, 30)
-  accentRimTop(g, cx, cy, RULES_W, 30, { alpha: 0.85 })
+  panelPlate(g, cx, cy, RULES_W, RULES_H, 30, { shadowAlpha: 0.08, rimAlpha: 0.85 })
   root.add(g)
   root.add(scene.add.rectangle(0, 0, RULES_W, RULES_H, 0xffffff, 0.001).setInteractive())
 

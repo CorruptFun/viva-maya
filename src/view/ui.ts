@@ -1,6 +1,6 @@
 import Phaser from 'phaser'
 import { SWAP_SOUNDS, SWAP_SOUND_LABELS, sfx } from '../audio/sfx'
-import { DESIGN_W, LIFE_REGEN_MS, LIVES_MAX, restScrollY, viewportCenterY, worldH } from '../config'
+import { DESIGN_W, LIFE_REGEN_MS, LIVES_MAX, restScrollY, worldH } from '../config'
 import { LIFE_REFILL_PRICE } from '../core/store'
 import { ENDLESS_UNLOCK_LEVEL } from '../core/endless'
 import { DEAL_STREAK } from '../core/deal'
@@ -31,7 +31,7 @@ import {
 } from './theme'
 import type { Theme, ThemeId } from './theme'
 import { openCloudModal } from './cloudmodal'
-import { accentRimTop, dropShadow, safeR } from './platekit'
+import { accentRimTop, addFocusScrim, dropShadow, panelPlate, safeR } from './platekit'
 import { quality } from './quality'
 import { D, E, OVERSHOOT, backOut } from './motion'
 import { vibratePattern } from './haptics'
@@ -1340,7 +1340,8 @@ export function openHelpPanel(scene: Phaser.Scene): void {
   const W = 720
   const layer = scene.add.container(0, 0).setDepth(60)
 
-  const scrim = scene.add.rectangle(W / 2, viewportCenterY(), W, worldH(), 0x2a2417, 0.6).setInteractive()
+  const scrimKit = addFocusScrim(scene, { alpha: 0.6, ink: 0x2a2417 })
+  const scrim = scrimKit.hit.setInteractive()
   scrim.on('pointerup', () => { sfx.whoosh(); layer.destroy() }) // §E3 B14: tap-outside close partner
 
   const px = 40
@@ -1358,12 +1359,7 @@ export function openHelpPanel(scene: Phaser.Scene): void {
   const rowH = Math.max(88, Math.min(118, Math.floor((phMax - HEAD - FOOT) / HELP_SECTIONS.length)))
   const ph = Math.min(phMax, HEAD + rowH * HELP_SECTIONS.length + FOOT)
   const g = scene.add.graphics()
-  dropShadow(g, px, pyTop, pw, ph, 30, getTheme().shadow, { alpha: 0.12, dist: 9 })
-  g.fillStyle(getTheme().cardFill, 1)
-  g.fillRoundedRect(px, pyTop, pw, ph, 30)
-  g.lineStyle(4, getTheme().goldBezel, 1)
-  g.strokeRoundedRect(px, pyTop, pw, ph, 30)
-  accentRimTop(g, px, pyTop, pw, 30, { alpha: 0.9 })
+  panelPlate(g, px, pyTop, pw, ph, 30)
 
   // Blocker so taps on the card don't fall through to the scrim (which closes).
   const block = scene.add.rectangle(W / 2, pyTop + ph / 2, pw, ph, 0xffffff, 0.001).setInteractive()
@@ -1373,7 +1369,7 @@ export function openHelpPanel(scene: Phaser.Scene): void {
     .setOrigin(0.5)
     .setLetterSpacing(2)
     .setShadow(0, 2, 'rgba(0,0,0,0.12)', 4, false, true)
-  layer.add([scrim, g, block, title])
+  layer.add([scrim, ...scrimKit.art, g, block, title])
 
   const textX = px + 116
   const wrap = pw - (textX - px) - 34
@@ -1454,7 +1450,8 @@ export function openSoundPanel(scene: Phaser.Scene): void {
   const H = 1280
   const layer = scene.add.container(0, 0).setDepth(60)
 
-  const scrim = scene.add.rectangle(W / 2, viewportCenterY(), W, worldH(), 0x2a2417, 0.6).setInteractive()
+  const scrimKit = addFocusScrim(scene, { alpha: 0.6, ink: 0x2a2417 })
+  const scrim = scrimKit.hit.setInteractive()
   scrim.on('pointerup', () => { sfx.whoosh(); layer.destroy() }) // §E3 B14: tap-outside close partner
 
   const px = 40
@@ -1462,12 +1459,7 @@ export function openSoundPanel(scene: Phaser.Scene): void {
   const ph = 640
   const pyTop = (H - ph) / 2
   const g = scene.add.graphics()
-  dropShadow(g, px, pyTop, pw, ph, 30, getTheme().shadow, { alpha: 0.12, dist: 9 })
-  g.fillStyle(getTheme().cardFill, 1)
-  g.fillRoundedRect(px, pyTop, pw, ph, 30)
-  g.lineStyle(4, getTheme().goldBezel, 1)
-  g.strokeRoundedRect(px, pyTop, pw, ph, 30)
-  accentRimTop(g, px, pyTop, pw, 30, { alpha: 0.9 })
+  panelPlate(g, px, pyTop, pw, ph, 30)
 
   // Blocker so taps on the card don't fall through to the scrim (which closes).
   const block = scene.add.rectangle(W / 2, pyTop + ph / 2, pw, ph, 0xffffff, 0.001).setInteractive()
@@ -1484,7 +1476,7 @@ export function openSoundPanel(scene: Phaser.Scene): void {
       color: '#6a6459',
     })
     .setOrigin(0.5)
-  layer.add([scrim, g, block, title, subtitle])
+  layer.add([scrim, ...scrimKit.art, g, block, title, subtitle])
 
   let y = pyTop + 176
   const rowH = 96
@@ -1660,7 +1652,8 @@ export function openThemePanel(scene: Phaser.Scene, openingThemeId: ThemeId = ge
   const ph = 792
   const pyTop = (H - ph) / 2
 
-  const scrim = scene.add.rectangle(W / 2, viewportCenterY(), W, worldH(), 0x2a2417, 0.6).setInteractive()
+  const scrimKit = addFocusScrim(scene, { alpha: 0.6, ink: 0x2a2417 })
+  const scrim = scrimKit.hit.setInteractive()
   const close = (): void => {
     sfx.whoosh() // §E3 B14: airy sweep partners the panel closing
     const changed = getThemeId() !== openingThemeId
@@ -1677,12 +1670,7 @@ export function openThemePanel(scene: Phaser.Scene, openingThemeId: ThemeId = ge
   scrim.on('pointerup', close)
 
   const g = scene.add.graphics()
-  dropShadow(g, px, pyTop, pw, ph, 30, getTheme().shadow, { alpha: 0.12, dist: 9 })
-  g.fillStyle(getTheme().cardFill, 1)
-  g.fillRoundedRect(px, pyTop, pw, ph, 30)
-  g.lineStyle(4, getTheme().goldBezel, 1)
-  g.strokeRoundedRect(px, pyTop, pw, ph, 30)
-  accentRimTop(g, px, pyTop, pw, 30, { alpha: 0.9 })
+  panelPlate(g, px, pyTop, pw, ph, 30)
 
   // Blocker so taps on the card don't fall through to the scrim (which closes).
   const block = scene.add.rectangle(W / 2, pyTop + ph / 2, pw, ph, 0xffffff, 0.001).setInteractive()
@@ -1699,7 +1687,7 @@ export function openThemePanel(scene: Phaser.Scene, openingThemeId: ThemeId = ge
       color: '#6a6459',
     })
     .setOrigin(0.5)
-  layer.add([scrim, g, block, title, subtitle])
+  layer.add([scrim, ...scrimKit.art, g, block, title, subtitle])
 
   const rowW = pw - 80
   const rowH = 116
@@ -1852,7 +1840,8 @@ export function openSettingsPanel(scene: Phaser.Scene): void {
   const startedHC = hcBoard()
   const startedRGB = rgbMarquee()
 
-  const scrim = scene.add.rectangle(W / 2, viewportCenterY(), W, worldH(), 0x2a2417, 0.6).setInteractive()
+  const scrimKit = addFocusScrim(scene, { alpha: 0.6, ink: 0x2a2417 })
+  const scrim = scrimKit.hit.setInteractive()
   const close = (): void => {
     sfx.whoosh() // §E3 B14: airy sweep partners the panel closing
     const changed =
@@ -1863,12 +1852,7 @@ export function openSettingsPanel(scene: Phaser.Scene): void {
   scrim.on('pointerup', close)
 
   const g = scene.add.graphics()
-  dropShadow(g, px, pyTop, pw, ph, 30, getTheme().shadow, { alpha: 0.12, dist: 9 })
-  g.fillStyle(getTheme().cardFill, 1)
-  g.fillRoundedRect(px, pyTop, pw, ph, 30)
-  g.lineStyle(4, getTheme().goldBezel, 1)
-  g.strokeRoundedRect(px, pyTop, pw, ph, 30)
-  accentRimTop(g, px, pyTop, pw, 30, { alpha: 0.9 })
+  panelPlate(g, px, pyTop, pw, ph, 30)
 
   // Blocker so taps on the card don't fall through to the scrim (which closes).
   const block = scene.add.rectangle(W / 2, pyTop + ph / 2, pw, ph, 0xffffff, 0.001).setInteractive()
@@ -1885,7 +1869,7 @@ export function openSettingsPanel(scene: Phaser.Scene): void {
       color: '#6a6459',
     })
     .setOrigin(0.5)
-  layer.add([scrim, g, block, title, subtitle])
+  layer.add([scrim, ...scrimKit.art, g, block, title, subtitle])
 
   const rows: ToggleConfig[] = [
     { label: 'Reduce Motion', sub: 'Calm the animations', get: rawReduceMotionPref, set: setReduceMotion },
@@ -1947,7 +1931,8 @@ export function openHazardIntro(scene: Phaser.Scene, kind: HazardKind, onClose?:
   // shortest one — a future theme pack must not have to re-tune this.
   const cardH = 520
 
-  const scrim = scene.add.rectangle(W / 2, viewportCenterY(), W, worldH(), 0x2a2417, 0.6).setInteractive()
+  const scrimKit = addFocusScrim(scene, { alpha: 0.6, ink: 0x2a2417 })
+  const scrim = scrimKit.hit.setInteractive()
   const close = (): void => {
     layer.destroy()
     onClose?.()
@@ -1965,6 +1950,7 @@ export function openHazardIntro(scene: Phaser.Scene, kind: HazardKind, onClose?:
     texture: ensureHazardTexture(scene, kind, kind === 'blocker' ? 2 : 1),
     blurb: skin.blurb[kind],
     scrim,
+    scrimArt: scrimKit.art,
   })
 }
 
@@ -1991,16 +1977,12 @@ function paintTeachCard(
     texture: string
     blurb: string
     scrim: Phaser.GameObjects.Rectangle
+    scrimArt?: Phaser.GameObjects.Image[]
   }
 ): void {
   const { cx, cy, cardW, cardH } = o
   const g = scene.add.graphics()
-  dropShadow(g, cx - cardW / 2, cy - cardH / 2, cardW, cardH, 30, getTheme().shadow, { alpha: 0.14, dist: 9 })
-  g.fillStyle(getTheme().cardFill, 1)
-  g.fillRoundedRect(cx - cardW / 2, cy - cardH / 2, cardW, cardH, 30)
-  g.lineStyle(4, getTheme().goldBezel, 1)
-  g.strokeRoundedRect(cx - cardW / 2, cy - cardH / 2, cardW, cardH, 30)
-  accentRimTop(g, cx - cardW / 2, cy - cardH / 2, cardW, 30, { alpha: 0.9 })
+  panelPlate(g, cx - cardW / 2, cy - cardH / 2, cardW, cardH, 30, { shadowAlpha: 0.14 })
 
   const block = scene.add.rectangle(cx, cy, cardW, cardH, 0xffffff, 0.001).setInteractive()
 
@@ -2036,7 +2018,7 @@ function paintTeachCard(
     })
     .setOrigin(0.5)
 
-  layer.add([o.scrim, g, block, kicker, title, swatch, body])
+  layer.add([o.scrim, ...(o.scrimArt ?? []), g, block, kicker, title, swatch, body])
   layer.add(addPillButton(scene, cx, cy + cardH / 2 - 58, 240, 66, 'GOT IT', GOLD_PILL, close))
 
   if (!o.reduced) {
@@ -2093,7 +2075,8 @@ export function openSpecialIntro(scene: Phaser.Scene, key: string, texture: stri
   const cy = 560
   const cardW = 600
   const cardH = 520
-  const scrim = scene.add.rectangle(W / 2, viewportCenterY(), W, worldH(), 0x2a2417, 0.6).setInteractive()
+  const scrimKit = addFocusScrim(scene, { alpha: 0.6, ink: 0x2a2417 })
+  const scrim = scrimKit.hit.setInteractive()
   const close = (): void => {
     layer.destroy()
     onClose?.()
@@ -2109,6 +2092,7 @@ export function openSpecialIntro(scene: Phaser.Scene, key: string, texture: stri
     texture,
     blurb: copy.blurb,
     scrim,
+    scrimArt: scrimKit.art,
   })
 }
 
@@ -2122,7 +2106,8 @@ export function openOnboarding(scene: Phaser.Scene, onClose?: () => void): void 
   const cardW = 600
   const cardH = 520
 
-  const scrim = scene.add.rectangle(W / 2, viewportCenterY(), W, worldH(), 0x2a2417, 0.6).setInteractive()
+  const scrimKit = addFocusScrim(scene, { alpha: 0.6, ink: 0x2a2417 })
+  const scrim = scrimKit.hit.setInteractive()
   const close = (): void => {
     layer.destroy()
     onClose?.()
@@ -2130,12 +2115,7 @@ export function openOnboarding(scene: Phaser.Scene, onClose?: () => void): void 
   scrim.on('pointerup', close)
 
   const g = scene.add.graphics()
-  dropShadow(g, cx - cardW / 2, cy - cardH / 2, cardW, cardH, 30, getTheme().shadow, { alpha: 0.14, dist: 9 })
-  g.fillStyle(getTheme().cardFill, 1)
-  g.fillRoundedRect(cx - cardW / 2, cy - cardH / 2, cardW, cardH, 30)
-  g.lineStyle(4, getTheme().goldBezel, 1)
-  g.strokeRoundedRect(cx - cardW / 2, cy - cardH / 2, cardW, cardH, 30)
-  accentRimTop(g, cx - cardW / 2, cy - cardH / 2, cardW, 30, { alpha: 0.9 })
+  panelPlate(g, cx - cardW / 2, cy - cardH / 2, cardW, cardH, 30, { shadowAlpha: 0.14 })
 
   // Blocker so taps on the card don't fall through to the scrim (which closes).
   const block = scene.add.rectangle(cx, cy, cardW, cardH, 0xffffff, 0.001).setInteractive()
@@ -2169,7 +2149,7 @@ export function openOnboarding(scene: Phaser.Scene, onClose?: () => void): void 
     })
     .setOrigin(0.5)
 
-  layer.add([scrim, g, block, title, ...icons, body])
+  layer.add([scrim, ...scrimKit.art, g, block, title, ...icons, body])
   layer.add(addPillButton(scene, cx, cy + cardH / 2 - 58, 260, 68, 'GOT IT', GOLD_PILL, close))
 
   if (!reduced) {

@@ -235,19 +235,22 @@ export interface FocusScrim {
  */
 export function addFocusScrim(
   scene: Phaser.Scene,
-  opts: { alpha?: number; depth?: number } = {}
+  opts: { alpha?: number; depth?: number; ink?: number } = {}
 ): FocusScrim {
   ensureBandTexture(scene)
   const T = getTheme()
   const a = opts.alpha ?? 0.5
+  const ink = opts.ink ?? T.scrim
   const W = DESIGN_W
   const H = worldH()
   const cy = viewportCenterY()
   const vt = cy - H / 2 // visible top edge (matches the flat scrims' cover geometry)
-  const hit = scene.add.rectangle(W / 2, cy, W, H, T.scrim, a * 0.8)
+  // +400 overscan (the stash/charm scrims' convention) so a camera nudged by shake trauma or a
+  // grown world can never expose a bare edge behind a modal.
+  const hit = scene.add.rectangle(W / 2, cy, W, H + 400, ink, a * 0.8)
   const band = (x: number, y: number, w: number, h: number, alpha: number, angle: number): Phaser.GameObjects.Image =>
     // displaySize is pre-rotation: the texture's fade axis (its height) spans the band's fade extent.
-    scene.add.image(x, y, 'bgband').setDisplaySize(w, h).setAngle(angle).setTint(T.scrim).setAlpha(alpha)
+    scene.add.image(x, y, 'bgband').setDisplaySize(w, h).setAngle(angle).setTint(ink).setAlpha(alpha)
   const art = [
     band(W / 2, vt + 170, W, 340, a * 0.5, 0), // top (fades down)
     band(W / 2, vt + H - 190, W, 380, a * 0.6, 180), // bottom (fades up)
