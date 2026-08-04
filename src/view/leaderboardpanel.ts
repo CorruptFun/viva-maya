@@ -1551,13 +1551,37 @@ function addRaceStrip(scene: Phaser.Scene, x: number, y: number, spec: StripSpec
       ease: down ? E.press : E.settle,
     })
   }
+  /**
+   * ⚠️ ARMED ON PRESS, not on release — the strip only opens if the gesture BEGAN on it.
+   *
+   * Phaser fires `pointerup` on whatever sits under the finger at release, regardless of where the
+   * press started. In endless the strip sits directly above the board, which is a SWIPE surface, so
+   * a player swiping up out of the top row released over the strip and had the standings panel open
+   * on them mid-run (owner report, 2026-08-04). Raising ENDLESS_BOARD_DROP widened the gap, but
+   * spacing alone cannot fix this: a drag ending on a control fires it from any distance.
+   *
+   * `pointerout` disarms, so dragging off and releasing elsewhere is a cancel — the same grammar
+   * every platform's buttons use. A normal tap is unaffected: down and up on the same object.
+   *
+   * Deliberately fixed HERE rather than in ui.ts's `buildPressable`, which has the same bare
+   * pointerup. Every other control in the game sits in a region where you TAP; this is the only one
+   * pressed up against a surface where you SWIPE, so it is the only one that actually misfires.
+   * Widening that change to every button in the app is a far larger blast radius than the bug.
+   */
+  let armed = false
   zone.on('pointerdown', () => {
+    armed = true
     sfx.uiPress()
     press(true)
   })
-  zone.on('pointerout', () => press(false))
+  zone.on('pointerout', () => {
+    armed = false
+    press(false)
+  })
   zone.on('pointerup', () => {
     press(false)
+    if (!armed) return // the gesture started somewhere else — almost always a swipe off the board
+    armed = false
     sfx.uiTap()
     sfx.whoosh() // §E3 B14: the airy sweep partners the panel opening
     spec.open()

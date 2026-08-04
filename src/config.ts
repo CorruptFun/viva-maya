@@ -104,9 +104,17 @@ export const BOARD_Y = 300
  *
  * Derived, not guessed: the MOVES / TODAY'S BEST cards end at y 248, the strip is seated at
  * `ENDLESS_STRIP_Y` spanning 266–318, and the board's baked frame starts ~14px above its top edge.
- * 60 leaves ~30px of air between the strip and the frame. Re-derive if the card row or STRIP_H moves.
+ *
+ * ⚠️ RAISED 60 → 84 on 2026-08-04. At 60 the gap between the strip's bottom edge and the board frame
+ * was ~28px, and players swiping UP from the board's top row were catching the strip on release and
+ * opening the standings mid-run (owner report). 84 puts ~52px of dead margin between them — nearly
+ * double. The spacing is the comfort half of that fix; the half that actually closes it is the
+ * press-started-here guard in view/leaderboardpanel.ts's `addRaceStrip`, because a drag that ENDS on
+ * a control fires its pointerup no matter how far away it began.
+ *
+ * Re-derive if the card row, STRIP_H, or CHEAT_ZONE_TOP moves — the three are budgeted together.
  */
-export const ENDLESS_BOARD_DROP = 60
+export const ENDLESS_BOARD_DROP = 84
 
 /** Centre of the endless TODAY'S LEADER strip, in the lane opened above the board. */
 export const ENDLESS_STRIP_Y = 292

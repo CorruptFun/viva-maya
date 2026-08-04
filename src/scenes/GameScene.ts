@@ -167,16 +167,20 @@ const SWEEP_FADE_MS = 360
  * was keyed off the strip's bottom edge, and that anchor no longer exists down here.
  *
  * The only thing left below the board is the standing brief, which follows the board down to
- * `988 + ENDLESS_BOARD_DROP` = 1048 and is a 22px line, so its bottom sits near 1059. 1080 clears it
- * with room for a thumb that lands just under the text. The zone must not overlap a real control:
- * it swallows whole gestures, so a swipe starting on one would read as cheat input AND as a press.
+ * `988 + ENDLESS_BOARD_DROP` = 1072 and is a 22px line, so its bottom sits near 1083. The zone must
+ * not overlap a real control: it swallows whole gestures, so a swipe starting on one would read as
+ * cheat input AND as a press.
  *
- * The dead space did NOT shrink — the strip leaving (52px) and the board arriving (60px) very nearly
- * cancel, so the zone starts at 1080 where it used to start at 1088. Against the 1280 design box
- * that is a full-width band 200px tall, growing on a tall phone: still ample to enter the pattern
- * unnoticed, which is the whole point of it. Re-derive again if the brief or the drop moves.
+ * ⚠️ Re-derived a second time on 2026-08-04, when ENDLESS_BOARD_DROP went 60 → 84 to keep board
+ * swipes off the leader strip. The brief moved down with the board, so 1080 would now have started
+ * the zone INSIDE it. 1104 clears the text plus room for a thumb landing just under it.
+ *
+ * Dead space is still ample: 1104 → the 1280 design box is a full-width band ~176px tall, and a real
+ * phone's reclaimed height pools below that and is strip too. Comfortably enough to enter the
+ * pattern unnoticed, which the owner confirmed is the only requirement down here. Re-derive AGAIN if
+ * the brief or the drop moves — this constant has no other anchor now that the strip lives up top.
  */
-const CHEAT_ZONE_TOP = 1080
+const CHEAT_ZONE_TOP = 1104
 
 /**
  * What the mega win multiplies the blast's points by. The cheat pays through the SAME chokepoint as
