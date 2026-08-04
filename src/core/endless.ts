@@ -378,14 +378,15 @@ export function formatWeekStanding(s: WeekStanding): string {
 /**
  * The hard ceiling a CHEAT run may post to the race.
  *
- * ── WHAT THIS IS, AND WHAT IT USED TO BE (owner decision, 2026-07-31) ────────────────────────────
+ * ── WHAT THIS IS, AND WHAT IT USED TO BE (owner decisions, 2026-07-31 and 2026-08-04) ───────────
  * This began at 13,000 — the 85th percentile of a typical run — as a "pace score": a top line
  * deliberately pitched at human reach so honest players took it down about one run in seven. That
  * made the clamp bind on essentially every cheat run, which is the wrong trade for how the cheat is
  * actually used here: fire it once to get a little ahead, then play the run out. Under the old
  * ceiling that run's real score was thrown away and replaced with a fixed 13,000.
  *
- * At 100,000 the clamp is a BACKSTOP rather than a pace-setter. It exists for exactly one thing —
+ * Since then the clamp is a BACKSTOP rather than a pace-setter — raised to 100,000 on 2026-07-31,
+ * then to 300,000 on 2026-08-04 (same job, more headroom). It exists for exactly one thing —
  * the cheat costs no moves and can be re-entered as often as the player has patience for, so an
  * unclamped run can mint an arbitrarily large number and own the board permanently. This bounds
  * that. What it no longer does is normalise ordinary cheat use: a single fire lands somewhere near
@@ -396,17 +397,18 @@ export function formatWeekStanding(s: WeekStanding): string {
  * sweep of the real board core (`sim.playEndless`, 400 runs, Plinko included, 'greedy' policy —
  * someone playing quickly without lookahead):
  *
- *     p50 7,080 · p75 10,500 · p85 13,020 · p95 17,220 · longest tail 62,660
+ *     p50 7,080 · p75 10,700 · p85 13,160 · p95 17,840 · longest tail 62,660   (re-run 2026-08-04)
  *
  * So a one-fire cheat run sits above p95 but still inside the range the board genuinely produces —
  * an exceptional honest run can beat it. A run that fires the cheat repeatedly will reach this
- * ceiling and sit on top of the board until someone else does the same. That is the accepted
+ * ceiling — 300,000, ~4.8× the longest measured honest tail, inside the <10× band the pace test
+ * enforces — and sit on top of the board until someone else does the same. That is the accepted
  * trade, not an oversight: see endless.pace.test.ts, which now guards the backstop rather than the
  * old chaseability band.
  *
  * Honest runs are untouched either way — this only ever applies to `recordEndless({ paced: true })`.
  */
-export const ENDLESS_MAX_CHEAT_SCORE = 100000
+export const ENDLESS_MAX_CHEAT_SCORE = 300000
 
 /** Endless unlocks once the player has cleared ENDLESS_UNLOCK_LEVEL numbered levels. */
 export function endlessUnlocked(save: SaveData): boolean {

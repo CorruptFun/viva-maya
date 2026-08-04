@@ -11,7 +11,8 @@ import { percentile, playEndless } from './sim'
  * are WRONG for what the constant is now. The owner deliberately raised it to 100,000 so that a
  * player who fires the cheat once, gets a little ahead and plays the run out posts THEIR REAL SCORE
  * instead of a flat substitute. The old ceiling bound on essentially every cheat run, which is the
- * behaviour that was being complained about.
+ * behaviour that was being complained about. (Raised again to 300,000 on 2026-08-04 — the value
+ * moved, the job did not; the bands below are the contract and they are value-relative.)
  *
  * So the ceiling is now a BACKSTOP against an unbounded runaway — the cheat costs no moves and can be
  * re-entered forever — and nothing more. The bands below guard that job. They deliberately do NOT

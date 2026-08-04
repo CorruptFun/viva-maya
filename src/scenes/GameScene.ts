@@ -5732,8 +5732,8 @@ export class GameScene extends Phaser.Scene {
     this.state = 'ended'
     this.clearBookedSwap() // §G1
     this.stopMovesPulse()
-    // A run that fired the cheat strip's mega win still reaches the race, but only as a PACE score —
-    // clamped to ENDLESS_MAX_CHEAT_SCORE inside recordEndless, which is the one place it happens. `posted`
+    // A run that fired the cheat strip's mega win still reaches the race, clamped to the
+    // ENDLESS_MAX_CHEAT_SCORE backstop inside recordEndless, which is the one place it happens. `posted`
     // is what actually went to the board, and it is what the card has to talk about.
     const paced = this.cheatFires > 0
     const { best, isRecord, week, posted } = recordEndless(this.score, this.endlessDayKey, { paced })
