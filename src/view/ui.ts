@@ -2137,8 +2137,10 @@ export function openMinimumIntro(scene: Phaser.Scene, target: number, onClose?: 
     reduced,
     title: 'HOUSE MINIMUM',
     headline: target.toLocaleString(),
+    // Three lines max at 25px — the card is sized for the tallest hazard blurb, and a fourth
+    // line clips behind GOT IT (caught in browser verification).
     blurb:
-      'This room has a minimum. Finish your goals AND put your score past the brass number — long cascades and specials are what pile up points. House rules: no Double Score in here.',
+      'This room has a minimum. Finish your goals AND beat the brass number — cascades and specials pile up points. House rules: no Double Score.',
     scrim,
     scrimArt: scrimKit.art,
   })

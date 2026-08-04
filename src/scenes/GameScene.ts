@@ -543,8 +543,6 @@ export class GameScene extends Phaser.Scene {
       this.board.seedHazards(hazardPlan(this.level, ROWS, COLS))
     }
     this.coatsTotal = this.board.coatsRemaining()
-    // HOUSE MINIMUM plaque — endless builds its spec inline with no target, so this is 0 there.
-    this.scoreTarget = this.spec.scoreTarget ?? 0
     this.movesLeft = this.spec.moves
     // Placed AFTER the lives gate returns, so a bounced entry is not counted as an attempt — a level
     // the player couldn't even get into must not drag down its own win rate.
@@ -592,7 +590,11 @@ export class GameScene extends Phaser.Scene {
     this.bufferSelected = null
     this.bufferConsumed = false
     this.scoreMult = 1
-    this.scoreTarget = 0
+    // HOUSE MINIMUM plaque — read here, INSIDE the field-reset block, because this block runs
+    // AFTER the mode fork assigns `this.spec` (a plain `= 0` reset here silently stomped an
+    // earlier assignment — caught in browser verification). Endless builds its spec inline with
+    // no target, so this is 0 there.
+    this.scoreTarget = this.spec.scoreTarget ?? 0
     this.minPlaqueText = null
     this.minPlaqueMet = false
     this.markerStake = 0
