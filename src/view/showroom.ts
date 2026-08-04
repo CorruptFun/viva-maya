@@ -106,7 +106,24 @@ export function openShowroom(scene: Phaser.Scene, opts: ShowroomOpts = {}): void
   // ── Layout, derived from the grid so the card can never crop it ──
   const px = 40
   const pw = W - 80
-  const pyTop = 56
+  /**
+   * The card's top edge must land in CLEAN air on its host, and the two hosts stack their chrome
+   * at different heights — so one seat cannot serve both. A half-covered control reads as BROKEN,
+   * where fully-visible-then-dimmed and fully-covered both read as "a modal is open".
+   *
+   * HOME: the chip rail is centred at y=44 (52px art → bottom ≈70, press pedestal ≈74). A top edge
+   * at 56 sliced all six chips through the middle (owner screenshot, 2026-08-04) → seat 84, below
+   * the rail. Bottom stays clear: 84 + ph(1156) = 1240 of 1280.
+   *
+   * LEVELSELECT keeps 56, and it is a compromise, not clean air: the header row (back 56–112,
+   * stash door 60–108, wordmark 59–119) is covered whole, but the mute chip at (676, 40) spans
+   * x 650–702 — PAST the card's right edge at 680 — so no seat can cover it: 56 grazes its
+   * bottom-left with only the corner arc (a crescent a few px deep, verified invisible in
+   * practice), while ≤14 would run the card's right edge straight through it and 84 would slice
+   * the entire header row. If the mute chip ever moves inboard (x ≤ ~648), drop this seat to 12
+   * and the compromise disappears.
+   */
+  const pyTop = scene.scene.key === 'home' ? 84 : 56
   const HEAD = 118 // title + tally
   const HERO = 168 // the grand-prize podium strip
   const ROWS = Math.ceil(CHAPTER_COUNT / COLS)
