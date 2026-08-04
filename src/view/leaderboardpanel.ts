@@ -64,6 +64,7 @@ import {
 } from '../core/leaderboard'
 import type { Champion, LeaderboardEntry, RaceBoard } from '../core/leaderboard'
 import { LEVEL_COUNT } from '../core/levels'
+import { chaptersFromCleared, trophyTier } from '../core/trophies'
 import type { SaveData } from '../core/save'
 import { openCloudModal } from './cloudmodal'
 import { D, E, OVERSHOOT, backOut, fadeRise, heartbeat, popIn } from './motion'
@@ -700,10 +701,37 @@ export function openRacePanel(scene: Phaser.Scene, opts: RacePanelOpts = {}): vo
         .setOrigin(0, 0.5)
       // Emboss on the gold plate so the champion's name reads etched into the metal.
       if (onGold) name.setShadow(0, 2, 'rgba(74,51,5,0.35)', 2, false, true)
+      // Trophy-tier badge (core/trophies.ts ladder) — worn between the name and the YOU tag, the
+      // slot the champion's crown established. Below the first rung there is no glyph at all, so a
+      // board of new players looks exactly as it did before badges existed.
+      const tier = typeof e.chapters === 'number' ? trophyTier(e.chapters) : null
+      const BADGE_W = tier ? 34 : 0
+      // ⚠️ The right side of the row is spoken for — the value text is right-pinned at ROW_W/2−26
+      // and the widest boards render "18,204 · 5d" — so the name+badge+YOU+crown cluster must stop
+      // short of it, and the NAME is the thing that gives: re-rendered with an ellipsis until the
+      // cluster fits. A 24-char handle at 30px could already walk into the value before badges
+      // existed; this budget closes that collision rather than adding to it.
+      const valueReserve = kind === 'gold' ? 236 : 206
+      const reserved = BADGE_W + (e.you ? 118 : 0) + (e.you && champYou ? 46 : 0)
+      const nameLimit = ROW_W / 2 - valueReserve - nameX - reserved
+      if (name.width > nameLimit && nameLimit > 24) {
+        let text = e.name
+        while (text.length > 1 && name.width > nameLimit) {
+          text = text.slice(0, -1)
+          name.setText(`${text}…`)
+        }
+      }
       row.add(name)
+      if (tier) {
+        row.add(
+          scene.add
+            .text(name.x + name.width + 10, 0, tier.emoji, { fontFamily: 'sans-serif', fontSize: '22px' })
+            .setOrigin(0, 0.5)
+        )
+      }
       if (e.you) {
         const tag = makeYouTag(scene)
-        tag.setPosition(name.x + name.width + 40, 0)
+        tag.setPosition(name.x + name.width + BADGE_W + 40, 0)
         row.add(tag)
         // Reigning champion's own row wears a small crown beside the YOU tag (gold-crown YOUR row).
         if (champYou) {
@@ -883,16 +911,25 @@ export function openRacePanel(scene: Phaser.Scene, opts: RacePanelOpts = {}): vo
       const tag = makeYouTag(scene)
       tag.setPosition(-ROW_W / 2 + 46, 0)
       foot.add(tag)
-      foot.add(
-        scene.add
-          .text(-ROW_W / 2 + 86, 0, `your rank  ·  #${board.myRank}`, {
-            fontFamily: FONT,
-            fontSize: '22px',
-            fontStyle: '900',
-            color: T.ink,
-          })
-          .setOrigin(0, 0.5)
-      )
+      const rankText = scene.add
+        .text(-ROW_W / 2 + 86, 0, `your rank  ·  #${board.myRank}`, {
+          fontFamily: FONT,
+          fontSize: '22px',
+          fontStyle: '900',
+          color: T.ink,
+        })
+        .setOrigin(0, 0.5)
+      foot.add(rankText)
+      // The footer wears the same tier badge as a row — read from the LOCAL save (RaceBoard.myChapters),
+      // so your own badge shows even when your board row was never fetched.
+      const myTier = typeof board.myChapters === 'number' ? trophyTier(board.myChapters) : null
+      if (myTier) {
+        foot.add(
+          scene.add
+            .text(rankText.x + rankText.width + 10, 0, myTier.emoji, { fontFamily: 'sans-serif', fontSize: '20px' })
+            .setOrigin(0, 0.5)
+        )
+      }
       if (board.myScore !== null) {
         foot.add(
           scene.add
@@ -1679,11 +1716,15 @@ function fixtureBoard(youAt: number | null, myRank: number | null, myScore: numb
     'goldrush', 'chipqueen', 'lucky.lou', 'marisol', 'dusty', 'sunburst',
     'cardshark', 'bellhop', 'renotwin', 'dulce', 'k-money', 'peachy',
   ]
+  // Tier spread on purpose: the car, every medal rung, and several no-badge rows — so `?race=rich`
+  // proves the whole ladder renders (and that a badge-less board still looks like it used to).
+  const chapterSpread = [30, 21, 17, 12, 9, 4, 15, 7, 2, 5, 0, 10]
   const entries: LeaderboardEntry[] = names.map((name, i) => ({
     rank: i + 1,
     name,
     score: 9840 - i * 520 - (i * i) % 97, // descending with a little organic wobble
     you: youAt !== null && i + 1 === youAt,
+    chapters: chapterSpread[i % chapterSpread.length],
   }))
   const mine = entries.find(e => e.you)
   return {
@@ -1691,6 +1732,7 @@ function fixtureBoard(youAt: number | null, myRank: number | null, myScore: numb
     entries,
     myRank: mine ? mine.rank : myRank,
     myScore: mine ? mine.score : myScore,
+    myChapters: 12,
   }
 }
 
@@ -1708,12 +1750,14 @@ function fixtureWeekBoard(youAt: number | null, myRank: number | null): RaceBoar
     ['cardshark', 19980, 3], ['bellhop', 17640, 4], ['renotwin', 14300, 2],
     ['dulce', 11250, 3], ['k-money', 8120, 2], ['peachy', 4410, 1],
   ]
+  const chapterSpread = [30, 20, 15, 10, 5, 8, 3, 12, 0, 6, 1, 25]
   const entries: LeaderboardEntry[] = rows.map(([name, total, days], i) => ({
     rank: i + 1,
     name,
     score: total,
     you: youAt !== null && i + 1 === youAt,
     valueText: `${total.toLocaleString()} · ${days}d`,
+    chapters: chapterSpread[i % chapterSpread.length],
   }))
   const mine = entries.find(e => e.you)
   return {
@@ -1722,6 +1766,7 @@ function fixtureWeekBoard(youAt: number | null, myRank: number | null): RaceBoar
     myRank: mine ? mine.rank : myRank,
     myScore: mine ? mine.score : 9260,
     myValueText: mine ? mine.valueText : '9,260 · 2d',
+    myChapters: 7,
   }
 }
 
@@ -1786,6 +1831,8 @@ function fixtureLevelBoard(youAt: number | null, myRank: number | null): RaceBoa
     score: cleared,
     you: youAt !== null && i + 1 === youAt,
     valueText: `${cleared} · ★${stars}`,
+    // Derived exactly as production does — the ladder's badge IS its cleared column.
+    chapters: chaptersFromCleared(cleared),
   }))
   const mine = entries.find(e => e.you)
   return {
@@ -1794,6 +1841,7 @@ function fixtureLevelBoard(youAt: number | null, myRank: number | null): RaceBoa
     myRank: mine ? mine.rank : myRank,
     myScore: mine ? mine.score : 37,
     myValueText: mine ? mine.valueText : '37 · ★84',
+    myChapters: 3,
   }
 }
 

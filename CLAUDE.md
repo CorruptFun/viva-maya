@@ -104,7 +104,21 @@ Live: <https://corruptfun.github.io/viva-maya/>
   therefore only opens if the gesture *started* on it. `ui.ts`'s `buildPressable`
   still has the bare `pointerup` **on purpose**: every other control sits where
   you tap, and only the race strip abuts a swipe surface. Spacing alone can never
-  fix this class of bug.
+  fix this class of bug. The LevelSelect chapter ribbons (doors to the trophy
+  showroom) sit on the grid's scroll surface and use the level chips' own guard —
+  `dragMoved` + viewport-clipped hit area — for the same reason.
+- **Leaderboard trophy badges are DERIVED, never submitted.** The tier glyph next
+  to a name is `floor(level_progress.cleared / 10)` mapped through `TROPHY_TIERS`
+  (`core/trophies.ts chaptersFromCleared` — deliberately the only place that
+  coupling lives). No badge column exists anywhere: the race boards batch-read
+  `level_progress.cleared` (world-readable, and 0007's monotonic guard is what
+  makes a derived badge trustworthy) and decorate client-side, degrading to an
+  unbadged board when the read fails. Changing `cleared`'s semantics moves every
+  badge; a new writable "flair" column would need guard-trigger + two-phase
+  treatment, which this design exists to avoid. Chapter trophies themselves are
+  claimed once per chapter into `save.chapterRewards` (`core/trophies.ts`,
+  award-first, unioned on merge) — the SAME list the showroom renders, so the
+  purse latch and the trophy shelf can never disagree.
 - **`splitPendingBoosts` is shared, and that is the point.** The stash panel
   promises "these go in next level" and the level start consumes — both call it,
   so they cannot disagree. Two copies of the cap rule would diverge the first
@@ -168,9 +182,12 @@ make green.
 | `src/core/inventory.ts` | canonical boost names (`BOOST_META`) + the stash model — see the note above |
 | `src/core/install.ts` | "add to home screen" custody; the platform split lives here |
 | `src/core/resumeguard.ts` | recovers a game loop that never restarted after a resume |
+| `src/core/trophies.ts` | chapter trophies — catalog, purse table, tier ladder, the claim latch (see the note above) |
 | `src/view/stash.ts` | the stash panel + its two doors (Home line, LevelSelect chip) |
 | `src/view/installsheet.ts` | the install sheet — DOM, so the iOS guide can point at real browser chrome |
 | `src/view/raceunlockcard.ts` | the one-time DAILY RACE UNLOCKED reveal |
+| `src/view/showroom.ts` | THE SHOWROOM trophy case — doors on the LevelSelect chapter ribbons |
+| `src/view/trophyceremony.ts` | the chapter-complete ceremony + the one-time catch-up card |
 | `src/view/rgbmarquee.ts` | the RGB cabinet chase — see the note above before touching it |
 | `src/view3d/stage.ts` | the only three.js usage |
 | `supabase/migrations/` | `0001_saves` → `0024_race_board_salt_enforced` |

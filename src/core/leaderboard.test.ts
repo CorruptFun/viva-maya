@@ -3,6 +3,7 @@ import {
   LEGACY_WEEK_CUTOVER,
   adoptHandle,
   anonName,
+  applyChapterTiers,
   formatStanding,
   getHandle,
   isLegacyWeek,
@@ -12,7 +13,7 @@ import {
   sanitizeName,
   setHandle,
 } from './leaderboard'
-import type { DailyWeekRow, LegacyWeekRow } from './leaderboard'
+import type { DailyWeekRow, LegacyWeekRow, LeaderboardEntry } from './leaderboard'
 import { coerceSave, loadSave, type SaveData } from './save'
 
 /**
@@ -381,5 +382,28 @@ describe('mergeTransitionWeek — both halves of the cutover week count', () => 
 
   it('is empty when the week was raced by nobody', () => {
     expect(mergeTransitionWeek([], [])).toEqual([])
+  })
+})
+
+describe('applyChapterTiers — the badge decoration is pure and never blocks a board', () => {
+  const entry = (name: string): LeaderboardEntry => ({ rank: 1, name, score: 100, you: false })
+
+  it('maps cleared levels to chapters completed via the ids running parallel to the rows', () => {
+    const entries = [entry('a'), entry('b'), entry('c')]
+    applyChapterTiers(entries, ['ua', 'ub', 'uc'], new Map([['ua', 300], ['ub', 47], ['uc', 9]]))
+    expect(entries.map(e => e.chapters)).toEqual([30, 4, 0])
+  })
+
+  it('leaves rows without a ladder row unbadged rather than guessing', () => {
+    const entries = [entry('a'), entry('b')]
+    applyChapterTiers(entries, ['ua', 'ub'], new Map([['ub', 130]]))
+    expect(entries[0].chapters).toBeUndefined()
+    expect(entries[1].chapters).toBe(13)
+  })
+
+  it('an empty map (the fetch failed) is a fully unbadged board, not an error', () => {
+    const entries = [entry('a')]
+    applyChapterTiers(entries, ['ua'], new Map())
+    expect(entries[0].chapters).toBeUndefined()
   })
 })
