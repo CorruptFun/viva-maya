@@ -19,6 +19,11 @@ import { greeting, occasionFor, pendingOccasion, secretNote, withName } from '..
 import { REFERRER_CHIPS, claimReferralRewards, fetchPendingRewards } from '../core/referrals'
 import type { PendingReferralReward } from '../core/referrals'
 import { claimChampionship, claimDailyWin, loadSave, markOccasionSeen, markRaceRecapSeen, touchOpen } from '../core/save'
+import { EVENTS, track } from '../core/analytics'
+import { CHAPTER_BOOSTS, CHAPTER_PURSES, claimChapterCatchUp, trophyFor, unclaimedChapters } from '../core/trophies'
+import type { ChapterCatchUp } from '../core/trophies'
+import { openTrophyCatchUpCard } from '../view/trophyceremony'
+import { openShowroom } from '../view/showroom'
 import { addCasinoBackdrop } from '../view/background'
 import {
   addRaceLockedModule,
@@ -860,6 +865,38 @@ export class HomeScene extends Phaser.Scene {
         // "SEE THE BOARD" hands them straight to the standings — the whole point is that they end up
         // looking at the thing, not merely told it exists.
         if (showBoard) openRacePanel(this)
+      }
+      if (!alive.on) return
+      // 0.5 · CHAPTER TROPHY CATCH-UP — the one-time back-fill: every chapter beaten before the
+      // trophies existed pays out here in one summed card, and thereafter this same sweep is the
+      // self-healing net for any win-flow grant a crash or a merge race skipped. Claimed AWARD-FIRST
+      // in one atomic write BEFORE the card opens, so a force-quit mid-card loses nothing and a
+      // re-open re-offers nothing — the claim latch is the only latch. Ahead of the coronations
+      // because it is once-ever and explains the showroom the ribbons now advertise; zero network,
+      // so the dormant contract holds. DEV: `?catchup` shows the card on fixture grants (no award).
+      let catchUp: ChapterCatchUp | null = null
+      if (q?.has('catchup')) {
+        const chips = loadSave().chips
+        const grants = [1, 2, 3, 4].map(c => ({
+          chapter: c,
+          trophy: trophyFor(c)!,
+          purse: CHAPTER_PURSES[c - 1] ?? 0,
+          boost: CHAPTER_BOOSTS[c] ?? null,
+          balance: chips,
+        }))
+        catchUp = { grants, totalPurse: grants.reduce((s, g) => s + g.purse, 0), balance: chips }
+      } else if (unclaimedChapters(loadSave()).length > 0) {
+        catchUp = claimChapterCatchUp()
+        if (catchUp) {
+          for (const g of catchUp.grants) {
+            track(EVENTS.CHAPTER_REWARD, { chapter: g.chapter, purse: g.purse, retro: true })
+          }
+        }
+      }
+      if (catchUp && alive.on) {
+        const { showShowroom } = await openTrophyCatchUpCard(this, catchUp, pill)
+        if (!alive.on) return
+        if (showShowroom) openShowroom(this)
       }
       if (!alive.on) return
       // 1 · CORONATION — did the player win an unclaimed prize for the season that just closed?

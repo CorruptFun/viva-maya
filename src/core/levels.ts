@@ -6,6 +6,18 @@ import { DIFFICULTY, isTeachingLevel } from './difficulty'
 export const LEVEL_COUNT = 300
 
 /**
+ * Levels per CHAPTER — the decade grouping the level map draws (ribbons every ten) and the win flow
+ * celebrates (milestone splash on every `% CHAPTER_LEVELS === 0` clear). Promoted here from
+ * LevelSelectScene so core code (trophies, chapter rewards) and the scenes read ONE constant; the
+ * scene previously owned a private copy while GameScene hard-coded the same 10 as a bare literal.
+ * LevelSelect's layout leans on 10 = exactly two 5-wide grid rows — change this and the chapter
+ * ribbon math changes with it.
+ */
+export const CHAPTER_LEVELS = 10
+/** How many chapters the 300 levels make — 30. The trophy showroom has exactly this many plinths. */
+export const CHAPTER_COUNT = LEVEL_COUNT / CHAPTER_LEVELS
+
+/**
  * Deterministic difficulty curve: level N always has the same goals/moves (seeded off N), but
  * every attempt plays on a fresh random board. Designed as a SMOOTH, progressively-harder ramp
  * across all 300 levels — no early plateau — anchored so the early game keeps its current feel

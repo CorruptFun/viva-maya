@@ -75,6 +75,16 @@ export const EVENTS = {
   ENDLESS_END: 'endless_end',
 
   /**
+   * {chapter, purse, retro} — a chapter's one-time trophy + purse landed. `retro: true` marks the
+   * Home catch-up sweep (back-fill for chapters beaten before the feature, or a grant a crash
+   * skipped); false is the live win-flow ceremony. Sum of purses per player is bounded by the
+   * CHAPTER_PURSES table, so this is also the audit trail for that faucet.
+   */
+  CHAPTER_REWARD: 'chapter_reward',
+  /** {trophies} — the showroom panel opened, carrying how many plinths were lit. */
+  SHOWROOM_OPEN: 'showroom_open',
+
+  /**
    * The sign-in funnel: how many see the offer vs take it.
    *
    * `signin_shown` counts OFFERS, not renders — once per cloud-modal open, from the signed-out

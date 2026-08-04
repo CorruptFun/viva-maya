@@ -80,9 +80,14 @@ function pickHandle(a: SaveData, b: SaveData): Partial<SaveData> {
  */
 function unionLatches(a: SaveData, b: SaveData): Partial<SaveData> {
   const both = (x: string[] = [], y: string[] = []): string[] => Array.from(new Set([...x, ...y]))
+  const bothN = (x: number[] = [], y: number[] = []): number[] =>
+    Array.from(new Set([...x, ...y])).sort((p, q) => p - q)
   return {
     seenIntro: a.seenIntro || b.seenIntro,
     finaleSeen: a.finaleSeen || b.finaleSeen,
+    // Joined late: raceunlockcard.ts always documented this as cloud-latched, but it shipped without
+    // a union rule — so a progress-winner merge silently dropped it and the one-time card replayed.
+    seenRaceUnlock: a.seenRaceUnlock || b.seenRaceUnlock,
     referralWelcomeClaimed: a.referralWelcomeClaimed || b.referralWelcomeClaimed,
     hazardIntros: both(a.hazardIntros, b.hazardIntros),
     specialIntros: both(a.specialIntros, b.specialIntros),
@@ -90,6 +95,10 @@ function unionLatches(a: SaveData, b: SaveData): Partial<SaveData> {
     championWeeks: both(a.championWeeks, b.championWeeks),
     championDays: both(a.championDays, b.championDays),
     raceRecapDays: both(a.raceRecapDays, b.raceRecapDays),
+    // Chapter trophies are claim latches like championWeeks, numeric and permanent — losing one to a
+    // merge would re-pay a purse; the union also guarantees a trophy earned on either device shows in
+    // the showroom on both. Sorted so the showroom and catch-up card read in chapter order.
+    chapterRewards: bothN(a.chapterRewards, b.chapterRewards),
     endlessDays: bestPerDay(a.endlessDays, b.endlessDays),
     ...mergeCharms(a, b),
   }

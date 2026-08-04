@@ -66,6 +66,15 @@ export interface SaveData {
    *  nothing, it just stops yesterday's result greeting you twice. Rides the synced save so a second
    *  device doesn't re-show it either. */
   raceRecapDays: string[]
+  /**
+   * Chapter numbers (1-based) whose completion reward has been claimed — the permanent trophy list
+   * AND the once-per-chapter purse latch in one field (core/trophies.ts owns the claim; keeping the
+   * two meanings in one list is what lets the retro back-fill and the win-flow grant never disagree).
+   * NEVER trimmed, unlike championWeeks: the showroom displays every entry forever, and the list is
+   * bounded at CHAPTER_COUNT (30) by construction. Rides the cloud-synced save; unioned on merge so
+   * a second device can neither re-claim a purse nor lose a trophy.
+   */
+  chapterRewards: number[]
   // --- Referral / free-spin fields. All default EMPTY/OFF; read shape-tolerantly below. ---
   /** The invite code this player arrived through — a UI mirror of the 'viva-maya:ref' stash
    *  (core/referrals.ts owns registration; the stash stays authoritative). Null when organic. */
@@ -163,6 +172,7 @@ const DEFAULTS: SaveData = {
   championWeeks: [],
   championDays: [],
   raceRecapDays: [],
+  chapterRewards: [],
   referredByCode: null,
   referralWelcomeClaimed: false,
   freeSpins: 0,
@@ -188,6 +198,7 @@ function fresh(): SaveData {
     championWeeks: [],
     championDays: [],
     raceRecapDays: [],
+    chapterRewards: [],
     endlessDays: {},
     charms: [],
   }
@@ -267,6 +278,19 @@ export function coerceSave(raw: unknown): SaveData {
       : []
     base.raceRecapDays = Array.isArray(data.raceRecapDays)
       ? data.raceRecapDays.filter((x): x is string => typeof x === 'string')
+      : []
+    // Chapter trophy/purse latch — absent in older saves → none claimed (the Home catch-up sweep
+    // back-fills once). Positive integers only, deduped; NOT validated against CHAPTER_COUNT here
+    // (this module stays dependency-light — core/trophies.ts imports IT, and its claim guard is what
+    // enforces the range; a stray high number simply never renders, like an unknown charm id).
+    base.chapterRewards = Array.isArray(data.chapterRewards)
+      ? Array.from(
+          new Set(
+            data.chapterRewards.filter(
+              (x): x is number => typeof x === 'number' && Number.isInteger(x) && x > 0
+            )
+          )
+        )
       : []
     // Referral / free-spin fields — absent in older saves → the empty/off defaults.
     base.referredByCode = typeof data.referredByCode === 'string' ? data.referredByCode : null
