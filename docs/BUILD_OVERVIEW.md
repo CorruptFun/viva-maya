@@ -280,10 +280,13 @@ cascade ≥2; **MEGA WIN** at ≥4 (siren + big vibrate + cabinet flash). Win ad
   except the taught-mechanic levels (+3 moves). The `+2` every-5th breather survives
   only in that protected band; above it the breather is a hazard-light table
   (`DIFFICULTY.breatherHazardScale`).
-- **Hazards:** locks from L31 and coats from L56 are live; blockers are built, measured
-  and tested but held back (`DIFFICULTY.hazards.blocker=false`). Bands, densities, caps
+- **Hazards:** locks from L31, coats from L56 and blockers (LOCKBOX) from L86 are all live
+  (Slice 0 flipped the long-staged blocker flag, 2026-08-04). Bands, densities, caps
   and the panic switches all live in the `DIFFICULTY` table — `difficulty.ts` is the
-  spec, `hazards.test.ts` + `feasibility.test.ts` the contract.
+  spec, `hazards.test.ts` + `feasibility.test.ts` the contract. Slice 0 also added two
+  non-hazard mid-game beats: HOUSE MINIMUM score plaques on the L%10∈{1,6} cadence from
+  201 (`levels.ts`, goldens in `levels.test.ts`, calibration guard `minimum.rate.test.ts`)
+  and THE MARKER opt-in side bet from 151 (`marker.ts`, sink guard `marker.rate.test.ts`).
 - **Stars:** graded as a COLLECT RATE on **earned** (unbought) leftover moves — 3★ ≈
   sustain 4.7 collects/move, 2★ ≈ 4.0 (`starThresholds`; L1–7 clamp to the old
   0.5 / 0.25 remaining-moves bars exactly).
@@ -665,8 +668,9 @@ Vite's 500 kB warning threshold (it's Phaser's bundle; a non-fatal warning). `th
 - Plinko bonus drop on a x5+ chain — x4+ in endless, always on x8 UNREAL (rigged-but-honest ball drop
   paying a chain multiplier or a free spin).
 - 300 procedural levels, seeded objectives/moves, stars, unlock progression — with a
-  monotonic difficulty climb to L300 and the hazard system (locks + coats live,
-  blockers built and held back) behind independent panic switches.
+  monotonic difficulty climb to L300 and the full hazard book live (locks 31, coats 56,
+  lockbox blockers 86) behind independent panic switches, plus HOUSE MINIMUM plaque
+  levels from 201 and THE MARKER side bet from 151 (Slice 0).
 - Chapter trophies, escalating one-time purses and THE SHOWROOM (30 plinths, ch.30
   pays the car), trophy ceremony + catch-up card, derived leaderboard tier badges.
 - Drag-scrollable Level Select with from-win chip celebration.
@@ -687,11 +691,11 @@ Vite's 500 kB warning threshold (it's Phaser's bundle; a non-fatal warning). `th
 
 ### Pending / not yet done
 
-- **Blockers are staged, not shipped** — built, measured and tested, held back behind
-  `DIFFICULTY.hazards.blocker = false`; the L86 band turns on with one boolean. (The
-  entry that used to sit here — "difficulty plateaus by ~L24" — is FIXED: the curve
-  overhaul ramps the required ratio monotonically to L300, asserted in
-  `levels.test.ts`.)
+- ~~Blockers are staged, not shipped~~ — **FIXED by Slice 0 (2026-08-04):** the L86 band
+  is live (`DIFFICULTY.hazards.blocker = true`, shipped-rollout pin updated in the same
+  commit). (The entry that used to sit here before it — "difficulty plateaus by ~L24" —
+  was fixed by the curve overhaul: the required ratio ramps monotonically to L300,
+  asserted in `levels.test.ts`.)
 - **Deeper beautification passes** — further visual polish beyond the current cabinet
   dressing.
 - Roadmap "maybe": let the daily spin grant a bonus life (`grantLife` gained its first

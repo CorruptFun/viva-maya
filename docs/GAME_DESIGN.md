@@ -245,6 +245,23 @@ clears a RANDOM present color. Swap-combos (both consumed, epicenter = drag dest
   clears play the "LEVEL n! · N STARS EARNED" star-tally splash (GameScene.milestoneSplash).
   L300's first clear plays the one-time ALL CLEAR finale, then chapter 30's car ceremony.
 
+## The mid-game refresh (Slice 0, 2026-08-04) — new beats from L86 to L300
+- The new-thing cadence never goes quiet past L56 any more: LOCKBOX blockers live at 86 ·
+  2-layer felt 151 · THE MARKER from 151 · 2-hp lockboxes 181 · HOUSE MINIMUM from 201.
+- HOUSE MINIMUM (src/core/levels.ts isMinimumLevel, cadence L%10∈{1,6} from 201; L201 teaches):
+  a brass score plaque REPLACES the third collect objective — win = 2 collect goals + felt +
+  `score >= scoreTarget`. The plaque is priced off the sim's goal-completing runs
+  (MINIMUM_POINTS_PER_GOAL, re-measured by minimum.rate.test.ts; exact targets are GOLDEN in
+  levels.test.ts). The move budget is byte-identical to the 3-objective sibling; DOUBLE SCORE is
+  skipped-not-consumed on plaque levels (levelBoostExclusions — threaded through the stash
+  preview so the promise matches the level start).
+- THE MARKER (src/core/marker.ts, numbered ≥151, never breathers, never endless): an opt-in side
+  bet — the stake is SPENT like a helper-shelf purchase; winning the level pays a non-chip
+  kicker (+1/+2 jackpot pips, or a free spin at 250 that degrades to pips when capped). Strict
+  sink at any win rate — marker.rate.test.ts proves kicker value < stake from the shipped prize
+  tables. Back out free before your first move; first busted marker each day is comped
+  (save.markerCompDay).
+
 ## Hazards — locks, coats, blockers (src/core/difficulty.ts + src/core/hazards.ts)
 - Numbered levels ONLY — endless is a same-board fairness contract and levelSpec is not even on
   its code path. Names are behavioural; appearance is a view-layer skin (view/hazardskins.ts).
@@ -252,10 +269,11 @@ clears a RANDOM present color. Swap-combos (both consumed, epicenter = drag dest
   frees it. Cheapest mechanic (~−4% collects/move); used for texture.
 - COAT (live, from L56): a coated table square that clears when a match lands on it — the one
   win-condition change (the FELT n/m HUD counter; the genre's "jelly" objective).
-- BLOCKER (built, measured, tested — HELD BACK: DIFFICULTY.hazards.blocker=false; band starts
-  L86 when flipped): never matches, broken by adjacent clears. The sharp instrument — ~10× a
-  lock's cost per cell and superlinear — so it is capped hard (≤6, ≤1/column, ≤2/row, never the
-  refill row) and gravity is segment-aware so a column can never wall off.
+- BLOCKER (live, from L86 — Slice 0 flipped the long-staged flag on 2026-08-04): never matches,
+  broken by adjacent clears; skinned as the LOCKBOX. The sharp instrument — ~10× a lock's cost
+  per cell and superlinear — so it is capped hard (≤6, ≤1/column, ≤2/row, never the refill row)
+  and gravity is segment-aware so a column can never wall off. 2-hp lockboxes creep in from L181
+  as originally staged.
 - Densities ramp per band and creep after L121 (DIFFICULTY.bands/density); hazards are strictly
   front-loaded (nothing spawns mid-level) and placed on their OWN RNG stream so they can never
   perturb the level's goals — levels.test.ts freezes L1–30 to prove it. Every 5th level is a
