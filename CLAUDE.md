@@ -78,13 +78,22 @@ Live: <https://corruptfun.github.io/viva-maya/>
   everyone at once.
 - **Endless has a cheat code**, and it is meant to be there — a secret swipe
   pattern on the dead strip below the board mints a free "mega win", each one
-  paying its own Plinko drop (`src/core/cheat.ts`). A run that fires it posts to
-  the daily race as a **pace score**: `recordEndless` takes `{ paced: true }` and
-  clamps it to `ENDLESS_PACE_SCORE` — a top line worth chasing that a typical
-  player beats about one run in seven, so it can never run away with the board.
-  That clamp is the only place it happens; don't route a cheat score around it.
-  The cap is measured, not chosen — `endless.pace.test.ts` re-derives it from the
-  real board and fails if a tuning change puts it out of human reach.
+  paying its own Plinko drop (`src/core/cheat.ts`). A run that fires it still
+  posts to the daily race at what it ACTUALLY SCORED, clamped to the
+  `ENDLESS_MAX_CHEAT_SCORE` backstop (300,000 — `core/endless.ts`).
+  `recordEndless({ paced: true })` is the only place that clamp happens; don't
+  route a cheat score around it. The cap is a **backstop, not a normaliser**
+  (owner calls: 13,000 "pace score" → 100,000 on 2026-07-31 → 300,000 on
+  2026-08-04). The old pace score replaced nearly every cheat run's real score
+  with a flat substitute — the exact behaviour that was complained about. Now a
+  single fire lands in the tens of thousands and posts honestly; what the
+  ceiling bounds is a run that re-fires the move-less cheat indefinitely, which
+  would otherwise own the board forever. `endless.pace.test.ts` guards the
+  CONTRACT, not a recorded number: the ceiling must really clamp, must stay a
+  ceiling and never a floor, and must sit above the best honest measured run
+  but inside 10× it — a retune that walks it out of either band fails the
+  suite. Accepted cost, stated in `endless.ts`'s header: a lightly-cheated run
+  outranks most honest ones.
 - **The endless board sits LOWER than the numbered board, and four constants are
   budgeted against each other.** `BOARD_Y` is the numbered-level seat; endless
   adds `ENDLESS_BOARD_DROP` so the TODAY'S LEADER strip can live *above* the
@@ -184,9 +193,9 @@ real coverage.
 `slots.rate.test.ts`, `plinko.rate.test.ts` and `endless.pace.test.ts` are
 **economy guards**, not unit tests: they measure what a machine actually pays
 against what it charges, and what the board actually scores against the number
-the race posts. If you retune a strip, a price, a paytable or the pace ceiling,
-the recorded numbers in them are what you re-derive — never what you edit to
-make green.
+the race posts. If you retune a strip, a price, a paytable or the cheat
+ceiling, the recorded numbers in them are what you re-derive — never what you
+edit to make green.
 
 ## Layout
 

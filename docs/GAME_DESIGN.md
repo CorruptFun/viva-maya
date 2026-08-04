@@ -215,29 +215,100 @@ clears a RANDOM present color. Swap-combos (both consumed, epicenter = drag dest
   that level ×2 (including moves bonus) — GameScene.addScore applies scoreMult.
 - BEST = highest single-level score, shown home/level-select.
 
-## Levels (src/core/levels.ts)
+## Levels (src/core/levels.ts + src/core/difficulty.ts — those two files are the spec)
 - levelSpec(n) is deterministic per level (seed 0xC0FFEE ^ n·2654435761): same goals every
-  attempt; boards are random per attempt. LEVEL_COUNT = 300 (UI; procedural spec works for any n —
-  difficulty naturally plateaus by ~L24, so L24+ are a steady hard challenge until curve tuning).
-  LevelSelect is a masked, drag-scrollable grid that auto-scrolls to the current level.
+  attempt; boards are random per attempt. LEVEL_COUNT = 300, grouped into 30 chapters of
+  CHAPTER_LEVELS = 10 (see "Chapters, trophies & the showroom"). LevelSelect is a masked,
+  drag-scrollable grid that auto-scrolls to the current level, building only the rows in view.
 - Objectives: collect N of 1 symbol (L1–2), 2 symbols (L3–7), 3 (L8+); per-objective
-  N = min(45, 10 + round(2.2n)). Collected = cleared pieces of that symbol (jackpot pieces excluded).
-- Moves: max(14, 26 − floor(n/2)) + 2·objectiveCount, +4 breather on every 5th level.
+  N = min(110, max(12, round(32·(n/10)^0.34))) — a concave power curve, ≈15 → 32 → 102 at
+  L1 → L10 → L300 (the 110 clamp is never reached inside 1–300). Collected = cleared pieces of
+  that symbol (jackpot pieces excluded).
+- Moves are DERIVED from a density-aware target collect ratio (total collects ÷ moves — the real
+  difficulty knob): 0.50 with 1 objective, 1.15→1.63 across L3–7, then an eased 3-objective
+  onset and a slow log climb (~2.8 at L8 → ~3.5 at L300; the post-L30 branch starts from the
+  exact L30 seam value so the handover can never step easier). Feasibility floor:
+  moves ≥ ceil(total/6.2) + objectiveCount. The +2-moves every-5th breather survives only in the
+  protected band (L1–30); above it the breather is a visibly hazard-light table
+  (DIFFICULTY.breatherHazardScale) and the teaching levels get +3 moves instead.
+- The old ~L24 plateau is GONE (curve overhaul): L1–30 are pinned byte-identical to the
+  pre-overhaul curve (golden table in levels.test.ts), and above L30 the required ratio climbs
+  monotonically to L300 — no level easier than its predecessor except taught mechanics — with
+  the total ramp (hazards on) asserted in feasibility.test.ts. Panic switch:
+  DIFFICULTY.curve.enabled=false restores the pre-overhaul budget exactly, also test-pinned.
 - Win when all objectives hit 0 (cascades count); lose when moves hit 0 first.
-- Stars by remaining-moves fraction: ≥50% → 3★, ≥25% → 2★, else 1★. recordResult persists
+- Stars grade a COLLECT RATE, not a fixed slice of the budget: 3★ ≈ sustain 4.7 collects/move,
+  2★ ≈ 4.0 (starThresholds; L1–7 clamp to the old 0.5/0.25 remaining-moves bars exactly), graded
+  on EARNED leftover moves only — purchased moves never inflate stars. recordResult persists
   best-of stars, unlocks n+1.
-- Star milestone: clearing a level where n%10===0 plays a full-screen "LEVEL n! · N STARS
-  EARNED" splash (heart shower + fanfare) before the normal result card (GameScene.milestoneSplash).
+- Every 10th level: the FIRST-ever clear of a chapter plays the trophy ceremony (below); repeat
+  clears play the "LEVEL n! · N STARS EARNED" star-tally splash (GameScene.milestoneSplash).
+  L300's first clear plays the one-time ALL CLEAR finale, then chapter 30's car ceremony.
+
+## Hazards — locks, coats, blockers (src/core/difficulty.ts + src/core/hazards.ts)
+- Numbered levels ONLY — endless is a same-board fairness contract and levelSpec is not even on
+  its code path. Names are behavioural; appearance is a view-layer skin (view/hazardskins.ts).
+- LOCK (live, from L31): the piece still MATCHES but cannot be SWAPPED until an adjacent clear
+  frees it. Cheapest mechanic (~−4% collects/move); used for texture.
+- COAT (live, from L56): a coated table square that clears when a match lands on it — the one
+  win-condition change (the FELT n/m HUD counter; the genre's "jelly" objective).
+- BLOCKER (built, measured, tested — HELD BACK: DIFFICULTY.hazards.blocker=false; band starts
+  L86 when flipped): never matches, broken by adjacent clears. The sharp instrument — ~10× a
+  lock's cost per cell and superlinear — so it is capped hard (≤6, ≤1/column, ≤2/row, never the
+  refill row) and gravity is segment-aware so a column can never wall off.
+- Densities ramp per band and creep after L121 (DIFFICULTY.bands/density); hazards are strictly
+  front-loaded (nothing spawns mid-level) and placed on their OWN RNG stream so they can never
+  perturb the level's goals — levels.test.ts freezes L1–30 to prove it. Every 5th level is a
+  hazard-light breather (×0.5); the level introducing a live mechanic gets +3 moves and a
+  just-in-time intro card, once (save.hazardIntros).
+- Panic switches: DIFFICULTY.hazards.enabled / DIFFICULTY.curve.enabled — independently
+  reversible, each restores pre-overhaul behaviour exactly, proven by npm test. The DIFFICULTY
+  table carries every knob, cap and measured cost; hazards.test.ts + feasibility.test.ts are the
+  contract.
+
+## Chapters, trophies & the showroom (src/core/trophies.ts + view/showroom.ts + view/trophyceremony.ts)
+- 300 levels = 30 chapters of CHAPTER_LEVELS=10 (core/levels.ts — the one constant; LevelSelect
+  ribbons, the win flow and trophies all read it).
+- First-ever clear of a chapter's closing level pays, once per chapter: a permanent TROPHY
+  (TROPHIES catalogue — chapter 30 is THE CAR on the rotating plinth, 29 its wheels, the
+  showroom's own near-miss tease), a one-time chip PURSE (CHAPTER_PURSES, escalating 100→1,000
+  with steps on every 5th; lifetime total CHAPTER_PURSE_TOTAL = 8,200, test-pinned in
+  trophies.test.ts), and on milestone chapters a BOOST into pendingBoosts.
+- AWARD-FIRST via claimChapter; the claim latch is save.chapterRewards — the SAME list the
+  showroom renders, so the purse latch and the trophy shelf can never disagree. Unioned on
+  device merge; never trimmed. A one-time Home catch-up card (claimChapterCatchUp) back-pays
+  players already past chapter boundaries.
+- THE SHOWROOM (view/showroom.ts): 30 plinths behind doors on the LevelSelect chapter ribbons;
+  locked trophies render as flat navy silhouettes, so every glyph must survive that treatment
+  (the catalogue's comments name the failures — no coins, cards, rosettes or pianos).
+- Leaderboard tier badges (🥉→🏎️) are DERIVED, never submitted: floor(cleared/10) through
+  TROPHY_TIERS via chaptersFromCleared — deliberately the only place that coupling lives. No
+  badge column exists anywhere; see CLAUDE.md's trophy-badge bullet before touching.
 
 ## Endless race — daily boards, weekly season (src/core/endless.ts + GameScene endless mode)
-- Unlocks after ENDLESS_UNLOCK_LEVEL=20 (fixed, independent of LEVEL_COUNT — save.unlocked > 20).
-  Entry: rose ENDLESS pill on Home and LevelSelect.
+- Unlocks after ENDLESS_UNLOCK_LEVEL=10 (fixed, independent of LEVEL_COUNT — save.unlocked > 10;
+  lowered 20 → 10 on 2026-08-03 so the race is reachable sooner, with a one-time DAILY RACE
+  UNLOCKED reveal on Home — view/raceunlockcard.ts). Entry: rose ENDLESS pill on Home and
+  LevelSelect.
 - **A NEW BOARD EVERY DAY.** dayKey(now) = "YYYY-MM-DD" on the **RACE_TZ = America/Edmonton**
   clock. The board opens and closes at midnight Mountain time for EVERYONE at once (06:00 UTC on
   MDT, 07:00 on MST), and the day's top score is crowned (DAILY_PURSE = 150 chips).
-  seedForKey(dayKey) = FNV-1a → endlessRngForDay = mulberry32(seed): everyone gets the SAME board
-  that day; every attempt that day replays the identical starting board (a BEST-score race, not
-  per-attempt random).
+  endlessRngForDay(day, salt) = mulberry32(FNV-1a of the salted day key): everyone gets the SAME
+  board that day; every attempt that day replays the identical starting board (a BEST-score race,
+  not per-attempt random). Since 2026-08-04 the key is SALTED and NORMALISED — next bullet.
+- **The board is salted and normalised (core/racesalt.ts + core/boardpick.ts, migrations
+  0023/0024).** The raw seed was a public hash of the date, so any future day's board could be
+  generated and solved in advance. Now: (1) the server mints a random per-day SALT only once the
+  day has OPENED and refuses to hand it out before then — mixed into the seed it makes the board
+  unknowable in advance; a posted score must carry the day's salt or 0024's guard refuses it
+  (which is what stops a stale cached client posting an old-board score). SALT_ACTIVE_FROM in
+  core/endless.ts and v_salt_from in 0024 are the same switch on two sides of the wire — change
+  both. Offline fallback: the unsalted board is playable but its score cannot post. (2) boardpick
+  NORMALISES the day by deterministic rejection sampling — it walks day, day#1, day#2… until the
+  greedy sim scores inside [8000, 16000], so the size of a big day is the player's doing, not the
+  hash's (raw day boards spanned 6.1×; normalised 1.9×). boardpick.test.ts pins the chosen
+  offsets as GOLDEN — a failure there means the race boards MOVED; ship board-affecting changes
+  behind a new activation date, never re-record.
 - **THE WEEK IS THE SEASON.** weekKey(now) = ISO-8601 "YYYY-Www" of the race calendar
   (Thursday-anchored), rolling over Monday midnight Mountain — the same instant Sunday's board
   closes. A week's standing is the SUM of that player's daily bests inside
@@ -334,17 +405,23 @@ clears a RANDOM present color. Swap-combos (both consumed, epicenter = drag dest
 - Buys are idle-only (the bar dims mid-resolve, hides on level end); reduced-motion / haptics / mute aware.
 
 ## Save (src/core/save.ts — localStorage key 'viva-maya:v1', all access try/catch)
-v11: { v:11, best, unlocked, stars{level:1..3}, lastSpinDate|null, streak, pendingBoosts[],
-      endlessDays{"YYYY-MM-DD": score}, lives, livesAnchor, chips, + v7 personal-warmth fields,
-      + v8 jackpot-wheel meter, champion claims (championWeeks + championDays), referral/free-spin
-      fields, + v10 charms[] (current series), charmSeries, charmsAllTime, winStreak }
+v13: { v:13, best, unlocked, stars{level:1..3}, lastSpinDate|null, streak, pendingBoosts[],
+      endlessDays{"YYYY-MM-DD": score}, lives, livesAnchor, chips, + v7 personal-warmth fields
+      (incl. later shape-tolerant latches: heldBoosts, seenRaceUnlock), + v8 jackpot-wheel meter,
+      champion claims (championWeeks + championDays), raceRecapDays, chapterRewards (trophy shelf
+      + purse latch in one list), referral/free-spin fields, + v10 charms[] (current series),
+      charmSeries, charmsAllTime, winStreak, + v13 handle/handleSetAt (the cloud-carried race
+      name + its merge tiebreak) }
 Migrations: v1 {best} → v2 (+unlocked/stars) → v3 (+daily) → v4 (+endless: endlessWeek
 "YYYY-Www", endlessBest) → v5 (+lives/energy: lives, livesAnchor — pre-v5 saves start full)
 → v6 (grace refill: tops every save to full — lives=LIVES_MAX, livesAnchor=0 — on upgrade)
 → v7 (+personal-warmth fields, §E9) → v8 (+jackpot-wheel meter; absent in older saves → 0)
 → v9 (+hazard/special teach latches) → v10 (+Lucky Deal & charms: charms[], charmSeries, charmsAllTime,
 winStreak — absent in older saves → an empty Series I album and a cold streak)
-→ v11 (endless goes DAILY: endlessWeek/endlessBest → endlessDays, +championDays).
+→ v11 (endless goes DAILY: endlessWeek/endlessBest → endlessDays, +championDays)
+→ v12 (+raceRecapDays, the seen-latch for yesterday's result card) → v13 (+handle/handleSetAt).
+Fields whose absence has a safe default (chapterRewards, heldBoosts, seenRaceUnlock…) are added
+WITHOUT a version bump — the shape-tolerant loader defaults them.
 The pre-v11 endless pair is deliberately NOT carried across — it held a best for a week-long board that
 no longer exists, and filing it under any day would credit a score nobody could earn on that layout.
 Loader is shape-tolerant (old saves default new fields). Mute flag is separate: 'viva-maya:muted'.
@@ -411,7 +488,7 @@ Deploy: GitHub Pages. With workflow scope: push to main → .github/workflows/de
 builds and deploys automatically. Legacy fallback: publish dist/ to gh-pages branch.
 
 ## Roadmap (agreed direction)
-DONE: streak flame on Home (addStreakBadge) · endless daily-seed race after L20 (shared board,
+DONE: streak flame on Home (addStreakBadge) · endless daily-seed race after L10 (shared board,
 BEST race — src/core/endless.ts) · star-milestone celebration every 10 levels (milestoneSplash) ·
 lives/energy (lose-only, 5-pool, 20-min regen, grace below L10 — src/core/lives.ts) · in-level helper bar (spend
 earned chips on +1/+5 moves or a targeted bomb for the current level — src/core/store.ts POWER_ITEMS).

@@ -25,8 +25,9 @@ is called out in [§8](#8-build-health--status).
 
 **Viva Maya** is a casino-themed match-3 PWA — the "swap adjacent pieces, clear
 runs of 3+, chain cascades, earn special pieces" board loop dressed as a modern
-slot screen, with a light lives/energy pool, a daily bonus spin, and a weekly
-endless race wrapped around it. Mobile-first, installable, fully offline.
+slot screen, with a light lives/energy pool, a daily bonus spin, and a daily
+endless race (summed into a weekly season) wrapped around it. Mobile-first,
+installable, fully offline.
 
 | | |
 |---|---|
@@ -87,10 +88,16 @@ data (`ClearWave`, `FallMove[]`, `Spawn[]`, `BlastEvent[]`). Tuning happens in
 | `src/core/board.ts` | The board model: fill-without-matches, run detection, match waves, special creation, `blastOf` (the one definition of what each special detonates) + combo/chain detonation (`chainExpand`), gravity, refill, valid-move/hint search, `plant` |
 | `src/core/plinko.ts` | Plinko bonus drop: the weighted slot table, `rollSlotIndex`, and `dropPath` — the RIG that builds a bounce sequence guaranteed to reach the pre-chosen slot |
 | `src/core/levels.ts` | `LEVEL_COUNT=300`; deterministic `levelSpec(n)` — seeded per-level objectives, symbol count, and move budget |
-| `src/core/save.ts` | `localStorage` save (key `viva-maya:v1`, schema **v8**): load/persist, shape-tolerant migrations, `recordResult`/`recordScore`/`takePendingBoosts` |
+| `src/core/save.ts` | `localStorage` save (key `viva-maya:v1`, schema **v13**): load/persist, shape-tolerant migrations, `recordResult`/`recordScore`/`takePendingBoosts` |
 | `src/core/daily.ts` | Daily check-in logic: `todayKey`, streak math (`advanceDailyRitual` + `milestoneDue`), `CHECKIN_CHIPS` ladder, and the classic `PRIZES` table (now the slots' gift floor — see `freeSlotSpin` in `store.ts`) |
-| `src/core/endless.ts` | Endless race: `dayKey`/`weekKey` (**fixed `RACE_TZ = America/Edmonton`**), `dayEndsAt`/`weekEndsAt`/`formatRaceRemaining`, `weekKeyOfDay` (the daily→weekly rollup), `seedForKey` (FNV-1a), shared seeded RNG, `endlessWeekStanding` (daily bests summed), `recordEndless`, `endlessUnlocked` (after L20) |
+| `src/core/endless.ts` | Endless race: `dayKey`/`weekKey` (**fixed `RACE_TZ = America/Edmonton`**), `dayEndsAt`/`weekEndsAt`/`formatRaceRemaining`, `weekKeyOfDay` (the daily→weekly rollup), `seedForKey` (FNV-1a), shared seeded RNG, `endlessWeekStanding` (daily bests summed), `recordEndless` (with the `ENDLESS_MAX_CHEAT_SCORE` backstop), `endlessUnlocked` (after L10), `endlessRngForDay` (salted — see §3) |
 | `src/core/lives.ts` | Lives/energy pool: wall-clock regen banking, `spendLife`/`grantLife`/`refreshLives`, `devSetLives`, `formatCountdown` |
+| `src/core/difficulty.ts` | Every difficulty/hazard knob in one pure-data table (`DIFFICULTY`): bands, densities, caps, breather/teaching rules, independent panic switches |
+| `src/core/hazards.ts` | Hazard placement + behaviour (locks/coats/blockers) — its own RNG stream, strictly front-loaded (nothing spawns mid-level) |
+| `src/core/trophies.ts` | Chapter trophies: catalogue (`TROPHIES`), purse ladder (`CHAPTER_PURSES`), tier ladder (`TROPHY_TIERS`), claim latch (`save.chapterRewards`) |
+| `src/core/racesalt.ts` | Fetch + cache of the race day's server-minted board salt (see the endless section) |
+| `src/core/boardpick.ts` | Race-board normalisation — deterministic rejection-sampled day offsets (`endlessBoardRng`) |
+| `src/core/cheat.ts` | The endless cheat code — swipe-pattern recogniser; its scores post through `endless.ts`'s `ENDLESS_MAX_CHEAT_SCORE` backstop |
 
 **Scenes (Phaser)**
 
@@ -98,7 +105,7 @@ data (`ClearWave`, `FallMove[]`, `Spawn[]`, `BlastEvent[]`). Tuning happens in
 |---|---|
 | `src/scenes/BootScene.ts` | Builds all textures, then routes to `home` (or a DEV-param destination) |
 | `src/scenes/HomeScene.ts` | Home: heart emblem, marquee, lives HUD + streak flame, PLAY / LEVELS / LUCKY SLOTS / ENDLESS entries, help + sound chips |
-| `src/scenes/LevelSelectScene.ts` | Masked, drag-scrollable 5-wide grid of 100 level chips (stars/locks), auto-scrolled to current; endless banner; from-win chip celebration |
+| `src/scenes/LevelSelectScene.ts` | Masked, drag-scrollable 5-wide grid of 300 level chips (stars/locks) — rows built only as they scroll into view — auto-scrolled to current; endless banner; from-win chip celebration |
 | `src/scenes/GameScene.ts` | The game: turn state machine, input (swipe + tap-tap), resolve/cascade loop, HUD, boosts, lives gate, win/lose/endless endings, win-sequence celebration |
 
 **View (shared rendering)**
@@ -257,21 +264,47 @@ The payoff fires on the FLOOR hit, so the slot lights while the chip is still ra
 cascade ≥2; **MEGA WIN** at ≥4 (siren + big vibrate + cabinet flash). Win adds
 `+60 × unused moves`. `BEST` = highest single score, persisted.
 
-### Levels — `src/core/levels.ts`, `LevelSelectScene`
-`LEVEL_COUNT=100`. `levelSpec(n)` is deterministic (seed `0xC0FFEE ^ n·2654435761`):
-same goals every attempt, random board per attempt.
+### Levels — `src/core/levels.ts` + `src/core/difficulty.ts`, `LevelSelectScene`
+`LEVEL_COUNT=300` (30 chapters × `CHAPTER_LEVELS=10`). `levelSpec(n)` is deterministic
+(seed `0xC0FFEE ^ n·2654435761`): same goals every attempt, random board per attempt.
 - **Objectives:** collect N of 1 symbol (L1–2), 2 (L3–7), 3 (L8+); each
-  `N = min(45, 10 + round(2.2n))`.
-- **Moves:** `max(14, 26 − floor(n/2)) + 2·objectiveCount`, `+4` breather every 5th
-  level.
-- **Stars:** by remaining-moves fraction — ≥50% → 3★, ≥25% → 2★, else 1★.
-- **Level Select:** masked, drag-scrollable 5-wide grid, auto-scrolled so the current
-  level sits mid-viewport; taps are suppressed once a press travels (scroll vs. tap).
+  `N = min(110, max(12, round(32·(n/10)^0.34)))` — a concave power curve,
+  ≈15 → 32 → 102 at L1 → L10 → L300 (the 110 clamp is never reached inside 1–300).
+- **Moves:** derived from a density-aware target COLLECT RATIO (total collects ÷ moves
+  — the real difficulty knob): 0.50 with one objective, 1.15→1.63 across L3–7, then an
+  eased 3-objective onset and a slow log climb (~2.8 at L8 → ~3.5 at L300, anchored at
+  the L30 seam so the handover never steps easier), floored at
+  `ceil(total/6.2) + objectiveCount`. L1–30 are pinned **byte-identical** to the
+  pre-overhaul curve (golden table in `levels.test.ts`); above L30 the required ratio
+  climbs **monotonically** to L300 — no plateau, no level easier than its predecessor
+  except the taught-mechanic levels (+3 moves). The `+2` every-5th breather survives
+  only in that protected band; above it the breather is a hazard-light table
+  (`DIFFICULTY.breatherHazardScale`).
+- **Hazards:** locks from L31 and coats from L56 are live; blockers are built, measured
+  and tested but held back (`DIFFICULTY.hazards.blocker=false`). Bands, densities, caps
+  and the panic switches all live in the `DIFFICULTY` table — `difficulty.ts` is the
+  spec, `hazards.test.ts` + `feasibility.test.ts` the contract.
+- **Stars:** graded as a COLLECT RATE on **earned** (unbought) leftover moves — 3★ ≈
+  sustain 4.7 collects/move, 2★ ≈ 4.0 (`starThresholds`; L1–7 clamp to the old
+  0.5 / 0.25 remaining-moves bars exactly).
+- **Level Select:** masked, drag-scrollable 5-wide grid, rows built only as they scroll
+  into view, auto-scrolled so the current level sits mid-viewport; taps are suppressed
+  once a press travels (scroll vs. tap).
 
-### Stars & 10-level milestones — `GameScene.finishWin` / `milestoneSplash`
-`recordResult` persists best-of stars and unlocks `n+1`. Clearing any level where
-`n % 10 === 0` plays a full-screen "LEVEL n! · ★ N STARS EARNED" splash (heart shower
-+ fanfare + jackpot strike) before the calm result card.
+### Stars, chapter ceremonies & milestones — `GameScene.finishWin`, `core/trophies.ts`
+`recordResult` persists best-of stars and unlocks `n+1`. The **first-ever** clear of a
+chapter-closing level (`n % 10 === 0`) plays the chapter trophy CEREMONY instead of the
+old milestone splash: a permanent trophy into THE SHOWROOM (`view/showroom.ts`, doors
+on the LevelSelect chapter ribbons), a one-time escalating purse (`CHAPTER_PURSES`,
+100→1,000, lifetime `CHAPTER_PURSE_TOTAL` 8,200 — test-pinned), and a boost on every
+5th chapter. Award-first; the claim latch is `save.chapterRewards`, the same list the
+showroom renders, unioned on device merge (a one-time Home catch-up card back-pays
+players already past boundaries). **Repeat** clears of a milestone level play the
+full-screen "LEVEL n! · ★ N STARS EARNED" star-tally splash (heart shower + fanfare)
+before the calm result card. L300's first clear plays the one-time ALL CLEAR finale,
+then hands off to chapter 30's car ceremony. Leaderboard tier badges (🥉→🏎️) are
+DERIVED client-side from `level_progress.cleared` via `chaptersFromCleared` — never
+submitted, no badge column anywhere.
 
 ### Lives / energy — `src/core/lives.ts`, `GameScene` gate
 Pool: `LIVES_MAX=5`, one life every `LIFE_REGEN_MS=20min` of **wall-clock** time (device
@@ -318,15 +351,25 @@ Home shows a 🔥 flame pill "N DAY STREAK" when `streak > 0` (the flame is a se
 text object — `letterSpacing` splits emoji surrogate pairs in Phaser's renderer).
 
 ### Endless race: daily boards, weekly season — `src/core/endless.ts`, `GameScene` endless mode
-Unlocks after **Level 20** (`endlessUnlocked` = `save.unlocked > ENDLESS_UNLOCK_LEVEL`,
-`ENDLESS_UNLOCK_LEVEL=20`). Entry via the rose ENDLESS pill on Home and Level Select.
-Everyone on the same race **day** (midnight-to-midnight America/Edmonton — `RACE_TZ`) plays the
-**same** board (`seedForKey(dayKey)` FNV-1a →
-`mulberry32`); a fixed budget (`ENDLESS_MOVES=30`), all 6 symbols, **no objectives, no boosts**
-(planting would change the shared board and break the race). Ends only on moves-out
-(`finishEndless`). `recordEndless` keeps the max per day in `save.endlessDays` (keyed by the day
-captured at board creation, so a run crossing midnight is still attributed correctly) and also
-updates all-time `save.best`.
+Unlocks after **Level 10** (`endlessUnlocked` = `save.unlocked > ENDLESS_UNLOCK_LEVEL`,
+`ENDLESS_UNLOCK_LEVEL=10` — lowered 20 → 10 on 2026-08-03 so the race is reachable sooner,
+announced once by the DAILY RACE UNLOCKED card). Entry via the rose ENDLESS pill on Home and
+Level Select. Everyone on the same race **day** (midnight-to-midnight America/Edmonton —
+`RACE_TZ`) plays the **same** board. Since 2026-08-04 that board is **salted and normalised**:
+the server mints a per-day salt only once the day has OPENED (`core/racesalt.ts`;
+`endlessRngForDay(day, salt)` mixes it into the FNV-1a seed, `SALT_ACTIVE_FROM` mirrored by
+migration 0024's `v_salt_from` — change one, change both), so the board is unknowable in
+advance and a posted score must carry the day's salt or 0024's guard refuses it; then
+`core/boardpick.ts` walks `day`, `day#1`, `day#2`… until the greedy sim scores inside
+[8000, 16000], so how big a day CAN be is the player's doing rather than the hash's
+(`boardpick.test.ts` pins the chosen offsets as GOLDEN — a failure there means the race boards
+moved; ship such changes behind a new activation date). A fixed budget (`ENDLESS_MOVES=30`),
+all 6 symbols, **no objectives, no boosts** (planting would change the shared board and break
+the race). Ends only on moves-out (`finishEndless`). `recordEndless` keeps the max per day in
+`save.endlessDays` (keyed by the day captured at board creation, so a run crossing midnight is
+still attributed correctly) and also updates all-time `save.best`. A run that fired the endless
+cheat (`core/cheat.ts`) posts what it actually scored through the `ENDLESS_MAX_CHEAT_SCORE`
+backstop (300,000) — contract in `endless.ts`'s header, guarded by `endless.pace.test.ts`.
 
 A **week's** standing is the SUM of that player's daily bests inside it (`endlessWeekStanding`,
 mirrored server-side by the `endless_weekly_totals` view). Miss a day and you bank a zero for it
@@ -423,8 +466,8 @@ A multi-beat celebration over the still-visible board, then the animated result 
   rolls `0→chipReward`, where `chipReward = stars·8 + movesLeft·2`, cosmetic only).
 
 The whole sequence is **tap-to-skip** (`overlaySettle` fast-forwards to the settled
-card). Milestone levels route through `milestoneSplash` instead, then show the calm
-card. *(This celebration is fully present in the committed source and compiles; per
+card). Chapter-closing levels route through the trophy ceremony on their first-ever
+clear (`chapterCeremony`) and `milestoneSplash` on repeats, then show the calm card. *(This celebration is fully present in the committed source and compiles; per
 the task brief it may have landed very recently.)*
 
 ### Swap-sound picker — `src/audio/sfx.ts`, `ui.ts openSoundPanel`
@@ -441,13 +484,13 @@ and a copyright line.
 
 ## 4. Save schema & migrations
 
-`localStorage` key **`viva-maya:v1`**; current schema version **`v: 6`**. All access is
+`localStorage` key **`viva-maya:v1`**; current schema version **`v: 13`**. All access is
 `try/catch` wrapped — storage failures (private mode, full) never crash the game; the
 loader is shape-tolerant and defaults any missing field.
 
 ```ts
 interface SaveData {
-  v: 6
+  v: 13
   best: number                 // highest single score (levels + endless feed in)
   unlocked: number             // highest level attemptable (1-based)
   stars: Record<number, number> // best stars per completed level (1–3)
@@ -458,11 +501,17 @@ interface SaveData {
                                //   week's standing is the sum of the days inside it
   lives: number                // current lives (0..LIVES_MAX)
   livesAnchor: number          // epoch ms the current regen cycle started (0 = full)
+  // …plus the v7–v13 field groups: personal-warmth latches (incl. heldBoosts,
+  // seenRaceUnlock), jackpotMeter, champion claims (championWeeks/championDays),
+  // raceRecapDays, chapterRewards, referral + free-spin fields, charms
+  // (charms/charmSeries/charmsAllTime), winStreak, and the v13 identity pair
+  // (handle, handleSetAt). src/core/save.ts is the field-by-field spec.
 }
 ```
 
-Separate keys: **`viva-maya:muted`** (`'1'`/`'0'`) and **`viva-maya:swapSound`**
-(`silk`/`chime`/`aurora`/`classic`).
+Separate keys: **`viva-maya:muted`** (`'1'`/`'0'`), **`viva-maya:swapSound`**
+(`silk`/`chime`/`aurora`/`classic`), **`viva-maya:ref`** (the referral-code stash —
+`core/referrals.ts` owns it) and **`vm.boardpick`** (the race-board offset cache).
 
 **Migration history** (each version adds fields; old saves default the new ones):
 
@@ -471,11 +520,21 @@ Separate keys: **`viva-maya:muted`** (`'1'`/`'0'`) and **`viva-maya:swapSound`**
 | v1 | `best` |
 | v2 | `unlocked`, `stars` |
 | v3 | daily spin (`lastSpinDate`, `streak`, `pendingBoosts`) |
-| v4 | endless race (`endlessWeek`, `endlessBest`) |
-| v9 | hazard teach-once latches (`hazardIntros`) |
-| **v10** | **Endless goes DAILY** — `endlessWeek`/`endlessBest` → `endlessDays` (per-race-day bests, pruned to ~16), plus `championDays` beside `championWeeks`. The old pair is NOT migrated: it held a best for a week-long board that no longer exists, and filing it under any day would credit a score nobody could earn on that layout |
+| v4 | endless race (`endlessWeek`, `endlessBest` — both retired at v11) |
 | v5 | lives/energy (`lives`, `livesAnchor`) — pre-v5 saves start full |
 | **v6** | **Grace refill** — the pool grew (3→10) and the break shortened; any save with stored `v < 6` is topped up to full (`lives = LIVES_MAX`, `livesAnchor = 0`) on load so no one is stranded at the old, stingier count |
+| v7 | personal-warmth fields (§E9: `firstPlayDate`, `lastOpenDate`, `occasionsSeen`, `specialIntros`, `finaleSeen`, `seenIntro`…) |
+| v8 | jackpot-wheel meter (`jackpotMeter`) |
+| v9 | hazard teach-once latches (`hazardIntros`) |
+| v10 | Lucky Deal / charms (`charms`, `charmSeries`, `charmsAllTime`, `winStreak`) |
+| **v11** | **Endless goes DAILY** — `endlessWeek`/`endlessBest` → `endlessDays` (per-race-day bests, pruned to ~16), plus `championDays` beside `championWeeks`. The old pair is NOT migrated: it held a best for a week-long board that no longer exists, and filing it under any day would credit a score nobody could earn on that layout |
+| v12 | `raceRecapDays` — the seen-latch for yesterday's result-recap card |
+| v13 | identity: `handle` + `handleSetAt` (the cloud-carried race name and its merge tiebreak) |
+
+Fields whose absence has a safe default are also added **without** a version bump — the
+shape-tolerant loader simply defaults them (`chapterRewards`, `heldBoosts`,
+`seenRaceUnlock`, the referral/free-spin group…). Save.ts's own migration comments are
+the authority on which fields rode which bump.
 
 ---
 
@@ -518,7 +577,7 @@ All gated behind `import.meta.env.DEV` (stripped from production). Appended to t
 | Param | Effect |
 |---|---|
 | `?level=N` | Boot straight into level N |
-| `?endless=1` | Boot the weekly endless race |
+| `?endless=1` | Boot today's daily endless race |
 | `?levels[=rich\|out\|empty\|loading\|error]` | LEVEL RACE ladder fixtures (mirrors `?race`; every variant forces levels mode) |
 | `?lives=N` | Force the life pool to N (test the gate) |
 | `?scene=daily\|home\|levelselect` | Boot a specific scene |
@@ -578,17 +637,18 @@ Pages artifact, and deploys via `actions/deploy-pages@v4` (Node 22, Pages permis
 
 ### Verification results (this pass)
 
-Last verified **2026-07-25**.
+Last verified **2026-08-04**.
 
 | Check | Command | Result |
 |---|---|---|
-| Type check | `npx tsc --noEmit` | **PASS** — exit 0, no errors |
-| Unit tests | `npm test` | **PASS** — 320 tests across 20 files (colocated `*.test.ts`; the count above was stale from the 12-file era — re-derive it, don't trust it) |
-| Production build | `npm run build` | **PASS** — exit 0; 90 modules transformed, `dist/` + SW written in ~3 s |
+| Type check | `tsc` (first half of `npm run build`) | **PASS** — exit 0, no errors |
+| Unit tests | `npm test` | **PASS** — 522 tests across 32 files (colocated `*.test.ts`; this count rots fast — re-derive it, don't trust it) |
+| Production build | `npm run build` | **PASS** — exit 0; `dist/` + SW written in ~4 s |
 
-Build output of note: the main JS chunk is **1,507.62 kB (gzip 425.19 kB)** — over
-Vite's 500 kB warning threshold (it's Phaser's bundle; a non-fatal warning suggesting
-manual chunking/code-splitting). The SW precaches 24 entries (~1769 KiB). No errors.
+Build output of note: the main JS chunk is **1,704.16 kB (gzip 489.12 kB)** — over
+Vite's 500 kB warning threshold (it's Phaser's bundle; a non-fatal warning). `three`,
+`supabase`, `stats` and `plinko` are already split into their own chunks on purpose
+(`vite.config.ts`). The SW precaches 27 entries (~2633 KiB). No errors.
 
 > **Deploy verification — hash comparison is a false alarm here.** CI's `npm ci` build
 > does *not* byte-match a local `npm run build` of the same commit, so the `assets/index-*.js`
@@ -604,14 +664,19 @@ manual chunking/code-splitting). The SW precaches 24 entries (~1769 KiB). No err
 - Full special-piece matrix + combos + chain detonation.
 - Plinko bonus drop on a x5+ chain — x4+ in endless, always on x8 UNREAL (rigged-but-honest ball drop
   paying a chain multiplier or a free spin).
-- 300 procedural levels, seeded objectives/moves, stars, unlock progression.
+- 300 procedural levels, seeded objectives/moves, stars, unlock progression — with a
+  monotonic difficulty climb to L300 and the hazard system (locks + coats live,
+  blockers built and held back) behind independent panic switches.
+- Chapter trophies, escalating one-time purses and THE SHOWROOM (30 plinths, ch.30
+  pays the car), trophy ceremony + catch-up card, derived leaderboard tier badges.
 - Drag-scrollable Level Select with from-win chip celebration.
 - Lives/energy pool (5, 20-min wall-clock regen, lose-only + quit-after-move, entry
   gate, grace below L10, v6 grace refill). Retuned 2026-07-21 from the original
   10 / 8-min, which was effectively infinite.
 - Daily bonus spin (always-wins, weighted prizes, streak, 5th-day double, boosts
   applied to next numbered level).
-- Endless weekly-seed race (shared board, fixed budget, per-week best).
+- Endless daily race — salted + normalised shared board, fixed budget, per-day bests
+  summed into a weekly season (daily winner + weekly champion purses).
 - Slot-cabinet visuals (marquee bulbs, glow, ambient backdrop, drifters).
 - Win-sequence celebration (light-up, rank wordmark, coin roll-up payout, fireworks,
   milestone splash) — present & compiling; tap-to-skip.
@@ -622,13 +687,15 @@ manual chunking/code-splitting). The SW precaches 24 entries (~1769 KiB). No err
 
 ### Pending / not yet done
 
-- **Difficulty-curve tuning** — `levelSpec` difficulty plateaus by ~L24, so L24–100
-  are a flat hard challenge until the curve is tuned from real play. (`levels.ts`,
-  `docs/GAME_DESIGN.md` roadmap.)
+- **Blockers are staged, not shipped** — built, measured and tested, held back behind
+  `DIFFICULTY.hazards.blocker = false`; the L86 band turns on with one boolean. (The
+  entry that used to sit here — "difficulty plateaus by ~L24" — is FIXED: the curve
+  overhaul ramps the required ratio monotonically to L300, asserted in
+  `levels.test.ts`.)
 - **Deeper beautification passes** — further visual polish beyond the current cabinet
   dressing.
-- Roadmap "maybe": let the daily spin grant a bonus life (`grantLife` exists but is
-  currently unused by any caller).
+- Roadmap "maybe": let the daily spin grant a bonus life (`grantLife` gained its first
+  caller in the lives-gate chip refill, §G10 — the daily-spin path itself is unbuilt).
 
 ### Fixed this pass (2026-07-25) — `6ab80b5`
 
@@ -648,28 +715,34 @@ manual chunking/code-splitting). The SW precaches 24 entries (~1769 KiB). No err
 
 ### Doc/copy drift vs. code — honest notes
 
-The previous ledger here had itself gone stale (it claimed a 10-pool / 8-min lives tuning
-and a v6 save that are both a generation behind). Re-verified against code 2026-07-25:
+This ledger keeps rotting: the 2026-07-25 pass fixed five items and then aged out
+itself — its item 3 declared "all three updated" while this file's §Levels went on
+saying `LEVEL_COUNT=100` for another ten days, and its item 5's "L20" grew a further
+step. Every claim below re-verified against code **2026-08-04**:
 
-1. **Live copy bug — the help panel misstates life regen.** `ui.ts` `HELP_SECTIONS` LIVES
-   said *"One returns every 8 minutes"*; `LIFE_REGEN_MS` is **20 min**. Now derived from
-   `config.ts` so it cannot drift again. (The gate/HUD countdowns always read live config
-   and were correct.)
-2. **`docs/GAME_DESIGN.md` is two schema versions behind** on saves — it documents `v: 6`
-   and migrations to v6; the code is **v8** (v7 personal-warmth fields, v8 jackpot-wheel
-   meter). Updated in this pass.
-3. **`LEVEL_COUNT` is 300**, not 100. Was stale in `GAME_DESIGN.md`, this file, and
-   `README.md`; all three updated.
-4. **Lives are 5 / 20-min / grace below L10** (`config.ts`, retuned 2026-07-21). Was stale
-   as 10 / 8-min in `GAME_DESIGN.md` and this file; both updated. `README.md` was already
-   correct.
-5. **Endless unlock is L30** (`ENDLESS_UNLOCK_LEVEL` in `core/endless.ts`, independent of
-   `LEVEL_COUNT`). `GAME_DESIGN.md` already states this correctly — the prior note here
-   claiming otherwise was itself out of date. *(Superseded 2026-07-27: retuned to **L20** so
-   the race is reachable sooner. The two copy surfaces that hardcoded "30" — the help
-   panel's ENDLESS blurb and the locked race module — now derive from the constant.)*
-6. **`README.md` is no longer materially behind** — Phase 5 is checked and the round-4
-   knobs are listed. Remaining gap was "100 levels" + "v6 save", now fixed. Its license
-   section is current.
+1. **§Levels above finally matches the code (and this ledger).** The body still carried
+   `LEVEL_COUNT=100` and all three pre-overhaul formulas
+   (`min(45, 10 + round(2.2n))`, `max(14, 26 − floor(n/2))`, fixed-fraction stars).
+   Rewritten from `levels.ts` + `difficulty.ts`; stars are collect-rate-graded since
+   §G3.
+2. **The ~L24 difficulty plateau is FIXED, not pending.** The curve overhaul ramps the
+   required ratio monotonically to L300 (`levels.test.ts` asserts it, with the
+   pre-overhaul curve preserved behind `DIFFICULTY.curve.enabled`); §Pending no longer
+   lists it.
+3. **Endless unlock is L10** (lowered 2026-08-03). Was stated as L20 here (twice) and in
+   `GAME_DESIGN.md`; the constant's recorded history is now 30 → 20 → 10.
+4. **The save schema is v13** (`handle`/`handleSetAt` identity fields). §4 above said
+   `v: 6` and filed the daily-race transition under v10; the file map said v8;
+   `GAME_DESIGN.md` said v11. All re-derived from `save.ts`'s migration comments — which
+   also note that safe-default fields (`chapterRewards`, `heldBoosts`…) ride in WITHOUT
+   version bumps, so a field's presence does not date it.
+5. **The race board is salted + normalised since 2026-08-04.** The plain
+   `seedForKey(day)` description was accurate only before that date — see the endless
+   section, `core/racesalt.ts` + `core/boardpick.ts`, and migrations 0023/0024.
+6. **The cheat ceiling is `ENDLESS_MAX_CHEAT_SCORE` — a 300,000 BACKSTOP** (owner calls
+   2026-07-31 and 2026-08-04), not the retired `ENDLESS_PACE_SCORE` "pace score" that
+   the repo `CLAUDE.md` still described. Contract in `endless.ts`'s header, guarded by
+   `endless.pace.test.ts`.
 
-None of the above affect the type check, the tests, or the build — all three pass cleanly.
+None of the above affect the type check, the tests, or the build — all three pass
+cleanly (verification table above, re-run 2026-08-04).
