@@ -14,6 +14,7 @@ import { isCloudConfigured } from '../core/cloud'
 import { rewardLabel } from '../core/promo'
 import { openPromoModal } from '../view/promomodal'
 import { D, E, OVERSHOOT, backOut, fadeRise, popIn, stagger } from '../view/motion'
+import { bakePanel } from '../view/platekit'
 import { quality } from '../view/quality'
 import { getTheme, prefersReducedMotion, reduceFlashing } from '../view/theme'
 import { ensurePieceTexture } from '../view/textures'
@@ -261,16 +262,21 @@ export class StoreScene extends Phaser.Scene {
     const chips = loadSave().chips
     const afford = chips >= item.price
     const row = this.hold(this.add.container(0, 0))
-    const g = this.add.graphics()
     const h = 88
-    const y = cy - h / 2
-    g.fillStyle(T.shadow, 0.16)
-    g.fillRoundedRect(CARD_X + 3, y + 6, CARD_W, h, 24)
-    g.fillStyle(T.cardFill, 1)
-    g.fillRoundedRect(CARD_X, y, CARD_W, h, 24)
-    g.lineStyle(2.5, T.goldBezel, 0.9)
-    g.strokeRoundedRect(CARD_X, y, CARD_W, h, 24)
-    row.add(g)
+    // Lifted shelf goods: a softshadow float under one theme-keyed baked plate. Rows are rebuilt on
+    // every affordability refresh, so the bake also stops each refresh re-tessellating N Graphics.
+    row.add(this.add.image(CARD_X + CARD_W / 2, cy + 8, 'softshadow').setDisplaySize(CARD_W + 48, h + 48).setAlpha(0.22))
+    row.add(
+      this.add.image(
+        CARD_X + CARD_W / 2,
+        cy,
+        bakePanel(this, `store:row:${T.id}:${CARD_W}x${h}`, CARD_W, h, 24, {
+          bezel: T.goldBezel,
+          bezelWidth: 2.5,
+          shadowDist: 6,
+        })
+      )
+    )
 
     // S2 · idle bob — each icon drifts a few px up-and-back on the shared breathing ease so the shelf
     // reads as alive, not a static price list. Reduced motion → no tween (the icon simply rests at cy).

@@ -29,6 +29,7 @@ import { vibratePattern } from '../view/haptics'
 import { addJackpotMeter } from '../view/jackpot'
 import type { JackpotMeter } from '../view/jackpot'
 import { D, E, OVERSHOOT, backOut, fadeRise, popIn } from '../view/motion'
+import { accentRimTop, glossBands } from '../view/platekit'
 import { quality } from '../view/quality'
 import { css, getTheme, hapticsOff, prefersReducedMotion, reduceFlashing, rgbMarquee } from '../view/theme'
 import { attachRgbRing, type RgbRing } from '../view/rgbmarquee'
@@ -122,7 +123,7 @@ export class SlotScene extends Phaser.Scene {
   /** Everything painted for ONE result — paylines, scatter rings, prize copy. Swept at the next pull. */
   private resultLayer!: Phaser.GameObjects.Container
   private rowScrims: Phaser.GameObjects.Rectangle[] = []
-  private rowLamps: { ring: Phaser.GameObjects.Graphics; label: Phaser.GameObjects.Text }[] = []
+  private rowLamps: { lamp: Phaser.GameObjects.Image; label: Phaser.GameObjects.Text }[] = []
   /** The cabinet container — the landing detent kicks the whole machine, not just a strip. */
   private cabinet!: Phaser.GameObjects.Container
   /** The marquee bulbs ringing the cabinet, in CLOCKWISE ring order so a chase can lap the frame. */
@@ -438,15 +439,31 @@ export class SlotScene extends Phaser.Scene {
     g.fillRoundedRect(CAB_X + 4, CAB_Y + 8, CAB_W, CAB_H, CAB_R)
     g.fillStyle(T.cardFill, 1)
     g.fillRoundedRect(CAB_X, CAB_Y, CAB_W, CAB_H, CAB_R)
+    // Top-lit gloss over the cabinet's upper half (the wells repaint over it, so it survives only on
+    // the chrome — gutter, margins) + the dark-theme lit rim, matching every plate in the game.
+    glossBands(g, CAB_X, CAB_Y, CAB_W, CAB_H * 0.5, CAB_R)
     g.lineStyle(3, T.goldBezel, 0.9)
     g.strokeRoundedRect(CAB_X, CAB_Y, CAB_W, CAB_H, CAB_R)
+    accentRimTop(g, CAB_X, CAB_Y, CAB_W, CAB_R, { alpha: 0.85 })
 
-    // Reel wells — one recessed slot per reel, drawn behind the strips.
+    // Reel wells — one RECESSED socket per reel, drawn behind the strips: the board tray's recess
+    // recipe (darkened floor, stacked top inner-shadow, lit bottom lip, sealed by the rim stroke),
+    // so the symbols spin inside the cabinet instead of on a flat card. Shallower band fractions
+    // than the board's — these wells are tall, and the recess is a top-edge phenomenon.
     for (let i = 0; i < SLOT_REELS; i++) {
+      const rx = this.reelX(i)
       g.fillStyle(T.cardFillAlt, 1)
-      g.fillRoundedRect(this.reelX(i), REELS_TOP, REEL_W, WINDOW_H, 16)
+      g.fillRoundedRect(rx, REELS_TOP, REEL_W, WINDOW_H, 16)
+      g.fillStyle(0x000000, 0.07)
+      g.fillRoundedRect(rx, REELS_TOP, REEL_W, WINDOW_H, 16)
+      for (const [f, a] of [[0.14, 0.06], [0.09, 0.06], [0.045, 0.07]] as Array<[number, number]>) {
+        g.fillStyle(0x000000, a)
+        g.fillRoundedRect(rx, REELS_TOP, REEL_W, WINDOW_H * f, { tl: 16, tr: 16, bl: 0, br: 0 })
+      }
+      g.fillStyle(0xfff3d6, 0.08)
+      g.fillRoundedRect(rx + 4, REELS_TOP + WINDOW_H - 12, REEL_W - 8, 9, { tl: 0, tr: 0, bl: 10, br: 10 })
       g.lineStyle(2, T.border, 1)
-      g.strokeRoundedRect(this.reelX(i), REELS_TOP, REEL_W, WINDOW_H, 16)
+      g.strokeRoundedRect(rx, REELS_TOP, REEL_W, WINDOW_H, 16)
     }
 
     for (let i = 0; i < SLOT_REELS; i++) this.reels.push(this.buildReel(i))
@@ -454,13 +471,14 @@ export class SlotScene extends Phaser.Scene {
     // Payline lamps down the left gutter, and the "you didn't buy this row" scrim over the reels. The
     // scrim is drawn OVER (depth 6, above the strips at 4) so an unlit row reads as switched off rather
     // than merely dim — it must never be mistakable for a line that might have paid.
+    const lampTex = this.ensureLampTextures()
     for (let r = 0; r < SLOT_MAX_ROWS; r++) {
-      const ring = this.add.graphics()
+      const lamp = this.add.image(LAMP_X, this.rowY(r), lampTex.off)
       const label = this.add
         .text(LAMP_X, this.rowY(r), String(r + 1), { fontFamily: FONT, fontSize: '24px', fontStyle: '900', color: T.inkMuted })
         .setOrigin(0.5)
-      cabinet.add([ring, label])
-      this.rowLamps.push({ ring, label })
+      cabinet.add([lamp, label])
+      this.rowLamps.push({ lamp, label })
       this.rowScrims.push(
         this.add.rectangle(REELS_X + REELS_W / 2, this.rowY(r), REELS_W, CELL_H, T.shadow, 0.55).setDepth(6)
       )
@@ -593,16 +611,56 @@ export class SlotScene extends Phaser.Scene {
     return reel.cells[this.stripIndex(reel) + row]
   }
 
+  /**
+   * Bake the two payline-lamp faces (lit / unlit) once per theme — a minted jewel (seat shadow,
+   * offset-disc dome, crown pool, glint — the rank medallion's tricks at lamp scale) instead of two
+   * flat circles redrawn through a live Graphics on every bet change. Same r17 + 2.5px stroke
+   * footprint as the old circles, so the RGB ring's carefully budgeted 15px halo still clears them.
+   */
+  private ensureLampTextures(): { on: string; off: string } {
+    const T = getTheme()
+    const on = `slot:lamp:on:${T.id}`
+    const off = `slot:lamp:off:${T.id}`
+    const bake = (key: string, live: boolean): void => {
+      if (this.textures.exists(key)) return
+      const g = this.make.graphics({ x: 0, y: 0 }, false)
+      const c = 23
+      // Seat shadow — straight down, one key light.
+      g.fillStyle(0x000000, 0.1)
+      g.fillEllipse(c, c + 3.5, 34, 30)
+      g.fillStyle(live ? T.gold : T.cardFillAlt, 1)
+      g.fillCircle(c, c, 17)
+      if (live) {
+        g.fillStyle(T.goldBright, 0.55)
+        g.fillCircle(c, c - 3, 12.5)
+        g.fillStyle(T.glossHi, 0.5)
+        g.fillEllipse(c, c - 8, 18, 7)
+        g.fillStyle(0xffffff, 0.85)
+        g.fillCircle(c - 5, c - 7, 2.2)
+      } else {
+        // Unlit: a shallow concave face — dark upper pool, faint lower bounce.
+        g.fillStyle(0x000000, 0.1)
+        g.fillEllipse(c, c - 5, 26, 14)
+        g.fillStyle(0xffffff, 0.14)
+        g.fillEllipse(c, c + 8, 22, 9)
+      }
+      g.lineStyle(2.5, live ? T.goldDeep : T.border, 1)
+      g.strokeCircle(c, c, 17)
+      g.generateTexture(key, 46, 46)
+      g.destroy()
+    }
+    bake(on, true)
+    bake(off, false)
+    return { on, off }
+  }
+
   /** Light the lamps and lift the scrims for the rows the current bet bought. */
   private paintRowLamps(): void {
     const T = getTheme()
-    this.rowLamps.forEach(({ ring, label }, r) => {
+    const tex = this.ensureLampTextures()
+    this.rowLamps.forEach(({ lamp, label }, r) => {
       const live = r < this.rows
-      ring.clear()
-      ring.fillStyle(live ? T.gold : T.cardFillAlt, live ? 1 : 0.8)
-      ring.fillCircle(LAMP_X, this.rowY(r), 17)
-      ring.lineStyle(2.5, live ? T.goldDeep : T.border, 1)
-      ring.strokeCircle(LAMP_X, this.rowY(r), 17)
+      lamp.setTexture(live ? tex.on : tex.off)
       label.setColor(live ? css(T.goldDarkest) : T.inkFaint).setAlpha(live ? 1 : 0.7)
     })
     this.rowScrims.forEach((scrim, r) => scrim.setVisible(r >= this.rows))
