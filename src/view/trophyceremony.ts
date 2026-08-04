@@ -136,6 +136,14 @@ export function playChapterCeremony(
     const trophyKey = ensureGlyphTexture(scene, `trophy:${grant.chapter}`, grant.trophy.emoji, 96, 128)
     const trophyRestY = plinthTop - 62
     const trophy = scene.add.image(cx, trophyRestY, trophyKey).setDisplaySize(128, 128)
+    /**
+     * ⚠️ `setDisplaySize` is stored as a NON-UNIFORM scale (the glyph texture is 96×128, so this is
+     * scale 1.33×1.0) — every scale pose in the timeline below must be relative to THESE numbers.
+     * A literal `scale: 1` is the native texture size, not the designed 128×128: the descent tween
+     * ended there, so the animated path landed a trophy 33% narrower than the `rest()` pose the
+     * skip path snaps to (which re-asserts setDisplaySize and was the design authority all along).
+     */
+    const trophyScale = { x: trophy.scaleX, y: trophy.scaleY }
     layer.add(trophy)
 
     const name = scene.add
@@ -360,7 +368,7 @@ export function playChapterCeremony(
     }
 
     // The trophy descends onto the plinth — the coronation's crown-descend, landing with the room.
-    trophy.setPosition(cx, trophyRestY - 210).setAlpha(0).setScale(0.72)
+    trophy.setPosition(cx, trophyRestY - 210).setAlpha(0).setScale(trophyScale.x * 0.72, trophyScale.y * 0.72)
     name.setAlpha(0)
     shelfLine.setAlpha(0)
     purse.setAlpha(0)
@@ -370,7 +378,8 @@ export function playChapterCeremony(
       scene.tweens.add({
         targets: trophy,
         y: trophyRestY,
-        scale: 1,
+        scaleX: trophyScale.x,
+        scaleY: trophyScale.y,
         duration: 460,
         ease: 'Cubic.easeIn',
         onComplete: () => {
@@ -540,8 +549,16 @@ export function openTrophyCatchUpCard(
       layer.setAlpha(0)
       scene.tweens.add({ targets: layer, alpha: 1, duration: 220, ease: 'Sine.easeOut' })
       icons.forEach((icon, i) => {
+        // Tween back to the icon's OWN scale, not to 1 — `setDisplaySize(52, 52)` is stored as a
+        // non-uniform scale of the 96×128 glyph texture, and a literal `scale: 1` blew every icon
+        // up to native size, stacking the shelf into an accidental pile (owner screenshot,
+        // 2026-08-04). Charming at nine trophies, but the card budgets its height for 74px rows,
+        // so at twenty the oversized icons bury the purse line and the buttons. Reduced motion
+        // never entered this block, which is why THAT path always showed the designed 52px grid.
+        const sx = icon.scaleX
+        const sy = icon.scaleY
         icon.setScale(0)
-        scene.tweens.add({ targets: icon, scale: 1, duration: 260, delay: 140 + i * 36, ease: backOut(OVERSHOOT.pop) })
+        scene.tweens.add({ targets: icon, scaleX: sx, scaleY: sy, duration: 260, delay: 140 + i * 36, ease: backOut(OVERSHOOT.pop) })
       })
       sfx.winFanfare()
     }
