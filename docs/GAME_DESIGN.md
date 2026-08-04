@@ -334,8 +334,17 @@ clears a RANDOM present color. Swap-combos (both consumed, epicenter = drag dest
 - Score attack: ENDLESS_MOVES=30, all 6 symbols, NO objectives, NO boosts applied (planting
   specials would change the board and break fairness). Ends only on moves-out → finishEndless.
 - recordEndless keeps the max per day in save.endlessDays (pruned to ~16 days); also flows into
-  all-time save.best. HUD shows a "TODAY'S BEST" card; the end card shows NEW BEST! / TIME'S UP,
-  today's best, and the running week total with "N of 7 boards raced".
+  all-time save.best — always of the POSTED score, never a raw pre-clamp one. HUD shows a
+  "TODAY'S BEST" card; the end card shows NEW BEST! / TIME'S UP, today's best, and the running
+  week total with "N of 7 boards raced".
+- The endless CHEAT CODE (core/cheat.ts — a secret swipe pattern on the dead strip below the
+  board; deliberate, not a bug) mints free mega wins, each paying its own Plinko drop. Its runs
+  still reach the race, at min(score, ENDLESS_MAX_CHEAT_SCORE): a 300,000 BACKSTOP, not a
+  normaliser (owner calls 2026-07-31 and 2026-08-04; it began as a 13,000 "pace score" that
+  replaced nearly every cheat run's real score). A single fire posts what it actually scored;
+  only a re-fired runaway hits the ceiling. recordEndless({ paced: true }) is the ONE place the
+  clamp lives — never route a cheat score around it. The contract (really clamps, never floors,
+  sits above the best honest measured run, inside 10× of it) is guarded by endless.pace.test.ts.
 - Panel: one card, TODAY / THIS WEEK tabs (view/leaderboardpanel.ts) + the all-time LEVEL ladder.
   Crown row is "yesterday's winner" on the daily tab, "last week's champion" on the weekly one.
 - RESULT RECAP (HomeScene.openRaceRecap): for everyone who raced the closed day and did NOT win it —
