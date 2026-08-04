@@ -3,6 +3,7 @@ import { cloudSession, flushCloudSaveNow, isCloudConfigured, sbClient } from './
 import { dayKey, endlessBestForDay, formatWeekStanding, previousDayKey, previousWeekKey, weekKey } from './endless'
 import { cachedSalt, playedRealBoard } from './racesalt'
 import { loadSave, persistSave, type SaveData } from './save'
+import { chaptersCompleted, chaptersFromCleared } from './trophies'
 
 /**
  * Endless-race leaderboard client — the read/submit surface over `public.endless_daily_scores` and
@@ -70,6 +71,14 @@ export interface LeaderboardEntry {
   you: boolean
   /** Display override for the right-hand value. Daily rows leave it undefined (score formats itself). */
   valueText?: string
+  /**
+   * Chapters this player has completed — the trophy-tier badge worn beside the name
+   * (core/trophies.ts trophyTier; below the first rung the panel draws nothing). DERIVED, never
+   * submitted: the levels board computes it from its own `cleared` column, the race boards from one
+   * batch read of `level_progress` (world-readable, monotonic-guarded — migration 0007). Absent when
+   * that read failed or the player has no ladder row; the board renders unbadged, never blocks.
+   */
+  chapters?: number
 }
 
 /** Result of a board fetch: the top rows plus (when signed in) the player's own rank. */
@@ -83,6 +92,8 @@ export interface RaceBoard {
   myScore: number | null
   /** Display override for the footer's own-rank readout — the row-level `valueText`'s counterpart. */
   myValueText?: string
+  /** The player's OWN chapters completed, read from the local save — the footer badge needs no fetch. */
+  myChapters?: number
 }
 
 // Supabase client access is lazy + optional, exactly like core/cloud.ts: cloud.ts owns the
@@ -90,6 +101,44 @@ export interface RaceBoard {
 async function client(): Promise<SupabaseClient | null> {
   if (!isCloudConfigured() || !cloudSession()) return null
   return sbClient()
+}
+
+/**
+ * Decorate board rows with their trophy-tier data — PURE, so the panel's badge logic is testable
+ * without a network. `userIds` runs parallel to `entries` (the ids never leave this module — an
+ * entry carries no id, only the derived count), `clearedById` maps user id → `level_progress.cleared`.
+ * A miss leaves `chapters` undefined and the row renders unbadged.
+ */
+export function applyChapterTiers(
+  entries: LeaderboardEntry[],
+  userIds: ReadonlyArray<string>,
+  clearedById: ReadonlyMap<string, number>
+): void {
+  entries.forEach((e, i) => {
+    const cleared = clearedById.get(userIds[i])
+    if (typeof cleared === 'number') e.chapters = chaptersFromCleared(cleared)
+  })
+}
+
+/**
+ * One batch read of `level_progress.cleared` for the rows on a race board (≤ the board's limit, so
+ * one `.in()` query). The table is world-readable and its guard keeps `cleared` monotonic — the same
+ * data the levels ladder already publishes, so this adds NO new exposure. Any failure returns an
+ * empty map: the board renders unbadged rather than late or not at all.
+ */
+async function fetchClearedFor(c: SupabaseClient, ids: string[]): Promise<Map<string, number>> {
+  const out = new Map<string, number>()
+  if (ids.length === 0) return out
+  try {
+    const { data, error } = await c.from('level_progress').select('user_id, cleared').in('user_id', ids)
+    if (error || !data) return out
+    for (const r of data as Array<{ user_id: string; cleared: number }>) {
+      if (typeof r.cleared === 'number') out.set(r.user_id, r.cleared)
+    }
+  } catch {
+    // Unbadged board — never block the standings on the decoration.
+  }
+  return out
 }
 
 /** Strip an email local-part / arbitrary text down to a friendly 24-char handle. */
@@ -338,6 +387,7 @@ async function fetchBoardForDay(day: string, limit: number): Promise<RaceBoard> 
       score: r.score,
       you: !!s && r.user_id === s.userId,
     }))
+    applyChapterTiers(entries, rows.map(r => r.user_id), await fetchClearedFor(c, rows.map(r => r.user_id)))
     let myRank: number | null = null
     let myScore: number | null = null
     const mine = entries.find(e => e.you)
@@ -363,7 +413,7 @@ async function fetchBoardForDay(day: string, limit: number): Promise<RaceBoard> 
         myRank = typeof count === 'number' ? count + 1 : null
       }
     }
-    return { key: day, entries, myRank, myScore }
+    return { key: day, entries, myRank, myScore, myChapters: chaptersCompleted(loadSave().unlocked) }
   } catch {
     return empty
   }
@@ -637,6 +687,7 @@ export async function fetchWeeklyBoard(limit = 25, now = new Date()): Promise<Ra
       you: !!s && r.user_id === s.userId,
       valueText: formatWeekStanding({ total: r.total, days: r.days_played }),
     }))
+    applyChapterTiers(entries, rows.map(r => r.user_id), await fetchClearedFor(c, rows.map(r => r.user_id)))
     let myRank: number | null = null
     let myScore: number | null = null
     let myValueText: string | undefined
@@ -674,7 +725,7 @@ export async function fetchWeeklyBoard(limit = 25, now = new Date()): Promise<Ra
         }
       }
     }
-    return { key: week, entries, myRank, myScore, myValueText }
+    return { key: week, entries, myRank, myScore, myValueText, myChapters: chaptersCompleted(loadSave().unlocked) }
   } catch {
     return empty
   }
@@ -791,6 +842,8 @@ export async function fetchLevelBoard(limit = 25): Promise<RaceBoard> {
       score: r.cleared,
       you: !!s && r.user_id === s.userId,
       valueText: formatStanding({ cleared: r.cleared, stars: r.stars }),
+      // The ladder already carries `cleared` — the badge costs this board no extra read.
+      chapters: chaptersFromCleared(r.cleared),
     }))
     let myRank: number | null = null
     let myScore: number | null = null
@@ -826,7 +879,7 @@ export async function fetchLevelBoard(limit = 25): Promise<RaceBoard> {
         }
       }
     }
-    return { key: 'ALL TIME', entries, myRank, myScore, myValueText }
+    return { key: 'ALL TIME', entries, myRank, myScore, myValueText, myChapters: chaptersCompleted(loadSave().unlocked) }
   } catch {
     return empty
   }
