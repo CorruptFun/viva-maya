@@ -4,6 +4,8 @@ import {
   BOARD_W,
   BOARD_X,
   BOARD_Y,
+  ENDLESS_BOARD_DROP,
+  ENDLESS_STRIP_Y,
   CELL,
   CLEAR_MS,
   COLS,
@@ -156,20 +158,25 @@ const SWEEP_FADE_MS = 360
  *
  * Everything from here down is dead space in endless, and only in endless: the numbered levels
  * spend it on the jackpot meter (y 1086) and the HELPERS shelf (1136–1240), while the race — a
- * boost-free fairness board — builds neither. Endless draws two things below the board: the standing
- * brief at y 988 and the leader strip centred at `ENDLESS_LEADER_Y`, so the zone starts clear of
- * both. It has no bottom edge: a tall phone's reclaimed height pools at the bottom (config.ts
- * contentOffsetY), and that extra room is strip too, which is why the hit test is a bare `y >=`
- * rather than a fixed rectangle.
+ * boost-free fairness board — builds neither. It has no bottom edge: a tall phone's reclaimed height
+ * pools at the bottom (config.ts contentOffsetY), and that extra room is strip too, which is why the
+ * hit test is a bare `y >=` rather than a fixed rectangle.
  *
- * It moved down from 1012 when the leader strip landed. The strip is a real control and the zone
- * swallows whole gestures, so they must not overlap at all — a swipe that began on the strip would
- * otherwise be read as cheat input AND as a press. Derived, not guessed: the strip's bottom edge is
- * ENDLESS_LEADER_Y + 26 (half of leaderboardpanel's STRIP_H 52), plus an 18px margin so a thumb
- * landing just under the strip still belongs to the strip. Re-derive it if either number moves.
+ * ⚠️ RE-DERIVED 2026-08-03, when the TODAY'S LEADER strip moved from below the board to ABOVE it
+ * (`ENDLESS_STRIP_Y`) and the board dropped by `ENDLESS_BOARD_DROP` to make the lane. The old value
+ * was keyed off the strip's bottom edge, and that anchor no longer exists down here.
+ *
+ * The only thing left below the board is the standing brief, which follows the board down to
+ * `988 + ENDLESS_BOARD_DROP` = 1048 and is a 22px line, so its bottom sits near 1059. 1080 clears it
+ * with room for a thumb that lands just under the text. The zone must not overlap a real control:
+ * it swallows whole gestures, so a swipe starting on one would read as cheat input AND as a press.
+ *
+ * The dead space did NOT shrink — the strip leaving (52px) and the board arriving (60px) very nearly
+ * cancel, so the zone starts at 1080 where it used to start at 1088. Against the 1280 design box
+ * that is a full-width band 200px tall, growing on a tall phone: still ample to enter the pattern
+ * unnoticed, which is the whole point of it. Re-derive again if the brief or the drop moves.
  */
-const ENDLESS_LEADER_Y = 1044
-const CHEAT_ZONE_TOP = ENDLESS_LEADER_Y + 26 + 18 // 1088
+const CHEAT_ZONE_TOP = 1080
 
 /**
  * What the mega win multiplies the blast's points by. The cheat pays through the SAME chokepoint as
@@ -369,6 +376,21 @@ export class GameScene extends Phaser.Scene {
   /** Set while the win result card is animating in — a tap fast-forwards it to the settled state. */
   private overlaySettle: (() => void) | null = null
 
+  /**
+   * Top edge of the board for THIS run. `BOARD_Y` (config) is the numbered-level seat; the endless
+   * race sits `ENDLESS_BOARD_DROP` lower so the TODAY'S LEADER strip can live ABOVE the board rather
+   * than below it — you race against a number, and it belongs in your eyeline, not past the bottom
+   * of the grid where you have to look away from the game to read it.
+   *
+   * ⚠️ EVERY piece of board geometry reads this, not BOARD_Y: piece placement, the mask, the frame,
+   * the RGB ring AND `rowAt`'s hit test. They must agree exactly — a hit test that disagrees with
+   * the render by even one row means taps land on the wrong piece, which is close to unplayable and
+   * looks like a swap bug rather than a layout one. Set once in `create()` before anything is built.
+   *
+   * §11: assigned in create(), because field initializers do NOT re-run on scene.restart().
+   */
+  private boardTop = BOARD_Y
+
   // --- In-level helpers (the mid-level power bar below the jackpot meter; numbered levels only) ---
   /** The shop-bar container (caption + item buttons); undefined in endless. Hidden on level end. */
   private powerBar?: Phaser.GameObjects.Container
@@ -438,6 +460,11 @@ export class GameScene extends Phaser.Scene {
       data?.endless === true ||
       (import.meta.env.DEV && data?.level == null && new URLSearchParams(location.search).has('endless'))
     this.level = Math.max(1, data?.level ?? 1)
+    // Set HERE, in init(), not in create(): init runs first, so every piece of board geometry built
+    // during create() — placement, mask, frame, RGB ring and the `rowAt` hit test — reads one
+    // already-settled value. Assigning it inside create() would work only for as long as nothing
+    // moved above the first read, which is exactly the kind of ordering nobody re-checks.
+    this.boardTop = BOARD_Y + (this.endless ? ENDLESS_BOARD_DROP : 0)
   }
 
   create(): void {
@@ -767,7 +794,7 @@ export class GameScene extends Phaser.Scene {
     if (!this.textures.exists('bgglow')) return
     // Board-frame centre in world space (cameras share restScrollY, so the queued world coords line up).
     const bx = BOARD_X + BOARD_W / 2
-    const by = BOARD_Y + (ROWS * CELL) / 2
+    const by = this.boardTop + (ROWS * CELL) / 2
     const bloom = this.add
       .image(focus.x, focus.y, 'bgglow')
       .setDepth(36)
@@ -1089,7 +1116,7 @@ export class GameScene extends Phaser.Scene {
       this.tweens.killTweensOf(this.boardBanner)
       this.boardBanner.destroy()
     }
-    const banner = this.add.container(DESIGN_W / 2, BOARD_Y + 72).setDepth(31)
+    const banner = this.add.container(DESIGN_W / 2, this.boardTop + 72).setDepth(31)
     this.boardBanner = banner
     const text = this.add
       .text(0, 0, label, {
@@ -1178,7 +1205,7 @@ export class GameScene extends Phaser.Scene {
   } {
     const T = getTheme()
     const cx = DESIGN_W / 2
-    const cy = BOARD_Y + BOARD_W * 0.36
+    const cy = this.boardTop + BOARD_W * 0.36
     const layer = this.add.container(cx, cy).setDepth(44)
 
     const headY = withReady ? -84 : -66
@@ -1753,13 +1780,13 @@ export class GameScene extends Phaser.Scene {
   private cellToXY(at: Coord): { x: number; y: number } {
     return {
       x: BOARD_X + at.col * CELL + CELL / 2,
-      y: BOARD_Y + at.row * CELL + CELL / 2,
+      y: this.boardTop + at.row * CELL + CELL / 2,
     }
   }
 
   private xyToCell(x: number, y: number): Coord | null {
     const col = Math.floor((x - BOARD_X) / CELL)
-    const row = Math.floor((y - BOARD_Y) / CELL)
+    const row = Math.floor((y - this.boardTop) / CELL)
     if (row < 0 || col < 0 || row >= ROWS || col >= COLS) return null
     return { row, col }
   }
@@ -1778,7 +1805,7 @@ export class GameScene extends Phaser.Scene {
     // Reddish "screen is on" glow behind the board — the opaque card covers its center, so only
     // a soft rose halo bleeds past the frame. Surges on a win (see celebrateBoard).
     this.cabinetGlow = this.add
-      .image(DESIGN_W / 2, BOARD_Y + BOARD_W / 2, 'bgglow')
+      .image(DESIGN_W / 2, this.boardTop + BOARD_W / 2, 'bgglow')
       .setTint(T.cabinetGlow)
       .setAlpha(0.13)
       .setBlendMode(Phaser.BlendModes.ADD)
@@ -1794,7 +1821,7 @@ export class GameScene extends Phaser.Scene {
     // footprint (pad 18 → x22/y282/size676) unchanged so the marquee bulbs stay aligned.
     const pad = 18
     const x = BOARD_X - pad
-    const y = BOARD_Y - pad
+    const y = this.boardTop - pad
     const size = BOARD_W + pad * 2
     // §R3 ELEVATION: the cabinet now FLOATS. Two baked `softshadow` layers under the slab — a
     // tight, darker CONTACT shadow hugging the silhouette plus a wide, faint AMBIENT falloff —
@@ -1947,7 +1974,7 @@ export class GameScene extends Phaser.Scene {
         this,
         {
           x: BOARD_X - pad + RGB_INSET,
-          y: BOARD_Y - pad + RGB_INSET,
+          y: this.boardTop - pad + RGB_INSET,
           w: side,
           h: side,
           r: 28 - RGB_INSET,
@@ -1961,8 +1988,8 @@ export class GameScene extends Phaser.Scene {
 
     const left = BOARD_X - pad + inset
     const right = BOARD_X - pad + (BOARD_W + pad * 2) - inset
-    const top = BOARD_Y - pad + inset
-    const bottom = BOARD_Y - pad + (BOARD_W + pad * 2) - inset
+    const top = this.boardTop - pad + inset
+    const bottom = this.boardTop - pad + (BOARD_W + pad * 2) - inset
     // Derive the step from the side length instead of hard-coding it. At a fixed 56 the side
     // (652) isn't a whole number of steps, so each edge ended on a 36px stub gap right before the
     // corner — the bulbs visibly bunched at all four corners. Rounding to the nearest whole count
@@ -2035,7 +2062,7 @@ export class GameScene extends Phaser.Scene {
   /** A modest spray of chips + cards bursting from the board — the casino "panel" win touch. */
   private burstTokens(count = 10): void {
     const cx = BOARD_X + BOARD_W / 2
-    const cy = BOARD_Y + BOARD_W / 2
+    const cy = this.boardTop + BOARD_W / 2
     for (let i = 0; i < count; i++) {
       const key = i % 2 === 0 ? 'chip' : 'card'
       const token = this.add
@@ -2073,7 +2100,7 @@ export class GameScene extends Phaser.Scene {
   private buildCoatCounter(): void {
     if (this.coatsTotal <= 0) return
     this.coatLabel = this.add
-      .text(DESIGN_W / 2, BOARD_Y - 38, '', {
+      .text(DESIGN_W / 2, this.boardTop - 38, '', {
         fontFamily: FONT,
         fontSize: '23px',
         fontStyle: '900',
@@ -2282,19 +2309,20 @@ export class GameScene extends Phaser.Scene {
         ? 'Match the goal symbols and sweep every felt square'
         : 'Match the highlighted goal symbols before moves run out'
     this.add
-      .text(DESIGN_W / 2, 988, brief, {
+      .text(DESIGN_W / 2, 988 + ENDLESS_BOARD_DROP, brief, {
         fontFamily: 'Arial, sans-serif',
         fontSize: '22px',
         color: T.onBackdropMuted,
       })
       .setOrigin(0.5)
 
-    // TODAY'S LEADER, under the brief and above the cheat zone. The brief states the RULE ("biggest
-    // score wins today's board"); this states the SCORE that is currently winning it, which is the
-    // question players were actually asking mid-run — and answering it used to mean abandoning the
-    // run to go and look. Endless only: the numbered levels spend this space on the jackpot meter and
-    // the helper shelf, and have no daily board to lead.
-    if (this.endless) this.add.existing(addEndlessLeaderStrip(this, DESIGN_W / 2, ENDLESS_LEADER_Y, loadSave()))
+    // TODAY'S LEADER, now seated ABOVE the board (owner request, 2026-08-03). The brief states the
+    // RULE ("biggest score wins today's board"); this states the SCORE currently winning it, which
+    // is the question players actually ask mid-run — and it belongs in the same glance as the board
+    // and your own SCORE, not past the bottom of the grid where reading it means looking away from
+    // the game. The board drops by ENDLESS_BOARD_DROP to open the lane. Endless only: numbered
+    // levels spend this space on the jackpot meter and the helper shelf, and have no board to lead.
+    if (this.endless) this.add.existing(addEndlessLeaderStrip(this, DESIGN_W / 2, ENDLESS_STRIP_Y, loadSave()))
   }
 
   // ------------------------------------------------------- in-level helpers (power bar)
@@ -2550,7 +2578,7 @@ export class GameScene extends Phaser.Scene {
     this.bombAimLayer = layer
     const frame = this.add.graphics()
     frame.lineStyle(6, T.gold, 0.95)
-    frame.strokeRoundedRect(BOARD_X - 8, BOARD_Y - 8, BOARD_W + 16, BOARD_W + 16, 18)
+    frame.strokeRoundedRect(BOARD_X - 8, this.boardTop - 8, BOARD_W + 16, BOARD_W + 16, 18)
     layer.add(frame)
     if (!this.reducedMotion) {
       this.bombAimTween = this.tweens.add({ targets: frame, alpha: 0.35, duration: 600, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' })
@@ -2630,7 +2658,7 @@ export class GameScene extends Phaser.Scene {
     })
     const maskShape = this.make.graphics({ x: 0, y: 0 }, false)
     maskShape.fillStyle(0xffffff)
-    maskShape.fillRect(BOARD_X - 4, BOARD_Y - 4, BOARD_W + 8, BOARD_W + 8)
+    maskShape.fillRect(BOARD_X - 4, this.boardTop - 4, BOARD_W + 8, BOARD_W + 8)
 
     this.pieceLayer = this.add.container(0, 0)
     this.pieceLayer.setMask(maskShape.createGeometryMask())
@@ -4444,7 +4472,7 @@ export class GameScene extends Phaser.Scene {
 
     // The line ignites — a warm fire streak flashing across the whole row/col.
     const sweep = this.add
-      .image(horizontal ? BOARD_X + BOARD_W / 2 : at.x, horizontal ? at.y : BOARD_Y + BOARD_W / 2, 'sweep')
+      .image(horizontal ? BOARD_X + BOARD_W / 2 : at.x, horizontal ? at.y : this.boardTop + BOARD_W / 2, 'sweep')
       .setDepth(25)
       .setBlendMode(Phaser.BlendModes.ADD)
     sweep.setDisplaySize(BOARD_W + 24, CELL * (0.72 + boost * 0.05))
@@ -4466,7 +4494,7 @@ export class GameScene extends Phaser.Scene {
     const dirs: Array<[number, number]> = horizontal ? [[-1, 0], [1, 0]] : [[0, -1], [0, 1]]
     for (const [dx, dy] of dirs) {
       const endX = horizontal ? (dx < 0 ? BOARD_X - 12 : BOARD_X + BOARD_W + 12) : at.x
-      const endY = horizontal ? at.y : dy < 0 ? BOARD_Y - 12 : BOARD_Y + BOARD_W + 12
+      const endY = horizontal ? at.y : dy < 0 ? this.boardTop - 12 : this.boardTop + BOARD_W + 12
       const missile = this.add
         .image(at.x, at.y, 'fireball')
         .setDepth(27)
@@ -4737,7 +4765,7 @@ export class GameScene extends Phaser.Scene {
     this.state = 'shuffling'
     sfx.reshuffleSwirl()
     const toast = this.add
-      .text(DESIGN_W / 2, BOARD_Y + BOARD_W / 2, 'NO MOVES — RESHUFFLING', {
+      .text(DESIGN_W / 2, this.boardTop + BOARD_W / 2, 'NO MOVES — RESHUFFLING', {
         fontFamily: FONT,
         fontSize: '36px',
         color: getTheme().ink,
@@ -5157,7 +5185,7 @@ export class GameScene extends Phaser.Scene {
    */
   private sweepBoardClean(track: <T extends Phaser.GameObjects.GameObject>(o: T) => T): () => void {
     const cx = BOARD_X + BOARD_W / 2
-    const cy = BOARD_Y + BOARD_W / 2
+    const cy = this.boardTop + BOARD_W / 2
     const distSq = (x: number, y: number): number => (x - cx) * (x - cx) + (y - cy) * (y - cy)
     // Live board sprites, centre-out (nearest first) so both the stride pick and the stagger read as
     // one expanding wave. sort/filter only READ the sprites — the map is never mutated.
@@ -5178,7 +5206,7 @@ export class GameScene extends Phaser.Scene {
 
     // Stride across the centre-sorted list so the capped flyers stay spatially spread over the board.
     const stride = Math.max(1, Math.ceil(live.length / flyCap))
-    const maxSq = distSq(BOARD_X, BOARD_Y) || 1 // corner→centre reference keeps the wave delay in [0, STAGGER]
+    const maxSq = distSq(BOARD_X, this.boardTop) || 1 // corner→centre reference keeps the wave delay in [0, STAGGER]
     const startScale = PIECE_SCALE
     for (let i = 0; i < live.length; i += stride) {
       const s = live[i]
@@ -5229,7 +5257,7 @@ export class GameScene extends Phaser.Scene {
    * no streaming particles — but the motif still plays (audio isn't motion). Caller gates scarcity;
    * this method self-guards to one fire per round.
    */
-  private heartbloom(cx = DESIGN_W / 2, cy = BOARD_Y + BOARD_W / 2): void {
+  private heartbloom(cx = DESIGN_W / 2, cy = this.boardTop + BOARD_W / 2): void {
     if (this.heartbloomFired) return
     this.heartbloomFired = true
     sfx.mayaMotif() // the leitmotif rings in BOTH motion modes — audio is never "motion"
@@ -5727,11 +5755,11 @@ export class GameScene extends Phaser.Scene {
     if (!pendingOccasion(today, loadSave().occasionsSeen)) return
     markOccasionSeen(today)
     if (this.reducedMotion) {
-      const h = this.add.image(DESIGN_W / 2, BOARD_Y + BOARD_W / 2, 'heartbig').setDisplaySize(90, 90).setDepth(45).setAlpha(0.85)
+      const h = this.add.image(DESIGN_W / 2, this.boardTop + BOARD_W / 2, 'heartbig').setDisplaySize(90, 90).setDepth(45).setAlpha(0.85)
       this.time.delayedCall(1400, () => h.destroy())
       return
     }
-    this.overlayHearts(DESIGN_W / 2, 22, BOARD_Y + BOARD_W / 2)
+    this.overlayHearts(DESIGN_W / 2, 22, this.boardTop + BOARD_W / 2)
   }
 
   /** Dim scrim behind an end-of-round overlay (also swallows taps meant for the board). */
@@ -6680,7 +6708,7 @@ export class GameScene extends Phaser.Scene {
             : tier.t >= 2
               ? css(getTheme().roseLight)
               : css(getTheme().rose)
-    const cy = BOARD_Y + BOARD_W / 2 - 40
+    const cy = this.boardTop + BOARD_W / 2 - 40
     if (!this.comboText || !this.comboText.active) {
       this.comboText = this.add
         .text(DESIGN_W / 2, cy, label, { fontFamily: FONT, fontSize: '54px', fontStyle: '900', color: heat })
@@ -6766,7 +6794,7 @@ export class GameScene extends Phaser.Scene {
     if (tier <= 0) return
     const T = getTheme()
     const cx = BOARD_X + BOARD_W / 2
-    const cy = BOARD_Y + BOARD_W / 2
+    const cy = this.boardTop + BOARD_W / 2
     sfx.megaBoom(tier) // the visceral low thump — audio is never motion-gated (§E8)
     this.flashCabinet(1 + tier) // one more, biggest re-strike as the chain lands
     stageFlare() // the room's celebratory swell under the shockwave ring
@@ -7130,7 +7158,7 @@ export class GameScene extends Phaser.Scene {
     }
     const T = getTheme()
     const tx = DESIGN_W / 2
-    const ty = BOARD_Y + BOARD_W / 2 - 40 // the MEGA marquee readout's seat — the ticket bursts from it
+    const ty = this.boardTop + BOARD_W / 2 - 40 // the MEGA marquee readout's seat — the ticket bursts from it
     const tw = 320
     const th = 128
     const ticket = this.add.container(tx, ty).setDepth(45).setScale(0).setAngle(-8)

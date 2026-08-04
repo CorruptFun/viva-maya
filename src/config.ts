@@ -97,6 +97,20 @@ export const CELL = 80
 export const BOARD_W = COLS * CELL
 export const BOARD_X = (DESIGN_W - BOARD_W) / 2
 export const BOARD_Y = 300
+/**
+ * How far the ENDLESS board sits below `BOARD_Y`, to open a lane above it for the TODAY'S LEADER
+ * strip (leaderboardpanel's STRIP_H is 52). Endless only — numbered levels keep BOARD_Y, because
+ * they spend the space below the board on the jackpot meter and the HELPER shelf instead.
+ *
+ * Derived, not guessed: the MOVES / TODAY'S BEST cards end at y 248, the strip is seated at
+ * `ENDLESS_STRIP_Y` spanning 266–318, and the board's baked frame starts ~14px above its top edge.
+ * 60 leaves ~30px of air between the strip and the frame. Re-derive if the card row or STRIP_H moves.
+ */
+export const ENDLESS_BOARD_DROP = 60
+
+/** Centre of the endless TODAY'S LEADER strip, in the lane opened above the board. */
+export const ENDLESS_STRIP_Y = 292
+
 export const PIECE_SIZE = CELL * 0.92
 
 export const POINTS_PER_PIECE = 20
