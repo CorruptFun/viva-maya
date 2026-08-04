@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { PRIZES } from './daily'
 import { DIFFICULTY } from './difficulty'
 import { BOOST_META, BOOST_ORDER, freeSourceFor, freeStockFor, hasSurplus, stash, stashTotal, usingNextCount } from './inventory'
-import { coerceSave, consumeBoost, loadSave, persistSave, promoteBoost, splitPendingBoosts, takePendingBoosts } from './save'
+import { coerceSave, consumeBoost, loadSave, persistSave, promoteBoost, splitPendingBoosts, takePendingBoosts, toggleHoldBoost } from './save'
 import { BOOST_ITEMS } from './store'
 import type { BoostType } from './types'
 
@@ -207,6 +207,73 @@ describe('consumeBoost — spending one outright', () => {
     persistSave(save(['wildReel']))
     expect(consumeBoost('extraMoves')).toBe(false)
     expect(loadSave().pendingBoosts).toEqual(['wildReel'])
+  })
+})
+
+describe('holding a boost type back', () => {
+  beforeEach(stubStorage)
+  afterEach(dropStorage)
+
+  const heldSave = (pendingBoosts: BoostType[], heldBoosts: BoostType[]) =>
+    coerceSave({ pendingBoosts, heldBoosts })
+
+  it('excludes every instance of a held type, however many are owned', () => {
+    const rows = stash(heldSave(['jackpot', 'jackpot', 'wildReel'], ['jackpot']))
+    const jack = rows.find(r => r.type === 'jackpot')
+    expect(jack?.count).toBe(2) // still owned
+    expect(jack?.usingNext).toBe(0) // but none go in
+    expect(jack?.held).toBe(true)
+    expect(rows.find(r => r.type === 'wildReel')?.usingNext).toBe(1)
+  })
+
+  /**
+   * ⚠️ The subtle one. Holding must FREE UP a slot, not silently waste one — otherwise setting a
+   * Jackpot Chip aside would quietly cost the player one of their three boosts for that level, which
+   * is the opposite of what "save it for later" means.
+   */
+  it('frees the slot rather than wasting it, so the next boost in line moves up', () => {
+    const pending: BoostType[] = ['jackpot', 'wildReel', 'diceBomb', 'extraMoves']
+    expect(usingNextCount(heldSave(pending, []))).toBe(3)
+    expect(usingNextCount(heldSave(pending, ['jackpot']))).toBe(3) // still three, not two
+
+    const rows = stash(heldSave(pending, ['jackpot']))
+    expect(rows.find(r => r.type === 'extraMoves')?.usingNext).toBe(1) // promoted into the free slot
+  })
+
+  it('can hold everything, and then nothing goes in', () => {
+    const held: BoostType[] = ['extraMoves', 'wildReel']
+    expect(usingNextCount(heldSave(['extraMoves', 'wildReel'], held))).toBe(0)
+  })
+
+  /** The drift guard again, now with holds in play: preview and consumption must still agree. */
+  it('agrees with what takePendingBoosts actually consumes', () => {
+    const pending: BoostType[] = ['jackpot', 'wildReel', 'diceBomb', 'extraMoves']
+    const predicted = stash(heldSave(pending, ['jackpot']))
+
+    persistSave(heldSave(pending, ['jackpot']))
+    const taken = takePendingBoosts()
+
+    for (const type of BOOST_ORDER) {
+      expect(predicted.find(r => r.type === type)?.usingNext).toBe(taken.filter(b => b === type).length)
+    }
+    expect(taken).not.toContain('jackpot')
+    expect(loadSave().pendingBoosts).toContain('jackpot') // held, therefore still owned afterwards
+  })
+
+  it('toggles on and off, and survives a round trip through the save', () => {
+    persistSave(heldSave(['jackpot'], []))
+    expect(toggleHoldBoost('jackpot')).toBe(true)
+    expect(loadSave().heldBoosts).toEqual(['jackpot'])
+    expect(usingNextCount(loadSave())).toBe(0)
+
+    expect(toggleHoldBoost('jackpot')).toBe(false)
+    expect(loadSave().heldBoosts).toEqual([])
+    expect(usingNextCount(loadSave())).toBe(1)
+  })
+
+  it('defaults to holding nothing, so older saves behave exactly as before', () => {
+    expect(coerceSave({}).heldBoosts).toEqual([])
+    expect(usingNextCount(coerceSave({ pendingBoosts: ['wildReel'] }))).toBe(1)
   })
 })
 

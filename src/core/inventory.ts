@@ -64,6 +64,8 @@ export interface StashEntry {
   count: number
   /** How many of this type the NEXT numbered level will consume (0 when it stays banked). */
   usingNext: number
+  /** True when the player has set this type aside — none of them go in, however many are owned. */
+  held: boolean
 }
 
 /**
@@ -75,12 +77,14 @@ export interface StashEntry {
  */
 export function stash(save: SaveData): StashEntry[] {
   const pending = save.pendingBoosts ?? []
-  const { take } = splitPendingBoosts(pending)
+  const held = save.heldBoosts ?? []
+  const { take } = splitPendingBoosts(pending, held)
   return BOOST_ORDER.map(type => ({
     type,
     meta: BOOST_META[type],
     count: pending.filter(b => b === type).length,
     usingNext: take.filter(b => b === type).length,
+    held: held.includes(type),
   }))
 }
 
@@ -91,7 +95,7 @@ export function stashTotal(save: SaveData): number {
 
 /** How many boosts the next numbered level will consume. Never exceeds `boostApplyMax`. */
 export function usingNextCount(save: SaveData): number {
-  return splitPendingBoosts(save.pendingBoosts ?? []).take.length
+  return splitPendingBoosts(save.pendingBoosts ?? [], save.heldBoosts ?? []).take.length
 }
 
 /**
@@ -137,5 +141,5 @@ export function freeStockFor(save: SaveData, powerType: string): number {
  */
 export function hasSurplus(save: SaveData): boolean {
   const pending = save.pendingBoosts ?? []
-  return pending.length > splitPendingBoosts(pending).take.length
+  return pending.length > splitPendingBoosts(pending, save.heldBoosts ?? []).take.length
 }

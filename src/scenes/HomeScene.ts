@@ -571,28 +571,34 @@ export class HomeScene extends Phaser.Scene {
     // INSIDE the pill container so the daily's beat carries it; the glow pulse is its own beat
     // (reduce-flashing → static soft glow; reduced motion → static badge, no pop, no pulse).
     if (save.freeSpins > 0) daily.add(this.buildFreeSpinsBadge(save.freeSpins))
-    if (save.pendingBoosts.length > 0) {
-      // Rides under the daily pill wherever it was seated (a first-run spin banks a boost while the
-      // rows above are still deferred, so this can't key off the full stack's geometry).
-      //
-      // This line used to read "🎁 boost ready for your next level" and was INERT. It named neither
-      // what nor how many, and there was nowhere to go and look — which is most of why a player
-      // asked "where does it go? where do you see your stash?" on 2026-08-03. It now counts the
-      // stash and opens it (view/stash.ts). Same slot, same one line of the budgeted band.
+    // THE STASH DOOR. Rides under the daily pill wherever it was seated (a first-run spin banks a
+    // boost while the rows above are still deferred, so this can't key off the full stack's geometry).
+    //
+    // This line used to read "🎁 boost ready for your next level" and was INERT — it named neither
+    // what nor how many, and there was nowhere to go and look, which is most of why a player asked
+    // "where does it go? where do you see your stash?" on 2026-08-03.
+    //
+    // ⚠️ It is now shown even when the stash is EMPTY, which is a deliberate break from the
+    // progressive-reveal rule above. That rule defers a destination that can do NOTHING for this
+    // player yet — but an empty stash is not nothing: it is the only place that says where winnings
+    // go, and the moment a player most needs to know that is BEFORE they have won anything. Gated
+    // only on `preFirstWin`, so a brand-new save still opens uncluttered.
+    if (!preFirstWin) {
       const n = stashBadgeCount()
+      const label = n > 0 ? `🎁 ${n} ${n === 1 ? 'boost' : 'boosts'} ready  ·  tap to see` : '🎁 your stash  ·  empty for now'
       const stashLine = this.add
-        .text(DESIGN_W / 2, dailyY + 58, `🎁 ${n} ${n === 1 ? 'boost' : 'boosts'} ready  ·  tap to see`, {
+        .text(DESIGN_W / 2, dailyY + 58, label, {
           fontFamily: FONT,
           fontSize: '20px',
-          color: getTheme().goldText,
+          color: n > 0 ? getTheme().goldText : getTheme().onBackdropMuted,
         })
         .setOrigin(0.5)
         .setInteractive({ useHandCursor: true })
       stashLine.on('pointerup', () => {
         sfx.uiTap()
-        // A promotion changes which boosts the next level takes, and PLAY's sub-line and this very
-        // count are both read from the save at build time — so a change repaints Home rather than
-        // leaving a stale readout behind.
+        // Holding or promoting changes which boosts the next level takes, and PLAY's sub-line and
+        // this very count are both read from the save at build time — so a change repaints Home
+        // rather than leaving a stale readout behind.
         openStash(this, { onChanged: () => this.scene.restart() })
       })
     }

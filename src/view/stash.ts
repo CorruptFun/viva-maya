@@ -3,7 +3,7 @@ import { sfx } from '../audio/sfx'
 import { DESIGN_W, viewportCenterY, worldH } from '../config'
 import { BOOST_ORDER, hasSurplus, stash, stashTotal, usingNextCount } from '../core/inventory'
 import type { StashEntry } from '../core/inventory'
-import { loadSave, promoteBoost } from '../core/save'
+import { loadSave, promoteBoost, toggleHoldBoost } from '../core/save'
 import { backOut, OVERSHOOT } from './motion'
 import { getTheme, prefersReducedMotion } from './theme'
 import { addPillButton, FONT, GOLD_PILL } from './ui'
@@ -63,9 +63,22 @@ export function openStash(scene: Phaser.Scene, opts: StashOpts = {}): void {
     layer.destroy()
     if (opts.dirty) opts.onChanged?.()
   }
+  /**
+   * Rebuild in place after a tap — destroy and reopen rather than hunting down every tile, collar
+   * and readout the change invalidated (view/charmalbum.ts §7, "apply by repaint, not live re-tint").
+   *
+   * ⚠️ DEFERRED BY A TICK, and it must stay that way. Rebuilding inline inside the `pointerup`
+   * handler drops a brand-new interactive scrim under the finger while Phaser is still dispatching
+   * that very event — the new scrim takes the same tap, calls `close()`, and the panel you just
+   * rebuilt vanishes and repaints Home behind it. Observed exactly that (2026-08-03): the hold
+   * toggle wrote the right save and then closed the stash. charmalbum's own repaint is deferred
+   * through `scene.time.delayedCall` for the same reason.
+   */
   const repaint = (): void => {
-    layer.destroy()
-    openStash(scene, { ...opts, instant: true, dirty: true })
+    scene.time.delayedCall(0, () => {
+      layer.destroy()
+      openStash(scene, { ...opts, instant: true, dirty: true })
+    })
   }
 
   const scrim = scene.add.rectangle(W / 2, viewportCenterY(), W, worldH() + 400, T.scrim, 0.62).setInteractive()
@@ -120,7 +133,7 @@ export function openStash(scene: Phaser.Scene, opts: StashOpts = {}): void {
   // winnings needs to be told they are not, in the place they came looking. Everything else here is
   // decoration around this line.
   const blurb = total
-    ? 'You won these. They cost nothing — the top row goes in automatically when you start your next level.'
+    ? 'You won these — they cost nothing. Whatever is marked NEXT goes in when you start your next level.'
     : 'Boosts you win in Lucky Slots and the Jackpot Wheel land here. They are free to use.'
   layer.add(
     scene.add
@@ -147,21 +160,25 @@ export function openStash(scene: Phaser.Scene, opts: StashOpts = {}): void {
   })
 
   // ── The footer line: what happens next, in plain words ──
+  // Must account for HELD as well as surplus, or a player who set everything aside reads
+  // "0 going in next level" with no explanation and assumes the panel is broken.
   let footText: string
   if (total === 0) footText = 'Nothing in the stash yet'
-  else if (surplus) footText = `${nextCount} going in next level  ·  ${total - nextCount} kept for later`
+  else if (nextCount === 0) footText = 'Nothing goes in next level'
+  else if (surplus) footText = `${nextCount} going in next level  ·  ${total - nextCount} kept back`
   else footText = nextCount === 1 ? '1 going in next level' : `${nextCount} going in next level`
   layer.add(
     scene.add
       .text(W / 2, pyTop + ph - 146, footText, { fontFamily: FONT, fontSize: '21px', fontStyle: '900', color: T.goldText })
       .setOrigin(0.5)
   )
-  // The surplus explanation. Without it, owning five boosts and seeing three used reads as two of
-  // them having gone missing — which is precisely the kind of silent loss this panel exists to deny.
-  if (surplus) {
+  // Teaches the gesture, and denies the silent-loss reading: owning five and seeing three used looks
+  // like two went missing unless the panel says otherwise. Shown whenever the player owns anything,
+  // because the tap is now the point of the screen rather than a surplus-only affordance.
+  if (total > 0) {
     layer.add(
       scene.add
-        .text(W / 2, pyTop + ph - 112, 'Nothing is lost — tap a spare to move it to the front', {
+        .text(W / 2, pyTop + ph - 112, 'Nothing is ever lost — tap one to use it or set it aside', {
           fontFamily: FONT,
           fontSize: '18px',
           color: T.inkFaint,
@@ -183,11 +200,22 @@ export function openStash(scene: Phaser.Scene, opts: StashOpts = {}): void {
 }
 
 /**
- * One boost tile. Three states, and they have to be distinguishable at a glance because the whole
- * panel is an answer to "what do I actually have":
- *   owned + going in next → gold face, "NEXT" collar
- *   owned + banked        → plain face, tappable to promote
+ * One boost tile. Four states, distinguishable at a glance because the panel is an answer to "what
+ * do I actually have and what is about to happen to it":
+ *   owned + going in next → warm face, gold "NEXT" collar
+ *   owned + HELD          → plain face, muted "HELD" collar — set aside, never consumed
+ *   owned + banked        → plain face, no collar (a surplus waiting its turn)
  *   none                  → ghosted, inert, but still present so the grid reads as a set with gaps
+ *
+ * ONE GESTURE, ONE MEANING: a tap always flips whether this type goes in next level.
+ *   NEXT   → hold it (take it out of the next level)
+ *   HELD   → release AND promote (put it in, now — releasing without promoting would leave the
+ *            player tapping a tile and seeing nothing change whenever a surplus is queued ahead)
+ *   banked → promote (put it in)
+ *
+ * ⚠️ Holding is per-TYPE, not per-instance. "Save my Jackpot Chips for a hard level" is the real
+ * intent; per-instance holding would need a second inventory kept in sync with the first through
+ * every grant, spend and device merge.
  */
 function buildTile(
   scene: Phaser.Scene,
@@ -203,6 +231,7 @@ function buildTile(
   const c = scene.add.container(cx, cy)
   const owned = entry.count > 0
   const going = entry.usingNext > 0
+  const held = entry.held && owned
 
   const g = scene.add.graphics()
   const fill = going ? T.cardFillWarm : T.cardFill
@@ -240,34 +269,42 @@ function buildTile(
       .setOrigin(0.5)
   )
 
-  if (going) {
-    // The collar reads as a state, not a button — it is the panel's answer to "which ones am I
-    // about to use", and it must not look tappable when tapping it would do nothing.
+  // The collar states what is about to happen to this type. HELD is deliberately muted rather than
+  // gold: it is the absence of an action, and it must never compete with NEXT for the eye.
+  const collarText = held ? 'HELD' : going ? (entry.usingNext > 1 ? `NEXT ×${entry.usingNext}` : 'NEXT') : ''
+  if (collarText) {
+    const cw = collarText.length > 6 ? 84 : 68
     const collar = scene.add.graphics()
-    collar.fillStyle(T.goldBezel, 1)
-    collar.fillRoundedRect(-34, -h / 2 - 9, 68, 22, 11)
+    collar.fillStyle(held ? T.border : T.goldBezel, 1)
+    collar.fillRoundedRect(-cw / 2, -h / 2 - 9, cw, 22, 11)
     c.add(collar)
     c.add(
       scene.add
-        .text(0, -h / 2 + 2, entry.usingNext > 1 ? `NEXT ×${entry.usingNext}` : 'NEXT', {
+        .text(0, -h / 2 + 2, collarText, {
           fontFamily: FONT,
           fontSize: '13px',
           fontStyle: '900',
-          color: '#fffdf7',
+          color: held ? T.inkSoft : '#fffdf7',
         })
         .setOrigin(0.5)
     )
   }
 
-  // Only a BANKED boost is worth tapping — promoting something already going in is a no-op, and an
-  // affordance that does nothing is worse than none.
-  if (owned && !going) {
+  // Every OWNED tile is tappable now — the gesture flips participation, so there is no owned state
+  // where a tap does nothing. (An unowned tile stays inert: there is nothing to flip.)
+  if (owned) {
     const hit = scene.add.rectangle(0, 0, w, h, 0xffffff, 0.001).setInteractive({ useHandCursor: true })
     hit.on('pointerup', () => {
-      if (promoteBoost(entry.type)) {
-        sfx.uiTap()
-        repaint()
+      sfx.uiTap()
+      if (held) {
+        toggleHoldBoost(entry.type) // release …
+        promoteBoost(entry.type) // … and put it in, so the tap visibly does something
+      } else if (going) {
+        toggleHoldBoost(entry.type) // set aside
+      } else {
+        promoteBoost(entry.type) // surplus → bring it forward
       }
+      repaint()
     })
     c.add(hit)
   }

@@ -46,6 +46,13 @@ export interface SaveData {
   seenIntro: boolean
   /** Latch for the one-time DAILY RACE UNLOCKED reveal, shown on Home once endless opens. */
   seenRaceUnlock: boolean
+  /**
+   * Boost TYPES the player has set aside — none of these are consumed at level start, however many
+   * are owned. A set of types rather than a count, because "hold my Jackpot Chips for a hard level"
+   * is the actual intent and per-instance holding would need a second inventory kept in sync with
+   * the first through every grant, spend and device merge.
+   */
+  heldBoosts: BoostType[]
   // --- v8 Jackpot Wheel field. Defaults to 0; read shape-tolerantly below. ---
   /** Jackpot meter charge — notches filled by level wins; at JACKPOT_GOAL the wheel fires, then resets. */
   jackpotMeter: number
@@ -151,6 +158,7 @@ const DEFAULTS: SaveData = {
   finaleSeen: false,
   seenIntro: false,
   seenRaceUnlock: false,
+  heldBoosts: [],
   jackpotMeter: 0,
   championWeeks: [],
   championDays: [],
@@ -244,6 +252,10 @@ export function coerceSave(raw: unknown): SaveData {
     base.finaleSeen = data.finaleSeen === true
     base.seenIntro = data.seenIntro === true
     base.seenRaceUnlock = data.seenRaceUnlock === true
+    // Absent in older saves → nothing held → today's behaviour exactly.
+    base.heldBoosts = Array.isArray(data.heldBoosts)
+      ? data.heldBoosts.filter((x): x is BoostType => typeof x === 'string')
+      : []
     // v8 Jackpot Wheel meter — absent in pre-v8 saves → 0.
     base.jackpotMeter = typeof data.jackpotMeter === 'number' ? Math.max(0, Math.floor(data.jackpotMeter)) : 0
     // Race champion claims (weekly season + daily board) — absent in older saves → none claimed.
@@ -688,11 +700,20 @@ export function setReferredByCode(code: string): void {
  * implementations of this rule would drift the first time a cap changed, and the symptom would be a
  * player watching a boost they were promised silently not appear.
  */
-export function splitPendingBoosts(pending: readonly BoostType[]): { take: BoostType[]; keep: BoostType[] } {
+export function splitPendingBoosts(
+  pending: readonly BoostType[],
+  held: readonly BoostType[] = []
+): { take: BoostType[]; keep: BoostType[] } {
   const take: BoostType[] = []
   const keep: BoostType[] = []
   let jackpots = 0
   for (const b of pending) {
+    // A HELD type is never taken and never counts against the cap — holding a Jackpot Chip must make
+    // room for the next boost in the queue, not silently waste one of the three slots.
+    if (held.includes(b)) {
+      keep.push(b)
+      continue
+    }
     const room = take.length < DIFFICULTY.economy.boostApplyMax
     const jackpotOk = b !== 'jackpot' || jackpots < DIFFICULTY.economy.jackpotBoostPerLevel
     if (room && jackpotOk) {
@@ -705,10 +726,30 @@ export function splitPendingBoosts(pending: readonly BoostType[]): { take: Boost
   return { take, keep }
 }
 
+/**
+ * Toggle whether a boost TYPE is set aside. Returns the new held state.
+ *
+ * Holding is per-type rather than per-instance on purpose. "Save my Jackpot Chips for a hard level"
+ * is the real intent, and a per-instance hold would need a second inventory kept consistent with the
+ * first through every grant, spend and cross-device merge — the same trap `promoteBoost` avoids by
+ * reordering rather than adding an `armedBoosts` array.
+ */
+export function toggleHoldBoost(type: BoostType): boolean {
+  const save = loadSave()
+  const at = save.heldBoosts.indexOf(type)
+  if (at >= 0) save.heldBoosts.splice(at, 1)
+  else save.heldBoosts.push(type)
+  persistSave(save)
+  return at < 0
+}
+
 export function takePendingBoosts(): BoostType[] {
   const save = loadSave()
   if (save.pendingBoosts.length === 0) return []
-  const { take, keep } = splitPendingBoosts(save.pendingBoosts)
+  // ⚠️ `heldBoosts` MUST be passed here. The stash previews the selection with the same call, so
+  // omitting it would make the panel promise one thing and the level do another — the exact drift
+  // `splitPendingBoosts` was extracted to prevent.
+  const { take, keep } = splitPendingBoosts(save.pendingBoosts, save.heldBoosts)
   save.pendingBoosts = keep
   persistSave(save)
   return take
