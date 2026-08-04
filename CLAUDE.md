@@ -204,6 +204,7 @@ make green.
 | `src/view/raceunlockcard.ts` | the one-time DAILY RACE UNLOCKED reveal |
 | `src/view/showroom.ts` | THE SHOWROOM trophy case — doors on the LevelSelect chapter ribbons |
 | `src/view/trophyceremony.ts` | the chapter-complete ceremony + the one-time catch-up card |
+| `src/view/platekit.ts` | the material + lighting law (E7): plates, spotlight scrims, `goldFace` — `ui.ts` re-exports the legacy names |
 | `src/view/rgbmarquee.ts` | the RGB cabinet chase — see the note above before touching it |
 | `src/view3d/stage.ts` | the only three.js usage |
 | `supabase/migrations/` | `0001_saves` → `0024_race_board_salt_enforced` |
