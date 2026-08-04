@@ -3,8 +3,11 @@ import { sfx } from '../audio/sfx'
 import { DESIGN_W, restScrollY } from '../config'
 import { endlessUnlocked } from '../core/endless'
 import { levelStanding } from '../core/leaderboard'
-import { LEVEL_COUNT } from '../core/levels'
+import { CHAPTER_LEVELS, LEVEL_COUNT } from '../core/levels'
 import { loadSave } from '../core/save'
+import { trophyFor } from '../core/trophies'
+import { openShowroom } from '../view/showroom'
+import { ensureGlyphTexture } from '../view/textures'
 import { addCasinoBackdrop } from '../view/background'
 import { addLevelRaceStrip, addRaceModule } from '../view/leaderboardpanel'
 import { D, E, OVERSHOOT, backOut } from '../view/motion'
@@ -86,7 +89,6 @@ const TRAIL_RETURN_BOW = 16
  * reason the windowed grid's scroll→row inverse stays closed-form (see `rowIndexAt`) instead of
  * turning into a search — the layout change costs the hot path two extra divisions, nothing more.
  */
-const CHAPTER_LEVELS = 10
 const CHAPTER_ROWS = CHAPTER_LEVELS / GRID_COLS
 /** Ribbon plate height, and the band each chapter reserves above its first row for it. */
 const RIBBON_H = 32
@@ -398,6 +400,17 @@ export class LevelSelectScene extends Phaser.Scene {
     this.addScrollRail(viewTop, viewBottom, contentBottom)
     this.addRecallPill(viewBottom, Math.min(save.unlocked, LEVEL_COUNT))
 
+    if (import.meta.env.DEV) {
+      // ?showroom[=N] — open the trophy case on demand; N treats chapters 1..N as owned (presentation
+      // only, no award). ?showroom=12 is the silhouette-legibility pass: every locked glyph must stay
+      // identifiable as a flat navy shape, or its TROPHIES entry gets swapped (mushroom-not-nazar).
+      const q = new URLSearchParams(location.search)
+      if (q.has('showroom')) {
+        const n = Math.floor(Number(q.get('showroom')))
+        this.time.delayedCall(400, () => openShowroom(this, { ownedOverride: n >= 1 ? n : undefined }))
+      }
+    }
+
     // Fixed footer. This is the SAME module Home seats its ENDLESS block in — one definition of what
     // the endless race looks like, what it says and what it does, so the board is reachable from both
     // screens that offer ENDLESS and the two can never drift. Using the module rather than a bare pill
@@ -583,6 +596,36 @@ export class LevelSelectScene extends Phaser.Scene {
         })
         .setOrigin(1, 0.5)
     )
+    // A finished chapter wears its showroom trophy on the ribbon — the door's own advertisement.
+    if (state === 'done') {
+      const trophy = trophyFor(chapter + 1)
+      if (trophy) {
+        const key = ensureGlyphTexture(this, `trophy:${chapter + 1}`, trophy.emoji, 96, 128)
+        container.add(this.add.image(-GRID_W / 2 + 168, 0, key).setDisplaySize(24, 24))
+      }
+    }
+    // ⚠️ Every ribbon is a DOOR to the showroom, and it sits on the grid's swipe surface — so it
+    // follows the level chips' exact guard, not a bare pointerup: the tap is ignored when the gesture
+    // was really a scroll (dragMoved), and the hit area is clipped to the viewport band so a ribbon
+    // scrolled under the header can never swallow a tap meant for the chrome above it (the same
+    // "back only works if I scroll up first" bug the chip zones already solve).
+    const ribbonCy = chapterTop(grid.viewTop, chapter) + 5 + RIBBON_H / 2
+    const ZONE_H = RIBBON_H + 14
+    const zone = this.add.rectangle(0, 0, GRID_W, ZONE_H, 0xffffff, 0.001).setInteractive({
+      useHandCursor: true,
+      hitArea: new Phaser.Geom.Rectangle(0, 0, GRID_W, ZONE_H),
+      hitAreaCallback: (area: Phaser.Geom.Rectangle, hx: number, hy: number): boolean => {
+        const pointerY = ribbonCy + grid.content.y + (hy - ZONE_H / 2)
+        return pointerY >= grid.viewTop && pointerY <= grid.viewBottom && Phaser.Geom.Rectangle.Contains(area, hx, hy)
+      },
+    })
+    zone.on('pointerup', () => {
+      const screenY = ribbonCy + grid.content.y
+      if (this.dragMoved >= 12 || screenY < grid.viewTop || screenY > grid.viewBottom) return
+      sfx.uiTap()
+      openShowroom(this, { focusChapter: chapter + 1 })
+    })
+    container.add(zone)
     return container
   }
 

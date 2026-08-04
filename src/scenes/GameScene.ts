@@ -31,7 +31,10 @@ import { endlessLockPlan, endlessShapeFor } from '../core/endlessramp'
 import type { EndlessShape } from '../core/endlessramp'
 import { endlessBoardRng } from '../core/boardpick'
 import { cachedSalt } from '../core/racesalt'
-import { LEVEL_COUNT, levelSpec, starsFor } from '../core/levels'
+import { CHAPTER_COUNT, CHAPTER_LEVELS, LEVEL_COUNT, levelSpec, starsFor } from '../core/levels'
+import { CHAPTER_BOOSTS, CHAPTER_PURSES, claimChapter, trophyFor } from '../core/trophies'
+import type { ChapterGrant } from '../core/trophies'
+import { playChapterCeremony } from '../view/trophyceremony'
 import { hazardPlan } from '../core/hazards'
 import { ensureHazardTexture } from '../view/textures'
 import { DIFFICULTY, type HazardKind } from '../core/difficulty'
@@ -682,6 +685,25 @@ export class GameScene extends Phaser.Scene {
       // ?ticket=N — punch the "+N FREE SPINS" ticket beat on demand (presentation only; no award).
       const ticket = Number(params.get('ticket'))
       if (ticket > 0) this.time.delayedCall(700, () => this.freeSpinTicket(ticket))
+      // ?chapter=N — play the chapter trophy ceremony on demand (presentation only; no award — the
+      // balance readout re-ticks to its real value). ?chapter=30 is the car. Mirrors ?ticket.
+      const chapter = Math.floor(Number(params.get('chapter')))
+      if (chapter >= 1 && chapter <= CHAPTER_COUNT) {
+        this.time.delayedCall(700, () => {
+          const trophy = trophyFor(chapter)
+          if (!trophy) return
+          this.chapterCeremony(
+            {
+              chapter,
+              trophy,
+              purse: CHAPTER_PURSES[chapter - 1] ?? 0,
+              boost: CHAPTER_BOOSTS[chapter] ?? null,
+              balance: loadSave().chips,
+            },
+            () => {}
+          )
+        })
+      }
       // ?plinko[=PTS] — drop the Plinko board on demand (mirrors ?wheel) so automated checks can reach
       // it without grinding for a chain. Routes through the real open path, so the award, the rigged
       // landing and the board handback are all exercised exactly as in production. Pair with ?slot=N
@@ -4838,6 +4860,16 @@ export class GameScene extends Phaser.Scene {
     // `moves_left` is the earned leftover, not the raw remainder, so a bought win can't read as a
     // comfortable one and flatter a level that is actually hard.
     track(EVENTS.LEVEL_WIN, { level: this.level, stars, moves_left: earnedLeftover })
+    // CHAPTER REWARD — a FIRST clear of a chapter-closing level banks its trophy + purse (+ milestone
+    // boost) right here, before any celebration animates (core/trophies.ts claim, award-first like
+    // every other surface). The ceremony later in this method replays this settled result; replays
+    // and already-claimed boundaries get null and fall through to the plain milestone splash.
+    const chapterGrant =
+      !isReplay && this.level % CHAPTER_LEVELS === 0 ? claimChapter(this.level / CHAPTER_LEVELS) : null
+    if (chapterGrant) {
+      this.chipBanked = chapterGrant.balance
+      track(EVENTS.CHAPTER_REWARD, { chapter: chapterGrant.chapter, purse: chapterGrant.purse, retro: false })
+    }
     // Charge the jackpot meter one notch. When it fills, arm the wheel — the win-card Continue then
     // fires it (see continueAfterWin). Persisted immediately, so quitting can't lose progress.
     //
@@ -4864,16 +4896,62 @@ export class GameScene extends Phaser.Scene {
     // normal milestone splash.
     if (this.level >= LEVEL_COUNT && !save.finaleSeen) {
       markFinaleSeen()
-      this.time.delayedCall(420, () => this.allClearFinale(totalStars, showCard))
+      // Level 300 is also chapter 30's close. The finale keeps the slot it has always owned, then
+      // hands off to the car ceremony — "ALL CLEAR → and your grand prize is a car" — before the
+      // result card. Both stages are tap-skippable, so the once-ever double bill can be walked out of.
+      const after = chapterGrant ? (): void => this.chapterCeremony(chapterGrant, showCard) : showCard
+      this.time.delayedCall(420, () => this.allClearFinale(totalStars, after))
+      return
+    }
+    // First clear of a chapter boundary: the trophy ceremony stands in where the milestone splash
+    // would have played — same seat, same hand-off to the card, a prize instead of a headline.
+    if (chapterGrant) {
+      this.time.delayedCall(420, () => this.chapterCeremony(chapterGrant, showCard))
       return
     }
     // Every 10th level is a milestone: a full-screen star-tally splash stands in for Beats 1–2.
-    if (this.level % 10 === 0) {
+    if (this.level % CHAPTER_LEVELS === 0) {
       // The splash already fired the fanfare + heart shower — the card stays calm (celebrate=false)
       // but still runs Beat 4 (elastic entrance + coin roll-up), tap-to-settle.
       this.time.delayedCall(420, () => this.milestoneSplash(totalStars, showCard))
     } else {
       this.runWinSequence(stars, bonus, chipReward)
+    }
+  }
+
+  /**
+   * The chapter trophy ceremony — plays where the milestone splash would, on the first clear of a
+   * chapter-closing level. The grant is ALREADY banked (finishWin, award-first); this only performs
+   * it, wiring the scene's single freeze authority and the balance pill exactly like the wheel does
+   * (the pill is lifted over the ceremony scrim so the purse visibly pours INTO the readout).
+   * Wrapped for the same reason offerDeal is: a throw on the way out of a win would strand the
+   * player on a dead result card. If anything here fails, the card shows as though no chapter had
+   * closed — the player misses a spectacle, never the prize (it is already in the save).
+   */
+  private chapterCeremony(grant: ChapterGrant, done: () => void): void {
+    try {
+      const pill = this.chipHud
+      const before = grant.balance - grant.purse
+      pill?.container.setDepth(63)
+      void playChapterCeremony(this, grant, {
+        hitstop: ms => this.hitstop(ms),
+        chipFlyTo: pill
+          ? {
+              x: pill.container.x,
+              y: pill.container.y,
+              onLand: (landed, total) =>
+                pill.update(Math.round(before + (grant.balance - before) * (landed / total))),
+            }
+          : undefined,
+      })
+        .catch(() => undefined)
+        .then(() => {
+          pill?.container.setDepth(50)
+          this.chipHud?.update(grant.balance)
+          done()
+        })
+    } catch {
+      done()
     }
   }
 

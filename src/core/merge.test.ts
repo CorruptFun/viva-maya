@@ -237,3 +237,30 @@ describe('mergeSaves — the race name', () => {
     expect(mergeSaves(local, cloud).handle).toBe('local')
   })
 })
+
+describe('mergeSaves — chapter trophies and the race-unlock latch', () => {
+  it('unions chapterRewards across both saves, whichever side wins the progress compare', () => {
+    // Trophy claims are claim latches like championWeeks: losing one to a merge would re-pay a purse
+    // on the next Home visit, and would blank an earned plinth in the showroom until then.
+    const phone = save({ unlocked: 45, chapterRewards: [1, 2, 4] })
+    const tablet = save({ unlocked: 31, chapterRewards: [2, 3] })
+    expect(mergeSaves(phone, tablet).chapterRewards).toEqual([1, 2, 3, 4])
+    expect(mergeSaves(tablet, phone).chapterRewards).toEqual([1, 2, 3, 4])
+  })
+
+  it('a further-progressed save without trophies cannot blank the other showroom', () => {
+    const freshButDeep = save({ unlocked: 200 })
+    const trophied = save({ unlocked: 41, chapterRewards: [1, 2, 3, 4] })
+    expect(mergeSaves(freshButDeep, trophied).chapterRewards).toEqual([1, 2, 3, 4])
+  })
+
+  it('seenRaceUnlock survives losing the progress compare (regression: it was missing from the union)', () => {
+    // raceunlockcard.ts has always documented this latch as cloud-synced, but it shipped without a
+    // union rule — so a device that had seen the card, merged against a further-progressed one that
+    // had not, replayed the one-time reveal. The union is the fix; this pins it.
+    const seen = save({ unlocked: 12, seenRaceUnlock: true })
+    const deeperUnseen = save({ unlocked: 80, seenRaceUnlock: false })
+    expect(mergeSaves(seen, deeperUnseen).seenRaceUnlock).toBe(true)
+    expect(mergeSaves(deeperUnseen, seen).seenRaceUnlock).toBe(true)
+  })
+})
