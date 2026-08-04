@@ -9,6 +9,7 @@ import { trophyFor } from '../core/trophies'
 import { openShowroom } from '../view/showroom'
 import { ensureGlyphTexture } from '../view/textures'
 import { addCasinoBackdrop } from '../view/background'
+import { addScreenGloss } from '../view/fx'
 import { addLevelRaceStrip, addRaceModule } from '../view/leaderboardpanel'
 import { D, E, OVERSHOOT, backOut } from '../view/motion'
 import { quality } from '../view/quality'
@@ -212,7 +213,7 @@ export class LevelSelectScene extends Phaser.Scene {
     // Warm cream fade-in (never black) — the receiving half of every startScene cross-fade.
     this.cameras.main.fadeIn(this.prefersReducedMotion() ? 90 : 180, 255, 253, 248)
     this.cameras.main.setScroll(0, restScrollY()) // centre the design box in the taller world
-    applyEntrance(this) // §E10 directional push-in + §F2 light-wipe (no-ops under reduced motion)
+    applyEntrance(this, undefined, { zoomSettle: true }) // §E10 push-in + §F2 light-wipe (no-op under RM)
     // C4: reset the idle-attract state per entry — Phaser reuses the scene instance across navigation, so
     // clear the latch + any stale current-chip/tween ref (e.g. from a visit that HAD a current chip) before
     // the grid rebuilds; startChipPulse re-captures the live chip once its entrance settles.
@@ -235,6 +236,7 @@ export class LevelSelectScene extends Phaser.Scene {
     this.winLast = -1
     const save = loadSave()
     addCasinoBackdrop(this, 'menu')
+    addScreenGloss(this) // same "inside the glass" finish as Home (tier-gated, static under RM)
     // Depth 50 puts the scene chrome above the scrolling grid for input as well as drawing — the same
     // rank addMuteChip already takes. The chip hit areas are clipped to the viewport (see buildChip),
     // so this is belt-and-braces: nothing in the list can outrank the way out of the screen.

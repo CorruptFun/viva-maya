@@ -25,6 +25,7 @@ import type { SlotBet, SlotSpin, SlotSymbol } from '../core/slots'
 import { BOOST_ITEMS, buySpin, freeSlotSpin } from '../core/store'
 import type { FreeSlotKind, FreeSlotSpinResult, SlotPurchase } from '../core/store'
 import { addCasinoBackdrop } from '../view/background'
+import { addScreenGloss } from '../view/fx'
 import { vibratePattern } from '../view/haptics'
 import { addJackpotMeter } from '../view/jackpot'
 import type { JackpotMeter } from '../view/jackpot'
@@ -167,8 +168,9 @@ export class SlotScene extends Phaser.Scene {
 
     this.cameras.main.setScroll(0, restScrollY())
     this.cameras.main.fadeIn(prefersReducedMotion() ? 90 : 180, 255, 253, 248)
-    applyEntrance(this)
+    applyEntrance(this, undefined, { zoomSettle: true })
     addCasinoBackdrop(this, 'home')
+    addScreenGloss(this) // same "inside the glass" finish as Home (tier-gated, static under RM)
     ensureGlyphTexture(this, CHARM_TEX, '❤️', 104, 128)
     const T = getTheme()
     const params = new URLSearchParams(location.search)

@@ -294,7 +294,11 @@ export function consumeFocus(): SceneFocus | undefined {
  * MAY call this once in create() after its `fadeIn`; scenes that don't just get today's flat cream
  * fade. Reduced-motion → no offset. Returns the resolved direction.
  */
-export function applyEntrance(scene: Phaser.Scene, dir: SceneDir = consumeEntrance()): SceneDir {
+export function applyEntrance(
+  scene: Phaser.Scene,
+  dir: SceneDir = consumeEntrance(),
+  opts: { zoomSettle?: boolean } = {}
+): SceneDir {
   if (prefersReducedMotion()) return dir
   const cam = scene.cameras.main
   // Rest at the centring scroll (restScrollY), not 0, so the entrance nudge settles onto the
@@ -302,6 +306,13 @@ export function applyEntrance(scene: Phaser.Scene, dir: SceneDir = consumeEntran
   const rest = restScrollY()
   cam.setScroll(cam.scrollX, rest + (dir === 'deeper' ? -ENTRANCE_OFFSET : ENTRANCE_OFFSET))
   scene.tweens.add({ targets: cam, scrollY: rest, duration: 340, ease: 'Back.easeOut' })
+  // Optional whisper of zoom-settle (1.01 → 1) riding the same 340ms Back ease as the scroll, so
+  // the destination lands with a breath of physical arrival. Off by default — existing callers are
+  // untouched — and inside the reduced-motion gate above, so the calm path never zooms.
+  if (opts.zoomSettle) {
+    cam.setZoom(1.01)
+    scene.tweens.add({ targets: cam, zoom: 1, duration: 340, ease: 'Back.easeOut' })
+  }
   // §F2 — the arriving half of the light-wipe: pick the band up where the cut left it and carry it
   // off-screen over the entrance settle. Screen-space, so the camera nudge above never bends it.
   lightWipe(scene, dir, 'arrive')

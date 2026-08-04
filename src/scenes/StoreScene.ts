@@ -9,6 +9,7 @@ import type { BoostStoreItem } from '../core/store'
 import { SYMBOLS } from '../core/types'
 import type { Piece, PieceKind } from '../core/types'
 import { addCasinoBackdrop } from '../view/background'
+import { addScreenGloss } from '../view/fx'
 import { INVITE_CARD_H, addInviteCard, maybeShowWelcome } from '../view/invite'
 import { isCloudConfigured } from '../core/cloud'
 import { rewardLabel } from '../core/promo'
@@ -53,8 +54,9 @@ export class StoreScene extends Phaser.Scene {
     // Warm cream fade-in + directional rise (the receiving half of startScene's cross-fade).
     this.cameras.main.setScroll(0, restScrollY()) // centre the design box (reduced-motion path skips applyEntrance)
     this.cameras.main.fadeIn(prefersReducedMotion() ? 90 : 180, 255, 253, 248)
-    applyEntrance(this)
+    applyEntrance(this, undefined, { zoomSettle: true })
     addCasinoBackdrop(this, 'home')
+    addScreenGloss(this) // same "inside the glass" finish as Home (tier-gated, static under RM)
     const T = getTheme()
 
     addPillButton(this, 64, 84, 84, 56, '‹', GHOST_PILL, () => startScene(this, 'home'))
