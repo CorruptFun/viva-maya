@@ -96,6 +96,30 @@ export type GoldTokens = Pick<Theme, 'goldBright' | 'gold' | 'goldDeep' | 'goldD
  * a deep belly, plus one thin `glossHi` specular band at ~40% height. Reads as curved metal instead
  * of flat "yellow plastic". Baked into a Graphics — shared so the champion plate, payline, win-card
  * tab and marquee lozenge all wear the exact same material.
+ *
+ * ⚠️ EVERY BAND IS INSET, and that is the whole difference between metal and a shape with ears.
+ * A band shorter than the silhouette's corner radius cannot wear that radius (`safeR` clamps it to
+ * the band's own half-height), and a smaller radius is a SQUARER corner — so an un-inset 2px crown
+ * band pokes its near-right-angle corners straight out through an arc that has barely opened yet,
+ * and they read as light gold "ears" hanging off the shape. `ensureFaceTexture` (ui.ts) learned
+ * this early on the 3-D button caps and has carried the guard ever since; this function never got
+ * it, so every `goldFace` surface in the game has quietly worn a set — invisible on a wide gold
+ * pill, where the ear is gold-on-gold inside the cap's own corner, and unmissable the moment the
+ * material was asked to be a 64px medallion RING, where it sprouted four (owner, 2026-08-04).
+ *
+ * Insetting by `r - (the band's own radius)` puts the band's corner exactly back on the silhouette's
+ * arc at the corner point and inside it everywhere else.
+ *
+ * The BELLY falloff is why the whole stack is now laid down darkest-first. It used to be painted on
+ * afterwards as a bottom-anchored strip with `{bl: r, br: r}` corners — degenerate whenever `r`
+ * exceeds the strip's own height, which it always does at `0.28 * h`, so it poked DARK ears out of
+ * the underside. And it cannot simply be inset like the crown bands: a band's radius is capped by
+ * its own height, so the inset that keeps its bottom corners inside the arc is exact only AT those
+ * corners and wildly over-conservative above them — which turns the falloff into a dark BAR floating
+ * across the middle of the shape (measured: a 34px coin's belly narrowed by 24px). So the darkest
+ * metal is the base, and the lighter metal is stacked over it TOP-anchored like everything else. The
+ * falloff is then whatever the top-anchored bands fail to reach, which follows the bottom arc
+ * exactly, for free, at every radius.
  */
 export function goldFace(
   g: Phaser.GameObjects.Graphics,
@@ -107,20 +131,25 @@ export function goldFace(
   radius?: number
 ): void {
   const r = safeR(radius ?? Math.min(h / 2, 18), w, h)
-  // Deep belly base.
-  g.fillStyle(tokens.goldDeep, 1)
+  /** Top-anchored band of height `bh`, inset so its squarer corners stay inside the silhouette's arc. */
+  const band = (bh: number, colour: number, alpha: number): void => {
+    const rb = safeR(r, w, bh)
+    const ins = Math.max(0, r - rb)
+    if (w - ins * 2 <= 0 || bh <= 0) return
+    g.fillStyle(colour, alpha)
+    g.fillRoundedRect(x + ins, y, w - ins * 2, bh, rb)
+  }
+  // Darkest metal underneath the lot — the belly falloff is the rim this leaves uncovered.
+  g.fillStyle(tokens.goldDarkest, 1)
   g.fillRoundedRect(x, y, w, h, r)
+  band(h * 0.97, tokens.goldDeep, 0.5)
+  band(h * 0.9, tokens.goldDeep, 1)
   // Bright crown → gold → deep belly: top-anchored falling-height bands (a gradient without a live fill).
   const bands = 8
   for (let i = 0; i < bands; i++) {
     const t = i / (bands - 1)
-    const bh = h * (0.96 - 0.9 * t)
-    g.fillStyle(t < 0.5 ? tokens.goldBright : tokens.gold, 0.16)
-    g.fillRoundedRect(x, y, w, bh, safeR(r, w, bh))
+    band(h * (0.86 - 0.8 * t), t < 0.5 ? tokens.goldBright : tokens.gold, 0.16)
   }
-  // Deepen the very bottom for a metal belly falloff.
-  g.fillStyle(tokens.goldDarkest, 0.22)
-  g.fillRoundedRect(x, y + h * 0.72, w, h * 0.28, { tl: 0, tr: 0, bl: r, br: r })
   // One thin specular gloss band at ~40% height (the crown highlight of real metal).
   const glossH = Math.max(2, h * 0.09)
   g.fillStyle(tokens.glossHi, 0.5)

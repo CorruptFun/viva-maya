@@ -38,7 +38,14 @@ export interface BoostMeta {
   label: string
   /** What it does, phrased for someone deciding whether to spend it. */
   blurb: string
-  /** Emoji shown on the stash tile. NOT usable in Phaser pill labels — see the note in HomeScene. */
+  /**
+   * Emoji shown on the stash row. NOT usable in Phaser pill labels — see the note in HomeScene.
+   *
+   * ⚠️ Must be a FULLY-QUALIFIED emoji, not merely a Unicode symbol. The chess pieces are the trap:
+   * only the pawn (`♟️`, U+265F U+FE0F) is an emoji — knight, rook, queen and king exist solely as
+   * monochrome text glyphs, so they render as flat black type next to four full-colour siblings, or
+   * as tofu where the font has no glyph at all.
+   */
   icon: string
 }
 
@@ -49,7 +56,10 @@ export interface BoostMeta {
 export const BOOST_ORDER: readonly BoostType[] = ['extraMoves', 'wildReel', 'diceBomb', 'doubleScore', 'jackpot']
 
 export const BOOST_META: Record<BoostType, BoostMeta> = {
-  extraMoves: { label: '+5 MOVES', blurb: 'Start the level with five extra moves', icon: '👟' },
+  // A chess pawn, not the old running shoe (owner call, 2026-08-04): the shoe read as *speed*, and
+  // this boost does not make you faster, it gives you five more TURNS. A pawn is the one piece the
+  // emoji set actually carries in colour — see the warning on `icon`.
+  extraMoves: { label: '+5 MOVES', blurb: 'Start the level with five extra moves', icon: '♟️' },
   wildReel: { label: 'WILD REEL', blurb: 'Start with a Wild Reel already on the board', icon: '🎰' },
   diceBomb: { label: 'DICE BOMB', blurb: 'Start with a Dice Bomb already on the board', icon: '🎲' },
   doubleScore: { label: 'DOUBLE SCORE', blurb: 'Everything scores 2× for the whole level', icon: '✨' },

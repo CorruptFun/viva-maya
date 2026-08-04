@@ -363,7 +363,7 @@ function addDeck(scene: Phaser.Scene, x: number, y: number, label: string, lit: 
   const key = bake(scene, `stash:deck:${T.id}:${lit ? 'lit' : 'off'}:${w}x${h}`, w, h, g => {
     const px = PAD
     const py = PAD
-    const r = h / 2
+    const r = h / 2 - 1 // a hair under half — an exact half-side radius spikes the corner arc (ui.ts `safeR`)
     g.fillStyle(T.shadow, 0.1)
     g.fillRoundedRect(px, py + 3, w, h, r)
     g.fillStyle(lit ? T.cardFillWarm : T.cardFillAlt, 1)
@@ -439,6 +439,14 @@ function ensureRowPlate(scene: Phaser.Scene, state: RowState): string {
 /**
  * The icon medallion — a recessed disc with a gold ring, so the emoji sits IN something instead of
  * floating on the plate. Lit for an owned boost, sunk and unlit for an empty socket.
+ *
+ * ⚠️ DRAWN FROM CIRCLES, never `goldFace`. That function is a rounded-RECT material: clamped to
+ * `w/2 - 1` it still keeps a hair of straight edge at four points, and every band it stacks is a
+ * rectangle that has to be argued out of poking through the arc. A ring has no corners to argue
+ * about, so it is built the way a ring is built — four discs nudged progressively UPWARD, each a
+ * shade brighter, which is the one key light (§E7) expressed as offsets rather than as a gradient:
+ * dark crescent underneath, lit crown on top. (`goldFace`'s own ear guard landed the same day; this
+ * is belt and braces, because the artifact showed up HERE first.)
  */
 function ensureMedallion(scene: Phaser.Scene, lit: boolean): string {
   const T = getTheme()
@@ -449,10 +457,16 @@ function ensureMedallion(scene: Phaser.Scene, lit: boolean): string {
     g.fillStyle(T.shadow, 0.16)
     g.fillCircle(c, c + 2, rr)
     if (lit) {
-      // A metal ring, a warm well cut out of it, then a crescent of light along the well's TOP edge —
-      // two overlapping circles, the upper one gloss and the lower one the well colour again, which
-      // is the one-key-light law (§E7) drawn with fills instead of a gradient.
-      goldFace(g, PAD, PAD, d, d, T, rr)
+      g.fillStyle(T.goldDarkest, 1)
+      g.fillCircle(c, c + 1, rr)
+      g.fillStyle(T.goldDeep, 1)
+      g.fillCircle(c, c, rr - 1)
+      g.fillStyle(T.gold, 1)
+      g.fillCircle(c, c - 1.5, rr - 2)
+      g.fillStyle(T.goldBright, 1)
+      g.fillCircle(c, c - 3, rr - 4)
+      // The well, then a crescent of light along its TOP edge — two overlapping discs, the upper one
+      // gloss and the lower one the well colour again.
       g.fillStyle(T.cardFill, 1)
       g.fillCircle(c, c, rr - 7)
       g.fillStyle(T.glossHi, 0.45)
@@ -472,16 +486,22 @@ function ensureMedallion(scene: Phaser.Scene, lit: boolean): string {
   })
 }
 
-/** The ×N count coin — real metal when owned, so a stack of five reads as winnings, not as a label. */
+/**
+ * The ×N count coin — real metal when owned, so a stack of five reads as winnings, not as a label.
+ * Radii are `CAP_R`, a hair under half the height: a radius of EXACTLY half a side degenerates the
+ * corner arc and bakes a sharp point into the texture (see `safeR` in ui.ts). `goldFace` clamps its
+ * own, but the shadow and the bezel here are drawn straight and have to say it themselves.
+ */
 function ensureCountCoin(scene: Phaser.Scene, w: number): string {
   const T = getTheme()
   const h = 34
+  const CAP_R = h / 2 - 1
   return bake(scene, `stash:coin:${T.id}:${w}x${h}`, w, h, g => {
     g.fillStyle(T.shadow, 0.16)
-    g.fillRoundedRect(PAD, PAD + 3, w, h, h / 2)
-    goldFace(g, PAD, PAD, w, h, T, h / 2)
+    g.fillRoundedRect(PAD, PAD + 3, w, h, CAP_R)
+    goldFace(g, PAD, PAD, w, h, T, CAP_R)
     g.lineStyle(2, T.goldDeep, 0.9)
-    g.strokeRoundedRect(PAD, PAD, w, h, h / 2)
+    g.strokeRoundedRect(PAD, PAD, w, h, CAP_R)
   })
 }
 
@@ -601,13 +621,14 @@ function buildRow(
     .setOrigin(0.5)
     .setLetterSpacing(1)
   const tabW = Math.max(74, Math.ceil(tabLabel.width) + 24)
+  const TAB_R = 12 // 26 tall, so a hair under the half — see the coin's note
   const tabG = scene.add.graphics()
-  if (going) goldFace(tabG, -tabW / 2, -13, tabW, 26, T, 13)
+  if (going) goldFace(tabG, -tabW / 2, -13, tabW, 26, T, TAB_R)
   else {
     tabG.fillStyle(held ? T.border : T.cardFill, owned ? 1 : 0.18)
-    tabG.fillRoundedRect(-tabW / 2, -13, tabW, 26, 13)
+    tabG.fillRoundedRect(-tabW / 2, -13, tabW, 26, TAB_R)
     tabG.lineStyle(1, owned ? T.goldDeep : T.goldBright, owned ? 0.5 : 0.3)
-    tabG.strokeRoundedRect(-tabW / 2, -13, tabW, 26, 13)
+    tabG.strokeRoundedRect(-tabW / 2, -13, tabW, 26, TAB_R)
   }
   tabWrap.add([tabG, tabLabel])
   c.add(tabWrap)
