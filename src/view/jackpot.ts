@@ -674,6 +674,13 @@ export function openJackpotWheel(scene: Phaser.Scene, opts: WheelOpenOpts): void
   drawWheelBezel(bezel, cx, cy, R, T)
 
   const hub = track(scene.add.image(cx, cy, 'jackpot').setDisplaySize(96, 96).setDepth(62))
+  /**
+   * ⚠️ `setDisplaySize` is stored as a SCALE of the 256² baked medallion (96/256 ≈ 0.375), so the
+   * hub's rest is THIS number, never `scale: 1` — that literal is the native 256px texture, 2.67×
+   * the designed cap (which is exactly where the old shared rig tween parked it; reduced motion
+   * never scaled, so IT was the path showing the intended 96px).
+   */
+  const hubScale = hub.scaleX
 
   // Pointer in a CONTAINER pivoting at its base so passing wedge pegs can flex it (the classic
   // clacker). Geometry matches the old fixed graphic exactly when at rest (angle 0).
@@ -683,12 +690,16 @@ export function openJackpotWheel(scene: Phaser.Scene, opts: WheelOpenOpts): void
   drawWheelPointer(pointerG, T)
   pointerC.add(pointerG)
 
-  // Entrance pop for the whole rig (wheel + rim + bezel + hub).
-  const rig: Phaser.GameObjects.GameObject[] = [wheel, rim, bezel, hub]
+  // Entrance pop for the whole rig (wheel + rim + bezel + hub). One tween carries the trio whose
+  // rest genuinely is 1 (Container/Graphics); the hub rides the same beat on its own tween, back to
+  // its own setDisplaySize rest.
+  const rig: Phaser.GameObjects.GameObject[] = [wheel, rim, bezel]
   if (!reduced) {
     for (const o of rig) (o as unknown as { setScale: (s: number) => void }).setScale(0.6)
+    hub.setScale(hubScale * 0.6)
     ;(title as Phaser.GameObjects.Text).setScale(0)
     scene.tweens.add({ targets: rig, scale: 1, duration: 420, ease: backOut(OVERSHOOT.gentle) })
+    scene.tweens.add({ targets: hub, scale: hubScale, duration: 420, ease: backOut(OVERSHOOT.gentle) })
     scene.tweens.add({ targets: title, scale: 1, duration: 340, delay: 120, ease: 'Back.easeOut' })
   }
 
@@ -884,9 +895,15 @@ export function openJackpotWheel(scene: Phaser.Scene, opts: WheelOpenOpts): void
     scene.tweens.killTweensOf(wheel)
     wheel.setRotation(deg(targetDeg))
     // A skip during the entrance pop kills the SHARED rig tween (it targets the wheel), which would
-    // freeze rim/bezel/hub mid-scale and shatter the payoff geometry — snap the rig to its rest
+    // freeze rim/bezel mid-scale and shatter the payoff geometry — snap the rig to its rest
     // (scale 1 is the entrance tween's exact end state; under reduced motion it never scaled down).
-    if (!reduced) for (const o of rig) (o as unknown as { setScale: (s: number) => void }).setScale(1)
+    // The hub entrance is its OWN tween to its OWN rest (hubScale — see its capture), so it gets its
+    // own kill + snap: `setScale(1)` here would park the cap at the native 256px medallion.
+    if (!reduced) {
+      for (const o of rig) (o as unknown as { setScale: (s: number) => void }).setScale(1)
+      scene.tweens.killTweensOf(hub)
+      hub.setScale(hubScale)
+    }
     // Retire the blur-streak ring + rest the pointer (a skip can arrive mid-spin, mid-flex).
     scene.tweens.killTweensOf(streaks)
     streaks.setAlpha(0)
