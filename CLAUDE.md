@@ -85,6 +85,58 @@ Live: <https://corruptfun.github.io/viva-maya/>
   That clamp is the only place it happens; don't route a cheat score around it.
   The cap is measured, not chosen — `endless.pace.test.ts` re-derives it from the
   real board and fails if a tuning change puts it out of human reach.
+- **The endless board sits LOWER than the numbered board, and four constants are
+  budgeted against each other.** `BOARD_Y` is the numbered-level seat; endless
+  adds `ENDLESS_BOARD_DROP` so the TODAY'S LEADER strip can live *above* the
+  board. Inside `GameScene` the seat is **`this.boardTop`, assigned in `init()`**
+  (which runs before `create()`), never `BOARD_Y` directly.
+  ⚠️ Piece placement, the mask, the frame, the RGB ring **and `xyToCell`'s hit
+  test** all read it. A hit test that disagrees with the render by one row makes
+  taps land on the wrong piece — near-unplayable, and it reads as a swap bug, not
+  a layout one. If you move any of `ENDLESS_BOARD_DROP`, `ENDLESS_STRIP_Y`, the
+  card row, or `STRIP_H`, **re-derive `CHEAT_ZONE_TOP` too** — it has no anchor
+  below the board any more except the standing brief, which moves with the board.
+  Verify by round-tripping `cellToXY` → `xyToCell` for all 64 cells.
+- **A control next to the board must arm on `pointerdown`, not fire on
+  `pointerup`.** Phaser dispatches `pointerup` to whatever is under the finger at
+  *release*, however far away the press began — so a swipe off the board fires
+  any control it happens to end on. `addRaceStrip` (`view/leaderboardpanel.ts`)
+  therefore only opens if the gesture *started* on it. `ui.ts`'s `buildPressable`
+  still has the bare `pointerup` **on purpose**: every other control sits where
+  you tap, and only the race strip abuts a swipe surface. Spacing alone can never
+  fix this class of bug.
+- **`splitPendingBoosts` is shared, and that is the point.** The stash panel
+  promises "these go in next level" and the level start consumes — both call it,
+  so they cannot disagree. Two copies of the cap rule would diverge the first
+  time a cap moved, and the symptom is a player watching a promised boost fail to
+  appear. Boost *choice* is expressed by **reordering `pendingBoosts`** (the
+  queue is consumed from the front) and *exclusion* by `heldBoosts`, a set of
+  TYPES. Neither adds a second inventory to keep in sync across grants, spends
+  and device merges. **A held type frees its slot rather than wasting it** —
+  setting a Jackpot Chip aside must not silently cost one of the three.
+- **`BOOST_META` (`core/inventory.ts`) is the only place a boost is named.** The
+  free prize table (`daily.ts`) and the paid one (`store.ts`) both read from it,
+  and `inventory.test.ts` pins them. Three different things were once called
+  "+5 MOVES" — the free slots prize, a 40-chip store boost, and a 30-chip
+  in-level shelf item — and a player reasonably concluded he was being charged
+  for his own winnings. ⚠️ The HELPER shelf items are **not** boosts: they act on
+  the level being played, so `BLAST` is deliberately not `DICE BOMB`. Only one
+  free-substitution mapping is honest (`moves5 ← extraMoves`); the negative cases
+  carry tests.
+- **`beforeinstallprompt` is captured, not observed.** `core/install.ts` takes
+  custody so the game can offer its own button (`view/installsheet.ts`); the
+  passive listener that used to sit in `main.ts` is gone. ⚠️ **iOS exposes no
+  install API at all** — never add a one-tap path there. The iOS half is an
+  illustrated Share → Add to Home Screen guide, tailored per browser, and
+  `install_result` with outcome `guided` is the closest signal Apple permits.
+- **The resume guard reloads the page, so its false-positive guard is critical.**
+  `core/resumeguard.ts` watches for the game loop failing to advance after a
+  resume. `main.ts` stops the loop on purpose while hidden, so **a hidden page
+  has a frozen frame counter by design**, and Android fires `focus` on
+  still-hidden pages — every check re-confirms visibility *at the moment it
+  runs*. ⚠️ Its nudge calls `sleep()` **before** `wake()`: Phaser's `wake()` opens
+  with `if (this.running) return`, so a loop with `running === true` and a dead
+  requestAnimationFrame can never be woken by `wake()` alone.
 
 ## Run it
 
@@ -113,6 +165,12 @@ make green.
 | `src/main.ts`, `src/config.ts` | entry + tunables |
 | `src/scenes/` | Phaser scenes — Boot, Home, Game, LevelSelect, Store, Slot |
 | `src/core/` | game logic + its tests — board, merge, levels, endless, daily, slots, hazards, analytics, push, cheat, rgb |
+| `src/core/inventory.ts` | canonical boost names (`BOOST_META`) + the stash model — see the note above |
+| `src/core/install.ts` | "add to home screen" custody; the platform split lives here |
+| `src/core/resumeguard.ts` | recovers a game loop that never restarted after a resume |
+| `src/view/stash.ts` | the stash panel + its two doors (Home line, LevelSelect chip) |
+| `src/view/installsheet.ts` | the install sheet — DOM, so the iOS guide can point at real browser chrome |
+| `src/view/raceunlockcard.ts` | the one-time DAILY RACE UNLOCKED reveal |
 | `src/view/rgbmarquee.ts` | the RGB cabinet chase — see the note above before touching it |
 | `src/view3d/stage.ts` | the only three.js usage |
 | `supabase/migrations/` | `0001_saves` → `0024_race_board_salt_enforced` |
