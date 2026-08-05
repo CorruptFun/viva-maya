@@ -1,3 +1,4 @@
+import { DIFFICULTY } from './difficulty'
 import { addChips, addFreeSpins, bumpJackpotMeter, loadSave, persistSave, spendChips } from './save'
 
 /**
@@ -19,15 +20,39 @@ import { addChips, addFreeSpins, bumpJackpotMeter, loadSave, persistSave, spendC
  */
 
 export const MARKER_FROM = 151
-export const MARKER_STAKES = [50, 100, 250] as const
+export const MARKER_STAKES = [50, 100, 250, 500] as const
 export type MarkerStake = (typeof MARKER_STAKES)[number]
 
-/** The kicker each stake pays on a WIN. The top stake's spin degrades to pips when the free-spin
+/**
+ * THE HIGH-ROLLER'S MARKER — the fourth rung, band-scoped to AFTER DARK (Slice 3).
+ *
+ * Not a level type and not a new system: the same opt-in, the same sink proof, one more rung on a
+ * ladder that already existed. That is the whole reason it belongs in the 200s — the band's brief is
+ * recombinations of shipped things, and widening an existing choice is the cheapest possible way to
+ * say "the stakes are higher after dark" without spending a verb Act II needs.
+ */
+export const HIGH_ROLLER_STAKE = 500
+
+/** The kicker each stake pays on a WIN. The top stakes' spin degrades to pips when the free-spin
  *  caps refuse it (the Plinko SPIN→×8 restrike philosophy — never a dead payout). */
 export const MARKER_KICKERS: Record<MarkerStake, { pips: number; spin: boolean }> = {
   50: { pips: 1, spin: false },
   100: { pips: 2, spin: false },
   250: { pips: 0, spin: true },
+  // The high-roller rung pays the spin AND a fistful of pips — twice the stake wants visibly more
+  // than the same prize. Still provably under the stake (`marker.rate.test.ts` re-derives it from
+  // the shipped prize tables), which is the only property this ladder is allowed to have.
+  500: { pips: 3, spin: true },
+}
+
+/**
+ * Which rungs this level offers. The high-roller rung appears only from `afterDark.markerStart`, so
+ * the ladder a player sees at 151 is byte-identical to the one that shipped in Slice 0.
+ */
+export function markerStakesFor(level: number): MarkerStake[] {
+  const { afterDark } = DIFFICULTY
+  const high = afterDark.enabled && afterDark.marker && level >= afterDark.markerStart
+  return MARKER_STAKES.filter(s => high || s !== HIGH_ROLLER_STAKE)
 }
 
 /** Degraded kicker when the spin can't be banked (bank full or daily earn cap spent). */
@@ -62,7 +87,10 @@ export function settleMarkerWin(stake: MarkerStake, dayKey: string): { pips: num
   let spins = 0
   if (kicker.spin) {
     spins = addFreeSpins(1, dayKey, 'mega')
-    if (spins === 0) pips = MARKER_SPIN_FALLBACK_PIPS
+    // ADDS to the rung's own pips rather than replacing them. Identical to the shipped behaviour at
+    // 250 (whose base is 0), and the only correct answer at 500: a refused spin must not also
+    // confiscate the three pips the rung pays regardless of it.
+    if (spins === 0) pips += MARKER_SPIN_FALLBACK_PIPS
   }
   let meter = loadSave().jackpotMeter
   for (let i = 0; i < pips; i++) meter = bumpJackpotMeter()

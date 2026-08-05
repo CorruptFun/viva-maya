@@ -1,11 +1,14 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { JACKPOT_GOAL, WHEEL_PRIZES } from './jackpot'
+import { DIFFICULTY } from './difficulty'
 import {
+  HIGH_ROLLER_STAKE,
   MARKER_FROM,
   MARKER_KICKERS,
   MARKER_SPIN_FALLBACK_PIPS,
   MARKER_STAKES,
   markerOfferable,
+  markerStakesFor,
   settleMarkerLoss,
   settleMarkerWin,
 } from './marker'
@@ -66,8 +69,10 @@ describe('the marker is a strict sink', () => {
     const spinValue = dearestBet + dearestBoost
     for (const stake of MARKER_STAKES) {
       const k = MARKER_KICKERS[stake]
+      // A spin rung's pips are paid ON TOP of the spin, and a refused spin pays the fallback on
+      // top of them — so both settlements have to be valued, and the bound takes the dearer.
       const kickerValue = k.spin
-        ? Math.max(spinValue, MARKER_SPIN_FALLBACK_PIPS * pipValue) // whichever way it settles
+        ? Math.max(spinValue + k.pips * pipValue, (k.pips + MARKER_SPIN_FALLBACK_PIPS) * pipValue)
         : k.pips * pipValue
       expect({ stake, kickerValue: Math.round(kickerValue), sink: kickerValue < stake }).toEqual({
         stake,
@@ -109,11 +114,29 @@ describe('the marker is a strict sink', () => {
     expect(settleMarkerWin(50, '2026-08-04')).toEqual({ pips: 1, spins: 0, meter: 1 })
     expect(settleMarkerWin(100, '2026-08-04')).toEqual({ pips: 2, spins: 0, meter: 3 })
     expect(settleMarkerWin(250, '2026-08-04')).toEqual({ pips: 0, spins: 1, meter: 3 })
+    // The high-roller rung pays its pips alongside the spin.
+    expect(settleMarkerWin(500, '2026-08-04')).toEqual({ pips: 3, spins: 1, meter: 6 })
     // Exhaust the daily earn cap, then the top stake must fall back to pips — never a dead payout.
     const s2 = loadSave()
     s2.freeSpinsEarnedToday = 6
     s2.freeSpinsDay = '2026-08-04'
     persistSave(s2)
-    expect(settleMarkerWin(250, '2026-08-04')).toEqual({ pips: MARKER_SPIN_FALLBACK_PIPS, spins: 0, meter: 5 })
+    expect(settleMarkerWin(250, '2026-08-04')).toEqual({ pips: MARKER_SPIN_FALLBACK_PIPS, spins: 0, meter: 8 })
+    // ...and a refused spin at 500 still pays the rung's own three, plus the fallback on top.
+    expect(settleMarkerWin(500, '2026-08-04')).toEqual({ pips: 3 + MARKER_SPIN_FALLBACK_PIPS, spins: 0, meter: 13 })
+  })
+
+  it('offers the high-roller rung only from the AFTER DARK band, and only when the flag is live', () => {
+    // The ladder a Slice 0 player meets at 151 must be byte-identical to the one that shipped.
+    expect(markerStakesFor(MARKER_FROM)).toEqual([50, 100, 250])
+    expect(markerStakesFor(DIFFICULTY.afterDark.markerStart - 1)).toEqual([50, 100, 250])
+    expect(markerStakesFor(DIFFICULTY.afterDark.markerStart)).toEqual([50, 100, 250, HIGH_ROLLER_STAKE])
+    const a = DIFFICULTY.afterDark as { marker: boolean }
+    try {
+      a.marker = false
+      expect(markerStakesFor(299)).toEqual([50, 100, 250])
+    } finally {
+      a.marker = true
+    }
   })
 })

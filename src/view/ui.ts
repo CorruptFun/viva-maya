@@ -2147,6 +2147,90 @@ export function openMinimumIntro(scene: Phaser.Scene, target: number, onClose?: 
 }
 
 /**
+ * AFTER DARK's three teach cards (Slice 3). All three follow `openMinimumIntro`'s no-texture shape —
+ * none of them is a PIECE, so there is nothing to draw at board scale, and the headline carries the
+ * idea instead. Three lines of blurb at 25px is the ceiling; a fourth clips behind GOT IT.
+ *
+ * They share one helper because the only things that differ are the three strings. Three copies of
+ * the same twenty lines is how the fourth one ends up subtly out of step with the other three.
+ */
+function openAfterDarkIntro(
+  scene: Phaser.Scene,
+  card: { title: string; headline: string; blurb: string },
+  onClose?: () => void
+): void {
+  const W = 720
+  const reduced = prefersReducedMotion()
+  const layer = scene.add.container(0, 0).setDepth(65)
+  const scrimKit = addFocusScrim(scene, { alpha: 0.6, ink: 0x2a2417 })
+  const scrim = scrimKit.hit.setInteractive()
+  const close = (): void => {
+    layer.destroy()
+    onClose?.()
+  }
+  scrim.on('pointerup', close)
+  paintTeachCard(scene, layer, close, {
+    cx: W / 2,
+    cy: 560,
+    cardW: 600,
+    cardH: 520,
+    reduced,
+    ...card,
+    scrim,
+    scrimArt: scrimKit.art,
+  })
+}
+
+/** POINTS NIGHT (level 216) — the plaque with nothing else on it. The number IS the level. */
+export function openPointsNightIntro(scene: Phaser.Scene, target: number, onClose?: () => void): void {
+  openAfterDarkIntro(
+    scene,
+    {
+      title: 'POINTS NIGHT',
+      headline: target.toLocaleString(),
+      blurb:
+        'No goal symbols tonight — the brass number is the whole hand. Match anything, chase the cascades, and clear the table before the moves run out.',
+    },
+    onClose
+  )
+}
+
+/** HOT TABLE (level 233) — the multiplier opens at ×2. Pure upside; the copy must not imply a cost. */
+export function openHotTableIntro(scene: Phaser.Scene, onClose?: () => void): void {
+  openAfterDarkIntro(
+    scene,
+    {
+      title: 'HOT TABLE',
+      headline: '×2',
+      blurb:
+        'The table is running hot. Every cascade pays one notch higher than it should, all the way up — and a Plinko drop landing here rides the bigger stake.',
+    },
+    onClose
+  )
+}
+
+/**
+ * THE EYE IN THE SKY (level 281) — and the card's job is to say that NOTHING HAPPENS.
+ *
+ * That is the entire beat: it teaches the telegraph vocabulary (a sweep, a blue marquee) that the
+ * House will use for real upstairs, so when it finally does play back the warning is already
+ * legible. Copy that hinted at a threat here would be a lie the level never pays off, and copy that
+ * ignored the sweep would leave a player hunting for a mechanic that does not exist.
+ */
+export function openEyeIntro(scene: Phaser.Scene, onClose?: () => void): void {
+  openAfterDarkIntro(
+    scene,
+    {
+      title: 'THE EYE IN THE SKY',
+      headline: '👁',
+      blurb:
+        'Someone upstairs has started watching your table. The lights go cold while it sweeps. It changes nothing about the hand — the House is only taking an interest.',
+    },
+    onClose
+  )
+}
+
+/**
  * THE REEL PULL's teach card (Act II, level 301) — the first NEW VERB the game has added since it
  * shipped, so it gets real art rather than a glyph: a slot arm mid-stroke with the column it just
  * pulled, drawn once into a texture (a Graphics on a card would re-tessellate every frame for a

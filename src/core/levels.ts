@@ -147,6 +147,31 @@ export function isHotTable(level: number): boolean {
 }
 
 /**
+ * AFTER DARK — THE EYE IN THE SKY (Slice 3). Every non-breather level from `eyeStart` to the end of
+ * Act I: the spotlight sweeps the felt, the marquee cools to security blue, and NOTHING HAPPENS.
+ *
+ * It is the only beat in this band with no mechanical effect whatsoever, and that is what it is for.
+ * By 281 the player is twenty levels from an elevator, and the act above opens with a House that
+ * plays back; a warning vocabulary has to be legible BEFORE it means anything, or the first time it
+ * means something it also has to be learned. So the sweep and the cold marquee are taught here,
+ * against a level where being watched costs nothing — and the same two signals upstairs will not
+ * need explaining.
+ *
+ * It skips the every-5th breathers for the same reason the plaque cadence does: a breather is the
+ * band's one visibly calmer beat, and the House looking over your shoulder is not calm.
+ */
+export function isEyeLevel(level: number): boolean {
+  const { afterDark } = DIFFICULTY
+  return (
+    afterDark.enabled &&
+    afterDark.eye &&
+    level >= afterDark.eyeStart &&
+    level <= ACT1_LEVELS &&
+    level % 5 !== 0
+  )
+}
+
+/**
  * ⚠️ THERE IS NO MOVE TRIM ON A HOT TABLE, and that is a MEASURED reversal of how it was specced
  * ("~10% trimmed move budget — hotter, shorter, riskier"). Written down here because the idea is an
  * obvious one to have again.

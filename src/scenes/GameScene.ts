@@ -36,13 +36,14 @@ import {
   CHAPTER_COUNT,
   CHAPTER_LEVELS,
   LEVEL_COUNT,
+  isEyeLevel,
   levelBoostExclusions,
   levelSpec,
   starsFor,
 } from '../core/levels'
 import { checkChaseOvertake } from '../core/leaderboard'
 import type { ChaseNeighbour } from '../core/leaderboard'
-import { MARKER_STAKES, markerOfferable, placeMarker, refundMarker, settleMarkerLoss, settleMarkerWin } from '../core/marker'
+import { markerOfferable, markerStakesFor, placeMarker, refundMarker, settleMarkerLoss, settleMarkerWin } from '../core/marker'
 import type { MarkerStake } from '../core/marker'
 import { CHAPTER_BOOSTS, CHAPTER_PURSES, claimChapter, trophyFor } from '../core/trophies'
 import type { ChapterGrant } from '../core/trophies'
@@ -103,7 +104,10 @@ import {
   hcBoard,
   inkShadow,
   openHazardIntro,
+  openEyeIntro,
+  openHotTableIntro,
   openMinimumIntro,
+  openPointsNightIntro,
   openPullIntro,
   openOnboarding,
   startScene,
@@ -223,6 +227,24 @@ const CHEAT_ZONE_TOP = 1104
  */
 const MEGA_WIN_MULT = 12
 
+/**
+ * THE EYE IN THE SKY's tuning (AFTER DARK, Slice 3). Presentational only — no number here can reach
+ * the board, the spec or the score.
+ *
+ * The cadence is the part worth explaining. A sweep every ~14 seconds is often enough that a player
+ * meets it two or three times in a level and slow enough that it never becomes wallpaper — the beat
+ * has to still register as an EVENT seventy levels later, because that is when the House starts
+ * using it to mean something. `EYE_ALPHA` is low on purpose: this is a change in the light, not a
+ * curtain over the felt, and the player must be able to read every piece underneath it.
+ */
+const EYE_TINT = 0x6f93c8
+const EYE_ALPHA = 0.3
+const EYE_SWEEP_MS = 2600
+const EYE_FIRST_MS = 3200
+const EYE_PERIOD_MS = 14000
+/** The held cool the a11y fallback settles the marquee on — a room with the lights down, not a pulse. */
+const EYE_CHILL_STILL = 0.55
+
 export class GameScene extends Phaser.Scene {
   private level = 1
   private spec!: LevelSpec
@@ -266,6 +288,8 @@ export class GameScene extends Phaser.Scene {
   private jackpotOccurred = false
   /** §E4 guard — the Heartbloom (giant heart of light + Maya leitmotif) fires at most ONCE per round. */
   private heartbloomFired = false
+  /** AFTER DARK — is the House watching this table? (`isEyeLevel`; never in endless.) */
+  private eyeActive = false
   /** §E9 — set in finishWin when this win's score beats the stored best; drives the NEW BEST! ribbon. */
   private newBestThisWin = false
   /**
@@ -547,6 +571,9 @@ export class GameScene extends Phaser.Scene {
     this.heartbloomFired = false
     this.newBestThisWin = false
     this.chaseOvertake = null
+    // Endless is excluded by having no level number to test — `isEyeLevel` is Act I band logic, and
+    // the race is a same-board-for-everyone contract that no cosmetic of this game's may key off.
+    this.eyeActive = !this.endless && isEyeLevel(this.level)
 
     // DEV: ?lives=N forces the pool before the gate check.
     if (import.meta.env.DEV) {
@@ -1064,12 +1091,25 @@ export class GameScene extends Phaser.Scene {
     if (this.endless || this.introOpen) return false
     // 'minimum' rides the hazard-intro latch machinery (save.hazardIntros, teach-once, one card
     // per level) but is a WIN TERM, not a hazard — it gets its own card body below.
-    const present: (HazardKind | 'minimum' | 'pull')[] = []
+    const present: (HazardKind | 'minimum' | 'pull' | 'points' | 'hot' | 'eye')[] = []
     // THE REEL PULL leads. It is the only NEW VERB on the board — everything else in this list is a
     // rule about pieces the player can already move — and level 301 carries a plaque as well as the
     // rail (every act opens on a …01, and the plaque cadence is …01/…06). Teaching the plaque first
     // on the level that introduces a new way to play would bury the thing that is actually new.
     if (this.canPullLevel) present.push('pull')
+    /**
+     * AFTER DARK's three, ahead of 'minimum' and gated on what this board actually IS — the same
+     * rule the hazard scan below follows, so a player who jumps the ladder is never taught a rule
+     * they cannot see.
+     *
+     * 'points' outranks 'minimum' deliberately. A points night IS a plaque level, so both would
+     * qualify; the POINTS NIGHT card is the more specific idea AND is self-contained (it explains
+     * the brass number on its own), so leading with the generic one would teach the player the
+     * half of the level that has not changed.
+     */
+    if (this.spec.objectives.length === 0 && this.scoreTarget > 0) present.push('points')
+    if (this.spec.hot) present.push('hot')
+    if (this.eyeActive) present.push('eye')
     if (this.scoreTarget > 0) present.push('minimum')
     if (this.board.coatsRemaining() > 0) present.push('coat')
     for (let r = 0; r < ROWS && present.length < 4; r++) {
@@ -1090,6 +1130,9 @@ export class GameScene extends Phaser.Scene {
       then() // §G7 — see maybeOnboarding
     }
     if (unseen === 'pull') openPullIntro(this, done)
+    else if (unseen === 'points') openPointsNightIntro(this, this.scoreTarget, done)
+    else if (unseen === 'hot') openHotTableIntro(this, done)
+    else if (unseen === 'eye') openEyeIntro(this, done)
     else if (unseen === 'minimum') openMinimumIntro(this, this.scoreTarget, done)
     else openHazardIntro(this, unseen, done)
     return true
@@ -2599,15 +2642,24 @@ export class GameScene extends Phaser.Scene {
     // still said "felt" over a board laid with something else would be the one always-visible piece
     // of copy disagreeing with the board it describes.
     const coat = hazardSkin().coatNoun
+    // AFTER DARK's POINTS NIGHT branches FIRST among the numbered cases, because it is the one level
+    // shape with no goal symbols at all — every sentence below it opens by naming them, and on a
+    // points night there are none to name. The plaque is the whole brief (plus the felt, when the
+    // table is laid with any).
+    const pointsNight = this.spec.objectives.length === 0 && this.scoreTarget > 0
     const brief = this.endless
       ? "Biggest score wins today's board"
-      : this.scoreTarget > 0
+      : pointsNight
         ? this.coatsTotal > 0
-          ? `Goals, ${coat}, and the house minimum — beat all three`
-          : 'Match the goals and beat the house minimum'
-        : this.coatsTotal > 0
-          ? `Match the goal symbols and sweep every ${coat} square`
-          : 'Match the highlighted goal symbols before moves run out'
+          ? `No goals tonight — sweep the ${coat} and beat the house minimum`
+          : 'No goals tonight — just beat the house minimum'
+        : this.scoreTarget > 0
+          ? this.coatsTotal > 0
+            ? `Goals, ${coat}, and the house minimum — beat all three`
+            : 'Match the goals and beat the house minimum'
+          : this.coatsTotal > 0
+            ? `Match the goal symbols and sweep every ${coat} square`
+            : 'Match the highlighted goal symbols before moves run out'
     /**
      * SEATED OFF THE BOARD, not off a literal. It used to read `988 + ENDLESS_BOARD_DROP`, which
      * applied the ENDLESS drop on EVERY level — so on a numbered level the brief fell 84px past the
@@ -2632,6 +2684,10 @@ export class GameScene extends Phaser.Scene {
       'onBackdrop'
     )
     this.maybeOfferMarker(briefY)
+    // AFTER DARK. Seated here rather than earlier in create() because it needs `cabinetRgb`, which
+    // the board build attaches — and it must never run before the ring exists or the marquee half of
+    // the beat is silently dropped while the sweep still plays.
+    this.startEye()
 
     // TODAY'S LEADER, now seated ABOVE the board (owner request, 2026-08-03). The brief states the
     // RULE ("biggest score wins today's board"); this states the SCORE currently winning it, which
@@ -4277,7 +4333,18 @@ export class GameScene extends Phaser.Scene {
         this.flyCollect(o, sources.slice(0, n))
       }
     }
-    const wavePoints = wave.cleared.length * POINTS_PER_PIECE * cascade
+    /**
+     * AFTER DARK's HOT TABLE: the multiplier opens at ×2, so every wave pays `cascade + 1`.
+     *
+     * ⚠️ THIS LINE AND `sim.ts`'s `waveMult` ARE ONE RULE IN TWO PLACES, and they must agree or the
+     * feasibility gates and the rate guards are measuring a game that was never shipped. Read from
+     * the SPEC (`this.spec.hot`), never from the level number, so endless — which builds its spec
+     * inline and never calls `levelSpec` — structurally cannot reach it.
+     *
+     * It flows into `chainPoints` as well as the score, which is the beat's actual reward: a Plinko
+     * drop that lands on a hot table multiplies a doubled stake.
+     */
+    const wavePoints = wave.cleared.length * POINTS_PER_PIECE * (this.spec.hot ? cascade + 1 : cascade)
     this.chainPoints += wavePoints // the stake a Plinko drop multiplies, if this chain earns one
     this.addScore(wavePoints)
     if (cascade >= 2) {
@@ -7295,6 +7362,76 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  // ---------------------------------------------------- THE EYE IN THE SKY (AFTER DARK, Slice 3)
+
+  /**
+   * The House looks over your table: a cold bar of light crosses the felt, the cabinet marquee cools
+   * to security blue, and nothing else happens at all. Purely presentational — nothing below touches
+   * the board, the spec, the score or the move budget.
+   *
+   * ── WHY THE MARQUEE HALF GOES THROUGH `setChill` ───────────────────────────────────────────
+   * Because the ring has exactly ONE clock, and it stays that way. `setChill` hands it a target and
+   * the existing UPDATE hook eases onto it — no second timer, no per-node tween, and no shader (the
+   * game is `Phaser.AUTO`, so a fragment shader would strand the Canvas fallback). This is the same
+   * law THE TELL had to satisfy and for the same reason: 80 per-bulb tweens is what the ring was
+   * built to replace.
+   *
+   * ── A11Y: TWO SEPARATE OPT-OUTS, TWO DIFFERENT ANSWERS ─────────────────────────────────────
+   * Reduced motion and reduce-flashing both land on the same fallback here — a STATIC cool wash held
+   * for the level — but for different reasons, and both are right. Reduced motion objects to the
+   * travel; reduce-flashing objects to a repeating luminance change. A held tint has neither, and it
+   * still says "the lights are colder on this table", which is the whole content of the beat.
+   */
+  private startEye(): void {
+    if (!this.eyeActive) return
+    const still = this.reducedMotion || this.reduceFlashing
+    const midY = this.boardTop + (ROWS * CELL) / 2
+    if (still) {
+      // One held wash over the whole felt, at half the sweep's strength since nothing carries it
+      // away again. No tween, no timer, nothing to clean up beyond the scene teardown.
+      this.add
+        .image(BOARD_X + BOARD_W / 2, midY, 'sweep')
+        .setDisplaySize(BOARD_W, ROWS * CELL)
+        .setTint(EYE_TINT)
+        .setAlpha(EYE_ALPHA * 0.5)
+        .setDepth(4)
+      this.cabinetRgb?.setChill(EYE_CHILL_STILL)
+      return
+    }
+    // The bar is narrower than the board and the `sweep` texture fades at both ends, so it stays on
+    // the felt by construction — no mask, and therefore no second mask to keep in step with the
+    // board's own when `boardTop` moves.
+    const w = CELL * 1.7
+    const beam = this.add
+      .image(BOARD_X + w / 2, midY, 'sweep')
+      .setDisplaySize(w, ROWS * CELL)
+      .setTint(EYE_TINT)
+      .setAlpha(0)
+      .setDepth(4)
+    /** One pass of the light, and the marquee cooling with it. Re-armed by its own completion. */
+    const pass = (): void => {
+      if (!this.scene.isActive()) return
+      this.cabinetRgb?.setChill(1)
+      beam.x = BOARD_X + w / 2
+      this.tweens.add({
+        targets: beam,
+        x: BOARD_X + BOARD_W - w / 2,
+        alpha: { from: 0, to: EYE_ALPHA, duration: EYE_SWEEP_MS * 0.25 },
+        duration: EYE_SWEEP_MS,
+        ease: 'Sine.easeInOut',
+        onComplete: () => {
+          this.tweens.add({ targets: beam, alpha: 0, duration: 400, ease: E.settle })
+          this.cabinetRgb?.setChill(0)
+        },
+      })
+    }
+    // A LOOPING TIMER, not a chained delayedCall: the scene owns the handle, so a shutdown mid-sweep
+    // cannot leave a callback holding a destroyed Image. The first pass waits a beat so the level's
+    // own entrance lands before the House takes an interest.
+    this.time.delayedCall(EYE_FIRST_MS, pass)
+    this.time.addEvent({ delay: EYE_PERIOD_MS, loop: true, callback: pass, startAt: EYE_FIRST_MS })
+  }
+
   // ------------------------------------------------------------- THE MARKER (Slice 0)
 
   /**
@@ -7318,8 +7455,24 @@ export class GameScene extends Phaser.Scene {
         .setOrigin(0.5)
         .setLetterSpacing(2)
     )
-    MARKER_STAKES.forEach((stake, i) => {
-      row.add(addPillButton(this, -92 + i * 104, 0, 96, 48, String(stake), GOLD_PILL, () => this.armMarker(stake)))
+    /**
+     * The rung row, DERIVED rather than seated — AFTER DARK adds a fourth stake from 251
+     * (`markerStakesFor`), and the shipped literals (`-92 + i * 104`, 96 wide) put its pill at 220,
+     * straight under the ✕ at 236. The row is a budgeted band like any other: the label owns the
+     * left end, the ✕ owns the right, and the rungs are centred in what is left.
+     *
+     * Three rungs still land EXACTLY where they shipped (-92 / 12 / 116) — that is what the pitch
+     * and width pair is chosen to reproduce, so a Slice 0 player's offer row does not move under
+     * them. Four rungs narrow and tighten to fit the same span with real clearance either side.
+     */
+    const stakes = markerStakesFor(this.level)
+    const wide = stakes.length <= 3
+    const pillW = wide ? 96 : 80
+    const pitch = wide ? 104 : 88
+    /** Group centre, matched to the shipped 3-rung row so the common case is byte-identical. */
+    const first = 12 - ((stakes.length - 1) * pitch) / 2
+    stakes.forEach((stake, i) => {
+      row.add(addPillButton(this, first + i * pitch, 0, pillW, 48, String(stake), GOLD_PILL, () => this.armMarker(stake)))
     })
     row.add(addPillButton(this, 236, 0, 60, 48, '✕', GHOST_PILL, () => this.dismissMarkerRow()))
   }

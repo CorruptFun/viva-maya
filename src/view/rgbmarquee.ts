@@ -170,6 +170,26 @@ const TELL_EASE_MS = 1400
 // ---------------------------------------------------------------------------
 
 /** Geometry of the light channel: the rounded rect its CENTRELINE follows. */
+/**
+ * THE EYE IN THE SKY's cooled ring (AFTER DARK, Slice 3).
+ *
+ * 210° is a security-camera blue — cold, institutional, and as far from every shipped theme's arc
+ * (all of which live in the warm half) as a single hue can get without turning green. The arc also
+ * NARROWS and DESATURATES while cooled: a hundred degrees of vivid blue would read as a party, and
+ * the beat wants the opposite — one flat colour, like a fluorescent tube being switched on over the
+ * table. That narrowing is what makes it read as surveillance rather than as another mood.
+ */
+const EYE_HUE = 210
+const EYE_SPAN_SCALE = 0.35
+const EYE_SAT_SCALE = 0.55
+/** Slower than `TELL_EASE_MS` on purpose — lights going down, not a hint arriving. */
+const EYE_EASE_MS = 1400
+
+/** Signed degrees from `a` to `b` the short way round — so cooling never takes the long way. */
+function shortestHueStep(a: number, b: number): number {
+  return (((b - a) % 360) + 540) % 360 - 180
+}
+
 export interface RgbRingGeom {
   x: number
   y: number
@@ -223,6 +243,22 @@ export interface RgbRing {
    * silently changed between paints would be worse than no tell at all.
    */
   setTell(tint: number | null): void
+  /**
+   * THE EYE IN THE SKY (AFTER DARK) — cool the whole ring toward security blue while the House is
+   * watching, `0` to warm back up. Rides the SAME clock and the same paint as everything else here:
+   * two more eased scalars folded into one `hsvToInt` call, no second timer, no per-node tween.
+   *
+   * ⚠️ This is the ONE thing in this module that deliberately leaves the theme's hue arc, and the
+   * exception is the point of the beat rather than a hole in the rule. Every other colour move here
+   * redistributes light INSIDE the arc precisely so the ring never fights the theme's identity; the
+   * Eye is the House reaching over and changing the room's lights, and a telegraph the player cannot
+   * distinguish from the cabinet's own mood is not a telegraph. It is also strictly temporary — it
+   * eases fully back, so nothing about the theme is left altered.
+   *
+   * No-op under reduced motion, like `surge` and `setTell`: the ring is painted once there and never
+   * ticks, so the scene holds a static tint of its own instead (see GameScene's eye sweep).
+   */
+  setChill(amount: number): void
   /** Unhook the per-frame drive and destroy every layer. Safe to call twice. */
   destroy(): void
 }
@@ -355,6 +391,10 @@ export function attachRgbRing(
   // here is a tween. `lean` is what `paint` hands to `ringHue`, once for the whole ring.
   let leanTarget = 0
   let lean = 0
+  // THE EYE: the same two-scalar shape as the tell — a target and an eased current — so the cooling
+  // costs the update hook one more lerp and the paint one more interpolation.
+  let chillTarget = 0
+  let chill = 0
 
   /** Paint the whole ring at the current phase. */
   const paint = (dim: number): void => {
@@ -364,6 +404,11 @@ export function attachRgbRing(
     const s = surgeMs > 0 ? (surgeMs / SURGE_MS) * surgePeak : 0
     const lo = Math.min(1, Math.max(soft ? FLASH_MIN_LO : p.lo, p.lo + s * 0.5))
     const span = hueSpan * p.spanScale
+    // THE EYE pulls the whole arc toward security blue and drains it, together — a cooled ring that
+    // kept the cabinet's saturation reads as a colour change, not as the lights going cold.
+    const from = chill > 0 ? hueFrom + shortestHueStep(hueFrom, EYE_HUE) * chill : hueFrom
+    const chillSpan = span * (1 - chill * (1 - EYE_SPAN_SCALE))
+    const chillSat = sat * (1 - chill * (1 - EYE_SAT_SCALE))
     for (let i = 0; i < n; i++) {
       // The normalised 0..1 travelling wave; each layer maps it into its own range below.
       const w = ringAlpha(i, n, phase, 0, 1, p.waves)
@@ -371,12 +416,14 @@ export function attachRgbRing(
       // pinned at 1 so the band never turns translucent and lets the groove wash through as grey.
       // `dim` is deliberately NOT applied here: the idle throttle calms the ring through the halo
       // alone, because pulling the band's value down is the same move that turns gold into olive.
-      band[i].setTint(hsvToInt(ringHue(i, n, phase, hueFrom, span, lean), sat, BAND_MIN + (1 - BAND_MIN) * w))
+      band[i].setTint(
+        hsvToInt(ringHue(i, n, phase, from, chillSpan, lean), chillSat, BAND_MIN + (1 - BAND_MIN) * w)
+      )
     }
     for (let k = 0; k < halo.length; k++) {
       const i = haloIdx[k]
       const w = ringAlpha(i, n, phase, 0, 1, p.waves)
-      halo[k].setTint(hsvToInt(ringHue(i, n, phase, hueFrom, span, lean), sat, 1))
+      halo[k].setTint(hsvToInt(ringHue(i, n, phase, from, chillSpan, lean), chillSat, 1))
       halo[k].setAlpha((lo + (p.hi - lo) * w) * dim * haloGain)
     }
   }
@@ -391,6 +438,7 @@ export function attachRgbRing(
       },
       surge: noop,
       setTell: noop,
+      setChill: noop,
       mode: (): RgbMode => mode,
       destroy: () => destroyAll(),
     }
@@ -423,6 +471,12 @@ export function attachRgbRing(
     if (lean !== leanTarget) {
       lean += (leanTarget - lean) * Math.min(1, dt / TELL_EASE_MS)
       if (Math.abs(leanTarget - lean) < 0.002) lean = leanTarget
+    }
+    // The Eye eases on the same schedule, and deliberately SLOWER than the tell: a room whose lights
+    // changed as fast as a hint would read as a glitch rather than as somebody turning them down.
+    if (chill !== chillTarget) {
+      chill += (chillTarget - chill) * Math.min(1, dt / EYE_EASE_MS)
+      if (Math.abs(chillTarget - chill) < 0.002) chill = chillTarget
     }
 
     const step = TIER_STEP_MS[quality.tier()]
@@ -467,6 +521,9 @@ export function attachRgbRing(
       // against the same `hueFrom`/`hueSpan` the ring is actually painting with — including a floor
       // overlay's, since that was already folded in when `getTheme()` was read.
       leanTarget = tint === null ? 0 : arcLean(hueFrom, hueSpan, hueOf(tint)) * TELL_MAX
+    },
+    setChill: (amount: number): void => {
+      chillTarget = Math.max(0, Math.min(1, amount))
     },
     mode: (): RgbMode => mode,
     destroy: destroyAll,
