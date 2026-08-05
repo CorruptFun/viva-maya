@@ -2260,13 +2260,20 @@ function pitBossTexture(scene: Phaser.Scene): string {
   if (scene.textures.exists(key)) return key
   const S = 132
   const g = scene.add.graphics()
+  // A scrap of TRAY first. Without it the four cushions are cream-on-cream against the card and the
+  // picture reads as a blank square — the same figure/ground problem the board itself had before its
+  // well floor dropped to a deep tan.
+  g.fillStyle(T.goldDeep, 1)
+  g.fillRoundedRect(0, 0, S, S, 18)
+  g.fillStyle(0xa78c57, 1)
+  g.fillRoundedRect(6, 6, S - 12, S - 12, 14)
   // Four cushions. The one he has marked wears the warning ring; the picture IS the telegraph, so
   // a player recognises it the first time they see it on their own board.
   const cw = 54
   for (let i = 0; i < 4; i++) {
     const x = 8 + (i % 2) * 62
     const y = 8 + Math.floor(i / 2) * 62
-    g.fillStyle(0x000000, 0.12)
+    g.fillStyle(0x000000, 0.16)
     g.fillRoundedRect(x, y + 3, cw, cw, 12)
     g.fillStyle(T.tileA, 1)
     g.fillRoundedRect(x, y, cw, cw, 12)

@@ -3340,22 +3340,40 @@ export class GameScene extends Phaser.Scene {
    */
   private showDealTelegraph(deal: Deal, cells: Coord[]): void {
     const T = getTheme()
-    const tint = deal.kind === 'felt' ? T.rose : T.accent
+    // ONE colour for "the House is taking this square", whichever instrument it reaches for — the
+    // brief says which. A player should learn the MARK once; two marks would be two things to learn
+    // for a distinction the sentence under the board already makes.
+    const tint = T.rose
     for (const at of cells) {
       const p = this.cellToXY(at)
+      // TWO rings, and the dark one is not decoration. The `ring` texture is a thin gold outline
+      // and the cushions it lands on are cream, so a single tinted ring at any honest alpha reads as
+      // a smudge — the same figure/ground problem the high-contrast selection ring solves by putting
+      // a dark stroke behind a bright one. Verified in the browser: one ring was invisible on the
+      // board it was supposed to be warning about.
+      const back = this.add
+        .image(p.x, p.y, 'ring')
+        .setDisplaySize(CELL, CELL)
+        .setTint(0x2a1810)
+        .setDepth(19)
+        .setAlpha(0.6)
       const mark = this.add
         .image(p.x, p.y, 'ring')
-        .setDisplaySize(CELL * 0.92, CELL * 0.92)
+        .setDisplaySize(CELL * 0.9, CELL * 0.9)
         .setTint(tint)
         .setDepth(19)
-        .setAlpha(this.reducedMotion ? 0.85 : 0.5)
-      this.bossMarks.push(mark)
+        .setAlpha(this.reducedMotion ? 1 : 0.7)
+      this.bossMarks.push(back, mark)
       // The pulse is the "not yet, but next move" — a static ring reads as something already there.
+      // ⚠️ Tweened off the CAPTURED scale: these are `setDisplaySize`d images, so a tween that ended
+      // at `scale: 1` would snap them to the texture's own 96px.
       if (!this.reducedMotion) {
+        const s = mark.scaleX
         this.tweens.add({
           targets: mark,
-          alpha: 0.95,
-          scale: mark.scale * 1.08,
+          alpha: 1,
+          scaleX: s * 1.1,
+          scaleY: s * 1.1,
           duration: 620,
           yoyo: true,
           repeat: -1,
@@ -3363,18 +3381,17 @@ export class GameScene extends Phaser.Scene {
         })
       }
     }
-    const label = deal.kind === 'felt' ? `THE PIT BOSS  ·  FRESH ${hazardSkin().label.coat}` : `THE PIT BOSS  ·  ${hazardSkin().label.lock}`
-    const text = this.add
-      .text(DESIGN_W / 2, this.boardTop - 12, label, {
-        fontFamily: FONT,
-        fontSize: '19px',
-        fontStyle: '900',
-        color: css(tint),
-      })
-      .setOrigin(0.5, 1)
-      .setDepth(19)
-      .setLetterSpacing(2)
-    this.bossMarks.push(text)
+    // The WORDS ride the standing brief rather than taking furniture of their own.
+    //
+    // The first cut printed them at `boardTop - 12`, which is the cabinet's own gold bezel — and the
+    // 52px band above the board already holds the sweep counter (`CANDLE WAX 2/24` at boardTop-38),
+    // so a 19px line seated there overlapped it by about four pixels and sat on the frame besides.
+    // The brief is the one line on this screen whose whole job is "what is happening to this board",
+    // it is already reserved, and it is the sentence a player is looking at anyway. Restored from
+    // `briefCopy` the moment the deal lands.
+    const skin = hazardSkin()
+    const what = deal.kind === 'felt' ? `FRESH ${skin.label.coat}` : `A ${skin.label.lock} DEAL`
+    this.briefText?.setText(`THE PIT BOSS — ${what} ON YOUR NEXT MOVE`).setColor(css(tint))
     sfx.uiTap()
   }
 
@@ -3384,6 +3401,9 @@ export class GameScene extends Phaser.Scene {
       m.destroy()
     }
     this.bossMarks = []
+    if (this.briefCopy && this.briefText) {
+      this.briefText.setText(this.briefCopy).setColor(getTheme().onBackdropMuted)
+    }
   }
 
   /**
