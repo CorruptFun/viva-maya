@@ -146,6 +146,17 @@ export const DIFFICULTY = {
     reveal: true,
     /** THE TELL — the marquee's hue drifting toward the best available move while the board idles. */
     tell: true,
+    /**
+     * THE PIT BOSS — Floor 2's mechanic, and the first thing in the game that ADDS work mid-level.
+     * The House takes a visible, telegraphed, schedule-fixed turn every few moves (core/pitboss.ts).
+     * Off restores levels 351+ to ordinary Act II levels exactly: no deals, and no deal allowance in
+     * the move budget either, since `dealCount` gates both.
+     */
+    pitBoss: true,
+    /** First level with a boss working it. Earns a teaching level like every other band start. */
+    pitBossStart: 351,
+    /** Where FRESH FELT joins the clamp in the boss's book — the second half of Floor 2. */
+    pitBossFeltFrom: 381,
   },
 
   /** First level at which each mechanic appears. Below `lockStart` the game is untouched. */
@@ -223,10 +234,16 @@ export function isTeachingLevel(level: number): boolean {
   // hazard band does — gated on its own flag, not on `hazards.enabled` (it is not a hazard).
   // THE REEL PULL teaches a new VERB at `act2.pullStart`, and gets the same courtesy on its own
   // flags: with the act switched off, L301 must be an ordinary level with an ordinary budget.
+  // THE PIT BOSS teaches a new OPPONENT at `act2.pitBossStart` — the same courtesy, on its own
+  // flags. ⚠️ Its band start is a …51, and the plaque cadence is L % 10 ∈ {1, 6}, so 351 is also a
+  // HOUSE MINIMUM level: teaching here therefore also relieves that plaque through
+  // `TEACHING_PLAQUE_RELIEF`, exactly as 301 does. That is the intent — meeting a new antagonist
+  // under the toughest minimum the House has ever posted is not teaching, it is springing.
   return (
     hazardTeach ||
     (goals.minimum && level === goals.minimumStart) ||
-    (act2.enabled && act2.pull && level === act2.pullStart)
+    (act2.enabled && act2.pull && level === act2.pullStart) ||
+    (act2.enabled && act2.pitBoss && level === act2.pitBossStart)
   )
 }
 

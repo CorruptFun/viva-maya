@@ -443,7 +443,7 @@ describe('the floor overlay', () => {
  * changing this assertion, on purpose, in the same commit.
  */
 describe('the shipped rollout', () => {
-  it('ships Slice 1: the act, the rail, the moods, the elevator and the tell', () => {
+  it('ships Slice 2: Slice 1 plus the pit boss working Floor 2', () => {
     expect({
       enabled: DIFFICULTY.act2.enabled,
       pull: DIFFICULTY.act2.pull,
@@ -452,7 +452,32 @@ describe('the shipped rollout', () => {
       mood: DIFFICULTY.act2.mood,
       reveal: DIFFICULTY.act2.reveal,
       tell: DIFFICULTY.act2.tell,
-    }).toEqual({ enabled: true, pull: true, pullStart: 301, rope: true, mood: true, reveal: true, tell: true })
+      pitBoss: DIFFICULTY.act2.pitBoss,
+      pitBossStart: DIFFICULTY.act2.pitBossStart,
+      pitBossFeltFrom: DIFFICULTY.act2.pitBossFeltFrom,
+    }).toEqual({
+      enabled: true,
+      pull: true,
+      pullStart: 301,
+      rope: true,
+      mood: true,
+      reveal: true,
+      tell: true,
+      pitBoss: true,
+      pitBossStart: 351,
+      pitBossFeltFrom: 381,
+    })
+  })
+
+  it('opens the pit boss ON the speakeasy, not somewhere inside it', () => {
+    // Floor 2 shipped in Slice 1 as a re-dress of Floor 1 — same verb, same hazards, new candlelight.
+    // The boss is what makes it a floor, so it has to arrive with the floor's first level or the
+    // room's identity and its mechanic are two separate events fifty levels apart.
+    const speakeasy = FLOORS.find(f => f.name === 'THE SPEAKEASY')
+    expect(DIFFICULTY.act2.pitBossStart).toBe(speakeasy?.from)
+    // …and fresh felt lands in its second half, so the floor has two acts of its own.
+    expect(DIFFICULTY.act2.pitBossFeltFrom).toBeGreaterThan(DIFFICULTY.act2.pitBossStart)
+    expect(DIFFICULTY.act2.pitBossFeltFrom).toBeLessThanOrEqual(speakeasy?.to ?? 0)
   })
 
   it('ships two floors — the high-limit room and the speakeasy', () => {

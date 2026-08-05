@@ -6,6 +6,7 @@ import { levelSpec } from './levels'
 import type { LevelSpec } from './types'
 import { hazardPlan } from './hazards'
 import type { HazardPlan } from './hazards'
+import { dealPlan, dealTargets } from './pitboss'
 import { plinkoSlots, rollSlotIndex, shouldOfferPlinko } from './plinko'
 import { mulberry32 } from './rng'
 import type { Rng } from './rng'
@@ -254,6 +255,14 @@ export function playLevel(level: number, seed: number, policy: Policy, specOverr
   const scoreTarget = spec.scoreTarget ?? 0
   let m = 0
 
+  // THE PIT BOSS's book for this level. ⚠️ It belongs HERE and not only in GameScene, for the same
+  // reason `act2Plan` does: a feasibility gate that measured a table nobody was interfering with
+  // would be measuring a different game from the one that ships — green and wrong at once. Its
+  // placement stream is the sim's own, seeded off the run, so it can never disturb the board's.
+  const plan = dealPlan(level, spec.moves)
+  const dealRng = mulberry32((0xd3a15 ^ Math.imul(level, 2654435761) ^ seed) >>> 0)
+  let nextDeal = 0
+
   for (; m < spec.moves; m++) {
     blockerCellTurns += blockersStanding(b)
     if ([...remaining.values()].every(v => v <= 0) && b.coatsRemaining() === 0 && score >= scoreTarget) break
@@ -302,6 +311,18 @@ export function playLevel(level: number, seed: number, policy: Policy, specOverr
     chains.push(res.cascade)
     score += res.points
     for (const [s, v] of before) collected += Math.max(0, v - (remaining.get(s) ?? 0))
+
+    // The House takes its turn, at the settle, on a playable board — GameScene's idle-handoff seam,
+    // mirrored. The win check comes FIRST and skips the deal, exactly as the scene's `finishWin`
+    // return does: a level that is already won can never be un-won by a deal.
+    const won = [...remaining.values()].every(v => v <= 0) && b.coatsRemaining() === 0 && score >= scoreTarget
+    while (nextDeal < plan.length && plan[nextDeal].atMove <= m + 1) {
+      const deal = plan[nextDeal++]
+      if (won) continue
+      const cells = dealTargets(b, deal.kind, deal.cells, dealRng)
+      if (deal.kind === 'clamp') b.dealLocks(cells)
+      else b.dealCoats(cells)
+    }
   }
 
   const objectivesMet = [...remaining.values()].every(v => v <= 0)

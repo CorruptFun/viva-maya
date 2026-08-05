@@ -3,6 +3,7 @@ import type { BoostType, LevelSpec, SymbolType } from './types'
 import { mulberry32, randInt } from './rng'
 import { DIFFICULTY, isTeachingLevel } from './difficulty'
 import { act2Spec } from './actII'
+import { dealMoveAllowance } from './pitboss'
 
 /**
  * The last level of ACT I — THE MAIN FLOOR. Not the same thing as `LEVEL_COUNT`, and the difference
@@ -226,9 +227,16 @@ export function levelSpec(level: number): LevelSpec {
     DIFFICULTY.curve.enabled && DIFFICULTY.hazards.enabled && isTeachingLevel(L)
       ? DIFFICULTY.teachingLevelBonusMoves
       : 0
+  // THE PIT BOSS's work, PAID FOR UP FRONT — clause 4 of its fairness constitution (core/pitboss.ts).
+  // The House is about to add squares to this table, so the budget grows before a single deal is
+  // placed rather than the deals being taken out of a budget sized for a table nobody interferes
+  // with. Gated on the same panic switch as the teaching bonus, so `curve.enabled = false` still
+  // reproduces the pre-overhaul budget on every level; `dealMoveAllowance` is 0 off the band, with
+  // the mechanic switched off, and on every breather (which takes no deals).
+  const dealing = DIFFICULTY.curve.enabled ? dealMoveAllowance(L) : 0
   // A hard feasibility floor keeps the budget above the point where even a flawless clear
   // (~6 collects/move) couldn't finish.
-  let moves = Math.round(total / ratio) + breather + teaching
+  let moves = Math.round(total / ratio) + breather + teaching + dealing
   moves = Math.max(moves, Math.ceil(total / 6.2) + objectiveCount)
 
   // Distinct goal symbols, chosen deterministically per level (variety; feasibility is symbol-

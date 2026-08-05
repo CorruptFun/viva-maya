@@ -732,6 +732,81 @@ export class Board {
     return true
   }
 
+  // ------------------------------------------------------------- the pit boss
+
+  /**
+   * THE PIT BOSS (Act II, Slice 2) — the three ways the House can add to the table MID-LEVEL.
+   *
+   * ⚠️ These are the ONLY functions in this file that make a level harder after it has started, and
+   * that is a deliberate, narrow exception to a guarantee the rest of the design leans on (see
+   * `hazards.ts`'s safety properties). Three things keep it safe:
+   *
+   *  · DORMANT BY ABSENCE. Nothing calls them except `GameScene`'s pit-boss hook and `sim.ts`'s
+   *    mirror of it, both gated on a numbered level's schedule. Endless has no level number and no
+   *    schedule, so it can never reach here — the same contract `pullColumn` signs.
+   *  · THEY NEVER TOUCH WHAT YOU BUILT. A clamp lands only on a plain, unclamped piece: a Wild Reel
+   *    or a Jackpot Chip you were saving is off limits, because the House pressures the TABLE.
+   *  · THEY CAN NEVER SOFT-LOCK. `dealLocks` applies one clamp at a time and puts any clamp back if
+   *    it would leave the board with no legal swap. That check is not theoretical — clamps do not
+   *    block gravity, but "every remaining swap involves a clamped piece" is entirely reachable on a
+   *    tight board, and the alternative (reshuffling mid-level) would rewrite the level under the
+   *    player at the exact moment they were being interfered with.
+   *
+   * Each returns the cells it ACTUALLY changed, so the view animates precisely what happened and the
+   * caller can keep an honest counter.
+   */
+  dealLocks(cells: readonly Coord[]): Coord[] {
+    const done: Coord[] = []
+    for (const at of cells) {
+      const p = this.inBounds(at) ? this.grid[at.row][at.col] : null
+      // Plain, unclamped, not a blocker, not a special the player banked.
+      if (!p || p.kind !== 'normal' || p.locked) continue
+      this.grid[at.row][at.col] = { ...p, locked: true }
+      if (!this.findFirstValidMove()) {
+        this.grid[at.row][at.col] = p // put it back — the House does not get to end the game
+        continue
+      }
+      done.push(at)
+    }
+    return done
+  }
+
+  /** Lay fresh felt on bare squares. Never under a blocker (an unreachable coat reads as a bug) and
+   *  never on a square that already carries some — a deal adds squares, it does not stack layers. */
+  dealCoats(cells: readonly Coord[]): Coord[] {
+    const done: Coord[] = []
+    for (const at of cells) {
+      if (!this.inBounds(at)) continue
+      if (this.grid[at.row][at.col]?.kind === 'blocker') continue
+      if (!this.coats) this.coats = Array.from({ length: this.rows }, () => new Array<number>(this.cols).fill(0))
+      if (this.coats[at.row][at.col] > 0) continue
+      this.coats[at.row][at.col] = 1
+      done.push(at)
+    }
+    return done
+  }
+
+  /**
+   * Drop a lockbox onto a cell mid-level — the sharpest of the three, and the one with no scheduled
+   * caller yet. It exists because the mechanic ladder puts "lockbox deals join the Pit Boss's book"
+   * upstairs (481+) and this is the seam they land on; shipping it with the other two means the
+   * Board's mid-level surface is one reviewed decision rather than a later afterthought.
+   *
+   * Refuses a special (same rule as `dealLocks`), an existing blocker, and row 0 — refills enter
+   * there, and `caps.forbiddenBlockerRows` exists precisely so nothing ever walls it.
+   */
+  dealBlocker(at: Coord, hp = 1): boolean {
+    if (!this.inBounds(at) || at.row === 0) return false
+    const p = this.grid[at.row][at.col]
+    if (!p || p.kind !== 'normal') return false
+    this.grid[at.row][at.col] = { ...this.newPiece(p.symbol, 'blocker'), hp }
+    if (!this.findFirstValidMove()) {
+      this.grid[at.row][at.col] = p
+      return false
+    }
+    return true
+  }
+
   findFirstValidMove(): { a: Coord; b: Coord } | null {
     for (let r = 0; r < this.rows; r++) {
       for (let c = 0; c < this.cols; c++) {

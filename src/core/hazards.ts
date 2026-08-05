@@ -20,6 +20,18 @@ import type { HazardKind } from './difficulty'
  *  1. Nothing here is ever created mid-level. Every hazard is seeded at level start and every
  *     rule only ever REMOVES them, so a level gets strictly easier as it proceeds and can never
  *     soft-lock behind a hazard it just spawned.
+ *
+ *     ⚠️ ONE SANCTIONED EXCEPTION, added 2026-08-05: THE PIT BOSS (`core/pitboss.ts`). On numbered
+ *     levels from `DIFFICULTY.act2.pitBossStart` the House deals clamps — and, from
+ *     `pitBossFeltFrom`, fresh felt — onto a live table through `Board.dealLocks`/`dealCoats`.
+ *     Nothing in THIS file does it: the plan is still seeded once and only ever shrinks, and the
+ *     deal is a separate, schedule-bounded system that adds to the board without going through
+ *     `hazardPlan` at all. The exception is narrow on purpose and every bound is enforced somewhere
+ *     testable: numbered levels only (endless has no level number, so it structurally cannot reach
+ *     it), a fixed per-level schedule that stands off your last five moves and skips every breather,
+ *     the work paid for in the move budget up front, and `dealLocks` reverting any clamp that would
+ *     take the last legal swap off the board — so "can never soft-lock" survives intact even though
+ *     "only ever gets easier" no longer does.
  *  2. Blockers can never wall off a column (>=1 per column, never row 0), which — together with
  *     segment-aware gravity in board.ts — is what keeps cascades deep enough for Plinko to fire.
  *  3. Below `bands.lockStart` the plan is empty, so the early game is untouched.

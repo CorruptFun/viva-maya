@@ -314,7 +314,19 @@ describe('HOUSE MINIMUM — the plaque cadence', () => {
     expect([201, 206, 251, 296].map(L => levelSpec(L).scoreTarget)).toEqual([11900, 14200, 16400, 18600])
     // Act II's, added Slice 1. 301 is the act-opening teaching dip; 306 resumes ABOVE 296, and the
     // ladder climbs to a `perObjective`-clamped ceiling by the high 370s.
-    expect([301, 306, 351, 396].map(L => levelSpec(L).scoreTarget)).toEqual([16100, 18900, 20000, 20700])
+    //
+    // ⚠️ 351 WAS RE-RECORDED (20,000 → 17,000) when THE PIT BOSS shipped, and deliberately: 351 is
+    // its band start, so it became a teaching level, and the plaque cadence puts a minimum on every
+    // …51 as surely as on every …01 — so it takes `TEACHING_PLAQUE_RELIEF` for exactly the reason
+    // 301 does. Meeting a new ANTAGONIST under the toughest minimum the House has ever posted is not
+    // teaching, it is springing. It is a second dip, one floor up, and the monotone walk above
+    // carves it out on the same rule.
+    //
+    // 396 is the assertion that earns its keep here: the Pit Boss GROWS the move budget on every
+    // level it works (its allowance, core/pitboss.ts), and 396 is one of them — yet its plaque has
+    // not moved a point, because the brass number is priced off the COLLECT DEMAND and never off the
+    // budget. A diff there would mean that coupling had come back.
+    expect([301, 306, 351, 396].map(L => levelSpec(L).scoreTarget)).toEqual([16100, 18900, 17000, 20700])
   })
 
   it('resumes the brass climb straight after an act-opening dip', () => {

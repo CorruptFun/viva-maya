@@ -48,8 +48,22 @@ const SEEDS = FULL ? 40 : 10
  * plan — same boxes, same hit points, same coats — but the boxes end up in one contiguous block of
  * columns, which changes the shape of the segments gravity falls through and therefore the cascades.
  * It is measured for exactly that reason: an arrangement is not free just because the count is.
+ *
+ * 363 and 387 joined for THE PIT BOSS (351+, core/pitboss.ts) — the first mechanic that ADDS to a
+ * live table, so it is the first that can move these gates from the middle of a run rather than
+ * from the seed. 363 is a clamp-only level and 387 is one with FRESH FELT in the book.
+ *
+ * ⚠️ THEY ARE NOT 355 AND 390, and that is the whole point of naming them. Every multiple of five is
+ * a BREATHER, and the boss takes every breather off (the empty chair) — so 355 and 390, the two Act
+ * II levels already in this list, measure the pit boss doing nothing at all. A gate that thinks it
+ * covers a mechanic and covers its day off is worse than no gate. Both stay, as the untouched
+ * controls they now are.
+ *
+ * Measured on arrival (banker, 40 seeds, 2026-08-05 — boss off → on):
+ *     352 33→33 · 358 35→40 · 363 53→53 · 372 33→38 · 378 33→30 · 387 23→43 · 393 35→40 · 399 23→35
+ * Cascade health held between 0.93× and 1.04× and Plinko eligibility never fell below 60%.
  */
-const CHECK_LEVELS = FULL ? [31, 45, 56, 65, 86, 100, 150, 220, 300, 310, 313, 355, 390] : [65, 150, 300, 390]
+const CHECK_LEVELS = FULL ? [31, 45, 56, 65, 86, 100, 150, 220, 300, 310, 313, 355, 363, 387, 390] : [65, 150, 300, 390]
 /** Playing the real board headlessly is not cheap, and the dense sweep is ~30s per gate. Vitest's
  *  5s default would fail these on wall clock rather than on merit — which is exactly the kind of
  *  false red that teaches people to ignore a suite. */
