@@ -609,6 +609,15 @@ export class LevelSelectScene extends Phaser.Scene {
     const floor = floorForChapter(chapter + 1)
     const mood = chapterMood(chapter + 1)
     const opensFloor = floor !== null && floor.chapterFrom === chapter + 1
+    /**
+     * The chapter label, KEPT, because the trophy glyph is seated off its real right-hand edge.
+     *
+     * It used to be seated at a literal `-GRID_W/2 + 168`, which was right for `CHAPTER 9` and wrong
+     * for every chapter from 10 up: the label is one character longer there and reaches past 168, so
+     * the trophy printed over its last digit — visible on Act I's own CHAPTER 30 long before Act II
+     * existed. A number that happens to clear the shortest string is not a layout.
+     */
+    let chapterLabel: Phaser.GameObjects.Text | null = null
     // Chapter 31 opens the FLOOR and the ACT at once, and the act is the bigger door — so it wears
     // the elevator plate and hands the floor's name to its right-hand label, where the star tally
     // would otherwise sit. Chapter 36 onward are plain floor nameplates.
@@ -629,12 +638,11 @@ export class LevelSelectScene extends Phaser.Scene {
           .setAlpha(state === 'ahead' ? 0.75 : 1)
       )
     } else {
-      container.add(
-        this.add
-          .text(-GRID_W / 2 + 22, 0, `CHAPTER ${chapter + 1}`, { fontFamily: FONT, fontSize: '19px', fontStyle: '900', color: ink })
-          .setOrigin(0, 0.5)
-          .setLetterSpacing(2)
-      )
+      chapterLabel = this.add
+        .text(-GRID_W / 2 + 22, 0, `CHAPTER ${chapter + 1}`, { fontFamily: FONT, fontSize: '19px', fontStyle: '900', color: ink })
+        .setOrigin(0, 0.5)
+        .setLetterSpacing(2)
+      container.add(chapterLabel)
     }
     let earned = 0
     if (state !== 'ahead') {
@@ -664,7 +672,13 @@ export class LevelSelectScene extends Phaser.Scene {
       const trophy = trophyFor(chapter + 1)
       if (trophy) {
         const key = ensureGlyphTexture(this, `trophy:${chapter + 1}`, trophy.emoji, 96, 128)
-        container.add(this.add.image(-GRID_W / 2 + 168, 0, key).setDisplaySize(24, 24))
+        // Seated off the label's MEASURED right edge, so it clears `CHAPTER 9` and `CHAPTER 100`
+        // alike. `chapterLabel` is null only on a floor-opening ribbon, whose nameplate is a long
+        // string that owns the whole left half — and those never wear a trophy anyway (the act plate
+        // takes the lift doors, and a floor's own chapter is the one this branch is not reached on).
+        const TROPHY = 24
+        const x = chapterLabel ? chapterLabel.x + chapterLabel.width + 10 + TROPHY / 2 : -GRID_W / 2 + 168
+        container.add(this.add.image(x, 0, key).setDisplaySize(TROPHY, TROPHY))
       }
     }
     // ⚠️ Every ribbon is a DOOR to the showroom, and it sits on the grid's swipe surface — so it
