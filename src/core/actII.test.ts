@@ -4,13 +4,19 @@ import {
   FLOORS,
   FLOOR_LEVELS,
   PULL_FROM,
+  ROPE_FROM,
+  ROPE_TO,
+  act2Plan,
   act2Spec,
   floorFor,
   floorForChapter,
   isAct2Level,
   isFloorOpening,
   pullLevel,
+  ropedLevel,
 } from './actII'
+import { coatsToClear, hazardPlan } from './hazards'
+import type { HazardPlan } from './hazards'
 import { ACT1_LEVELS, CHAPTER_COUNT, CHAPTER_LEVELS, LEVEL_COUNT, levelSpec } from './levels'
 import { DIFFICULTY, isTeachingLevel } from './difficulty'
 import { CHAPTER_PURSES, TROPHIES } from './trophies'
@@ -275,6 +281,97 @@ describe('the active floor', () => {
 })
 
 /**
+ * THE ROPED RUN (311–315) — the pull × lockbox interaction band.
+ *
+ * The band's whole claim is that it changes the PICTURE and not the level: same boxes, same hit
+ * points, same coats, same layers, same locks, moved. If that stops being true the level's demand
+ * has quietly moved with it, and a curated arrangement will have re-priced five shipped levels.
+ */
+describe('the roped run', () => {
+  const plan = (L: number): HazardPlan => hazardPlan(L, 8, 8)
+  const roped = (L: number): HazardPlan => act2Plan(L, plan(L), 8)
+
+  it('runs 311–315 and touches nothing else, in either act', () => {
+    for (const L of [1, 86, 300, ACT2_FROM, 310, 316, 351, LEVEL_COUNT]) {
+      expect({ L, roped: ropedLevel(L) }).toEqual({ L, roped: false })
+      // Off the band it hands the SAME OBJECT back, not a rebuilt copy of it — the strongest form
+      // of "untouched", and the one `levels.test.ts`'s panic-switch transcription depends on.
+      const p = plan(L)
+      expect({ L, identical: act2Plan(L, p, 8) === p }).toEqual({ L, identical: true })
+    }
+    for (let L = ROPE_FROM; L <= ROPE_TO; L++) expect({ L, roped: ropedLevel(L) }).toEqual({ L, roped: true })
+  })
+
+  it('is a PERMUTATION — the demand budget cannot move', () => {
+    for (let L = ROPE_FROM; L <= ROPE_TO; L++) {
+      const before = plan(L)
+      const after = roped(L)
+      expect({ L, boxes: after.blockers.length }).toEqual({ L, boxes: before.blockers.length })
+      expect({ L, hp: after.blockers.map(b => b.hp) }).toEqual({ L, hp: before.blockers.map(b => b.hp) })
+      // The win condition's second term, to the layer.
+      expect({ L, coats: coatsToClear(after) }).toEqual({ L, coats: coatsToClear(before) })
+      expect({ L, n: after.coats.length }).toEqual({ L, n: before.coats.length })
+      expect({ L, n: after.locks.length }).toEqual({ L, n: before.locks.length })
+      // And nothing ends up stacked on a box, which would render as an unreachable coat.
+      const boxes = new Set(after.blockers.map(b => `${b.row},${b.col}`))
+      for (const c of [...after.coats, ...after.locks]) expect(boxes.has(`${c.row},${c.col}`)).toBe(false)
+      // No two coats (or two locks) land on the same cell either — a bijection, not a collapse.
+      expect(new Set(after.coats.map(c => `${c.row},${c.col}`)).size).toBe(after.coats.length)
+      expect(new Set(after.locks.map(c => `${c.row},${c.col}`)).size).toBe(after.locks.length)
+    }
+  })
+
+  it("keeps every one of hazardPlan's own safety caps", () => {
+    const { caps } = DIFFICULTY
+    for (let L = ROPE_FROM; L <= ROPE_TO; L++) {
+      const perCol = new Map<number, number>()
+      const perRow = new Map<number, number>()
+      for (const b of roped(L).blockers) {
+        expect({ L, row0: (caps.forbiddenBlockerRows as readonly number[]).includes(b.row) }).toEqual({ L, row0: false })
+        expect(b.row).toBeGreaterThanOrEqual(0)
+        expect(b.row).toBeLessThan(8)
+        expect(b.col).toBeGreaterThanOrEqual(0)
+        expect(b.col).toBeLessThan(8)
+        perCol.set(b.col, (perCol.get(b.col) ?? 0) + 1)
+        perRow.set(b.row, (perRow.get(b.row) ?? 0) + 1)
+      }
+      for (const [, n] of perCol) expect(n).toBeLessThanOrEqual(caps.blockersPerColumn)
+      for (const [, n] of perRow) expect(n).toBeLessThanOrEqual(caps.blockersPerRow)
+    }
+  })
+
+  it('ropes a CONTIGUOUS block of handles — which is the entire point of the band', () => {
+    for (let L = ROPE_FROM; L <= ROPE_TO; L++) {
+      const cols = [...new Set(roped(L).blockers.map(b => b.col))].sort((a, b) => a - b)
+      // One box per column (above), so a contiguous run means max − min + 1 === count.
+      expect({ L, contiguous: cols[cols.length - 1] - cols[0] + 1 === cols.length }).toEqual({ L, contiguous: true })
+      // ...and the rail is never entirely dead: at least two handles always work.
+      expect({ L, live: 8 - cols.length }).toEqual({ L, live: 8 - cols.length })
+      expect(8 - cols.length).toBeGreaterThanOrEqual(2)
+    }
+    // The rope travels along the machine across the band rather than sitting in one place.
+    const starts = []
+    for (let L = ROPE_FROM; L <= ROPE_TO; L++) starts.push(Math.min(...roped(L).blockers.map(b => b.col)))
+    expect(new Set(starts).size).toBeGreaterThan(1)
+  })
+
+  it('is revocable — with the flag off those five levels get their ordinary boards back', () => {
+    const a2 = DIFFICULTY.act2 as { rope: boolean }
+    const was = a2.rope
+    try {
+      a2.rope = false
+      for (let L = ROPE_FROM; L <= ROPE_TO; L++) {
+        expect({ L, roped: ropedLevel(L) }).toEqual({ L, roped: false })
+        expect({ L, blockers: roped(L).blockers }).toEqual({ L, blockers: plan(L).blockers })
+        expect({ L, coats: roped(L).coats }).toEqual({ L, coats: plan(L).coats })
+      }
+    } finally {
+      a2.rope = was
+    }
+  })
+})
+
+/**
  * THE FLOOR OVERLAY — "a mood MODULATES, it never replaces", proved rather than asserted in a
  * comment. Two halves, and the first one is the half that was actually broken.
  */
@@ -351,10 +448,11 @@ describe('the shipped rollout', () => {
       enabled: DIFFICULTY.act2.enabled,
       pull: DIFFICULTY.act2.pull,
       pullStart: DIFFICULTY.act2.pullStart,
+      rope: DIFFICULTY.act2.rope,
       mood: DIFFICULTY.act2.mood,
       reveal: DIFFICULTY.act2.reveal,
       tell: DIFFICULTY.act2.tell,
-    }).toEqual({ enabled: true, pull: true, pullStart: 301, mood: true, reveal: true, tell: true })
+    }).toEqual({ enabled: true, pull: true, pullStart: 301, rope: true, mood: true, reveal: true, tell: true })
   })
 
   it('ships two floors — the high-limit room and the speakeasy', () => {

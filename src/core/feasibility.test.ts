@@ -43,8 +43,13 @@ const SEEDS = FULL ? 40 : 10
  * ⚠️ The banker only takes a pull that matches something IMMEDIATELY (see sim.previewPull), so it
  * plays Act II as a slightly better swapper rather than as a player using the verb. Every number
  * here is therefore a FLOOR on player power — fine as a gate, worthless as an estimate.
+ *
+ * 313 joins them for THE ROPED RUN (311–315, core/actII.ts). That band only PERMUTES the hazard
+ * plan — same boxes, same hit points, same coats — but the boxes end up in one contiguous block of
+ * columns, which changes the shape of the segments gravity falls through and therefore the cascades.
+ * It is measured for exactly that reason: an arrangement is not free just because the count is.
  */
-const CHECK_LEVELS = FULL ? [31, 45, 56, 65, 86, 100, 150, 220, 300, 310, 355, 390] : [65, 150, 300, 390]
+const CHECK_LEVELS = FULL ? [31, 45, 56, 65, 86, 100, 150, 220, 300, 310, 313, 355, 390] : [65, 150, 300, 390]
 /** Playing the real board headlessly is not cheap, and the dense sweep is ~30s per gate. Vitest's
  *  5s default would fail these on wall clock rather than on merit — which is exactly the kind of
  *  false red that teaches people to ignore a suite. */

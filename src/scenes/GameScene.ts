@@ -81,7 +81,7 @@ import {
   rgbMarquee,
   setFloorOverlay,
 } from '../view/theme'
-import { isAct2Level } from '../core/actII'
+import { act2Plan, isAct2Level } from '../core/actII'
 import { activeFloorMood, enterFloor } from '../view/floormood'
 import { maybeFloorDoor } from '../view/floordoor'
 import { addEndlessLeaderStrip } from '../view/leaderboardpanel'
@@ -580,7 +580,9 @@ export class GameScene extends Phaser.Scene {
       this.board = new Board(ROWS, COLS, this.spec.symbolCount, mulberry32((Math.random() * 2 ** 31) | 0))
       // Hazards are numbered-levels-only, seeded once, never mid-level. Deliberately inside this
       // arm rather than behind a second `if (!this.endless)` — one fork, one place to delete.
-      this.board.seedHazards(hazardPlan(this.level, ROWS, COLS))
+      // `act2Plan` re-seats the lockboxes on the roped run (311–315) and is a no-op everywhere else;
+      // `sim.buildLevelBoard` folds in the SAME call, so the feasibility gates measure this board.
+      this.board.seedHazards(act2Plan(this.level, hazardPlan(this.level, ROWS, COLS), COLS))
     }
     this.coatsTotal = this.board.coatsRemaining()
     this.movesLeft = this.spec.moves

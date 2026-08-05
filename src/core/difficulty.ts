@@ -135,6 +135,11 @@ export const DIFFICULTY = {
     pull: true,
     /** First level carrying the rail. Earns a teaching level like every other band start. */
     pullStart: 301,
+    /** THE ROPED RUN — the curated 311–315 band where the lockboxes are re-seated into a contiguous
+     *  block of columns, so breaking one visibly frees the handle above it (core/actII.ts). It only
+     *  rearranges what `hazardPlan` already produced, so switching it off restores those five
+     *  levels' ordinary boards exactly. */
+    rope: true,
     /** Floor moods — per-floor ambiance (view/floormood.ts). Modulates light; never the theme's wash. */
     mood: true,
     /** THE PRIVATE ELEVATOR reveal + the LevelSelect dressing that advertises the act. */

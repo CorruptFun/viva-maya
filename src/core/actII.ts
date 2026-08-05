@@ -1,4 +1,5 @@
 import { DIFFICULTY } from './difficulty'
+import type { HazardPlan } from './hazards'
 import type { LevelSpec } from './types'
 
 /**
@@ -136,4 +137,102 @@ export function pullLevel(level: number): boolean {
 export function act2Spec(level: number, base: LevelSpec): LevelSpec {
   if (!pullLevel(level)) return base
   return { ...base, pull: true }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE ROPED RUN — the levels where the new verb and the sharp hazard argue.
+//
+// The rule that makes them argue already exists and needs no help: a column holding a lockbox will
+// not pull, and `caps.blockersPerColumn` is 1, so breaking ONE box always frees exactly ONE handle.
+// What was missing is that on an ordinary board it does not READ. Six boxes scattered over eight
+// columns is noise — the player sees a rail with some handles greyed, breaks a box somewhere for
+// unrelated reasons, and never connects the two events.
+//
+// So this band does not change the rule, the count, the hit points or the demand. It changes the
+// ARRANGEMENT: the boxes are re-seated into a CONTIGUOUS run of columns, slung in a shallow sag
+// across the middle rows, so half the machine is visibly roped off and every box you break opens the
+// handle directly above it. The teaching is done by the picture.
+//
+// ── IT IS A PERMUTATION, NOT A RE-PLAN ──────────────────────────────────────────────────────
+// Anything already sitting on a cell a box moves ONTO is moved to the cell that box moved OFF. So
+// the coat count, the layer count, the lock count, the blocker count and every hp are bit-for-bit
+// what `hazardPlan` produced — which means `coatsToClear`, the win condition and the whole demand
+// budget cannot move. Only where things sit changes, and `hazardPlan`'s own safety properties
+// survive with it: never row 0, at most one box per column, at most two per row.
+//
+// ⚠️ TWO CALL SITES, and they must agree or the feasibility gates measure a board nobody plays:
+// `GameScene` (what you play) and `sim.buildLevelBoard` (what the gates measure).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** First and last level of the interaction band. Half a chapter — long enough to land, short enough not to become the floor's identity. */
+export const ROPE_FROM = 311
+export const ROPE_TO = 315
+
+/**
+ * Which row each box in the run sits on, in order across the columns. Never row 0
+ * (`caps.forbiddenBlockerRows`) and never more than twice on any row (`caps.blockersPerRow`) —
+ * including for every PREFIX of it, since a level with fewer boxes takes the first N.
+ *
+ * ⚠️ THIS PATTERN IS MEASURED, NOT DRAWN. The arrangement is supposed to be free — same boxes, same
+ * count — and it is not. Neighbouring boxes at neighbouring HEIGHTS put the segment boundaries
+ * gravity falls through at nearly the same level right across the run, which strangles cascades. The
+ * first pattern drawn here was a shallow sag ([3,4,5,5,4,3], a rope slung between two posts, which
+ * is the picture the band is named for) and it cost the banker proxy half its win rate on the two
+ * levels it actually moved — 43% → 20% at 311, 35% → 23% at 313 (40 seeds, 2026-08-05). A teaching
+ * band cannot be the hardest thing on the floor.
+ *
+ * The shipped pattern ALTERNATES hard instead, so consecutive columns break at heights three rows
+ * apart and the run never forms a shelf. Measured against the same levels' unroped boards it is
+ * neutral to slightly kinder: 311 43%→43% · 312 43%→53% · 313 35%→45% · 314 55%→53% · 315 38%→38%.
+ * Re-derive those numbers if you touch this array; do not redraw it by eye.
+ */
+const ROPE_ROWS = [3, 6, 4, 6, 3, 5] as const
+
+/** True on a level that carries the roped run. */
+export function ropedLevel(level: number): boolean {
+  const { act2 } = DIFFICULTY
+  return act2.enabled && act2.pull && act2.rope && Number.isFinite(level) && level >= ROPE_FROM && level <= ROPE_TO
+}
+
+/**
+ * Fold Act II's hazard authoring into a finished plan. Returns `plan` UNTOUCHED for every level off
+ * the band and whenever the act (or the rope) is switched off — the same revocability contract
+ * `act2Spec` signs, and the reason levels 1–300 cannot be reached from here at all.
+ */
+export function act2Plan(level: number, plan: HazardPlan, cols: number): HazardPlan {
+  if (!ropedLevel(level) || plan.blockers.length === 0) return plan
+
+  const n = Math.min(plan.blockers.length, ROPE_ROWS.length, cols)
+  // Where the run starts, derived from the level so the rope moves along the machine across the band
+  // rather than sitting in the same place five levels running.
+  const start = (level - ROPE_FROM) % Math.max(1, cols - n + 1)
+  const target = Array.from({ length: n }, (_, i) => ({ row: ROPE_ROWS[i], col: start + i }))
+
+  const k = (c: { row: number; col: number }): string => `${c.row},${c.col}`
+  const olds = plan.blockers.map(k)
+  const news = target.map(k)
+  const oldSet = new Set(olds)
+  const newSet = new Set(news)
+  // Cells that stop holding a box, and cells that start holding one. Equal in number by
+  // construction, which is what makes the relocation below a bijection rather than a guess.
+  const vacated = plan.blockers.filter(b => !newSet.has(k(b))).map(b => ({ row: b.row, col: b.col }))
+  const arriving = target.filter(t => !oldSet.has(k(t)))
+
+  // Where a displaced coat or lock goes. `vacated` cells are guaranteed clear of both, because
+  // `hazardPlan` draws coats and locks only from cells no box already occupies.
+  const moveTo = new Map<string, { row: number; col: number }>()
+  arriving.forEach((cell, i) => {
+    const to = vacated[i]
+    if (to) moveTo.set(k(cell), to)
+  })
+  const relocate = <T extends { row: number; col: number }>(c: T): T => {
+    const to = moveTo.get(k(c))
+    return to ? { ...c, row: to.row, col: to.col } : c
+  }
+
+  // Boxes keep their hit points in order, so the 2-hp ones stay 2-hp — the band re-seats the
+  // furniture, it never re-rolls it. Any box past the run's length (there is none today, but the
+  // caps could move) simply stays where it was.
+  const blockers = plan.blockers.map((b, i) => (i < n ? { ...b, row: target[i].row, col: target[i].col } : b))
+  return { blockers, coats: plan.coats.map(relocate), locks: plan.locks.map(relocate) }
 }

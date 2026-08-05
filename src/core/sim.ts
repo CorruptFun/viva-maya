@@ -1,4 +1,5 @@
 import { POINTS_PER_PIECE } from '../config'
+import { act2Plan } from './actII'
 import { Board } from './board'
 import { ENDLESS_MOVES } from './endless'
 import { levelSpec } from './levels'
@@ -211,11 +212,17 @@ function resolvePullTracking(b: Board, col: number, remaining: Map<SymbolType, n
   return { cascade, points }
 }
 
-/** Build the board a real attempt at `level` would get, hazards included. */
+/**
+ * Build the board a real attempt at `level` would get, hazards included.
+ *
+ * ⚠️ `act2Plan` belongs HERE and not only in GameScene. The roped run (311–315) re-seats the
+ * lockboxes, and a feasibility gate that measured the unroped board would be measuring a level
+ * nobody plays — which is the one way a gate can be green and wrong at the same time.
+ */
 export function buildLevelBoard(level: number, seed: number): Board {
   const spec = levelSpec(level)
   const b = new Board(8, 8, spec.symbolCount, mulberry32(seed))
-  b.seedHazards(hazardPlan(level, 8, 8))
+  b.seedHazards(act2Plan(level, hazardPlan(level, 8, 8), 8))
   return b
 }
 
