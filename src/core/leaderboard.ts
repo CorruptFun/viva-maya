@@ -886,6 +886,323 @@ export async function fetchLevelBoard(limit = 25): Promise<RaceBoard> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// THE CHASE — who is just ahead of you, and who is just behind.
+//
+// `fetchLevelBoard` answers "who is winning", which is the wrong question for almost everyone on it.
+// At the measured population (15 players, deepest 125, median 42) the top of that board is eighty
+// levels away from the median player, so the ladder's own readout gives most of the game a target it
+// will not reach this year. The owner reports players chasing each other up the ladder anyway — the
+// behaviour is already there and the code simply never showed it a number.
+//
+// So this is a WINDOW, not a board: the two players immediately above you and the two immediately
+// below, read straight off `level_progress` with two small range queries. Same table, same ordering,
+// same guards — a chase line can never disagree with the ladder it is a view of, because it IS the
+// ladder, sliced around one row instead of from the top.
+//
+// EVERYTHING HERE DEGRADES TO SILENCE. Signed out, dormant, offline, nobody above, nobody at all —
+// the fetch returns null and the caller draws NOTHING. Never an error, never an empty frame: a
+// social feature with no other players in it must be invisible, not apologetic.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** One player in the window around you. Carries no user id — see `chaseKey` for why the cache does. */
+export interface ChaseNeighbour {
+  /** The public name — `preferredName`'s rules as published, never anything email-derived. */
+  name: string
+  /** Their rung. */
+  cleared: number
+  /** Levels between you and them, always positive — the direction is which list they are in. */
+  gap: number
+  /** Opaque stable identity for the overtake diff. Never displayed. */
+  key: string
+}
+
+/** The window around the player: at most two either side, each list ordered NEAREST FIRST. */
+export interface ChaseWindow {
+  /** The rung the window was cut around. */
+  mine: number
+  /** The players you are chasing. Empty = top of the ladder. */
+  above: ChaseNeighbour[]
+  /** The players chasing you. Empty = nobody behind you yet. */
+  below: ChaseNeighbour[]
+}
+
+/** How deep the window looks either way. Two is enough to name a target and a pursuer, and it keeps
+ *  both reads inside one index scan. */
+const CHASE_DEPTH = 2
+
+/**
+ * An opaque, stable, non-reversible handle for one account — the identity the overtake cache diffs on.
+ *
+ * It is NOT the user id, deliberately. Ids never leave this module (see `applyChapterTiers`), and the
+ * overtake cache is DURABLE storage on a device that may be shared, so writing other players' account
+ * uuids into it would put identifiers on disk that nothing in the game needs to read back. A 32-bit
+ * FNV-1a of the id is stable across sessions, collides at a rate no friends-scale board will ever
+ * reach, and identifies nobody on its own.
+ *
+ * Names cannot do this job: two players may pick the same handle, and a rename would silently re-key
+ * a row mid-chase. (A rename is still SAFE either way — it drops out of both sides of the diff and
+ * produces silence rather than a false pass — but silence-by-accident is not an invariant.)
+ */
+function chaseKey(userId: string): string {
+  let h = 0x811c9dc5
+  for (let i = 0; i < userId.length; i++) {
+    h ^= userId.charCodeAt(i)
+    h = Math.imul(h, 0x01000193) >>> 0
+  }
+  return h.toString(16).padStart(8, '0')
+}
+
+/** A `level_progress` row as the window reads it. */
+interface LadderRow {
+  user_id: string
+  display_name: string
+  cleared: number
+}
+
+/**
+ * The two players above and the two below, or null when there is nothing to say.
+ *
+ * ── THE RUNG THE WINDOW IS CUT AROUND ───────────────────────────────────────────────────────
+ * `mine` is the HIGHER of the player's mirrored row and their local save, not the server's copy
+ * alone. Mirroring piggybacks the cloud-save push, so for a few seconds after a win the table still
+ * holds the old rung — and a window cut around it would list someone the player has just beaten as
+ * still being ahead of them, which is precisely the moment this feature exists to get right. The
+ * guard trigger keeps `cleared` monotonic, so the server can only ever be catching up to the save.
+ *
+ * ── TIES ────────────────────────────────────────────────────────────────────────────────────
+ * `cleared > mine` / `cleared < mine` are STRICT, so a player level with you is neither chasing nor
+ * chased — which is the honest reading, and it keeps the player's own row out of the window even in
+ * the window above where their mirrored rung is stale. (Their row is excluded by user id as well;
+ * the invariant is worth having structurally rather than as a consequence.)
+ *
+ * Within a rung the order is `stars desc, reached_at asc` — the LADDER's own tiebreak
+ * (`level_progress_ladder`), not a second definition of "near". The chase must never name a
+ * neighbour the board would rank somewhere else.
+ */
+export async function fetchLevelNeighbours(): Promise<ChaseWindow | null> {
+  try {
+    const s = cloudSession()
+    if (!s) return null
+    const c = await client()
+    if (!c) return null
+    // The save is authoritative for the player's own progress; the table may not have caught up yet.
+    const own = await c.from('level_progress').select('cleared').eq('user_id', s.userId).maybeSingle()
+    const mirrored = (own.data as { cleared: number } | null)?.cleared
+    const local = levelStanding(loadSave()).cleared
+    const mine = Math.max(typeof mirrored === 'number' ? mirrored : 0, local)
+    if (mine <= 0) return null // not on the ladder yet — there is no window to cut
+    const [aboveQ, belowQ] = await Promise.all([
+      c
+        .from('level_progress')
+        .select('user_id, display_name, cleared')
+        .neq('user_id', s.userId)
+        .gt('cleared', mine)
+        .order('cleared', { ascending: true })
+        .order('stars', { ascending: false })
+        .order('reached_at', { ascending: true })
+        .limit(CHASE_DEPTH),
+      c
+        .from('level_progress')
+        .select('user_id, display_name, cleared')
+        .neq('user_id', s.userId)
+        .lt('cleared', mine)
+        .order('cleared', { ascending: false })
+        .order('stars', { ascending: false })
+        .order('reached_at', { ascending: true })
+        .limit(CHASE_DEPTH),
+    ])
+    // A HALF-READ IS NO READ. Ranking a chase off one successful query and one failed one would
+    // silently claim "nobody is ahead of you" on a dropped packet — the single most misleading thing
+    // this line could say. Both or neither.
+    if (aboveQ.error || belowQ.error) return null
+    const toNeighbour = (r: LadderRow): ChaseNeighbour => ({
+      name: sanitizeName(r.display_name),
+      cleared: r.cleared,
+      gap: Math.abs(r.cleared - mine),
+      key: chaseKey(r.user_id),
+    })
+    const above = ((aboveQ.data ?? []) as LadderRow[]).map(toNeighbour)
+    const below = ((belowQ.data ?? []) as LadderRow[]).map(toNeighbour)
+    if (above.length === 0 && below.length === 0) return null // alone on the ladder — say nothing
+    return { mine, above, below }
+  } catch {
+    return null
+  }
+}
+
+// ── The copy ─────────────────────────────────────────────────────────────────
+// Pure, and shared by every surface that shows a chase, so Home and LevelSelect cannot end up
+// phrasing the same window two different ways.
+
+/**
+ * A long handle must not push the line under the strip's chevron. 14 is `LEADER_NAME_MAX`'s
+ * discipline, applied to the same 21px face — the panel behind the strip shows the full name.
+ */
+const CHASE_NAME_MAX = 14
+
+function shortChaseName(n: string): string {
+  return n.length > CHASE_NAME_MAX ? `${n.slice(0, CHASE_NAME_MAX - 1)}…` : n
+}
+
+/** How a gap reads. The singular is spelled out; see the warning on `chaseCopy`. */
+function levelsWord(gap: number): string {
+  return gap === 1 ? 'one level' : `${gap} levels`
+}
+
+/**
+ * A chase window as words. Four fields because there are four shapes of hole to fill, and each has
+ * exactly one consumer — which is the point: two surfaces phrasing one window two ways is how a
+ * feature starts contradicting itself.
+ */
+export interface ChaseCopy {
+  /** Who you are chasing, in full. Null when you are top of the ladder. */
+  ahead: string | null
+  /** Who is chasing you, in full — the quieter half. Null when nobody is behind you. */
+  behind: string | null
+  /** What a one-line STRIP prints (LevelSelect's marquee). Never empty. */
+  line: string
+  /** The compact form for a shared sub-line (Home, where the chase is one segment of three). */
+  tag: string
+}
+
+/**
+ * Turn a window into copy.
+ *
+ * ⚠️ THE SINGULAR CASE IS THE POINT. "one level ahead" is the whole difference between a ladder and
+ * a race, and it is the string a median player is most likely to see at fifteen players — so it is
+ * special-cased everywhere rather than left to a bare `1 levels`. It carries its own test.
+ *
+ * ── WHY THE STRIP LINE NEVER CARRIES BOTH HALVES ────────────────────────────────────────────
+ * It does not fit, and the arithmetic is worth writing down so the next person does not re-derive
+ * it by shipping an overlap. The marquee's line sits between the badge (x −258) and the drifting
+ * chevron (x +268), centred at −14, so the badge side binds it to ~460px; at 21px/900 that is about
+ * forty glyphs. `chasing Neon_Ghost-7…  ·  5 levels ahead` is already forty. Appending a pursuer
+ * would put a real player's name under the chevron.
+ *
+ * So the line LEADS WITH THE PLAYER AHEAD and falls back to the pursuit only when there is nobody
+ * to chase. That is not only a space decision — it is the feature's ethic in one branch. The chase
+ * PULLS. `behind` stays available for any surface with room, and it says how far back someone is,
+ * never that they are gaining, and (see `chaseOvertakes`) never that they have passed you.
+ */
+export function chaseCopy(w: ChaseWindow): ChaseCopy {
+  const a = w.above[0]
+  const b = w.below[0]
+  const ahead = a ? `chasing ${shortChaseName(a.name)}  ·  ${levelsWord(a.gap)} ahead` : null
+  const behind = b ? `${shortChaseName(b.name)} is ${levelsWord(b.gap)} behind you` : null
+  // Top of the ladder — the sparse-population case that fires constantly at friends scale. Said as
+  // an achievement with the pursuit behind it, never as an empty frame and never as an apology.
+  if (!a) {
+    const crown = b ? `top of the ladder  ·  ${shortChaseName(b.name)} ${b.gap} behind` : 'top of the ladder'
+    return { ahead, behind, line: crown, tag: 'top of the ladder' }
+  }
+  return {
+    ahead,
+    behind,
+    line: ahead!,
+    tag: `chasing ${shortChaseName(a.name)}, ${a.gap === 1 ? 'one level ahead' : `${a.gap} ahead`}`,
+  }
+}
+
+// ── The overtake moment ──────────────────────────────────────────────────────
+// The reason the chase is emotional rather than informational: the win card names the player you
+// just went past.
+//
+// The last-seen window lives in LOCALSTORAGE and must stay there. It is ephemeral SOCIAL state about
+// other people, not progress — riding the save would push it through a cloud merge and a device
+// restore, where a stale snapshot from another phone would produce a fabricated pass on a device
+// that never saw the overtake happen. There is no save field for it and there must not be one.
+//
+// ⚠️ NEVER ANNOUNCE BEING PASSED. The chase pulls; it must not punish. Someone climbing over you
+// changes the line the next time you look at it, and that is all — the same discipline the lose card
+// already keeps about broken streaks.
+
+const CHASE_CACHE_KEY = 'viva-maya:chase'
+
+/** What the device remembers of the last window it saw. Only the fields the diff reads. */
+export interface ChaseSnapshot {
+  mine: number
+  above: Array<{ key: string; name: string }>
+}
+
+/** Shrink a live window to the snapshot the diff needs — the only thing that is ever persisted. */
+export function chaseSnapshot(w: ChaseWindow): ChaseSnapshot {
+  return { mine: w.mine, above: w.above.map(n => ({ key: n.key, name: n.name })) }
+}
+
+/** The remembered window, or null when there is none (fresh install, cleared storage, junk). */
+export function loadChaseSnapshot(): ChaseSnapshot | null {
+  try {
+    const raw = localStorage.getItem(CHASE_CACHE_KEY)
+    if (raw === null) return null
+    const v = JSON.parse(raw) as Partial<ChaseSnapshot> | null
+    if (!v || typeof v.mine !== 'number' || !Array.isArray(v.above)) return null
+    // Shape-tolerant, theme.ts style: a hand-edited or half-written entry reads as "no cache", which
+    // costs one silent overtake and can never fabricate one.
+    const above = v.above
+      .filter((n): n is { key: string; name: string } => !!n && typeof n.key === 'string' && typeof n.name === 'string')
+      .map(n => ({ key: n.key, name: n.name }))
+    return { mine: v.mine, above }
+  } catch {
+    return null
+  }
+}
+
+/** Remember this window as the baseline for the next diff. Best-effort; storage may be blocked. */
+export function saveChaseSnapshot(w: ChaseWindow): void {
+  try {
+    localStorage.setItem(CHASE_CACHE_KEY, JSON.stringify(chaseSnapshot(w)))
+  } catch {
+    // private mode / no DOM — the chase line still renders, it just cannot announce a pass
+  }
+}
+
+/**
+ * Who did the player just go past? PURE — this is the rule that decides whether a card beat fires,
+ * so it is unit-testable without a network, a save or a clock.
+ *
+ * Fires for a neighbour that was in the remembered ABOVE set and is now in the fresh BELOW set.
+ * Both halves are required on purpose:
+ *   · using the remembered rung alone would claim a pass whenever they were merely *close*, and
+ *   · matching against the fresh window means a neighbour who ALSO advanced (and is still ahead)
+ *     correctly produces nothing.
+ *
+ * Three silences, each deliberate:
+ *   · no cache → nothing. A fresh install would otherwise announce a dozen passes at once for
+ *     progress the player made before the device ever looked at the ladder.
+ *   · `next.mine <= prev.mine` → nothing. That is a REPLAY: no rung advanced, so nobody was passed,
+ *     and the guard lives here rather than at the call site so it cannot be forgotten by a second one.
+ *   · a neighbour who fell further than `CHASE_DEPTH` below is not in the fresh window, so they go
+ *     unnamed. A miss, never a lie — the same rule `fetchRaceRecap` keeps about a gap it cannot see.
+ *
+ * Returned NEAREST FIRST, because `below` is ordered nearest-first and this preserves it. The card
+ * shows one name; passing two people in one win is a rare, good problem and the ladder speaks for
+ * the rest.
+ */
+export function chaseOvertakes(prev: ChaseSnapshot | null, next: ChaseWindow): ChaseNeighbour[] {
+  if (!prev) return []
+  if (next.mine <= prev.mine) return []
+  const wasAhead = new Set(prev.above.map(n => n.key))
+  return next.below.filter(n => wasAhead.has(n.key))
+}
+
+/**
+ * The whole overtake check in one call, in the one order that is correct: read the baseline, take a
+ * fresh window, diff, THEN re-baseline. Splitting these across a caller is how the snapshot gets
+ * overwritten before it is read, so the sequence is not offered separately.
+ *
+ * Returns the nearest player passed, or null — dormant, offline, no advance, cold cache and
+ * "genuinely passed nobody" all resolve to the same silence, which is exactly what the card wants.
+ */
+export async function checkChaseOvertake(): Promise<ChaseNeighbour | null> {
+  const prev = loadChaseSnapshot()
+  const next = await fetchLevelNeighbours()
+  if (!next) return null
+  const passed = chaseOvertakes(prev, next)
+  saveChaseSnapshot(next)
+  return passed[0] ?? null
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // CHAMPIONS — the prizes for winning a closed board.
 //
 // TWO CADENCES, DELIBERATELY DIFFERENT SIZES. The daily purse is the reason to come back tomorrow;

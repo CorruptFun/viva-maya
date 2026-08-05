@@ -235,6 +235,24 @@ export const EVENTS = {
   ACT2_REVEAL: 'act2_reveal',
   FLOOR_ENTER: 'floor_enter',
 
+  /**
+   * THE CHASE (Slice 3) — the neighbour window on the level ladder.
+   *
+   * `chase_shown` {gap_above, gap_below} — a chase line rendered with live data. The two gaps are
+   * the whole measurement: this feature's bet is that a player at the median rung will act on a
+   * target FIVE levels away when they would not act on one eighty away, and the distribution of
+   * `gap_above` is the only thing that says whether the window is cut at a useful width. A gap of
+   * -1 means that side was empty (top of the ladder, or nobody behind yet), which at fifteen
+   * players is a common and expected reading — pooling it with 0 would hide how often the sparse
+   * fallbacks actually fire.
+   *
+   * `chase_overtake` {level} — the YOU PASSED beat fired on a win card. Deliberately carries no
+   * name: who was passed is between the two players, and the level it happened at is what says
+   * whether the chase is doing work up and down the whole ladder or only near the frontier.
+   */
+  CHASE_SHOWN: 'chase_shown',
+  CHASE_OVERTAKE: 'chase_overtake',
+
   /** The update toast, which the PWA stale-build trap makes worth watching. */
   UPDATE_SHOWN: 'update_shown',
   UPDATE_APPLIED: 'update_applied',

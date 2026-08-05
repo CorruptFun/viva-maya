@@ -4,16 +4,20 @@ import {
   adoptHandle,
   anonName,
   applyChapterTiers,
+  chaseCopy,
+  chaseOvertakes,
   formatStanding,
   getHandle,
   isLegacyWeek,
   levelStanding,
+  loadChaseSnapshot,
   mergeTransitionWeek,
   preferredName,
   sanitizeName,
+  saveChaseSnapshot,
   setHandle,
 } from './leaderboard'
-import type { DailyWeekRow, LegacyWeekRow, LeaderboardEntry } from './leaderboard'
+import type { ChaseNeighbour, ChaseSnapshot, ChaseWindow, DailyWeekRow, LegacyWeekRow, LeaderboardEntry } from './leaderboard'
 import { coerceSave, loadSave, type SaveData } from './save'
 
 /**
@@ -405,5 +409,137 @@ describe('applyChapterTiers — the badge decoration is pure and never blocks a 
     const entries = [entry('a')]
     applyChapterTiers(entries, ['ua'], new Map())
     expect(entries[0].chapters).toBeUndefined()
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE CHASE — the pure halves: the copy and the overtake diff.
+//
+// The network half (`fetchLevelNeighbours`) is dormant in this env by design, exactly as every
+// other Supabase path here is. What is tested is the two things that decide what a player SEES: the
+// string, and the rule that fires a card beat.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('chaseCopy — the line the strip prints', () => {
+  const near = (name: string, gap: number, key = name): ChaseNeighbour => ({
+    name,
+    cleared: 100 + gap,
+    gap,
+    key,
+  })
+  const win = (above: ChaseNeighbour[], below: ChaseNeighbour[]): ChaseWindow => ({ mine: 100, above, below })
+
+  it('special-cases the singular — the most motivating string in the feature', () => {
+    expect(chaseCopy(win([near('Sam', 1)], [])).ahead).toBe('chasing Sam  ·  one level ahead')
+  })
+
+  it('pluralises every other gap', () => {
+    expect(chaseCopy(win([near('Sam', 5)], [])).ahead).toBe('chasing Sam  ·  5 levels ahead')
+  })
+
+  it('leads with the player ahead — the chase pulls, so the strip never leads with a pursuer', () => {
+    const copy = chaseCopy(win([near('Sam', 3)], [near('Kim', 2)]))
+    expect(copy.line).toBe('chasing Sam  ·  3 levels ahead')
+    // The pursuit half is still available to a surface with room — it is just never the headline.
+    expect(copy.behind).toBe('Kim is 2 levels behind you')
+  })
+
+  it('keeps the strip line inside the width the badge and chevron leave it', () => {
+    // The strip's line has ~460px between the badge and the chevron at 21px/900 — about 40 glyphs,
+    // 44 at the optimistic end. This is the guard that a hostile handle cannot grow the line: the
+    // worst case is a name at the truncation cap plus the widest gap the 400-level ladder allows,
+    // and it must stay bounded. Un-cap the name and a 24-char handle takes this to 53.
+    const worst = chaseCopy(win([near('Neon_Ghost-77_Extra', 399)], [near('Wilhelmina', 4)]))
+    expect(worst.line).toBe('chasing Neon_Ghost-77…  ·  399 levels ahead')
+    expect(worst.line.length).toBeLessThanOrEqual(44)
+  })
+
+  it('gives a shared sub-line a compact tag, singular intact', () => {
+    expect(chaseCopy(win([near('Sam', 5)], [])).tag).toBe('chasing Sam, 5 ahead')
+    expect(chaseCopy(win([near('Sam', 1)], [])).tag).toBe('chasing Sam, one level ahead')
+    expect(chaseCopy(win([], [near('Kim', 2)])).tag).toBe('top of the ladder')
+  })
+
+  it('nobody above reads as an achievement, never as an empty frame', () => {
+    expect(chaseCopy(win([], [near('Kim', 2)])).line).toBe('top of the ladder  ·  Kim 2 behind')
+    expect(chaseCopy(win([], [])).line).toBe('top of the ladder')
+  })
+
+  it('pluralises the pursuit half too', () => {
+    expect(chaseCopy(win([], [near('Kim', 1)])).behind).toBe('Kim is one level behind you')
+  })
+
+  it('shortens a long handle instead of letting it run under the chevron', () => {
+    const copy = chaseCopy(win([near('Neon_Ghost-77_Extra', 2)], []))
+    expect(copy.ahead).toBe('chasing Neon_Ghost-77…  ·  2 levels ahead')
+  })
+})
+
+describe('chaseOvertakes — what fires a YOU PASSED beat', () => {
+  const near = (key: string, gap: number): ChaseNeighbour => ({ name: key, cleared: 42 - gap, gap, key })
+  const snap = (mine: number, above: string[]): ChaseSnapshot => ({
+    mine,
+    above: above.map(k => ({ key: k, name: k })),
+  })
+
+  it('a cold cache announces nothing — a fresh install must not fabricate a dozen passes', () => {
+    const next: ChaseWindow = { mine: 42, above: [], below: [near('sam', 1), near('kim', 3)] }
+    expect(chaseOvertakes(null, next)).toEqual([])
+  })
+
+  it('someone who was above and is now below fires exactly one, nearest first', () => {
+    const prev = snap(40, ['sam', 'kim'])
+    const next: ChaseWindow = { mine: 42, above: [], below: [near('sam', 1), near('kim', 2)] }
+    const out = chaseOvertakes(prev, next)
+    expect(out.map(n => n.key)).toEqual(['sam', 'kim'])
+    expect(out[0].key).toBe('sam') // the nearest is the one the card names
+  })
+
+  it('a replay announces nothing — no rung advanced, so nobody was passed', () => {
+    const prev = snap(42, ['sam'])
+    const next: ChaseWindow = { mine: 42, above: [], below: [near('sam', 1)] }
+    expect(chaseOvertakes(prev, next)).toEqual([])
+  })
+
+  it('a neighbour who advanced too, and is still ahead, is not a pass', () => {
+    const prev = snap(40, ['sam'])
+    const next: ChaseWindow = { mine: 42, above: [{ name: 'sam', cleared: 45, gap: 3, key: 'sam' }], below: [] }
+    expect(chaseOvertakes(prev, next)).toEqual([])
+  })
+
+  it('someone who was never above you is not a pass, however far below they now are', () => {
+    const prev = snap(40, [])
+    const next: ChaseWindow = { mine: 42, above: [], below: [near('kim', 8)] }
+    expect(chaseOvertakes(prev, next)).toEqual([])
+  })
+
+  it('diffs on the opaque key, so a rename produces silence rather than a false pass', () => {
+    const prev: ChaseSnapshot = { mine: 40, above: [{ key: 'a1b2c3d4', name: 'Sam' }] }
+    const next: ChaseWindow = { mine: 42, above: [], below: [{ name: 'Samantha', cleared: 41, gap: 1, key: 'a1b2c3d4' }] }
+    // Same account, new handle: the pass is still real and the card uses the NEW name.
+    expect(chaseOvertakes(prev, next).map(n => n.name)).toEqual(['Samantha'])
+  })
+})
+
+describe('the chase snapshot round-trip', () => {
+  it('persists only the diff fields, and reads back what it wrote', () => {
+    const w: ChaseWindow = {
+      mine: 42,
+      above: [{ name: 'Sam', cleared: 45, gap: 3, key: 'aaaa1111' }],
+      below: [{ name: 'Kim', cleared: 40, gap: 2, key: 'bbbb2222' }],
+    }
+    saveChaseSnapshot(w)
+    expect(loadChaseSnapshot()).toEqual({ mine: 42, above: [{ key: 'aaaa1111', name: 'Sam' }] })
+  })
+
+  it('reads junk as NO cache — one silent overtake, never a fabricated one', () => {
+    localStorage.setItem('viva-maya:chase', '{ not json')
+    expect(loadChaseSnapshot()).toBeNull()
+    localStorage.setItem('viva-maya:chase', JSON.stringify({ mine: 'forty', above: [] }))
+    expect(loadChaseSnapshot()).toBeNull()
+  })
+
+  it('is absent on a fresh device', () => {
+    expect(loadChaseSnapshot()).toBeNull()
   })
 })
