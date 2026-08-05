@@ -124,6 +124,31 @@ const FLOOR_MOODS: Readonly<Record<number, FloorMood>> = {
   },
 }
 
+/**
+ * AFTER DARK's accent (Slice 3) — the 200s' signature colour, and the appearance half of
+ * `core/levels.ts`'s band predicates, kept here for the same reason every other accent is: core
+ * names a stretch of the ladder, this dresses it.
+ *
+ * A late-evening indigo. It has to do two jobs at once and they pull against each other: read as
+ * "the main floor, LATE" beside Act I's gold, and stay clearly WARMER and softer than THE EYE's
+ * security blue, which arrives inside this same band at 281 and has to register as the House doing
+ * something the room was not already doing. So the band sits at the blue end of dusk and the Eye
+ * sits past it, colder and flatter.
+ *
+ * ⚠️ IT IS DARKER THAN IT WANTS TO BE, and that is a contrast constraint rather than taste. This ink
+ * lands on all three ribbon plate states, and the `now` state is REAL METAL — a bright gold face. A
+ * dusk indigo picked for the trail alone measured about 2.7:1 there, under AA even for large text
+ * (caught in browser verification). Deepened until it clears the gold plate as well as the cream
+ * ones; on the journey trail it still reads as evening light rather than as dirt, because the trail
+ * paints it at half alpha over a warm ground.
+ *
+ * ⚠️ It is NOT a `FloorMood`. Moods carry an audio room, a hazard skin, a flourish and a croupier,
+ * and AFTER DARK has none of those on purpose — it is a recombination band, not a new room. Giving
+ * it a mood object would put it in `moodedFloors()` and break `actII.test.ts`'s "every shipped floor
+ * is dressed" check with a floor that does not exist.
+ */
+export const AFTER_DARK_ACCENT = 0x3d4f85
+
 /** True when floor moods are live at all. Their own flag, revocable without touching the act. */
 export function moodsLive(): boolean {
   return DIFFICULTY.act2.enabled && DIFFICULTY.act2.mood

@@ -108,6 +108,34 @@ export function isMinimumLevel(level: number): boolean {
 }
 
 /**
+ * AFTER DARK — the BAND itself (Slice 3): Act I's last hundred levels, 201 to the end of the act.
+ *
+ * Separate from the per-beat predicates below because it answers a different question. Those say
+ * "what does this level DO"; this says "which stretch of road am I looking at", and it is what the
+ * map reads. A feature at 216 that a player at 42 cannot see motivates nobody — the whole reason the
+ * band has an identity on LevelSelect is so it can pull from a hundred and seventy levels away.
+ *
+ * Anchored to the plaque's own band start, not to a fresh literal: 201 is where HOUSE MINIMUM opened
+ * the 200s and AFTER DARK is the same stretch acquiring a name, not a new one starting nearby.
+ */
+export const AFTER_DARK_FROM = DIFFICULTY.goals.minimumStart
+/** The chapters the band covers — 21 through 30, derived so `CHAPTER_LEVELS` stays the one authority. */
+export const AFTER_DARK_CHAPTER_FROM = Math.floor((AFTER_DARK_FROM - 1) / CHAPTER_LEVELS) + 1
+export const AFTER_DARK_CHAPTER_TO = ACT1_LEVELS / CHAPTER_LEVELS
+
+/** True for a numbered level inside the band (and false with the band switched off). */
+export function isAfterDarkLevel(level: number): boolean {
+  return DIFFICULTY.afterDark.enabled && level >= AFTER_DARK_FROM && level <= ACT1_LEVELS
+}
+
+/** True for a 1-based CHAPTER inside the band — what LevelSelect's ribbons read. */
+export function isAfterDarkChapter(chapter: number): boolean {
+  return (
+    DIFFICULTY.afterDark.enabled && chapter >= AFTER_DARK_CHAPTER_FROM && chapter <= AFTER_DARK_CHAPTER_TO
+  )
+}
+
+/**
  * AFTER DARK — POINTS NIGHT (Slice 3). The plaque's PURE FORM: a minimum level with its collect
  * goals taken away, so the brass number (plus the felt) is the whole win condition.
  *

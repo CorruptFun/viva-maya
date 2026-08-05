@@ -3,11 +3,19 @@ import { sfx } from '../audio/sfx'
 import { DESIGN_W, restScrollY } from '../config'
 import { endlessUnlocked } from '../core/endless'
 import { levelStanding } from '../core/leaderboard'
-import { CHAPTER_LEVELS, LEVEL_COUNT } from '../core/levels'
+import {
+  AFTER_DARK_CHAPTER_FROM,
+  CHAPTER_LEVELS,
+  LEVEL_COUNT,
+  isAfterDarkChapter,
+  isAfterDarkLevel,
+  isHotTable,
+  isPointsNight,
+} from '../core/levels'
 import { loadSave } from '../core/save'
 import { trophyFor } from '../core/trophies'
 import { floorForChapter } from '../core/actII'
-import { chapterMood, floorMood, floorPlateLabel } from '../view/floormood'
+import { AFTER_DARK_ACCENT, chapterMood, floorMood, floorPlateLabel } from '../view/floormood'
 import { openAct2Card } from '../view/act2card'
 import { openShowroom } from '../view/showroom'
 import { ensureGlyphTexture } from '../view/textures'
@@ -610,6 +618,18 @@ export class LevelSelectScene extends Phaser.Scene {
     const mood = chapterMood(chapter + 1)
     const opensFloor = floor !== null && floor.chapterFrom === chapter + 1
     /**
+     * AFTER DARK dressing (Slice 3) — Act II's nameplate treatment, applied to Act I's last decade
+     * block, and for exactly the reason it earns its place here: the whole band lives at 201+, past
+     * every living player, so the ONLY thing that can make it do work today is being legible from
+     * below. In `ahead` state it reads from level 1.
+     *
+     * Slice 1's restraint is kept as well as its machinery: the chapter that OPENS the band wears
+     * the nameplate, and 22–30 stay ordinary decade ribbons whose label simply takes the band's
+     * accent. Ten nameplates in a column would say nothing ten times.
+     */
+    const afterDark = isAfterDarkChapter(chapter + 1)
+    const opensDark = afterDark && chapter + 1 === AFTER_DARK_CHAPTER_FROM
+    /**
      * The chapter label, KEPT, because the trophy glyph is seated off its real right-hand edge.
      *
      * It used to be seated at a literal `-GRID_W/2 + 168`, which was right for `CHAPTER 9` and wrong
@@ -638,10 +658,22 @@ export class LevelSelectScene extends Phaser.Scene {
           .setAlpha(state === 'ahead' ? 0.75 : 1)
       )
     } else {
+      // ⚠️ The AFTER DARK nameplate keeps `chapterLabel` SET, unlike the Act II ones. Chapter 21 is a
+      // real Act I chapter that can be finished, so it can wear a showroom trophy — and that trophy
+      // is seated off this label's MEASURED right edge (see the note above). A null here would drop
+      // it back onto the old `-GRID_W/2 + 168` literal, which is the bug that comment exists about.
       chapterLabel = this.add
-        .text(-GRID_W / 2 + 22, 0, `CHAPTER ${chapter + 1}`, { fontFamily: FONT, fontSize: '19px', fontStyle: '900', color: ink })
+        .text(-GRID_W / 2 + 22, 0, opensDark ? 'AFTER DARK' : `CHAPTER ${chapter + 1}`, {
+          fontFamily: FONT,
+          fontSize: '19px',
+          fontStyle: '900',
+          color: afterDark ? css(AFTER_DARK_ACCENT) : ink,
+        })
         .setOrigin(0, 0.5)
         .setLetterSpacing(2)
+        // Readable while still AHEAD — a locked stretch of road you can read the sign on is the
+        // entire reason to put one on the map.
+        .setAlpha(afterDark && state === 'ahead' ? 0.8 : 1)
       container.add(chapterLabel)
     }
     let earned = 0
@@ -1133,6 +1165,38 @@ export class LevelSelectScene extends Phaser.Scene {
    * chevron rests static (no bob); otherwise it gives a gentle directional nudge. Baked Graphics
    * added INTO the chip container, so it scrolls + masks with the grid (L1's coast/mask untouched).
    */
+  /**
+   * AFTER DARK's chip marks (Slice 3) — one small glyph in the top-left corner of a POINTS NIGHT or
+   * HOT TABLE chip, so the band visibly has TEXTURE while you scroll toward it rather than being a
+   * hundred identical numbers with a different ribbon over them.
+   *
+   * ⚠️ Reached from `buildChip`, which only `buildRow` calls, which only `syncWindow` calls — the
+   * grid is windowed, and per-chip work added anywhere outside that chain leaks objects for the
+   * hundreds of levels that are not on screen (see the L6 note at ROW_BUFFER).
+   *
+   * A baked GLYPH TEXTURE rather than a Text: `ensureGlyphTexture` bakes each emoji once and every
+   * chip on screen shares the two Images, where thirty-five Texts would each carry their own canvas.
+   *
+   * ⚠️ SEATED ABOVE THE NUMBER, not beside it. The obvious corner (−32, −32) puts a 24px glyph
+   * straight through the top-left of a three-digit number — the digits span roughly ±33 and start at
+   * y −34, so the two overlap by about half the glyph (caught in browser verification). Every other
+   * anchor on a chip is taken: the stars own the bottom, the milestone tally owns the bottom centre,
+   * and the frontier chevron owns the right of the one chip this mark is most likely to share. So it
+   * takes the strip of air ABOVE the number, which is clear in all four chip layouts.
+   */
+  private addAfterDarkMark(container: Phaser.GameObjects.Container, n: number): void {
+    const glyph = isPointsNight(n) ? '🌙' : isHotTable(n) ? '🔥' : null
+    if (!glyph) return
+    const key = ensureGlyphTexture(this, `afterdark:${glyph}`, glyph, 64, 64)
+    container.add(
+      this.add
+        .image(-32, -38, key)
+        .setDisplaySize(20, 20)
+        // Quiet on a level you cannot reach yet: it is a label on the road ahead, not a call to act.
+        .setAlpha(n <= this.grid!.unlocked ? 0.95 : 0.55)
+    )
+  }
+
   private addFrontierMarker(container: Phaser.GameObjects.Container, n: number): void {
     const T = getTheme()
     // Levels fill left→right, top→bottom: the next run is the same-row neighbour to the right, unless
@@ -1224,7 +1288,9 @@ export class LevelSelectScene extends Phaser.Scene {
       const lit = n + 1 <= unlocked
       // Keyed to the segment's DESTINATION, so the colour changes exactly at the level that is on
       // the new floor — the last main-floor dot is still gold.
-      const accent = floorMood(n + 1)?.accent ?? null
+      // ACT II's floor accent first, then AFTER DARK's — the tower's rooms outrank the band, and
+      // the two ranges cannot overlap anyway (the band ends where the act begins).
+      const accent = floorMood(n + 1)?.accent ?? (isAfterDarkLevel(n + 1) ? AFTER_DARK_ACCENT : null)
       if ((n - 1) % GRID_COLS < GRID_COLS - 1) {
         // Same-row hop: a straight dotted run whose dots peek through the gaps between neighbouring chips.
         const steps = Math.max(2, Math.round(a.distance(b) / TRAIL_DOT_GAP))
@@ -1281,6 +1347,10 @@ export class LevelSelectScene extends Phaser.Scene {
     const face = this.add.image(0, 0, this.chipFace(kind))
     if (kind === 'lockedMilestone') face.setAlpha(0.78) // subordinate to the current chip — a landmark ahead
     container.add(face)
+    // ⚠️ OUTSIDE the `playable` branch below, deliberately. A mark that only appeared on levels you
+    // have already cleared would be the one thing this feature must not be: invisible from below.
+    // The band's texture has to read while you are still scrolling TOWARD it.
+    this.addAfterDarkMark(container, n)
 
     if (playable) {
       const hasStars = stars > 0

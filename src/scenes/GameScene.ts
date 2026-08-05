@@ -2543,11 +2543,18 @@ export class GameScene extends Phaser.Scene {
       // Narrowest at 3 objectives (~92px) and roomier with fewer, so it is derived, never fixed.
       const firstChipLeft = slot(0) - chipW / 2
       this.freeSpinSpot = { x: (BOARD_X + 170 + firstChipLeft) / 2, y: cardY }
-      this.add
-        .text(clusterCx, cardY - 70, 'COLLECT', { fontFamily: FONT, fontSize: '18px', fontStyle: '900', color: T.goldText })
-        .setOrigin(0.5)
-        .setLetterSpacing(4)
-        .setShadow(0, 2, 'rgba(90,70,20,0.18)', 3, false, true)
+      // ⚠️ NOT on a POINTS NIGHT. The tag labels the objective chips, and with none of them the word
+      // is left standing over the brass plaque instead — telling the player to COLLECT a score
+      // target on the one level type that has nothing to collect (caught in browser verification).
+      // Gated on the chips actually existing rather than on the level type, so it stays true of any
+      // future goal-less shape as well.
+      if (this.objectives.length > 0) {
+        this.add
+          .text(clusterCx, cardY - 70, 'COLLECT', { fontFamily: FONT, fontSize: '18px', fontStyle: '900', color: T.goldText })
+          .setOrigin(0.5)
+          .setLetterSpacing(4)
+          .setShadow(0, 2, 'rgba(90,70,20,0.18)', 3, false, true)
+      }
       this.objectives.forEach((o, i) => {
         const chip = this.add.container(slot(i), cardY)
         // §R3 elevated-rail underlay — BELOW the gold halo so the additive breathe stays luminous.
@@ -7449,9 +7456,17 @@ export class GameScene extends Phaser.Scene {
     const row = this.add.container(DESIGN_W / 2, briefY).setDepth(36)
     this.markerRow = row
     this.briefText?.setVisible(false)
+    const stakes = markerStakesFor(this.level)
+    const wide = stakes.length <= 3
     row.add(
       this.add
-        .text(-236, 0, 'THE MARKER', { fontFamily: FONT, fontSize: '20px', fontStyle: '900', color: T.goldText })
+        // Shifted left on a four-rung row. MEASURED, not nudged: the label is 167px wide, so at the
+        // shipped −236 it reaches −152 and the fourth rung's pill starts at −160 — an 8px overlap
+        // (caught in browser verification). −256 buys 20px of daylight and still leaves the label
+        // 21px inside the design edge. Moving the RUNGS instead is what the alternative would be,
+        // and it costs more: tightening their pitch below 88 puts adjacent hit zones inside each
+        // other's 84px minimum, on a control that spends 500 chips per mis-tap.
+        .text(wide ? -236 : -256, 0, 'THE MARKER', { fontFamily: FONT, fontSize: '20px', fontStyle: '900', color: T.goldText })
         .setOrigin(0.5)
         .setLetterSpacing(2)
     )
@@ -7465,8 +7480,6 @@ export class GameScene extends Phaser.Scene {
      * and width pair is chosen to reproduce, so a Slice 0 player's offer row does not move under
      * them. Four rungs narrow and tighten to fit the same span with real clearance either side.
      */
-    const stakes = markerStakesFor(this.level)
-    const wide = stakes.length <= 3
     const pillW = wide ? 96 : 80
     const pitch = wide ? 104 : 88
     /** Group centre, matched to the shipped 3-rung row so the common case is byte-identical. */

@@ -182,12 +182,26 @@ const TELL_EASE_MS = 1400
 const EYE_HUE = 210
 const EYE_SPAN_SCALE = 0.35
 const EYE_SAT_SCALE = 0.55
-/** Slower than `TELL_EASE_MS` on purpose — lights going down, not a hint arriving. */
-const EYE_EASE_MS = 1400
+/**
+ * How long the ring takes to cool, and it is sized against the SWEEP rather than chosen for feel.
+ * The sweep holds the chill for ~2.6s; at the 1400ms this started on, the ring was still in transit
+ * when the sweep released it and never actually reached blue (measured: 270° at mid-sweep, 239° at
+ * the end, against the 210° being asked for). At 700ms it arrives inside the first second and HOLDS
+ * cold for the rest of the pass, which is what makes the beat read as a state rather than a smear.
+ */
+const EYE_EASE_MS = 700
 
-/** Signed degrees from `a` to `b` the short way round — so cooling never takes the long way. */
-function shortestHueStep(a: number, b: number): number {
-  return (((b - a) % 360) + 540) % 360 - 180
+/**
+ * Degrees from `a` FORWARD to `b` — always the increasing direction, never the shorter one.
+ *
+ * ⚠️ Deliberately not a shortest-path step, and this is the difference between the ring cooling and
+ * the ring doing something strange. Every theme and floor arc in this game lives in the warm half,
+ * so the short way round to 210° runs DOWNWARD through pink and magenta (measured: gold 20° →
+ * 332° → 270° → 239°). Forward from a warm hue goes through yellow, green and cyan instead — which
+ * is what "the lights went cold" actually looks like. The long way is the right way here.
+ */
+function forwardHueStep(a: number, b: number): number {
+  return (((b - a) % 360) + 360) % 360
 }
 
 export interface RgbRingGeom {
@@ -406,8 +420,16 @@ export function attachRgbRing(
     const span = hueSpan * p.spanScale
     // THE EYE pulls the whole arc toward security blue and drains it, together — a cooled ring that
     // kept the cabinet's saturation reads as a colour change, not as the lights going cold.
-    const from = chill > 0 ? hueFrom + shortestHueStep(hueFrom, EYE_HUE) * chill : hueFrom
+    //
+    // ⚠️ IT MOVES THE ARC'S CENTRE, not its START. `ringHue` spreads the nodes across
+    // `[from, from + span]`, so aiming `from` at the target leaves the ring's visible BODY a whole
+    // arc-width past it — measured at a median hue of 249–278° while asking for 210° (violet, not
+    // the security blue the beat is named for). Centring and re-deriving the start lands the body on
+    // the number, and collapses to exactly `hueFrom` at chill 0, so an uncooled ring is untouched.
     const chillSpan = span * (1 - chill * (1 - EYE_SPAN_SCALE))
+    const warmCentre = hueFrom + span / 2
+    const coolCentre = warmCentre + forwardHueStep(warmCentre, EYE_HUE) * chill
+    const from = chill > 0 ? coolCentre - chillSpan / 2 : hueFrom
     const chillSat = sat * (1 - chill * (1 - EYE_SAT_SCALE))
     for (let i = 0; i < n; i++) {
       // The normalised 0..1 travelling wave; each layer maps it into its own range below.
