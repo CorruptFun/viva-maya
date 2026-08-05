@@ -48,6 +48,7 @@ import { playChapterCeremony } from '../view/trophyceremony'
 import { openAct2Card } from '../view/act2card'
 import { hazardPlan } from '../core/hazards'
 import { ensureHazardTexture } from '../view/textures'
+import { hazardSkin } from '../view/hazardskins'
 import { DIFFICULTY, type HazardKind } from '../core/difficulty'
 import { shouldOfferPlinko } from '../core/plinko'
 import { dealReady, winsToDeal } from '../core/deal'
@@ -80,7 +81,7 @@ import {
   rgbMarquee,
   setFloorOverlay,
 } from '../view/theme'
-import { floorMood } from '../view/floormood'
+import { activeFloorMood, enterFloor } from '../view/floormood'
 import { maybeFloorDoor } from '../view/floordoor'
 import { addEndlessLeaderStrip } from '../view/leaderboardpanel'
 import { attachRgbRing, type RgbRing } from '../view/rgbmarquee'
@@ -696,7 +697,11 @@ export class GameScene extends Phaser.Scene {
      * The overlay carries LIGHT and TONE only — never a wash, a card or an ink. See theme.ts's
      * FloorOverlay type, which spells the whitelist out rather than accepting `Partial<Theme>`.
      */
-    const mood = this.endless ? null : floorMood(this.level)
+    // The floor is ENTERED first: the hazard skins and the margin flourish read it directly rather
+    // than through the theme overlay, because neither is a theme token (see floormood.ts). One call,
+    // one source of truth for "which room is this", and the mood below comes off the same answer.
+    enterFloor(this.endless ? null : this.level)
+    const mood = activeFloorMood()
     setFloorOverlay(
       mood
         ? {
@@ -714,6 +719,7 @@ export class GameScene extends Phaser.Scene {
     // reverb bus is retuned in the same call. Theme swaps use this exact seam.
     sfx.refreshTheme()
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      enterFloor(null)
       setFloorOverlay(null)
       sfx.refreshTheme()
     })
@@ -2547,14 +2553,18 @@ export class GameScene extends Phaser.Scene {
     // felt is a genuine binding constraint (core/difficulty.ts: ~5pp of failures end with felt still
     // on the table) — so the one always-visible sentence describing the win condition described half
     // of it, and a player could sweep every symbol and still not know what was holding the level open.
+    // ...and it names the coat off the SKIN (`coatNoun`), so upstairs it says baize. A sentence that
+    // still said "felt" over a board laid with something else would be the one always-visible piece
+    // of copy disagreeing with the board it describes.
+    const coat = hazardSkin().coatNoun
     const brief = this.endless
       ? "Biggest score wins today's board"
       : this.scoreTarget > 0
         ? this.coatsTotal > 0
-          ? 'Goals, felt, and the house minimum — beat all three'
+          ? `Goals, ${coat}, and the house minimum — beat all three`
           : 'Match the goals and beat the house minimum'
         : this.coatsTotal > 0
-          ? 'Match the goal symbols and sweep every felt square'
+          ? `Match the goal symbols and sweep every ${coat} square`
           : 'Match the highlighted goal symbols before moves run out'
     /**
      * SEATED OFF THE BOARD, not off a literal. It used to read `988 + ENDLESS_BOARD_DROP`, which
@@ -3204,11 +3214,19 @@ export class GameScene extends Phaser.Scene {
     })
   }
 
-  /** The sweep counter: how much felt is still on the table. Hidden entirely when there is none. */
+  /**
+   * The sweep counter: how much felt is still on the table. Hidden entirely when there is none.
+   *
+   * The heading comes off the SKIN, not a literal, for the same reason the teach card's does: on a
+   * high-roller floor the board is laid with baize, and a counter that still said FELT would be the
+   * HUD contradicting the thing it is counting.
+   */
   private refreshCoatLabel(): void {
     if (!this.coatLabel) return
     const left = this.board.coatsRemaining()
-    this.coatLabel.setText(left > 0 ? `FELT  ${this.coatsTotal - left}/${this.coatsTotal}` : 'TABLE SWEPT')
+    this.coatLabel.setText(
+      left > 0 ? `${hazardSkin().label.coat}  ${this.coatsTotal - left}/${this.coatsTotal}` : 'TABLE SWEPT'
+    )
     this.coatLabel.setColor(left > 0 ? getTheme().goldText : css(getTheme().goldBright))
   }
 
@@ -3908,7 +3926,7 @@ export class GameScene extends Phaser.Scene {
     this.refreshPullRail()
   }
 
-  /** Grey the handles of columns that cannot pull — a clamp or a lockbox refuses the whole column. */
+  /** Grey the handles of columns that cannot pull — only a lockbox refuses; a clamp rides the pull. */
   private refreshPullRail(): void {
     if (!this.pullRail) return
     for (let c = 0; c < this.pullHandles.length; c++) {

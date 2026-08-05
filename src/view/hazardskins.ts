@@ -1,21 +1,24 @@
 import Phaser from 'phaser'
 import { getThemeId } from './theme'
 import type { ThemeId } from './theme'
+import { activeFloor } from './floormood'
 import type { HazardKind } from '../core/difficulty'
 
 /**
  * How a hazard LOOKS, kept strictly apart from what it DOES.
  *
  * `src/core/` names hazards behaviourally — `coat`, `blocker`, `lock` — and never says felt, crate
- * or ice. Appearance lives here, keyed off the theme the player has chosen. That split is the whole
- * point: a future seasonal pack ("Winter") can render the blocker as a block of ice by adding one
- * skin object and one theme entry, with ZERO changes to the board rules, the hazard planner, the
- * difficulty tuning or any test. Ice is an APPEARANCE of `blocker`, not a fourth mechanic.
+ * or ice. Appearance lives here, keyed off the theme the player has chosen and the FLOOR they are
+ * standing on. That split is the whole point: a future seasonal pack ("Winter") can render the
+ * blocker as a block of ice by adding one skin object and one theme entry, with ZERO changes to the
+ * board rules, the hazard planner, the difficulty tuning or any test. Ice is an APPEARANCE of
+ * `blocker`, not a fourth mechanic — and so is a chip rack.
  *
  * To add a theme pack you write exactly two things:
  *   1. a `ThemeId` + `Theme` + `THEME_META` entry in `theme.ts` (the existing documented pattern);
  *   2. a `HazardSkin` here, registered in `HAZARD_SKINS` under that id.
- * Nothing below `src/view/` needs to know it happened.
+ * An Act II FLOOR is the same two steps with `FLOOR_HAZARD_SKINS` as the register.
+ * Nothing below `src/view/` needs to know either happened.
  *
  * House rules this file inherits:
  *  - ZERO binary assets. Everything is drawn procedurally into a DynamicTexture at runtime.
@@ -29,6 +32,14 @@ export interface HazardSkin {
   id: string
   /** Player-facing name for the intro card and HUD. */
   label: Record<HazardKind, string>
+  /**
+   * The coat as a lower-case MASS NOUN, for the one place the game talks about it in a sentence —
+   * the standing brief under the board ("Goals, felt, and the house minimum"). `label.coat` is a
+   * heading and cannot be dropped into prose; a skin that renamed the coat and left the brief saying
+   * "felt" would have the board and the sentence describing it disagree, which is the exact failure
+   * the copy-comes-from-the-skin rule exists to prevent.
+   */
+  coatNoun: string
   /** One sentence explaining the rule, shown once when the mechanic first appears. */
   blurb: Record<HazardKind, string>
   /** Draws the obstacle at `hp` of `maxHp` into a TEX_SIZE² texture (authored on a 128 grid). */
@@ -49,6 +60,7 @@ export interface HazardSkin {
 const casinoVault: HazardSkin = {
   id: 'casinoVault',
   label: { coat: 'FELT', blocker: 'LOCKBOX', lock: 'CLAMP' },
+  coatNoun: 'felt',
   blurb: {
     coat: 'Some squares are covered in felt. Make a match on top of one to sweep it clean — clear every last square to win the level.',
     blocker: "Lockboxes don't match and can't be moved. Break one by clearing a square right next to it.",
@@ -180,6 +192,178 @@ const casinoVault: HazardSkin = {
 }
 
 /**
+ * FLOOR 1 · THE HIGH-LIMIT ROOM — brass and baize. The same three obstacles as downstairs, made of
+ * better things: the cloth is a proper baize with a brass rule stitched into it, the lockbox is a
+ * dealer's CHIP RACK, and the clamp is the brass thumbscrew that holds a card down on a live table.
+ *
+ * The rule copy is word-for-word the default's with the nouns swapped, and that is deliberate: a
+ * player who learned "clear a square next to it" at level 86 must not be able to read a re-dressed
+ * obstacle as a new mechanic. The room changed; the game did not.
+ */
+const highLimitRoom: HazardSkin = {
+  id: 'highLimit',
+  label: { coat: 'BAIZE', blocker: 'CHIP RACK', lock: "DEALER'S CLAMP" },
+  coatNoun: 'baize',
+  blurb: {
+    coat: 'Some squares are laid with baize. Make a match on top of one to sweep it clean — clear every last square to win the level.',
+    blocker: "Chip racks don't match and can't be moved. Break one by clearing a square right next to it.",
+    lock: 'A clamped piece still matches, but it will not move. Clear a square beside it to back the clamp off.',
+  },
+  burstTint: { coat: 0x2f9b78, blocker: 0xe8c27a, lock: 0xc79a4a },
+
+  /**
+   * A brass-railed rack of chips standing in a walnut tray. At 2 hp the rail runs the full width on
+   * both posts and the stacks are square; at 1 the right post has let go, the rail hangs short, and
+   * the stacks have dropped — so "one more hit" reads from the furniture rather than from a number,
+   * the same contract the default lockbox's cracked lid signs.
+   *
+   * Composed FULL-BLEED on purpose. The first pass stacked chips up from the tray floor and left the
+   * top 40% of the cell empty dark walnut, which at 76px on a phone read as a hole in the board
+   * rather than as an object standing in it (browser, level 301). The rail now caps the composition
+   * at the top and the stacks fill the space beneath it.
+   */
+  drawBlocker: (g, size, hp, maxHp) => {
+    const m = size * 0.09
+    const w = size - m * 2
+    const r = size * 0.08
+    const sprung = hp < maxHp
+
+    // Walnut tray + its shadow. Lighter than a true walnut so the chips have something to sit ON —
+    // a dark tray plus dark gaps between stacks is a silhouette, not a rack.
+    g.fillStyle(0x140d06, 0.5)
+    g.fillRoundedRect(m + size * 0.02, m + size * 0.05, w, w, r)
+    g.fillStyle(sprung ? 0x63482c : 0x513921, 1)
+    g.fillRoundedRect(m, m, w, w, r)
+    g.lineStyle(Math.max(2, size * 0.022), sprung ? 0x7d5a22 : 0xc79a4a, 1)
+    g.strokeRoundedRect(m, m, w, w, r)
+
+    // The two rail posts, running the height of the tray, drawn BEHIND the chips.
+    const railY = size * (sprung ? 0.42 : 0.32)
+    for (const px of [0.19, 0.81]) {
+      g.fillStyle(0x7d5a22, 1)
+      g.fillRect(size * px - size * 0.024, railY, size * 0.048, size * 0.56)
+    }
+
+    // Chip stacks: three columns of fat discs filling the tray from the floor up to just under the
+    // rail. A sprung rack keeps two-thirds of each and spills one flat.
+    const chipCols: [number, number][] = [
+      [0.31, 4],
+      [0.5, 5],
+      [0.69, 3],
+    ]
+    const chipInk = [0xf2ead6, 0x9a2233, 0x1f6b52]
+    const floorY = size * 0.79
+    const discH = size * 0.105
+    const step = discH * 0.78
+    chipCols.forEach(([cx, tall], ci) => {
+      const count = Math.max(1, sprung ? Math.round(tall * 0.6) : tall)
+      for (let k = 0; k < count; k++) {
+        const y = floorY - k * step
+        g.fillStyle(0x0a0703, 0.4)
+        g.fillEllipse(size * cx, y + size * 0.014, size * 0.24, discH)
+        g.fillStyle(chipInk[ci], 1)
+        g.fillEllipse(size * cx, y, size * 0.24, discH)
+        // The chip's edge stripe — the one detail that makes a column of discs read as CHIPS.
+        g.fillStyle(0xffffff, k % 2 === 0 ? 0.55 : 0.26)
+        g.fillRect(size * (cx - 0.062), y - discH * 0.2, size * 0.124, discH * 0.2)
+      }
+    })
+    if (sprung) {
+      // A chip on its side on the tray floor — the rack has spilled.
+      g.fillStyle(0xf2ead6, 0.92)
+      g.fillEllipse(size * 0.35, size * 0.86, size * 0.2, size * 0.06)
+    }
+
+    // The brass rail across the front, capping the composition. Sprung: it has come off the right
+    // post and hangs short of it.
+    g.fillStyle(sprung ? 0x7d5a22 : 0xc79a4a, 1)
+    g.fillRoundedRect(size * 0.16, railY - size * 0.03, size * (sprung ? 0.44 : 0.68), size * 0.062, size * 0.031)
+    g.fillStyle(0xe8c27a, sprung ? 0.45 : 0.9)
+    g.fillRect(size * 0.19, railY - size * 0.018, size * (sprung ? 0.38 : 0.62), size * 0.016)
+  },
+
+  /**
+   * A brass strap with a knurled THUMBSCREW where the default wears a padlock — the fixture a dealer
+   * actually uses. Mirrored to +45° so the two clamps are told apart at a glance even at cell size,
+   * and diagonal for the same reason the default is: a horizontal bar reads as the BAR symbol's pill.
+   */
+  drawLock: (g, size) => {
+    const cx = size / 2
+    const barH = size * 0.125
+
+    g.save()
+    g.translateCanvas(cx, cx)
+    g.rotateCanvas(Math.PI / 4)
+    g.fillStyle(0x140d06, 0.36)
+    g.fillRoundedRect(-size * 0.46, -barH / 2 + size * 0.024, size * 0.92, barH, barH / 2)
+    g.fillStyle(0x7d5a22, 1)
+    g.fillRoundedRect(-size * 0.46, -barH / 2, size * 0.92, barH, barH / 2)
+    g.fillStyle(0xc79a4a, 1)
+    g.fillRoundedRect(-size * 0.46, -barH / 2, size * 0.92, barH * 0.7, barH / 2)
+    g.fillStyle(0xe8c27a, 0.8)
+    g.fillRect(-size * 0.42, -barH * 0.3, size * 0.84, barH * 0.15)
+    g.restore()
+
+    // The thumbscrew: a knurled brass head, drawn as a ring of short radial teeth around a domed
+    // centre with a driver slot. Reads as "screwed down" rather than "locked", which is the point.
+    g.fillStyle(0x140d06, 0.34)
+    g.fillCircle(cx, cx + size * 0.028, size * 0.145)
+    g.fillStyle(0x7d5a22, 1)
+    g.fillCircle(cx, cx, size * 0.145)
+    for (let k = 0; k < 12; k++) {
+      const a = (k / 12) * Math.PI * 2
+      g.fillStyle(0xe8c27a, 0.75)
+      g.fillCircle(cx + Math.cos(a) * size * 0.128, cx + Math.sin(a) * size * 0.128, size * 0.019)
+    }
+    g.fillStyle(0xc79a4a, 1)
+    g.fillCircle(cx, cx, size * 0.105)
+    g.fillStyle(0xe8c27a, 0.65)
+    g.fillCircle(cx - size * 0.025, cx - size * 0.028, size * 0.05)
+    g.fillStyle(0x3b2a18, 0.9)
+    g.fillRect(cx - size * 0.072, cx - size * 0.014, size * 0.144, size * 0.028)
+  },
+
+  /**
+   * Bottle-green baize with a brass rule stitched a hair in from the edge. Deeper and bluer than the
+   * main floor's felt on purpose — upstairs is the better cloth, and the two have to be different
+   * greens rather than the same green twice. Second layer doubles the rule.
+   */
+  drawCoat: (g, size, layers) => {
+    const deep = layers >= 2
+    const pad = size * 0.02
+    const w = size - pad * 2
+    const r = size * 0.13
+
+    g.fillStyle(deep ? 0x0c2f27 : 0x14493c, 1)
+    g.fillRoundedRect(pad, pad, w, w, r)
+
+    // Recessed read — dark at the top, a faint lift at the base. Same idiom as the default coat,
+    // because it is what says COVERED rather than "a tile that happens to be green".
+    g.fillStyle(0x000000, 0.24)
+    g.fillRoundedRect(pad, pad, w, size * 0.16, { tl: r, tr: r, bl: 0, br: 0 })
+    g.fillStyle(0x2f9b78, 0.14)
+    g.fillRoundedRect(pad, size - pad - size * 0.13, w, size * 0.13, { tl: 0, tr: 0, bl: r, br: r })
+
+    // A whisper of nap: two long diagonal strokes, so the cloth has a direction.
+    g.lineStyle(Math.max(1, size * 0.01), 0x3fbf95, 0.09)
+    g.beginPath()
+    g.moveTo(size * 0.14, size * 0.86)
+    g.lineTo(size * 0.86, size * 0.14)
+    g.moveTo(size * 0.14, size * 0.56)
+    g.lineTo(size * 0.56, size * 0.14)
+    g.strokePath()
+
+    // The brass rule.
+    g.lineStyle(Math.max(1, size * 0.014), 0xc79a4a, deep ? 0.4 : 0.5)
+    g.strokeRoundedRect(pad + size * 0.06, pad + size * 0.06, w - size * 0.12, w - size * 0.12, r * 0.7)
+    if (deep) {
+      g.lineStyle(Math.max(2, size * 0.018), 0xe8c27a, 0.45)
+      g.strokeRoundedRect(pad + size * 0.125, pad + size * 0.125, w - size * 0.25, w - size * 0.25, r * 0.5)
+    }
+  },
+}
+
+/**
  * Skin per theme. Every current theme uses the default; a theme may override later without any
  * change here beyond one entry. `default` is required and is the fallback for unknown ids.
  */
@@ -187,7 +371,29 @@ export const HAZARD_SKINS: Partial<Record<ThemeId, HazardSkin>> & { default: Haz
   default: casinoVault,
 }
 
-/** The skin for the player's current theme. */
+/**
+ * Skin per Act II FLOOR — the room's own furniture, which outranks the theme's because the floor
+ * owns the room (`floormood.ts`'s standing rule). A floor with no entry here simply falls through to
+ * the theme, so a new floor can ship its levels before its art without a hole in the board.
+ */
+export const FLOOR_HAZARD_SKINS: Readonly<Record<number, HazardSkin>> = {
+  1: highLimitRoom,
+}
+
+/**
+ * The skin to draw with, resolved FLOOR → THEME → default.
+ *
+ * `activeFloor()` is null in Act I, in endless and with floor moods switched off, so every level at
+ * or below 300 resolves exactly as it did before Act II existed — which is the whole reason the
+ * lookup is an override chain rather than a replacement. Texture keys are skin-scoped
+ * (`hazardTextureKey`), so a floor's art and the main floor's coexist in the cache without collision
+ * and a player walking downstairs gets the right furniture back with no re-bake.
+ */
 export function hazardSkin(): HazardSkin {
+  const floor = activeFloor()
+  if (floor !== null) {
+    const skin = FLOOR_HAZARD_SKINS[floor]
+    if (skin) return skin
+  }
   return HAZARD_SKINS[getThemeId()] ?? HAZARD_SKINS.default
 }

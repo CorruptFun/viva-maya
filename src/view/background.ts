@@ -1,6 +1,8 @@
 import Phaser from 'phaser'
 import { BOARD_W, BOARD_Y, contentOffsetY, DESIGN_H, DESIGN_W, worldH } from '../config'
 import { setStageMood } from '../view3d/stage'
+import { activeFloorMood } from './floormood'
+import type { FloorFlourish } from './floormood'
 import { D, E } from './motion'
 import { quality } from './quality'
 import { css, getTheme, getThemeId, prefersReducedMotion } from './theme'
@@ -598,6 +600,14 @@ function installIdleThrottle(scene: Phaser.Scene, loops: AmbientLoop[]): void {
  */
 function themeFlourish(scene: Phaser.Scene, variant: BackdropVariant): void {
   if (prefersReducedMotion() || quality.tier() === 'low') return
+  // An Act II floor brings its own accent and takes the theme's place for the duration — the floor
+  // owns the ROOM (floormood.ts). It arrives INSIDE the a11y/tier gates above, so a floor can never
+  // reintroduce motion a player switched off, and it inherits the same margin + depth + alpha law.
+  const floorAccent = activeFloorMood()?.flourish
+  if (floorAccent) {
+    floorFlourish(scene, floorAccent)
+    return
+  }
   const T = getTheme()
   // Governor-capped count, clamped to ONE on the budget-tight game variant.
   const pick = (len: number): number =>
@@ -687,6 +697,64 @@ function themeFlourish(scene: Phaser.Scene, variant: BackdropVariant): void {
       // Golden Hour — a single warm dust mote loafing low in the floor light (bottom margin).
       drift(120, 1054, 0.9, 'bgglow', T.moteTint, 0.06, 0.12, T_DRIFT * 1.4, 26, -34)
     }
+  }
+}
+
+/**
+ * An Act II FLOOR's margin accent, standing in for the theme's while the player is on that floor.
+ *
+ * Same law as `themeFlourish`, inherited by construction (it is only ever called from inside it):
+ * `Z.flourish`, ADD blend, α ≤ 0.20, margins only, and already past the reduced-motion / low-tier
+ * gate. The one thing it deliberately does NOT inherit is the theme's colour — a floor's whole job is
+ * to look like a different room, and the accent is light, which is the half of the picture a mood is
+ * allowed to own.
+ *
+ * Both accents are driven by ONE proxy tween each, the `neonVegas` pattern, rather than a tween per
+ * sprite: a lamp is one object with two layers (pool + filament), not two ambient motes.
+ */
+function floorFlourish(scene: Phaser.Scene, kind: FloorFlourish): void {
+  if (kind === 'tableLamp') {
+    // FLOOR 1 — a brass banker's lamp burning in the bottom-left CORNER: the side table just out of
+    // frame. The pool is wide and dim, the filament small and warm, and the whole thing breathes on
+    // a very slow cycle so it reads as a filament settling rather than as a pulse.
+    //
+    // Cornered on purpose. Additive light needs somewhere dark to land, and the middle of the bottom
+    // margin on the default (cream) theme is the brightest ground on the screen — the first placement
+    // sat there and the lamp was invisible at any alpha this layer is allowed to use (browser, level
+    // 301). The vignette (Z.vignette, one layer in FRONT of this one) darkens the corners, so the
+    // corner is the one part of the margin where a legal alpha still reads.
+    const x = 74
+    const y = 1152
+    const pool = scene.add
+      .image(x, y, 'bgglow')
+      .setDisplaySize(340, 250)
+      .setTint(0xffa733)
+      .setAlpha(0.12)
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setDepth(Z.flourish)
+    const filament = scene.add
+      .image(x + 14, y - 40, 'bgdot')
+      .setDisplaySize(58, 58)
+      .setTint(0xffdca0)
+      .setAlpha(0.18)
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setDepth(Z.flourish)
+    const proxy = { p: 0 }
+    scene.tweens.add({
+      targets: proxy,
+      p: 1,
+      duration: T_DRIFT * 1.8,
+      repeat: -1,
+      ease: 'Linear',
+      onUpdate: () => {
+        // Two sines an octave apart — a lamp on a mains supply never breathes on one clean period.
+        const t = proxy.p * Math.PI * 2
+        const w = 0.5 + 0.36 * Math.sin(t) + 0.14 * Math.sin(t * 2.3)
+        const k = Phaser.Math.Clamp(w, 0, 1)
+        pool.setAlpha(0.08 + 0.07 * k)
+        filament.setAlpha(0.13 + 0.07 * k)
+      },
+    })
   }
 }
 

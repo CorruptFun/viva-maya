@@ -15,7 +15,7 @@ import { ACT1_LEVELS, CHAPTER_COUNT, CHAPTER_LEVELS, LEVEL_COUNT, levelSpec } fr
 import { DIFFICULTY, isTeachingLevel } from './difficulty'
 import { CHAPTER_PURSES, TROPHIES } from './trophies'
 import type { SymbolType } from './types'
-import { moodedFloors } from '../view/floormood'
+import { activeFloor, activeFloorMood, enterFloor, moodedFloors } from '../view/floormood'
 
 /**
  * ACT II's structural promises. Two of them are the kind that cost a player something real when
@@ -212,6 +212,64 @@ describe('floor 1 as authored — GOLDEN', () => {
       return s.objectives.reduce((n, o) => n + o.count, 0) / s.moves
     }
     for (let L = 302; L <= 310; L++) expect({ L, harder: ratio(L) > ratio(301) }).toEqual({ L, harder: true })
+  })
+})
+
+/**
+ * THE ACTIVE FLOOR — the scene-scoped "which room is the player in" that the hazard skins and the
+ * margin flourish read (neither is a theme token, so neither can travel on the theme overlay).
+ *
+ * The assertion that earns its keep is the DEGRADE: every level at or below 300, plus endless, plus
+ * the act switched off, must resolve to no floor at all — because that is the only thing standing
+ * between Act II's furniture and three hundred shipped levels drawn by a different skin.
+ */
+describe('the active floor', () => {
+  it('stands the player on exactly the floor their level is on, and nowhere in Act I', () => {
+    try {
+      for (const L of [1, 86, 151, 201, 299, ACT1_LEVELS]) {
+        enterFloor(L)
+        expect({ L, floor: activeFloor() }).toEqual({ L, floor: null })
+        expect({ L, mood: activeFloorMood() }).toEqual({ L, mood: null })
+      }
+      for (const [L, floor] of [
+        [ACT2_FROM, 1],
+        [325, 1],
+        [350, 1],
+        [351, 2],
+        [LEVEL_COUNT, 2],
+      ] as const) {
+        enterFloor(L)
+        expect({ L, floor: activeFloor() }).toEqual({ L, floor })
+        expect({ L, mood: activeFloorMood() !== null }).toEqual({ L, mood: true })
+      }
+      // Endless has no level number and passes null — the same call the scene makes on shutdown.
+      enterFloor(null)
+      expect(activeFloor()).toBeNull()
+      // Off the top of the shipped tower there is no floor either, so a level that outran its
+      // catalogue draws the main floor's furniture rather than nothing at all.
+      enterFloor(LEVEL_COUNT + 1)
+      expect(activeFloor()).toBeNull()
+    } finally {
+      enterFloor(null)
+    }
+  })
+
+  it('is total when moods are switched off — both on the way in and once already standing', () => {
+    const a2 = DIFFICULTY.act2 as { mood: boolean }
+    const was = a2.mood
+    try {
+      enterFloor(ACT2_FROM)
+      expect(activeFloor()).toBe(1)
+      // Already inside a floor: flipping the flag has to take effect NOW, not at the next entry.
+      a2.mood = false
+      expect(activeFloor()).toBeNull()
+      expect(activeFloorMood()).toBeNull()
+      enterFloor(ACT2_FROM)
+      expect(activeFloor()).toBeNull()
+    } finally {
+      a2.mood = was
+      enterFloor(null)
+    }
   })
 })
 
