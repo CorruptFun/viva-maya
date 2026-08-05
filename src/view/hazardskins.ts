@@ -411,17 +411,18 @@ const speakeasy: HazardSkin = {
       g.fillRect(x - size * 0.062, cy - h, size * 0.124, h * 2)
     }
 
-    // Two iron hoops. Sprung: the top one has slipped off true and sits at an angle.
+    // Two iron hoops, their width following the belly so they sit ON the curve rather than across
+    // it. Sprung: the top one has slipped and hangs low of true.
     for (const [k, off] of [
       [-0.6, sprung ? size * 0.03 : 0],
       [0.6, 0],
     ]) {
-      const h = Math.sqrt(Math.max(0, 1 - k * k)) * rh
+      const half = rw * Math.sqrt(Math.max(0, 1 - k * k))
+      const y = cy + k * rh + off
       g.fillStyle(sprung && k < 0 ? 0x6a6f76 : 0x9aa3ad, 1)
-      g.fillRect(cx - rw * Math.sqrt(1 - k * k) - size * 0.01, cy + k * rh - size * 0.035 + off, rw * 2 * Math.sqrt(1 - k * k) + size * 0.02, size * 0.07)
+      g.fillRect(cx - half - size * 0.01, y - size * 0.035, half * 2 + size * 0.02, size * 0.07)
       g.fillStyle(0xd6dde4, sprung && k < 0 ? 0.3 : 0.55)
-      g.fillRect(cx - rw * Math.sqrt(1 - k * k), cy + k * rh - size * 0.028 + off, rw * 2 * Math.sqrt(1 - k * k), size * 0.018)
-      void h
+      g.fillRect(cx - half, y - size * 0.028, half * 2, size * 0.018)
     }
 
     // The bung, and — once sprung — the trickle out of it.
