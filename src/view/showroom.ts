@@ -235,10 +235,14 @@ export function openShowroom(scene: Phaser.Scene, opts: ShowroomOpts = {}): void
       .text(0, 11, `${wingOwned(w)} / ${WING_CHAPTERS}`, { fontFamily: FONT, fontSize: '12px', fontStyle: '900', color: css(T.rose) })
       .setOrigin(0.5)
       .setLetterSpacing(1)
+    // The house idiom for a hit target: an invisible rectangle, never `container.setInteractive()`.
+    // A Container has no texture to derive a hit area from, so that call silently produces a tab
+    // that looks perfect and cannot be tapped (measured in the browser, 2026-08-04).
+    const hit = scene.add.rectangle(cx, railCy, tabW, TAB_H, 0xffffff, 0.001).setInteractive({ useHandCursor: true })
     c.add([plate, label, count])
-    c.setSize(tabW, TAB_H).setInteractive({ useHandCursor: true })
     layer.add(c)
-    return { wing: w, tab: c, plate, label, count }
+    layer.add(hit)
+    return { wing: w, tab: hit, plate, label, count }
   })
   const dressTabs = (): void => {
     for (const t of tabs) {
@@ -257,11 +261,14 @@ export function openShowroom(scene: Phaser.Scene, opts: ShowroomOpts = {}): void
   layer.add(wingLayer)
 
   const paintWing = (animate: boolean): void => {
+    // Put the replacement back where the old one stood. Appending instead would stack each repaint
+    // one layer higher — harmless today (nothing in the wing overlaps the rail or CLOSE) and a
+    // latent input bug the moment anything in it becomes interactive. `destroy` shifts every later
+    // sibling down one, so the index has to be read BEFORE it, not after.
+    const seat = layer.getIndex(wingLayer)
     wingLayer.destroy(true)
     wingLayer = scene.add.container(0, 0)
-    // addAt(…, 1) keeps it directly above the scrim and BELOW everything already built (card, rail,
-    // CLOSE), so a repaint can never end up drawing the grid over its own tabs.
-    layer.addAt(wingLayer, 1)
+    layer.addAt(wingLayer, seat)
 
     const hero = wing.hero
     const hasHero = owned.has(hero.chapter)

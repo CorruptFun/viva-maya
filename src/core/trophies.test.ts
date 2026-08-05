@@ -67,7 +67,7 @@ describe('the tables — economy data, pinned', () => {
   it('every act closes on a crown, and the floor closes carry the Act II ones', () => {
     // Act II's shape: five chapters per floor, the fifth is the floor's crest/door.
     expect(trophyFor(35)?.label).toBe('THE CLUB CREST')
-    expect(trophyFor(40)?.label).toBe('THE HIDDEN DOOR')
+    expect(trophyFor(40)?.label).toBe('THE MASKS')
   })
 
   it('a wing knows its own chapters and its own podium piece', () => {
@@ -311,7 +311,7 @@ describe('coercion + merge — trophies survive old saves and second devices', (
   it('trophyFor maps chapters to the catalogue and null off it', () => {
     expect(trophyFor(1)?.emoji).toBe('🪅')
     expect(trophyFor(30)?.label).toBe('THE CAR')
-    expect(trophyFor(CHAPTER_COUNT)?.label).toBe('THE HIDDEN DOOR')
+    expect(trophyFor(CHAPTER_COUNT)?.label).toBe('THE MASKS')
     expect(trophyFor(CHAPTER_COUNT + 1)).toBeNull()
     expect(trophyFor(0)).toBeNull()
   })

@@ -108,12 +108,20 @@ export const TROPHIES: readonly ChapterTrophy[] = [
   // chapter-1 note rejects. Every glyph below was checked under `?showroom=N`.
   { chapter: 36, emoji: '🍸', label: 'THE MARTINI' },
   { chapter: 37, emoji: '🎷', label: 'MIDNIGHT SAX' },
-  { chapter: 38, emoji: '🎭', label: 'THE MASKS' },
-  // The near-miss tease, exactly as the wheels precede the car: a candle at the end of a corridor is
-  // a door you cannot see yet.
-  { chapter: 39, emoji: '🕯️', label: 'THE BACK-ROOM CANDLE' },
-  // FLOOR CLOSE — a crown piece.
-  { chapter: 40, emoji: '🚪', label: 'THE HIDDEN DOOR' },
+  { chapter: 38, emoji: '🕯️', label: 'THE BACK-ROOM CANDLE' },
+  // The near-miss tease, exactly as the wheels precede the car: the light you carry down the
+  // corridor, one chapter before the room it finds.
+  { chapter: 39, emoji: '🔦', label: "THE DOORMAN'S TORCH" },
+  // FLOOR CLOSE — a crown piece, and each floor closes on its own EMBLEM: floor 1 on the crest it
+  // hangs above the door, floor 2 on the masks, because what a speakeasy actually sells is that
+  // nobody in it has a name.
+  //
+  // ⚠️ NOT the door this floor is named after. 🚪 was the design's first choice and it FAILS the
+  // showroom's locked treatment outright: a door emoji is a slab, so at 52px in flat navy it is an
+  // unreadable rectangle — the chapter-1 coin and chapter-5 playing-card failure, third time. Caught
+  // under `?showroom=34`, which is what that fixture is for. The hidden door survives as the FLOOR's
+  // name, where it never has to be drawn.
+  { chapter: 40, emoji: '🎭', label: 'THE MASKS' },
 ]
 
 /** The trophy for a 1-based chapter, or null off the map (a merge from a newer build, garbage). */
