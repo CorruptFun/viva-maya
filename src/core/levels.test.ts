@@ -297,6 +297,11 @@ describe('HOUSE MINIMUM — the plaque cadence', () => {
     let prev = 0
     for (let L = 201; L <= LEVEL_COUNT; L++) {
       if (!isMinimumLevel(L)) continue
+      // A TEACHING level's plaque steps back on purpose (see minimumTargetFrac). Every act opens on
+      // a …01, and the cadence puts a plaque on every …01, so an act opening is always both — the
+      // dip is where a new verb is being introduced, and it is carved out here for exactly the
+      // reason the move-budget monotonicity test above carves teaching levels out.
+      if (isTeachingLevel(L)) continue
       const t = levelSpec(L).scoreTarget as number
       expect({ L, rises: t >= prev }).toEqual({ L, rises: true })
       prev = t
@@ -304,7 +309,19 @@ describe('HOUSE MINIMUM — the plaque cadence', () => {
     // GOLDEN: the plaque numbers as calibrated 2026-08-04 (banker completer distribution — see
     // minimum.rate.test.ts). A failure here means SHIPPED LEVELS MOVED — retune deliberately and
     // re-record, never let a target drift as a side effect of touching the curve or the scoring.
+    // Act I's four are the SHIPPED values and must never move: the Act II ramp is anchored to
+    // ACT1_LEVELS rather than LEVEL_COUNT precisely so that opening a new act cannot re-price them.
     expect([201, 206, 251, 296].map(L => levelSpec(L).scoreTarget)).toEqual([11900, 14200, 16400, 18600])
+    // Act II's, added Slice 1. 301 is the act-opening teaching dip; 306 resumes ABOVE 296, and the
+    // ladder climbs to a `perObjective`-clamped ceiling by the high 370s.
+    expect([301, 306, 351, 396].map(L => levelSpec(L).scoreTarget)).toEqual([16100, 18900, 20000, 20700])
+  })
+
+  it('resumes the brass climb straight after an act-opening dip', () => {
+    // The dip is allowed to exist, not to persist: the first plaque after it must clear the last
+    // plaque before it, or the House quietly lowered its minimum for a whole floor.
+    expect(levelSpec(301).scoreTarget!).toBeLessThan(levelSpec(296).scoreTarget!)
+    expect(levelSpec(306).scoreTarget!).toBeGreaterThan(levelSpec(296).scoreTarget!)
   })
 
   it('auto-holds DOUBLE SCORE on minimum levels only (skipped, never consumed)', () => {

@@ -31,7 +31,15 @@ import { endlessLockPlan, endlessShapeFor } from '../core/endlessramp'
 import type { EndlessShape } from '../core/endlessramp'
 import { endlessBoardRng } from '../core/boardpick'
 import { cachedSalt } from '../core/racesalt'
-import { CHAPTER_COUNT, CHAPTER_LEVELS, LEVEL_COUNT, levelBoostExclusions, levelSpec, starsFor } from '../core/levels'
+import {
+  ACT1_LEVELS,
+  CHAPTER_COUNT,
+  CHAPTER_LEVELS,
+  LEVEL_COUNT,
+  levelBoostExclusions,
+  levelSpec,
+  starsFor,
+} from '../core/levels'
 import { MARKER_STAKES, markerOfferable, placeMarker, refundMarker, settleMarkerLoss, settleMarkerWin } from '../core/marker'
 import type { MarkerStake } from '../core/marker'
 import { CHAPTER_BOOSTS, CHAPTER_PURSES, claimChapter, trophyFor } from '../core/trophies'
@@ -5059,14 +5067,22 @@ export class GameScene extends Phaser.Scene {
       this.showOverlay(true, stars, bonus, chipReward, false, true)
       this.input.once('pointerdown', () => this.overlaySettle?.())
     }
-    // §E9 ALL CLEAR (signature moment #6) — a one-time bespoke crescendo the first time she clears the
-    // FINAL level. Latched by finaleSeen so it never repeats; a later L100 replay falls back to the
-    // normal milestone splash.
-    if (this.level >= LEVEL_COUNT && !save.finaleSeen) {
+    // §E9 ALL CLEAR (signature moment #6) — a one-time bespoke crescendo the first time she clears
+    // the last level of ACT I. Latched by finaleSeen so it never repeats; a later replay falls back
+    // to the normal milestone splash.
+    //
+    // ⚠️ `=== ACT1_LEVELS`, not `>= LEVEL_COUNT`. This is an ACT finale, not a list-ended notice: it
+    // celebrates finishing the main floor and hands over to the car. Keyed to LEVEL_COUNT it would
+    // have walked up the ladder with every expansion — L300 would silently stop being the finale the
+    // day Act II opened, and the one player standing on the new top level would get a crescendo for
+    // an act that has not finished. The equality also means a save that somehow skipped past it
+    // simply never sees it, which is the right failure.
+    if (this.level === ACT1_LEVELS && !save.finaleSeen) {
       markFinaleSeen()
       // Level 300 is also chapter 30's close. The finale keeps the slot it has always owned, then
-      // hands off to the car ceremony — "ALL CLEAR → and your grand prize is a car" — before the
-      // result card. Both stages are tap-skippable, so the once-ever double bill can be walked out of.
+      // hands off to the car ceremony — "ALL CLEAR → and your grand prize is a car", and from Slice 1
+      // on to THE PRIVATE ELEVATOR — before the result card. Every stage is tap-skippable, so the
+      // once-ever bill can be walked out of.
       const after = chapterGrant ? (): void => this.chapterCeremony(chapterGrant, showCard) : showCard
       this.time.delayedCall(420, () => this.allClearFinale(totalStars, after))
       return
@@ -5957,7 +5973,9 @@ export class GameScene extends Phaser.Scene {
       .setStroke('#ffffff', 10)
       .setShadow(0, 4, 'rgba(0,0,0,0.22)', 10, true, true)
     const tally = this.add
-      .text(cx, cy - 78, `★  ${LEVEL_COUNT} LEVELS  ·  ${totalStars} STARS  ★`, {
+      // ACT1_LEVELS, not LEVEL_COUNT: this card celebrates the act you just finished. Reading the
+      // ladder's length would make it claim credit for the floors upstairs you have not played yet.
+      .text(cx, cy - 78, `★  ${ACT1_LEVELS} LEVELS  ·  ${totalStars} STARS  ★`, {
         fontFamily: FONT,
         fontSize: '30px',
         fontStyle: '900',

@@ -116,6 +116,33 @@ export const DIFFICULTY = {
    */
   goals: { minimum: true, minimumStart: 201 },
 
+  /**
+   * ACT II — THE HIGH-ROLLER FLOORS (levels 301+). The third staged-rollout block, same contract as
+   * `hazards` and `goals` above: a master switch, one boolean per mechanic, and OFF must mean the
+   * game is byte-identical to Act I's. `actII.test.ts` pins the shipped state so a rollout change is
+   * a DECISION written down in the same commit, exactly as `hazards.test.ts` does.
+   *
+   * ⚠️ `enabled: false` does NOT hide levels 301–400. `LEVEL_COUNT` is a CLIENT-ATOMIC constant: it
+   * ships in one deploy with its trophy catalogue and its showroom wing, because a `claimChapter`
+   * that outran the catalogue would be a crash, not a downgrade. What the switch does is strip Act
+   * II's BEHAVIOUR back out — no rail, no floor moods, no elevator — leaving those levels on the
+   * plain extended curve. That is why `levels.test.ts`'s panic-switch transcription still covers
+   * the whole 1..LEVEL_COUNT range with the act switched off.
+   */
+  act2: {
+    enabled: true,
+    /** THE REEL PULL — pull a column one notch, wrapping the bottom piece to the top, for one move. */
+    pull: true,
+    /** First level carrying the rail. Earns a teaching level like every other band start. */
+    pullStart: 301,
+    /** Floor moods — per-floor ambiance (view/floormood.ts). Modulates light; never the theme's wash. */
+    mood: true,
+    /** THE PRIVATE ELEVATOR reveal + the LevelSelect dressing that advertises the act. */
+    reveal: true,
+    /** THE TELL — the marquee's hue drifting toward the best available move while the board idles. */
+    tell: true,
+  },
+
   /** First level at which each mechanic appears. Below `lockStart` the game is untouched. */
   bands: { lockStart: 31, coatStart: 56, blockerStart: 86, lateStart: 121 },
 
@@ -181,7 +208,7 @@ export const DIFFICULTY = {
  * to explain the dip. With blockers still held back, L86 was exactly that.
  */
 export function isTeachingLevel(level: number): boolean {
-  const { bands, hazards, goals } = DIFFICULTY
+  const { bands, hazards, goals, act2 } = DIFFICULTY
   const hazardTeach =
     hazards.enabled &&
     ((hazards.lock && level === bands.lockStart) ||
@@ -189,7 +216,13 @@ export function isTeachingLevel(level: number): boolean {
       (hazards.blocker && level === bands.blockerStart))
   // HOUSE MINIMUM's first level teaches a new WIN TERM, so it earns the same gentleness a new
   // hazard band does — gated on its own flag, not on `hazards.enabled` (it is not a hazard).
-  return hazardTeach || (goals.minimum && level === goals.minimumStart)
+  // THE REEL PULL teaches a new VERB at `act2.pullStart`, and gets the same courtesy on its own
+  // flags: with the act switched off, L301 must be an ordinary level with an ordinary budget.
+  return (
+    hazardTeach ||
+    (goals.minimum && level === goals.minimumStart) ||
+    (act2.enabled && act2.pull && level === act2.pullStart)
+  )
 }
 
 /** True when `level` is below every hazard band (or hazards are off) — i.e. the protected early game. */

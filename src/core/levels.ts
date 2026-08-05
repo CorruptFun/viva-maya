@@ -2,8 +2,33 @@ import { SYMBOLS } from './types'
 import type { BoostType, LevelSpec, SymbolType } from './types'
 import { mulberry32, randInt } from './rng'
 import { DIFFICULTY, isTeachingLevel } from './difficulty'
+import { act2Spec } from './actII'
 
-export const LEVEL_COUNT = 300
+/**
+ * The last level of ACT I — THE MAIN FLOOR. Not the same thing as `LEVEL_COUNT`, and the difference
+ * is the whole point of this pair.
+ *
+ * `LEVEL_COUNT` is how far the ladder currently REACHES; `ACT1_LEVELS` is where the campaign's first
+ * story ENDS. Chapter 30's car ceremony, the ALL CLEAR finale and the "★ 300 LEVELS ★" tally all
+ * belong to the second number and must never drift with the first — an act finale that re-fires
+ * every time the ladder grows is a grand prize that means nothing. Anything that means "the end of
+ * the list" (PLAY's target, the Store/Slot clamps, LevelSelect's frontier and recall) keeps reading
+ * `LEVEL_COUNT` and self-heals.
+ */
+export const ACT1_LEVELS = 300
+
+/**
+ * How far the ladder reaches today. ACT II — THE HIGH-ROLLER FLOORS opens at `ACT1_LEVELS + 1` and
+ * is designed to 600; it ships a floor pair per slice (`core/actII.ts` FLOORS).
+ *
+ * ⚠️ CLIENT-ATOMIC. Raising this is never a one-line change: `CHAPTER_COUNT` derives from it, and
+ * `claimChapter` will hand out a chapter this number makes reachable. So the trophy catalogue, the
+ * purse ladder and the showroom's wing for those chapters must land in the SAME tree — a cached PWA
+ * client running yesterday's bundle is fine (it simply never offers the new levels), but a client
+ * whose LEVEL_COUNT outran its catalogue would claim a trophy that does not exist.
+ * `trophies.test.ts` pins `TROPHIES.length === CHAPTER_COUNT` precisely so a lone bump goes red.
+ */
+export const LEVEL_COUNT = 400
 
 /**
  * Levels per CHAPTER — the decade grouping the level map draws (ribbons every ten) and the win flow
@@ -14,7 +39,10 @@ export const LEVEL_COUNT = 300
  * ribbon math changes with it.
  */
 export const CHAPTER_LEVELS = 10
-/** How many chapters the 300 levels make — 30. The trophy showroom has exactly this many plinths. */
+/** How many chapters the ladder makes — 40 today. The showroom has exactly this many plinths, split
+ *  across its wings (Act I's thirty, then a floor's five per Act II chapter band). Derived, so a
+ *  `LEVEL_COUNT` bump moves it automatically — which is exactly why the catalogues have to move with
+ *  it in the same commit (see the LEVEL_COUNT note above). */
 export const CHAPTER_COUNT = LEVEL_COUNT / CHAPTER_LEVELS
 
 /**
@@ -101,9 +129,40 @@ export const MINIMUM_POINTS_PER_GOAL = 89
 export function minimumTargetFrac(level: number): number {
   const start = DIFFICULTY.goals.minimumStart
   if (level === start) return 0.75
-  const t = Math.max(0, Math.min(1, (level - start) / (LEVEL_COUNT - start)))
-  return 0.88 + 0.16 * t
+  // ⚠️ ACT1_LEVELS, never LEVEL_COUNT. This ramp's endpoints are the SHIPPED plaque goldens
+  // (201→11,900 … 296→18,600); anchoring it to a constant that grows with the ladder would re-price
+  // every brass plaque in Act I the moment a new act opened — a silent retune of levels people have
+  // already played, from a change that had nothing to do with them.
+  const t = Math.max(0, Math.min(1, (level - start) / (ACT1_LEVELS - start)))
+  const act1 = 0.88 + 0.16 * t
+  if (level <= ACT1_LEVELS) return act1
+  // Upstairs the House keeps raising its minimum, but GENTLY — a third of Act I's slope, spread over
+  // Act II's own designed span (300 levels). The demand it multiplies (`owed`) is still climbing on
+  // its own until `perObjective` clamps around L378, so a steeper `f` would compound with it; past
+  // the clamp this term is the only thing still moving, which is precisely why it must keep moving.
+  const t2 = Math.max(0, Math.min(1, (level - ACT1_LEVELS) / ACT2_SPAN))
+  const f = act1 + 0.06 * t2
+  // A level that TEACHES something new posts a gentler minimum — the same courtesy L201 gets from
+  // the early return above, generalised.
+  //
+  // This exists because of an arithmetic collision, not a design choice: the plaque cadence is
+  // L % 10 ∈ {1, 6}, and every act opens on a …01, so an act opening ALWAYS lands on a plaque.
+  // Without this, level 301 would ask a player to learn a brand-new verb under the toughest minimum
+  // the House has ever posted. The brass ladder therefore dips exactly once per act, on the level
+  // that also hands out +3 moves and an intro card — visible, explained, and immediately resumed
+  // (306 clears 296). `levels.test.ts` carves teaching levels out of the monotone check for the
+  // same reason it already carves them out of the move-budget one.
+  return isTeachingLevel(level) ? f * TEACHING_PLAQUE_RELIEF : f
 }
+
+/** How far a teaching level's plaque steps back from its band rate. 0.85 ≈ L201's own 0.75/0.88 —
+ *  the shipped teaching discount, re-expressed as a ratio so it travels up the ladder unchanged. */
+const TEACHING_PLAQUE_RELIEF = 0.85
+
+/** Act II's designed span (301–600), the denominator its gentle ramps are measured against — the
+ *  act ships a floor pair at a time, so this is deliberately NOT `LEVEL_COUNT - ACT1_LEVELS`: the
+ *  slope must not steepen every time another floor opens. */
+const ACT2_SPAN = 300
 
 /**
  * Boost TYPES a level refuses at start. Refused boosts are SKIPPED, never consumed — they stay
@@ -190,9 +249,12 @@ export function levelSpec(level: number): LevelSpec {
   if (minimum) {
     const owed = objectives.reduce((n, o) => n + o.count, 0)
     const scoreTarget = Math.round((minimumTargetFrac(L) * MINIMUM_POINTS_PER_GOAL * owed) / 100) * 100
-    return { level: L, moves, symbolCount, objectives, scoreTarget }
+    return act2Spec(L, { level: L, moves, symbolCount, objectives, scoreTarget })
   }
-  return { level: L, moves, symbolCount, objectives }
+  // ACT II folds in LAST and only ADDS — everything above is the one curve, unchanged, all the way
+  // up. `act2Spec` returns this object untouched for every Act I level and whenever the act is
+  // switched off, which is what keeps the panic-switch transcription honest over the whole range.
+  return act2Spec(L, { level: L, moves, symbolCount, objectives })
 }
 
 /**

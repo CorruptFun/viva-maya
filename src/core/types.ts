@@ -89,6 +89,13 @@ export interface LevelSpec {
    * move budget is still derived from the full 3-objective demand (see levelSpec).
    */
   scoreTarget?: number
+  /**
+   * THE REEL PULL (Act II, Slice 1): this level's board carries the slot-arm rail — a column can be
+   * pulled one notch downward, the bottom piece wrapping to the top, at the cost of one move.
+   * Present only on Act II levels with the flag live (core/actII.ts); absent everywhere else, so
+   * every Act I spec is byte-identical and endless — which never calls `levelSpec` — cannot see it.
+   */
+  pull?: boolean
 }
 
 /** Choreography instructions emitted by the core for the view to render. */

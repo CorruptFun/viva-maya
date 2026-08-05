@@ -87,6 +87,33 @@ export const TROPHIES: readonly ChapterTrophy[] = [
   // The wheels arrive one chapter before the car — the showroom's own near-miss tease.
   { chapter: 29, emoji: '🛞', label: 'SHOWROOM WHEELS' },
   { chapter: 30, emoji: '🏎️', label: 'THE CAR' },
+
+  // ── ACT II · FLOOR 1 — THE HIGH-LIMIT ROOM (chapters 31–35) ────────────────────────────────
+  // The escalation changes KIND here, not just size. Act I's shelf is prizes you were HANDED at a
+  // counter; from 31 the shelf is the room itself — you are not winning trinkets any more, you are
+  // furnishing the floor you play on. That is why chapter 31 is a chair: the whole fantasy of the
+  // high-limit room is being allowed to sit down.
+  { chapter: 31, emoji: '🪑', label: 'THE PRIVATE SEAT' },
+  // The brass table lamp is also the floor's own mood flourish (view/floormood.ts) — the trophy is
+  // literally the thing lighting your table.
+  { chapter: 32, emoji: '🪔', label: 'THE BRASS LAMP' },
+  { chapter: 33, emoji: '🪞', label: 'THE GILDED MIRROR' },
+  { chapter: 34, emoji: '🍾', label: 'VINTAGE MAGNUM' },
+  // FLOOR CLOSE — a crown piece. The crest is what the room hangs above its own door: proof you
+  // belong to it, not another object inside it.
+  { chapter: 35, emoji: '⚜️', label: 'THE CLUB CREST' },
+
+  // ── ACT II · FLOOR 2 — THE SPEAKEASY (chapters 36–40) ──────────────────────────────────────
+  // Not a coin, not a card, not a disco ball: 🪩 silhouettes to the same featureless circle the
+  // chapter-1 note rejects. Every glyph below was checked under `?showroom=N`.
+  { chapter: 36, emoji: '🍸', label: 'THE MARTINI' },
+  { chapter: 37, emoji: '🎷', label: 'MIDNIGHT SAX' },
+  { chapter: 38, emoji: '🎭', label: 'THE MASKS' },
+  // The near-miss tease, exactly as the wheels precede the car: a candle at the end of a corridor is
+  // a door you cannot see yet.
+  { chapter: 39, emoji: '🕯️', label: 'THE BACK-ROOM CANDLE' },
+  // FLOOR CLOSE — a crown piece.
+  { chapter: 40, emoji: '🚪', label: 'THE HIDDEN DOOR' },
 ]
 
 /** The trophy for a 1-based chapter, or null off the map (a merge from a newer build, garbage). */
@@ -112,6 +139,22 @@ export const CHAPTER_PURSES: readonly number[] = [
   250, 250, 250, 250, 400, // ch 16–20
   300, 300, 300, 300, 500, // ch 21–25
   400, 400, 400, 400, 1000, // ch 26–30
+  // ── ACT II — FLAT WITH CROWNS, and the step DOWN at chapter 31 is deliberate ───────────────
+  // Act I's ladder climbs because chips are the only currency it has. Act II stops climbing on
+  // purpose: 250 flat, 400 on a floor close. Three reasons, in order of weight.
+  //
+  //  1. The chip faucet is a LIFETIME budget, not a per-chapter reward rate. Act I already grants
+  //     8,200; continuing its slope through thirty more chapters would roughly double every price
+  //     in the store's meaning without a single price changing.
+  //  2. Nothing repeatable may top the weekly crown (1,000). Chapter 30's champion purse is a
+  //     once-per-lifetime exception; a second ladder climbing toward it would make it ordinary.
+  //  3. The act's real reward currency is arriving later — chips recede here so STARS can take
+  //     over as the thing you spend upstairs. A flat chip line is what makes room for that.
+  //
+  // So the "never steps down across a band boundary" rule in trophies.test.ts is an ACT-LOCAL rule,
+  // and the test says so. A step down BETWEEN acts is the design; a step down inside one is a bug.
+  250, 250, 250, 250, 400, // ch 31–35  (F1 · THE HIGH-LIMIT ROOM, crown on the floor close)
+  250, 250, 250, 250, 400, // ch 36–40  (F2 · THE SPEAKEASY, crown on the floor close)
 ]
 
 /** Sum of the ladder — the whole feature's lifetime chip injection per player. Pinned by test. */
@@ -129,6 +172,12 @@ export const CHAPTER_BOOSTS: Readonly<Partial<Record<number, BoostType>>> = {
   20: 'doubleScore',
   25: 'jackpot',
   30: 'jackpot',
+  // Act II keeps the every-5th cadence. The ladder has TOPPED OUT rather than gone flat by
+  // accident: `BOOST_META` holds five types and `jackpot` is the strongest of them, so the only
+  // honest way to escalate further is a new boost type, not a bigger label on this one. (⚠️ And the
+  // in-level HELPER shelf is not a boost — see the BOOST_META note in core/inventory.ts.)
+  35: 'jackpot',
+  40: 'jackpot',
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -147,14 +196,84 @@ export interface TrophyTier {
   label: string
 }
 
-/** Descending, so the first match in order is the tier worn. */
+/**
+ * Descending, so the first match in order is the tier worn.
+ *
+ * ⚠️ A new rung is a ZERO-MIGRATION change, and that is not luck — it is why the ladder is derived
+ * from `level_progress.cleared` instead of a badge column. A client running yesterday's bundle
+ * simply saturates at the highest rung IT knows (a 40-chapter player wears 🏎️ on an old client and
+ * 🎖️ on a new one); nothing is written, so nothing can disagree. Adding a rung upstairs therefore
+ * needs no server work at all — which is the entire argument against a writable "flair" column.
+ */
 export const TROPHY_TIERS: readonly TrophyTier[] = [
+  // ACT II opens the case up. The whole of Act I now fits under one rung, which is the point: at
+  // forty chapters you are not a player who finished the game, you are a player who went upstairs.
+  { min: 40, emoji: '🎖️', label: 'HIGH-ROLLER CASE' },
   { min: 30, emoji: '🏎️', label: 'THE CAR' },
   { min: 20, emoji: '🏆', label: 'CHAMPION CASE' },
   { min: 15, emoji: '🥇', label: 'GOLD CASE' },
   { min: 10, emoji: '🥈', label: 'SILVER CASE' },
   { min: 5, emoji: '🥉', label: 'BRONZE CASE' },
 ]
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE SHOWROOM'S WINGS — one per act.
+//
+// At forty chapters a single grid is eight rows and overflows the 720×1280 design box, so the
+// showroom grew a tab rail instead of a taller card (its height is pinned at 1156 by the seats it
+// has to fit under on Home and LevelSelect). One wing per ACT, each exactly `WING_CHAPTERS` wide,
+// which keeps the grid at six rows forever however far the ladder runs.
+//
+// The wing also owns its own PODIUM PIECE, and that is where the car precedent is written down: the
+// grand prize has always been visible from the first time the showroom opened, as a navy
+// silhouette. A wing's hero may therefore name a chapter beyond the shipped catalogue — a prize you
+// cannot reach yet is the same tease one act up, and it is the only honest way to answer "what is
+// all this climbing FOR?" while the floors above are still being built.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Chapters per wing — one act's worth. Six rows of five in the showroom grid, by construction. */
+export const WING_CHAPTERS = 30
+
+export interface TrophyWing {
+  /** Stable id (analytics, default-tab logic). */
+  id: 'main' | 'highRoller'
+  /** Tab label on the showroom's header rail. */
+  tab: string
+  /** First and last chapter this wing displays — including ones the catalogue has not reached yet,
+   *  which render as empty sockets. A floor plan of the act, with no design leaked. */
+  chapterFrom: number
+  chapterTo: number
+  /** The act's grand prize on the podium. `chapter` may exceed `CHAPTER_COUNT` (see above); when it
+   *  does NOT, `emoji`/`label` must match `trophyFor(chapter)` — pinned by test so the podium and
+   *  the shelf can never tell two different stories about the same prize. */
+  hero: { chapter: number; emoji: string; label: string; caption: string }
+}
+
+export const TROPHY_WINGS: readonly TrophyWing[] = [
+  {
+    id: 'main',
+    tab: 'MAIN FLOOR',
+    chapterFrom: 1,
+    chapterTo: WING_CHAPTERS,
+    hero: { chapter: 30, emoji: '🏎️', label: 'THE CAR', caption: 'GRAND PRIZE · CHAPTER 30' },
+  },
+  {
+    id: 'highRoller',
+    tab: 'HIGH-ROLLER WING',
+    chapterFrom: WING_CHAPTERS + 1,
+    chapterTo: WING_CHAPTERS * 2,
+    hero: { chapter: 60, emoji: '🏛️', label: 'THE DEED', caption: 'GRAND PRIZE · CHAPTER 60' },
+  },
+]
+
+/** The wing a 1-based chapter belongs to — what the LevelSelect ribbon doors use to pick a tab. */
+export function wingForChapter(chapter: number): TrophyWing {
+  return TROPHY_WINGS.find(w => chapter >= w.chapterFrom && chapter <= w.chapterTo) ?? TROPHY_WINGS[0]
+}
+
+/** Chapters whose trophy is an ACT's grand prize. The tier ladder is allowed to wear one of these
+ *  (🏎️ at thirty chapters means "the car is yours" — wearing it IS owning it) and nothing else. */
+export const GRAND_PRIZE_CHAPTERS: readonly number[] = TROPHY_WINGS.map(w => w.hero.chapter)
 
 /** The badge worn at N chapters completed, or null below the first rung. */
 export function trophyTier(chaptersDone: number): TrophyTier | null {
@@ -214,6 +333,10 @@ export interface ChapterGrant {
 function grantInto(save: SaveData, c: number): ChapterGrant {
   const trophy = trophyFor(c) as ChapterTrophy
   const purse = CHAPTER_PURSES[c - 1] ?? 0
+  // Callers have already bounded `c` by CHAPTER_COUNT, and `trophies.test.ts` pins the catalogue to
+  // exactly that length — so this cannot fire. It is here because the ONE way it could is the
+  // failure mode the whole client-atomicity rule exists to prevent: a LEVEL_COUNT bump shipping
+  // ahead of its catalogue. Better a chapter that quietly refuses to pay than a crash mid-ceremony.
   const boost = CHAPTER_BOOSTS[c] ?? null
   save.chapterRewards.push(c)
   save.chips += purse
@@ -233,6 +356,7 @@ function grantInto(save: SaveData, c: number): ChapterGrant {
  */
 export function claimChapter(chapter: number): ChapterGrant | null {
   if (!Number.isInteger(chapter) || chapter < 1 || chapter > CHAPTER_COUNT) return null
+  if (!trophyFor(chapter)) return null
   const save = loadSave()
   if (save.chapterRewards.includes(chapter)) return null
   if (chapter > chaptersCompleted(save.unlocked)) return null
