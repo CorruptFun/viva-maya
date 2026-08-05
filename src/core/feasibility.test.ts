@@ -49,7 +49,16 @@ const SEEDS = FULL ? 40 : 10
  * columns, which changes the shape of the segments gravity falls through and therefore the cascades.
  * It is measured for exactly that reason: an arrangement is not free just because the count is.
  */
-const CHECK_LEVELS = FULL ? [31, 45, 56, 65, 86, 100, 150, 220, 300, 310, 313, 355, 390] : [65, 150, 300, 390]
+/**
+ * AFTER DARK joins the dense sweep at 216 / 233 / 281 — the three levels the band actually teaches.
+ * They are the whole point of adding them: 216 is a level shape the gates had never measured (no
+ * collect goals at all, so the win rides the score and the felt), 233 is the first level whose
+ * scoring rule differs from every other level in the game, and 281 is the check that THE EYE really
+ * is presentational — a purely visual beat must leave its level's numbers exactly where they were.
+ */
+const CHECK_LEVELS = FULL
+  ? [31, 45, 56, 65, 86, 100, 150, 216, 220, 233, 281, 300, 310, 313, 355, 390]
+  : [65, 150, 300, 390]
 /** Playing the real board headlessly is not cheap, and the dense sweep is ~30s per gate. Vitest's
  *  5s default would fail these on wall clock rather than on merit — which is exactly the kind of
  *  false red that teaches people to ignore a suite. */

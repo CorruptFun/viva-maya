@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { ROWS, COLS } from '../config'
-import { DIFFICULTY } from './difficulty'
+import { DIFFICULTY, isTeachingLevel } from './difficulty'
 import { coatsToClear, densityFor, hazardPlan } from './hazards'
 import type { HazardPlan } from './hazards'
 
@@ -204,6 +204,31 @@ describe('the shipped rollout', () => {
       blocker: DIFFICULTY.hazards.blocker,
       curve: DIFFICULTY.curve.enabled,
     }).toEqual({ hazards: true, lock: true, coat: true, blocker: true, curve: true })
+  })
+
+  it('ships AFTER DARK (Slice 3) — points nights, hot tables, the high-roller marker and the eye', () => {
+    // The fourth staged block, pinned for the same reason the three above it are: a rollout change
+    // has to be a DECISION written down in the same commit. `points`/`hot` also buy their band start
+    // a teaching level, so a silent flip would move a move budget as well as a win condition.
+    expect({ ...DIFFICULTY.afterDark }).toEqual({
+      enabled: true,
+      points: true,
+      pointsStart: 216,
+      hot: true,
+      hotStart: 233,
+      marker: true,
+      markerStart: 251,
+      eye: true,
+      eyeStart: 281,
+    })
+  })
+
+  it('teaches AFTER DARK where it starts — and never for the eye, which changes nothing', () => {
+    expect(isTeachingLevel(DIFFICULTY.afterDark.pointsStart)).toBe(true)
+    expect(isTeachingLevel(DIFFICULTY.afterDark.hotStart)).toBe(true)
+    // §G12 in its purest form: THE EYE is presentational, so buying its level +3 moves would make
+    // it measurably easier than its neighbours to introduce something that costs the player nothing.
+    expect(isTeachingLevel(DIFFICULTY.afterDark.eyeStart)).toBe(false)
   })
 
   it('means a live board carries clamps, felt and lockboxes, each from its own band', () => {

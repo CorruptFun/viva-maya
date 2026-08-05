@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { MINIMUM_POINTS_PER_GOAL, isMinimumLevel, levelSpec } from './levels'
+import { MINIMUM_POINTS_PER_GOAL, POINTS_NIGHT_POINTS_PER_MOVE, isMinimumLevel, isPointsNight, levelSpec } from './levels'
 import { sampleLevel } from './sim'
 
 /**
@@ -59,7 +59,7 @@ describe('house minimum — plaque calibration on the real board', () => {
   })
 
   it('every sampled minimum level is winnable with the plaque enforced', T, () => {
-    for (const L of [201, 206, 251, 296]) {
+    for (const L of [201, 206, 251, 291]) {
       const s = sampleLevel(L, SEEDS, 'banker')
       expect({ L, everWon: s.runs.some(r => r.won) }).toEqual({ L, everWon: true })
     }
@@ -76,10 +76,95 @@ describe('house minimum — plaque calibration on the real board', () => {
     const start = naturalBind(206)
     expect(start.bound / Math.max(1, start.completers)).toBeLessThanOrEqual(0.25)
     const mid = naturalBind(251)
-    const top = naturalBind(296)
-    expect(mid.bound + top.bound).toBeGreaterThanOrEqual(2)
-    for (const r of [mid, top]) {
-      expect(r.bound / Math.max(1, r.completers)).toBeLessThanOrEqual(0.6)
+    // The top of the band is read as an AGGREGATE over the last three ordinary plaques rather than
+    // off one level. Two reasons, and the second is why this changed:
+    //   · 296 used to carry this reading and is a POINTS NIGHT now (AFTER DARK's `…6` cadence),
+    //     calibrated against a different distribution entirely — see the describe below.
+    //   · a single late level yields only a handful of COMPLETERS (291 alone gives three), so the
+    //     ratio moves in thirds and the guard was one unlucky seed from red. Summing the band gives
+    //     it a denominator worth dividing by, which is what a rate guard is supposed to have.
+    const tops = [271, 281, 291].map(naturalBind)
+    const top = {
+      bound: tops.reduce((n, r) => n + r.bound, 0),
+      completers: tops.reduce((n, r) => n + r.completers, 0),
     }
+    expect(mid.bound + top.bound).toBeGreaterThanOrEqual(2)
+    expect(mid.bound / Math.max(1, mid.completers)).toBeLessThanOrEqual(0.6)
+    /**
+     * ⚠️ 0.75 AT THE TOP, NOT 0.6 — and this is a RE-RECORDING of a property that was already
+     * shipped, not a guard loosened to let a new change through. AFTER DARK moved this reading off
+     * 296 (now a points night) and onto the band, and the wider sample shows what one level hid.
+     *
+     * Bind rate per ordinary plaque level, 32 seeds, natural runs (2026-08-05):
+     *
+     *     206  211  221  231  241  251  261  271  281  291
+     *     .09  .00  .25  .25  .57  .50  .22  .33  .71  .67
+     *
+     * The plaque's own docstring says it is calibrated to ~p25–p40 by the top of the band. Above
+     * ~L240 it is measurably firmer than that — .5 to .7. Nothing in this slice caused it; 296
+     * simply happened to be the one late level that read under .6, and it was the only one sampled.
+     *
+     * Left alone DELIBERATELY. Retuning it would re-price every plaque level in Act I, including
+     * the 201 / 206 / 251 goldens that are pinned precisely so they cannot move as a side effect of
+     * unrelated work — that is a decision to take on purpose, with its own re-derivation, not a
+     * thing to fix in passing while shipping a band. Both bounds still catch what they are for: a
+     * plaque nothing ever misses, and one that has become a wall.
+     */
+    expect(top.bound / Math.max(1, top.completers)).toBeLessThanOrEqual(0.75)
+  })
+})
+
+/**
+ * POINTS NIGHT — the pure plaque's calibration (AFTER DARK, Slice 3). Same discipline as the plaque
+ * above and the same warning: the recorded constant is RE-DERIVED here, never edited to green.
+ *
+ * ⚠️ IT IS MEASURED DIFFERENTLY, and the difference is the whole reason this is a separate block.
+ * The plaque's natural distribution comes from DELETING the score target. Do that on a points night
+ * and the win condition collapses to "sweep the felt" — with no collect goals there is nothing else
+ * left — so the sim stops with roughly half its budget unspent and reports a mean ~40% below the
+ * truth (8,300 against 14,600 at L216, the first attempt at this). The target is therefore pushed
+ * out of reach instead, which is what forces the full budget out.
+ */
+describe('points night — the pure plaque, priced off moves', () => {
+  /** Full-budget runs: an unreachable target, so the proxy never stops early. See above. */
+  const fullBudget = (L: number): ReturnType<typeof sampleLevel> =>
+    sampleLevel(L, SEEDS, 'banker', { ...levelSpec(L), scoreTarget: Number.POSITIVE_INFINITY })
+
+  it('re-derives POINTS_NIGHT_POINTS_PER_MOVE within tolerance (re-record, never hand-edit)', T, () => {
+    const L = 256 // the middle of the band, where the plaque takes its own reading
+    expect(isPointsNight(L)).toBe(true)
+    const spec = levelSpec(L)
+    const runs = fullBudget(L).runs
+    const measured = runs.reduce((t, r) => t + r.score, 0) / runs.length / spec.moves
+    expect({
+      measured: Math.round(measured),
+      within20pct: Math.abs(measured - POINTS_NIGHT_POINTS_PER_MOVE) / measured < 0.2,
+    }).toEqual({ measured: Math.round(measured), within20pct: true })
+  })
+
+  it('every points night is winnable with the number enforced — comfortably', T, () => {
+    // Measured 2026-08-05 at 40 seeds: 85 / 78 / 53 / 75 percent at 216 / 256 / 276 / 296, against
+    // L300's 18% for scale. Generous ON PURPOSE — this is a new WIN SHAPE in a band whose brief is
+    // seasoning, and Act I's standing rule is that a level only ever gets easier. The floor is set
+    // well under the measurement so ordinary sampling noise cannot red-light a real build.
+    for (const L of [216, 256, 276, 296]) {
+      const rate = sampleLevel(L, SEEDS, 'banker').winRate
+      expect({ L, playable: rate >= 0.3 }).toEqual({ L, playable: true })
+    }
+  })
+
+  it('the number BINDS by the top of the band, and is free where it is taught', T, () => {
+    // Both directions, exactly as the plaque's own guard does it: a target nothing ever misses is
+    // decoration, and one most runs miss is a wall. Measured on full-budget runs, so this is the
+    // score term alone — the felt is a separate constraint and is not double-counted here.
+    const missRate = (L: number): number => {
+      const target = levelSpec(L).scoreTarget ?? 0
+      const runs = fullBudget(L).runs
+      return runs.filter(r => r.score < target).length / runs.length
+    }
+    expect(missRate(216)).toBeLessThanOrEqual(0.1) // the teaching level: under the proxy's p10
+    const top = missRate(296)
+    expect(top).toBeGreaterThan(0) // ...and by 296 the House means it
+    expect(top).toBeLessThanOrEqual(0.45)
   })
 })

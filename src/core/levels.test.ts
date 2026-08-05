@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
   LEVEL_COUNT,
+  isHotTable,
   isMinimumLevel,
+  isPointsNight,
   levelBoostExclusions,
   levelSpec,
   minimumTargetFrac,
@@ -251,7 +253,9 @@ describe('HOUSE MINIMUM — the plaque cadence', () => {
       const expected = L % 10 === 1 || L % 10 === 6
       expect({ L, min: isMinimumLevel(L) }).toEqual({ L, min: expected })
       expect({ L, plaque: levelSpec(L).scoreTarget !== undefined }).toEqual({ L, plaque: expected })
-      if (expected) expect(levelSpec(L).objectives).toHaveLength(2)
+      // Two goals on an ordinary plaque level, NONE on a POINTS NIGHT — the plaque's pure form takes
+      // the last two as well as the third (core/levels.ts isPointsNight).
+      if (expected) expect(levelSpec(L).objectives).toHaveLength(isPointsNight(L) ? 0 : 2)
     }
   })
 
@@ -264,7 +268,9 @@ describe('HOUSE MINIMUM — the plaque cadence', () => {
   it('replaces a goal, never buys moves — the budget is its 3-objective sibling\'s exactly', () => {
     const g = DIFFICULTY.goals as { minimum: boolean }
     try {
-      for (const L of [206, 251, 296]) {
+      // 291 rather than the 296 this used to check: 296 is a POINTS NIGHT now, and its own version
+      // of this promise (all three goals replaced, budget still untouched) is asserted below.
+      for (const L of [206, 251, 291]) {
         const on = levelSpec(L)
         g.minimum = false
         const off = levelSpec(L)
@@ -294,9 +300,21 @@ describe('HOUSE MINIMUM — the plaque cadence', () => {
   })
 
   it('the brass ladder only ever rises — with GOLDEN anchors from the shipped calibration', () => {
+    // TWO series, walked separately. From 216 the `…6` half of the cadence is POINTS NIGHT, priced
+    // off MOVES against its own constant while the `…1` half stays priced off COLLECTS — different
+    // currencies of demand, so interleaving them compares numbers that were never comparable.
+    // Each must climb on its own; neither may drift.
     let prev = 0
+    let prevPoints = 0
     for (let L = 201; L <= LEVEL_COUNT; L++) {
       if (!isMinimumLevel(L)) continue
+      if (isPointsNight(L)) {
+        if (isTeachingLevel(L)) continue
+        const p = levelSpec(L).scoreTarget as number
+        expect({ L, rises: p >= prevPoints }).toEqual({ L, rises: true })
+        prevPoints = p
+        continue
+      }
       // A TEACHING level's plaque steps back on purpose (see minimumTargetFrac). Every act opens on
       // a …01, and the cadence puts a plaque on every …01, so an act opening is always both — the
       // dip is where a new verb is being introduced, and it is carved out here for exactly the
@@ -311,17 +329,143 @@ describe('HOUSE MINIMUM — the plaque cadence', () => {
     // re-record, never let a target drift as a side effect of touching the curve or the scoring.
     // Act I's four are the SHIPPED values and must never move: the Act II ramp is anchored to
     // ACT1_LEVELS rather than LEVEL_COUNT precisely so that opening a new act cannot re-price them.
-    expect([201, 206, 251, 296].map(L => levelSpec(L).scoreTarget)).toEqual([11900, 14200, 16400, 18600])
+    // ⚠️ THE FOURTH ANCHOR MOVED FROM 296 TO 291, and that is a real content change, not a test edit.
+    // AFTER DARK's POINTS NIGHT cadence is `…6` from 216, so 296 stopped being an ordinary plaque
+    // level; its 18,600 is gone and its new number is pinned in the points ladder below. 291 is now
+    // the last ordinary plaque of Act I and carries the top of this series. The three that could
+    // stay, stayed: 201 / 206 / 251 are byte-identical, as is everything below 201.
+    expect([201, 206, 251, 291].map(L => levelSpec(L).scoreTarget)).toEqual([11900, 14200, 16400, 18400])
     // Act II's, added Slice 1. 301 is the act-opening teaching dip; 306 resumes ABOVE 296, and the
     // ladder climbs to a `perObjective`-clamped ceiling by the high 370s.
     expect([301, 306, 351, 396].map(L => levelSpec(L).scoreTarget)).toEqual([16100, 18900, 20000, 20700])
+    // AFTER DARK's POINTS NIGHT ladder (Slice 3, 2026-08-05) — its OWN goldens, calibrated against
+    // the full-budget banker distribution in minimum.rate.test.ts. 216 is the teaching level and
+    // sits deliberately under the proxy's p10.
+    //
+    // ⚠️ 296 USED TO BE 18,600 AND IS NOW A POINTS NIGHT. That is the one shipped Act I plaque this
+    // slice moves, and it is unavoidable rather than incidental: the cadence is `…6` from 216, and
+    // carving a hole at the band's last level to preserve a golden would be preserving the number
+    // instead of the design. 201 / 206 / 251 are untouched, and so is every level below 201.
+    expect([216, 226, 236, 246, 256, 266, 276, 286, 296].map(L => levelSpec(L).scoreTarget)).toEqual([
+      9800, 11300, 11600, 11900, 12200, 12500, 12800, 13100, 13300,
+    ])
+  })
+
+  /**
+   * POINTS NIGHT — the plaque's pure form (AFTER DARK, Slice 3). Same two promises the plaque signs,
+   * taken one step further: it replaces EVERY collect goal, and it still must not buy or sell a
+   * single move. A level that quietly changed size while changing shape would make the whole band's
+   * feasibility measurement meaningless.
+   */
+  describe('POINTS NIGHT — the plaque with nothing else on it', () => {
+    it('runs on the …6 half from 216, and never on the …1 half', () => {
+      for (let L = 1; L <= LEVEL_COUNT; L++) {
+        expect({ L, pn: isPointsNight(L) }).toEqual({ L, pn: L >= 216 && L <= 300 && L % 10 === 6 })
+      }
+    })
+
+    it('takes every goal and still deals the same board size', () => {
+      const g = DIFFICULTY.goals as { minimum: boolean }
+      for (const L of [216, 256, 296]) {
+        const on = levelSpec(L)
+        expect(on.objectives).toEqual([])
+        expect(on.scoreTarget).toBeGreaterThan(0)
+        try {
+          g.minimum = false
+          const off = levelSpec(L)
+          // Byte-identical budget to the 3-objective sibling — the demand moved from pieces to
+          // points, the level did not get bigger or smaller.
+          expect({ L, moves: on.moves }).toEqual({ L, moves: off.moves })
+          expect(on.demand).toBe(off.objectives.reduce((n, o) => n + o.count, 0))
+        } finally {
+          g.minimum = true
+        }
+      }
+    })
+
+    it('still grades stars against a real bar, not the unreachable clamp', () => {
+      // With no objectives the collect RATE is zero, which would clamp 3★ to half the move budget —
+      // by this curve's own reckoning, harder than flawless play. `demand` is what stops that.
+      for (const L of [216, 256, 296]) {
+        const pn = starThresholds(levelSpec(L))
+        expect(pn.three).toBeLessThan(0.5)
+        // …and it grades exactly like the plain 3-objective level of the same size would.
+        const g = DIFFICULTY.goals as { minimum: boolean }
+        try {
+          g.minimum = false
+          expect(pn).toEqual(starThresholds(levelSpec(L)))
+        } finally {
+          g.minimum = true
+        }
+      }
+    })
+
+    it('auto-holds DOUBLE SCORE like any plaque level — a 2x on a score target is the whole level', () => {
+      expect(levelBoostExclusions(216)).toEqual(['doubleScore'])
+    })
+  })
+
+  /**
+   * HOT TABLE — scoring only. The one promise worth pinning is the one the spec originally got
+   * wrong: it must not touch the move budget (see the measurement in levels.ts).
+   */
+  describe('HOT TABLE — the multiplier that costs nothing', () => {
+    it('runs on the …3 cadence from 233, and never leaves Act I', () => {
+      for (let L = 1; L <= LEVEL_COUNT; L++) {
+        expect({ L, hot: isHotTable(L) }).toEqual({ L, hot: L >= 233 && L <= 300 && L % 10 === 3 })
+        expect({ L, flag: levelSpec(L).hot === true }).toEqual({ L, flag: isHotTable(L) })
+      }
+    })
+
+    it('never trims the budget — the flag changes scoring and nothing else', () => {
+      const a = DIFFICULTY.afterDark as { hot: boolean }
+      // 253 and 293, NOT the teaching level: switching the beat off also takes 233's +3 teaching
+      // bonus with it (§G12 — a mechanic that does not appear must not buy its level a discount),
+      // so 233 is legitimately three moves apart with the flag off. That is asserted separately.
+      for (const L of [253, 293]) {
+        const on = levelSpec(L)
+        try {
+          a.hot = false
+          const off = levelSpec(L)
+          expect({ L, moves: on.moves }).toEqual({ L, moves: off.moves })
+          expect({ L, ...on, hot: undefined }).toEqual({ L, ...off, hot: undefined })
+        } finally {
+          a.hot = true
+        }
+      }
+    })
+
+    it('teaches at 233 with +3 moves, and gives them back when the beat is switched off', () => {
+      const a = DIFFICULTY.afterDark as { hot: boolean }
+      const on = levelSpec(233)
+      try {
+        a.hot = false
+        expect(on.moves).toBe(levelSpec(233).moves + 3)
+      } finally {
+        a.hot = true
+      }
+    })
+
+    it('never collides with a plaque, a points night or a breather', () => {
+      for (let L = 1; L <= LEVEL_COUNT; L++) {
+        if (!isHotTable(L)) continue
+        expect({ L, min: isMinimumLevel(L), pn: isPointsNight(L), breather: L % 5 === 0 }).toEqual({
+          L,
+          min: false,
+          pn: false,
+          breather: false,
+        })
+      }
+    })
   })
 
   it('resumes the brass climb straight after an act-opening dip', () => {
     // The dip is allowed to exist, not to persist: the first plaque after it must clear the last
     // plaque before it, or the House quietly lowered its minimum for a whole floor.
-    expect(levelSpec(301).scoreTarget!).toBeLessThan(levelSpec(296).scoreTarget!)
-    expect(levelSpec(306).scoreTarget!).toBeGreaterThan(levelSpec(296).scoreTarget!)
+    // Measured against 291, the last ORDINARY plaque of Act I — 296 is a points night now and its
+    // number is priced off a different anchor entirely, so it is not the thing 301 has to clear.
+    expect(levelSpec(301).scoreTarget!).toBeLessThan(levelSpec(291).scoreTarget!)
+    expect(levelSpec(306).scoreTarget!).toBeGreaterThan(levelSpec(291).scoreTarget!)
   })
 
   it('auto-holds DOUBLE SCORE on minimum levels only (skipped, never consumed)', () => {

@@ -96,6 +96,27 @@ export interface LevelSpec {
    * every Act I spec is byte-identical and endless — which never calls `levelSpec` — cannot see it.
    */
   pull?: boolean
+  /**
+   * HOT TABLE (AFTER DARK, Slice 3): every wave scores at `cascade + 1` instead of `cascade`, so the
+   * whole table runs one notch hot — against a trimmed move budget. Present only on hot-table
+   * levels (core/levels.ts isHotTable); absent everywhere else, and endless never calls `levelSpec`.
+   */
+  hot?: boolean
+  /**
+   * The COLLECT DEMAND the move budget was derived from, when `objectives` no longer represents it.
+   *
+   * Set only on POINTS NIGHT, where `objectives` is empty and the level's whole demand is asked for
+   * in points. Star grading reads a demand RATE (`starThresholds`), and an empty objective list
+   * makes that rate zero — which clamps the 3★ bar to half the move budget, a bar the curve's own
+   * notes call harder than perfect play. So a pure-minimum level carries the number its budget was
+   * actually built from, and grades exactly like the 3-objective sibling it is the same size as.
+   *
+   * ⚠️ Deliberately NOT set on ordinary plaque levels, whose `objectives` sum to two thirds of their
+   * demand for the same reason. That bar has been live since Slice 0 and every plaque level's stars
+   * are recorded against it; correcting it would silently re-grade levels people have already
+   * played. This field fixes an UNDEFINED case, it does not re-open a settled one.
+   */
+  demand?: number
 }
 
 /** Choreography instructions emitted by the core for the view to render. */

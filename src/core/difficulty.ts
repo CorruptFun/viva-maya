@@ -148,6 +148,51 @@ export const DIFFICULTY = {
     tell: true,
   },
 
+  /**
+   * AFTER DARK — the 200s (Slice 3). The fourth staged-rollout block, same contract as `hazards`,
+   * `goals` and `act2` above: a master switch, one boolean per beat, and OFF must mean levels
+   * 201–300 are byte-identical to what shipped before it. `hazards.test.ts` pins the shipped state
+   * in the same commit that changes it.
+   *
+   * ── THE RULE THAT KEEPS IT CHEAP, AND KEEPS ACT II INTACT ───────────────────────────────────
+   * Every beat here is a RECOMBINATION of something already shipped — a spec branch, a scoring
+   * line, an existing stake ladder, a marquee hue. No new hazard kind, no new verb, no new save
+   * field, no migration. New verbs and new opponents belong upstairs: 211–300 was the ladder's
+   * dullest stretch, but spending Act II's thunder to fix it would only move the dull stretch.
+   *
+   * ── THE CADENCE COLLISION, AND WHY POINTS NIGHT IS NOT A NEW SYSTEM ─────────────────────────
+   * HOUSE MINIMUM already owns `L % 10 ∈ {1, 6}` from 201, so every round number in the band (211,
+   * 231, 251, 281) is ALREADY a plaque level. Rather than fight that, POINTS NIGHT absorbs it: it
+   * is the plaque's PURE FORM on the `…6` half — the same brass number with the collect goals taken
+   * away — so it costs one branch in `levelSpec` and reads to the player as one idea escalating
+   * rather than a fourth unrelated system.
+   *
+   * Density: ~16 special levels in 90 (≈18%), and the cadences are disjoint by construction —
+   * `…3` and `…6` never collide, and neither is an every-5th breather or a chapter-closing `…0`.
+   */
+  afterDark: {
+    enabled: true,
+    /** POINTS NIGHT — a plaque level with NO collect objectives. The score target is the whole win
+     *  condition (plus felt). `pointsStart` is its teaching level; the cadence is `L % 10 === 6`,
+     *  which is why it starts at …16 rather than at the band's own …11. */
+    points: true,
+    pointsStart: 216,
+    /** HOT TABLE — the cascade multiplier opens at ×2 on `L % 10 === 3`. Scoring only: it ships with
+     *  NO move trim, which is a measured reversal of the spec — see the note above the flag's
+     *  reader in `levels.ts`, which carries the table that killed it. */
+    hot: true,
+    hotStart: 233,
+    /** THE HIGH-ROLLER'S MARKER — a fourth stake tier on the shipped ladder, band-scoped. Not a
+     *  level type: it widens an existing opt-in rather than changing what a level is. */
+    marker: true,
+    markerStart: 251,
+    /** THE EYE IN THE SKY — the spotlight sweeps and the marquee cools to security blue, and
+     *  NOTHING HAPPENS. Presentational only, and that is the point: it teaches the telegraph
+     *  vocabulary the House will use for real upstairs, so its first move arrives already legible. */
+    eye: true,
+    eyeStart: 281,
+  },
+
   /** First level at which each mechanic appears. Below `lockStart` the game is untouched. */
   bands: { lockStart: 31, coatStart: 56, blockerStart: 86, lateStart: 121 },
 
@@ -213,18 +258,30 @@ export const DIFFICULTY = {
  * to explain the dip. With blockers still held back, L86 was exactly that.
  */
 export function isTeachingLevel(level: number): boolean {
-  const { bands, hazards, goals, act2 } = DIFFICULTY
+  const { bands, hazards, goals, act2, afterDark } = DIFFICULTY
   const hazardTeach =
     hazards.enabled &&
     ((hazards.lock && level === bands.lockStart) ||
       (hazards.coat && level === bands.coatStart) ||
       (hazards.blocker && level === bands.blockerStart))
+  // AFTER DARK teaches twice — a new WIN SHAPE at `pointsStart` and a new SCORING RULE at
+  // `hotStart`. Both earn the same +3 every other band start gets, on their own flags, so a
+  // switched-off beat leaves its level an ordinary one with an ordinary budget.
+  //
+  // ⚠️ THE EYE deliberately does NOT teach. It is presentational — it changes nothing about how the
+  // level plays — so buying it +3 moves would be the §G12 defect exactly: a level measurably easier
+  // than its neighbours to introduce something that does not affect them. It gets an intro card and
+  // no budget at all, which is the honest way to say "watch this, it costs you nothing".
+  const afterDarkTeach =
+    afterDark.enabled &&
+    ((afterDark.points && level === afterDark.pointsStart) || (afterDark.hot && level === afterDark.hotStart))
   // HOUSE MINIMUM's first level teaches a new WIN TERM, so it earns the same gentleness a new
   // hazard band does — gated on its own flag, not on `hazards.enabled` (it is not a hazard).
   // THE REEL PULL teaches a new VERB at `act2.pullStart`, and gets the same courtesy on its own
   // flags: with the act switched off, L301 must be an ordinary level with an ordinary budget.
   return (
     hazardTeach ||
+    afterDarkTeach ||
     (goals.minimum && level === goals.minimumStart) ||
     (act2.enabled && act2.pull && level === act2.pullStart)
   )

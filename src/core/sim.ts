@@ -191,15 +191,34 @@ function previewPull(b: Board, col: number, goals: Set<SymbolType>, policy: Poli
   )
 }
 
+/**
+ * AFTER DARK's HOT TABLE, in the ONE place the simulator turns waves into points.
+ *
+ * A hot level scores every wave at `cascade + 1` instead of `cascade` — the multiplier opens at ×2
+ * rather than ×1. Threaded through the two resolve functions rather than read from a module flag,
+ * because the feasibility gates and the rate guards run levels in any order in one process.
+ *
+ * ⚠️ It deliberately does NOT reach `previewValue`. The preview ranks CANDIDATE MOVES by their
+ * opening wave, and a uniform multiplier scales every candidate identically — so folding it in
+ * would change no decision the proxy makes while quietly making two policies differ. The multiplier
+ * belongs to what a move PAYS, not to which move gets picked.
+ */
+const waveMult = (cascade: number, hot: boolean): number => (hot ? cascade + 1 : cascade)
+
 /** Resolve a committed PULL through the real cascade loop, decrementing objectives as it goes. */
-function resolvePullTracking(b: Board, col: number, remaining: Map<SymbolType, number>): { cascade: number; points: number } {
+function resolvePullTracking(
+  b: Board,
+  col: number,
+  remaining: Map<SymbolType, number>,
+  hot: boolean
+): { cascade: number; points: number } {
   if (!b.pullColumn(col)) return { cascade: 0, points: 0 }
   let wave = b.matchWave()
   let cascade = 0
   let points = 0
   while (wave) {
     cascade++
-    points += wave.cleared.length * POINTS_PER_PIECE * cascade
+    points += wave.cleared.length * POINTS_PER_PIECE * waveMult(cascade, hot)
     for (const { piece } of wave.cleared) {
       if (piece.kind === 'jackpot' || piece.kind === 'blocker') continue
       const left = remaining.get(piece.symbol)
@@ -252,6 +271,10 @@ export function playLevel(level: number, seed: number, policy: Policy, specOverr
   let score = 0
   let blockerCellTurns = 0
   const scoreTarget = spec.scoreTarget ?? 0
+  // Read from the SPEC, never from the level number — a `specOverride` measurement (minimum.rate's
+  // plaque-stripped variant, say) must be able to play a hot table with the multiplier off, and an
+  // Act I measurement must never pick up a rule its level does not have.
+  const hot = spec.hot === true
   let m = 0
 
   for (; m < spec.moves; m++) {
@@ -298,7 +321,9 @@ export function playLevel(level: number, seed: number, policy: Policy, specOverr
     // does — that is the whole trade the verb sells — so both land in the same loop iteration.
     const before = new Map(remaining)
     const res =
-      pullCol >= 0 ? resolvePullTracking(b, pullCol, remaining) : resolveSwapTracking(b, pick.a, pick.to, remaining)
+      pullCol >= 0
+        ? resolvePullTracking(b, pullCol, remaining, hot)
+        : resolveSwapTracking(b, pick.a, pick.to, remaining, hot)
     chains.push(res.cascade)
     score += res.points
     for (const [s, v] of before) collected += Math.max(0, v - (remaining.get(s) ?? 0))
@@ -324,7 +349,8 @@ function resolveSwapTracking(
   b: Board,
   a: Coord,
   to: Coord,
-  remaining: Map<SymbolType, number>
+  remaining: Map<SymbolType, number>,
+  hot: boolean
 ): { cascade: number; points: number } {
   b.swap(a, to)
   let wave = b.swapActivation(a, to)
@@ -339,7 +365,7 @@ function resolveSwapTracking(
   let points = 0
   while (wave) {
     cascade++
-    points += wave.cleared.length * POINTS_PER_PIECE * cascade
+    points += wave.cleared.length * POINTS_PER_PIECE * waveMult(cascade, hot)
     for (const { piece } of wave.cleared) {
       if (piece.kind === 'jackpot' || piece.kind === 'blocker') continue
       const left = remaining.get(piece.symbol)

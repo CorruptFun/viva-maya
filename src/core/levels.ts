@@ -108,6 +108,130 @@ export function isMinimumLevel(level: number): boolean {
 }
 
 /**
+ * AFTER DARK — POINTS NIGHT (Slice 3). The plaque's PURE FORM: a minimum level with its collect
+ * goals taken away, so the brass number (plus the felt) is the whole win condition.
+ *
+ * It runs on the `…6` half of the shipped plaque cadence from `pointsStart`, which is why the band
+ * begins at 216 rather than the round 211 the fiction would have picked — 211 is a `…1`, and
+ * splitting one cadence across two ideas would have made both unreadable. The `…1` half stays an
+ * ordinary HOUSE MINIMUM all the way up, so the band reads as one idea escalating.
+ */
+export function isPointsNight(level: number): boolean {
+  const { afterDark } = DIFFICULTY
+  // Gated on the PLAQUE, not merely on the cadence. This is the plaque's pure form, so switching
+  // HOUSE MINIMUM off must take points nights with it — otherwise `goals.minimum = false` would
+  // deal a level with no collect goals AND no score target, which is not a level at all.
+  return (
+    isMinimumLevel(level) &&
+    afterDark.enabled &&
+    afterDark.points &&
+    level >= afterDark.pointsStart &&
+    level <= ACT1_LEVELS &&
+    level % 10 === 6
+  )
+}
+
+/**
+ * AFTER DARK — HOT TABLE (Slice 3). The cascade multiplier opens at ×2 (`cascade + 1` in the wave
+ * score) against a `HOT_TABLE_MOVE_TRIM` budget. Hotter, shorter, riskier — and made of two numbers
+ * that already existed, which is the whole rule this band is built under.
+ *
+ * `…3` is disjoint from the plaque cadence `…1`/`…6` by construction, and from the every-5th
+ * breathers and the chapter-closing `…0`, so a hot table can never be anything else as well.
+ */
+export function isHotTable(level: number): boolean {
+  const { afterDark } = DIFFICULTY
+  return (
+    afterDark.enabled && afterDark.hot && level >= afterDark.hotStart && level <= ACT1_LEVELS && level % 10 === 3
+  )
+}
+
+/**
+ * ⚠️ THERE IS NO MOVE TRIM ON A HOT TABLE, and that is a MEASURED reversal of how it was specced
+ * ("~10% trimmed move budget — hotter, shorter, riskier"). Written down here because the idea is an
+ * obvious one to have again.
+ *
+ * Two measurements killed it (banker, 40 seeds, 2026-08-05).
+ *
+ * 1 · THE LATE BAND CANNOT AFFORD IT. Clear rate against moves given back, from the untrimmed budget:
+ *
+ *        level      base   −0    −1    −2    −4    −8
+ *        233         84   40%   40%   33%   23%    8%
+ *        253         83   23%   23%   20%   15%    5%
+ *        273         86   25%   23%   20%   20%    8%
+ *        293         86   33%   33%   30%   28%   23%
+ *
+ *    The specced 10% is the −8 column: a FIVE-FOLD collapse. Even −2 costs ~13% of the clear rate.
+ *    Up here the marginal move is worth far more than a percentage of the budget suggests.
+ *
+ * 2 · THE MULTIPLIER CANNOT PAY FOR IT, because a hot table is a COLLECT level. Doubling the wave
+ *    score moves the score and nothing else: the win condition is goals plus felt, the chip reward
+ *    is star- and move-based, and there is no plaque on a `…3`. Measured, the multiplier lifts the
+ *    mean score 16,050 → 25,093 at L233 and the clear rate 40% → 8%. That is paying real difficulty
+ *    for a number — and it would make AFTER DARK the one band in Act I that punishes you for
+ *    arriving, against the act's standing "a level only ever gets easier".
+ *
+ * So the beat ships as PURE UPSIDE: the table runs hot, the numbers run hot with it, a personal best
+ * jumps, and a Plinko drop that lands here pays on a doubled stake. The House is having a good night
+ * and letting you have one too — which is a better read of "the tables keep odd hours" than a tax
+ * was. If a future slice wants the risk back, it has to bring something score ACTUALLY BUYS with it.
+ */
+
+/**
+ * Banker-proxy points scored per MOVE on a POINTS NIGHT board — the anchor the pure plaque is priced
+ * against, and deliberately NOT `MINIMUM_POINTS_PER_GOAL`.
+ *
+ * With no collect goals the proxy's `goalValue` term is zero, so the banker collapses to a
+ * points-and-coats chaser (the same collapse `playEndless` documents) — which is, for once, the
+ * RIGHT player model: a points night asks for points, so the proxy finally wants what the level
+ * wants. It also means the usual proxy-bias caveat is weaker here than anywhere else in this file.
+ *
+ * MEASURED 2026-08-05, banker, 40 seeds, full budget forced:
+ *
+ *     level     216    226    236    246    256    266    276    286    296
+ *     pts/move  178    180    191    185    182    183    185    186    173
+ *
+ * Remarkably flat, and within a few percent of the ~186–202 the ORDINARY plaque levels post — the
+ * proxy plays a points night almost exactly as it plays its sibling, because `previewValue` already
+ * weights raw clear size far above goal symbols. A real player, freed from chasing two colours, does
+ * strictly better, so this anchor is a floor.
+ *
+ * ⚠️ "Full budget FORCED" is load-bearing and is not how the plaque is measured. `minimum.rate.ts`
+ * strips the target to observe a natural run; do that here and the win condition collapses to "sweep
+ * the felt", the sim stops with half its moves unspent, and the measured score comes out ~40% low
+ * (8,300 against 14,600 at L216 — the first attempt at this calibration, caught by the numbers being
+ * absurd next to the siblings'). An UNREACHABLE target is what makes the proxy spend the budget.
+ */
+export const POINTS_NIGHT_POINTS_PER_MOVE = 183
+
+/**
+ * The pure plaque's demand as a fraction of what a full-budget proxy run scores. Same shape as
+ * `minimumTargetFrac` and the same philosophy — free where the idea is introduced, real by the top
+ * of the band — but its own numbers, and a GENTLER ladder than the plaque's, deliberately.
+ *
+ * The plaque can afford to ask for more than the proxy scores (L291 posts 18,400 against a 16,000
+ * full-budget mean) because it is the SECOND win term: a player who finishes the collects has
+ * usually scored past it on the way. Here it is the only term there is. A points night priced at
+ * the plaque's aggression would be the hardest level in Act I, which would break both the band's
+ * brief (seasoning, not a wall) and Act I's own "a level only ever gets easier" invariant.
+ *
+ * So the ramp lands the proxy's bind rate at roughly 5% on the teaching level and ~25% by 296 —
+ * measured in `minimum.rate.test.ts`, which re-derives it and guards BOTH directions: a plaque that
+ * never binds is decoration, one that always binds is a wall.
+ */
+export function pointsNightTargetFrac(level: number): number {
+  const start = DIFFICULTY.afterDark.pointsStart
+  // The teaching level exists to introduce the shape, not to enforce it — the same courtesy L201
+  // gets from `minimumTargetFrac`'s own early return, and comfortably under the proxy's p10.
+  if (level === start) return 0.65
+  // ⚠️ ACT1_LEVELS, never LEVEL_COUNT — the same rule the plaque ramp carries. Points nights cannot
+  // exist above 300 today (`isPointsNight` caps them), so this is belt and braces; it stays because
+  // the failure it prevents is silent, and the day the band moves upstairs is the day it matters.
+  const t = Math.max(0, Math.min(1, (level - start) / (ACT1_LEVELS - start)))
+  return 0.76 + 0.09 * t
+}
+
+/**
  * Banker-proxy points scored per GOAL COLLECT, among runs that FINISH the collect goals — measured
  * at the middle of the band (L251), where it is remarkably stable (~89–94 across 201–296 while
  * points-per-MOVE drifts 193→220). Priced against completing runs on purpose: score and collects
@@ -188,7 +312,11 @@ export function levelSpec(level: number): LevelSpec {
   // shares, so a minimum level is exactly as big as its 3-objective sibling; the third share is
   // simply asked for in points instead of pieces.
   const minimum = isMinimumLevel(L)
-  const goalCount = minimum ? Math.min(2, objectiveCount) : objectiveCount
+  // POINTS NIGHT takes the idea one step further: the plaque replaces ALL the collect goals, not
+  // just the third. The demand — and so the budget below — still counts every share, so a points
+  // night is exactly as big as its 3-objective sibling; it is simply asked for entirely in points.
+  const points = isPointsNight(L)
+  const goalCount = points ? 0 : minimum ? Math.min(2, objectiveCount) : objectiveCount
 
   // Collect target per objective: concave growth, no early cap (clamp is a far-off safety rail).
   const perObjective = Math.min(110, Math.max(12, Math.round(32 * Math.pow(L / 10, 0.34))))
@@ -230,6 +358,8 @@ export function levelSpec(level: number): LevelSpec {
   // (~6 collects/move) couldn't finish.
   let moves = Math.round(total / ratio) + breather + teaching
   moves = Math.max(moves, Math.ceil(total / 6.2) + objectiveCount)
+  // HOT TABLE touches the SCORING only — see the measurement above for why it touches no budget.
+  const hot = isHotTable(L)
 
   // Distinct goal symbols, chosen deterministically per level (variety; feasibility is symbol-
   // agnostic since the board fills uniformly from the palette).
@@ -246,11 +376,20 @@ export function levelSpec(level: number): LevelSpec {
   // is strictly non-decreasing in the level, so the brass ladder is monotone by construction with
   // no move-rounding wobble. Rounded to a brass-friendly 100; the exact numbers are pinned as
   // goldens in levels.test.ts and the constant under them is re-measured by minimum.rate.test.ts.
+  // POINTS NIGHT prices off MOVES, not collects — there are none to price against. Its own
+  // constant, its own fraction, its own goldens: the plaque's anchor is a goal-completing run's
+  // score, and a level with no goals to complete has no such run. `demand` rides along so star
+  // grading still has a rate to read (see LevelSpec.demand).
+  if (points) {
+    const scoreTarget = Math.round((pointsNightTargetFrac(L) * POINTS_NIGHT_POINTS_PER_MOVE * moves) / 100) * 100
+    return act2Spec(L, { level: L, moves, symbolCount, objectives, scoreTarget, demand: total })
+  }
   if (minimum) {
     const owed = objectives.reduce((n, o) => n + o.count, 0)
     const scoreTarget = Math.round((minimumTargetFrac(L) * MINIMUM_POINTS_PER_GOAL * owed) / 100) * 100
     return act2Spec(L, { level: L, moves, symbolCount, objectives, scoreTarget })
   }
+  if (hot) return act2Spec(L, { level: L, moves, symbolCount, objectives, hot: true })
   // ACT II folds in LAST and only ADDS — everything above is the one curve, unchanged, all the way
   // up. `act2Spec` returns this object untouched for every Act I level and whenever the act is
   // switched off, which is what keeps the panic-switch transcription honest over the whole range.
@@ -281,7 +420,12 @@ const RATE_3 = 4.7
 const RATE_2 = 4.0
 
 export function starThresholds(spec: LevelSpec): { three: number; two: number } {
-  const total = spec.objectives.reduce((n, o) => n + o.count, 0)
+  // `demand` is the level's collect budget when `objectives` no longer represents it — POINTS NIGHT
+  // only. Without it an empty objective list reads as a required rate of ZERO, which clamps both
+  // bars to the pre-§G3 constants and asks for half the move budget back: by this file's own
+  // definition of flawless play, a 3★ that does not exist. See LevelSpec.demand for why ordinary
+  // plaque levels deliberately keep the bar they shipped with.
+  const total = spec.demand ?? spec.objectives.reduce((n, o) => n + o.count, 0)
   const req = total / Math.max(1, spec.moves)
   const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, v))
   return {
