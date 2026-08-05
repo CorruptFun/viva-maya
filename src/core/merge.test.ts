@@ -263,4 +263,16 @@ describe('mergeSaves — chapter trophies and the race-unlock latch', () => {
     expect(mergeSaves(seen, deeperUnseen).seenRaceUnlock).toBe(true)
     expect(mergeSaves(deeperUnseen, seen).seenRaceUnlock).toBe(true)
   })
+
+  it('the Act II latches join the union — the elevator and each floor door play exactly once', () => {
+    // seenRaceUnlock's twins, added WITH the fields rather than after the bug (see the note above).
+    // The elevator reveal is chained off a once-in-a-lifetime ceremony; replaying it because the
+    // player opened a tablet would be the same defect one act up, and more visible.
+    const seen = save({ unlocked: 305, seenAct2Reveal: true, floorIntros: ['1'] })
+    const deeperUnseen = save({ unlocked: 360, seenAct2Reveal: false, floorIntros: ['2'] })
+    for (const merged of [mergeSaves(seen, deeperUnseen), mergeSaves(deeperUnseen, seen)]) {
+      expect(merged.seenAct2Reveal).toBe(true)
+      expect(merged.floorIntros.slice().sort()).toEqual(['1', '2'])
+    }
+  })
 })

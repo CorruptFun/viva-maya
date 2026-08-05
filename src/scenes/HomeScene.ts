@@ -13,7 +13,8 @@ import {
 } from '../core/endless'
 import { DAILY_PRIZE_TIERS, PRIZE_TIERS, checkDailyPrize, checkWeeklyPrize, fetchRaceRecap } from '../core/leaderboard'
 import type { RacePrizeWin, RaceRecap } from '../core/leaderboard'
-import { LEVEL_COUNT, levelBoostExclusions } from '../core/levels'
+import { ACT1_LEVELS, LEVEL_COUNT, levelBoostExclusions } from '../core/levels'
+import { DIFFICULTY } from '../core/difficulty'
 import { refreshLives } from '../core/lives'
 import { greeting, occasionFor, pendingOccasion, secretNote, withName } from '../core/maya'
 import { REFERRER_CHIPS, claimReferralRewards, fetchPendingRewards } from '../core/referrals'
@@ -41,6 +42,7 @@ import { maybeShowInstallOffer } from '../view/installsheet'
 import { nextLevelSummary } from '../core/inventory'
 import { openStash, stashBadgeCount } from '../view/stash'
 import { openRaceUnlockCard } from '../view/raceunlockcard'
+import { openAct2Card } from '../view/act2card'
 import { addJackpotMeter } from '../view/jackpot'
 import { D, E, OVERSHOOT, backOut, fadeRise, heartbeat, popIn } from '../view/motion'
 import { quality } from '../view/quality'
@@ -856,7 +858,26 @@ export class HomeScene extends Phaser.Scene {
     })
     try {
       const q = import.meta.env.DEV ? new URLSearchParams(location.search) : null
-      // 0 · DAILY RACE UNLOCKED — the one-time reveal, ahead of everything else in this queue.
+      // 0 · THE PRIVATE ELEVATOR — ACT II's one-time reveal, first in the queue.
+      //
+      // This is the CATCH-UP door. The intended one is chained off the chapter-30 car ceremony, and
+      // everyone who clears 300 from now on meets it there. This exists for the cohort who had
+      // already finished the game when the act shipped: without it they would simply find a hundred
+      // more levels on the map one day, with nothing anywhere saying where they came from. Exactly
+      // the problem `seenRaceUnlock` was written for, and the same shape of fix.
+      //
+      // Ahead of the race reveal because it is rarer and bigger; the card latches itself, so the two
+      // doors can never double-show. DEV: `?elevator`.
+      const act2Save = loadSave()
+      const act2Due = DIFFICULTY.act2.enabled && DIFFICULTY.act2.reveal && act2Save.unlocked > ACT1_LEVELS
+      if ((q?.has('elevator') || (act2Due && !act2Save.seenAct2Reveal)) && alive.on) {
+        const { goUp } = await openAct2Card(this, 'home')
+        if (!alive.on) return
+        if (goUp) startScene(this, 'game', { level: ACT1_LEVELS + 1 })
+        if (goUp) return
+      }
+      if (!alive.on) return
+      // 0.25 · DAILY RACE UNLOCKED — the one-time reveal, ahead of everything else in this queue.
       // First because a brand-new racer cannot have won a crown or placed on yesterday's board yet,
       // and because it is the card that explains every card that could follow it. Before this, the
       // most repeatable feature in the game introduced itself by a dim signpost silently going live.

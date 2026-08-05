@@ -45,6 +45,7 @@ import type { MarkerStake } from '../core/marker'
 import { CHAPTER_BOOSTS, CHAPTER_PURSES, claimChapter, trophyFor } from '../core/trophies'
 import type { ChapterGrant } from '../core/trophies'
 import { playChapterCeremony } from '../view/trophyceremony'
+import { openAct2Card } from '../view/act2card'
 import { hazardPlan } from '../core/hazards'
 import { ensureHazardTexture } from '../view/textures'
 import { DIFFICULTY, type HazardKind } from '../core/difficulty'
@@ -5080,10 +5081,15 @@ export class GameScene extends Phaser.Scene {
     if (this.level === ACT1_LEVELS && !save.finaleSeen) {
       markFinaleSeen()
       // Level 300 is also chapter 30's close. The finale keeps the slot it has always owned, then
-      // hands off to the car ceremony — "ALL CLEAR → and your grand prize is a car", and from Slice 1
-      // on to THE PRIVATE ELEVATOR — before the result card. Every stage is tap-skippable, so the
+      // hands off to the car ceremony — "ALL CLEAR → and your grand prize is a car" — and from Slice
+      // 1 on to THE PRIVATE ELEVATOR, before the result card. Every stage is tap-skippable, so the
       // once-ever bill can be walked out of.
-      const after = chapterGrant ? (): void => this.chapterCeremony(chapterGrant, showCard) : showCard
+      //
+      // Read it inside-out: `elevator` wraps the card, the ceremony wraps `elevator`, the finale
+      // wraps the ceremony. Each stage takes the next as its continuation, which is the same shape
+      // every chained celebration here uses and the reason a skipped stage cannot strand the player.
+      const elevator = this.act2Reveal(showCard)
+      const after = chapterGrant ? (): void => this.chapterCeremony(chapterGrant, elevator) : elevator
       this.time.delayedCall(420, () => this.allClearFinale(totalStars, after))
       return
     }
@@ -5112,6 +5118,32 @@ export class GameScene extends Phaser.Scene {
    * player on a dead result card. If anything here fails, the card shows as though no chapter had
    * closed — the player misses a spectacle, never the prize (it is already in the save).
    */
+  /**
+   * Wrap `done` so THE PRIVATE ELEVATOR plays first — the reveal's primary door.
+   *
+   * Returns `done` UNCHANGED when the act is off, when the reveal has already been seen, or on any
+   * throw. That is deliberate: this sits between a grand-prize ceremony and the result card, and the
+   * one outcome it must never produce is a player stranded with no card. GO UP starts the first Act
+   * II level directly, because at this point the alternative is a result card for a level whose
+   * "next" button would have taken them there anyway.
+   */
+  private act2Reveal(done: () => void): () => void {
+    if (!DIFFICULTY.act2.enabled || !DIFFICULTY.act2.reveal) return done
+    if (loadSave().seenAct2Reveal) return done
+    return (): void => {
+      try {
+        void openAct2Card(this, 'finale')
+          .catch(() => ({ goUp: false }))
+          .then(r => {
+            if (r.goUp) startScene(this, 'game', { level: ACT1_LEVELS + 1 })
+            else done()
+          })
+      } catch {
+        done()
+      }
+    }
+  }
+
   private chapterCeremony(grant: ChapterGrant, done: () => void): void {
     try {
       const pill = this.chipHud

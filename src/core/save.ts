@@ -46,6 +46,13 @@ export interface SaveData {
   seenIntro: boolean
   /** Latch for the one-time DAILY RACE UNLOCKED reveal, shown on Home once endless opens. */
   seenRaceUnlock: boolean
+  /** Latch for the one-time THE PRIVATE ELEVATOR reveal — Act II opening. `seenRaceUnlock`'s twin
+   *  in every respect: absent in older saves → false, latched the moment the card renders, and
+   *  UNIONED on merge (core/merge.ts) so a second device cannot replay it. */
+  seenAct2Reveal: boolean
+  /** Floor numbers (Act II) whose one-time floor-door card has been shown. `hazardIntros`' twin —
+   *  a teach-once latch, string-keyed, union-merged, and shape-tolerant on the way in. */
+  floorIntros: string[]
   /**
    * Boost TYPES the player has set aside — none of these are consumed at level start, however many
    * are owned. A set of types rather than a count, because "hold my Jackpot Chips for a hard level"
@@ -171,6 +178,8 @@ const DEFAULTS: SaveData = {
   finaleSeen: false,
   seenIntro: false,
   seenRaceUnlock: false,
+  seenAct2Reveal: false,
+  floorIntros: [],
   heldBoosts: [],
   jackpotMeter: 0,
   championWeeks: [],
@@ -200,6 +209,7 @@ function fresh(): SaveData {
     occasionsSeen: [],
     hazardIntros: [],
     specialIntros: [],
+    floorIntros: [],
     championWeeks: [],
     championDays: [],
     raceRecapDays: [],
@@ -268,6 +278,12 @@ export function coerceSave(raw: unknown): SaveData {
     base.finaleSeen = data.finaleSeen === true
     base.seenIntro = data.seenIntro === true
     base.seenRaceUnlock = data.seenRaceUnlock === true
+    // Act II latches. Absent in every save written before 2026-08-04 → the reveal plays once on the
+    // next visit, which is the intended behaviour for the cohort already sitting on level 301.
+    base.seenAct2Reveal = data.seenAct2Reveal === true
+    base.floorIntros = Array.isArray(data.floorIntros)
+      ? data.floorIntros.filter((x): x is string => typeof x === 'string')
+      : []
     // Absent in older saves → nothing held → today's behaviour exactly.
     base.heldBoosts = Array.isArray(data.heldBoosts)
       ? data.heldBoosts.filter((x): x is BoostType => typeof x === 'string')
@@ -588,6 +604,30 @@ export function markRaceUnlockSeen(): void {
     save.seenRaceUnlock = true
     persistSave(save)
   }
+}
+
+/**
+ * Latch THE PRIVATE ELEVATOR reveal — `markRaceUnlockSeen`'s twin, and for the same reason: the card
+ * has TWO doors (chained after the L300 car ceremony, and Home's growth-celebration queue), so
+ * neither one can be trusted to be the only caller. Latching inside the card itself is what makes
+ * the second door harmless.
+ */
+export function markAct2RevealSeen(): void {
+  const save = loadSave()
+  if (!save.seenAct2Reveal) {
+    save.seenAct2Reveal = true
+    persistSave(save)
+  }
+}
+
+/** Latch one floor's door card. Returns false when it had already been shown — `hazardIntros`' twin. */
+export function markFloorIntroSeen(floor: number): boolean {
+  const key = String(floor)
+  const save = loadSave()
+  if (save.floorIntros.includes(key)) return false
+  save.floorIntros.push(key)
+  persistSave(save)
+  return true
 }
 
 /** Grant a boost (e.g. a Jackpot Wheel prize) — banked to apply on the next level started. */

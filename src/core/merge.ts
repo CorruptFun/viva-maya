@@ -88,9 +88,14 @@ function unionLatches(a: SaveData, b: SaveData): Partial<SaveData> {
     // Joined late: raceunlockcard.ts always documented this as cloud-latched, but it shipped without
     // a union rule — so a progress-winner merge silently dropped it and the one-time card replayed.
     seenRaceUnlock: a.seenRaceUnlock || b.seenRaceUnlock,
+    // THE PRIVATE ELEVATOR, seenRaceUnlock's twin — and joined AT THE SAME TIME as the field, not
+    // late the way that one was. A one-time act reveal replaying because you opened a tablet is the
+    // exact bug the note above records.
+    seenAct2Reveal: a.seenAct2Reveal || b.seenAct2Reveal,
     referralWelcomeClaimed: a.referralWelcomeClaimed || b.referralWelcomeClaimed,
     hazardIntros: both(a.hazardIntros, b.hazardIntros),
     specialIntros: both(a.specialIntros, b.specialIntros),
+    floorIntros: both(a.floorIntros, b.floorIntros),
     occasionsSeen: both(a.occasionsSeen, b.occasionsSeen),
     championWeeks: both(a.championWeeks, b.championWeeks),
     championDays: both(a.championDays, b.championDays),

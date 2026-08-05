@@ -6,6 +6,9 @@ import { levelStanding } from '../core/leaderboard'
 import { CHAPTER_LEVELS, LEVEL_COUNT } from '../core/levels'
 import { loadSave } from '../core/save'
 import { trophyFor } from '../core/trophies'
+import { floorForChapter } from '../core/actII'
+import { chapterMood, floorMood, floorPlateLabel } from '../view/floormood'
+import { openAct2Card } from '../view/act2card'
 import { openShowroom } from '../view/showroom'
 import { ensureGlyphTexture } from '../view/textures'
 import { addCasinoBackdrop } from '../view/background'
@@ -14,7 +17,7 @@ import { RACE_MARQUEE_H, addLevelRaceStrip, addRaceModule } from '../view/leader
 import { D, E, OVERSHOOT, backOut } from '../view/motion'
 import { quality } from '../view/quality'
 import { addStashDoor } from '../view/stash'
-import { getTheme, prefersReducedMotion, reduceFlashing } from '../view/theme'
+import { css, getTheme, prefersReducedMotion, reduceFlashing } from '../view/theme'
 import { FONT, GHOST_PILL, GOLD_PILL, addGoldWordmark, addMuteChip, addPillButton, applyEntrance, goldFace, startScene } from '../view/ui'
 
 const GRID_COLS = 5
@@ -593,28 +596,71 @@ export class LevelSelectScene extends Phaser.Scene {
     if (state === 'ahead') plate.setAlpha(0.7)
     container.add(plate)
     const ink = state === 'now' ? T.goldPillText : state === 'done' ? T.goldText : T.inkFaint
-    container.add(
-      this.add
-        .text(-GRID_W / 2 + 22, 0, `CHAPTER ${chapter + 1}`, { fontFamily: FONT, fontSize: '19px', fontStyle: '900', color: ink })
-        .setOrigin(0, 0.5)
-        .setLetterSpacing(2)
-    )
+    /**
+     * ACT II dressing. A ribbon that OPENS A FLOOR stops being a decade marker and becomes a
+     * nameplate: `FLOOR 1 · THE HIGH-LIMIT ROOM`, in the floor's own accent. Every other Act II
+     * ribbon keeps the ordinary three-state treatment, because five nameplates in a row would make
+     * none of them mean anything.
+     *
+     * ⚠️ Copy and colour ONLY — no geometry. `rowIndexAt` is a closed form that assumes a constant
+     * chapter pitch, so a ribbon that were taller here would silently break the hit test for every
+     * chip below it.
+     */
+    const floor = floorForChapter(chapter + 1)
+    const mood = chapterMood(chapter + 1)
+    const opensFloor = floor !== null && floor.chapterFrom === chapter + 1
+    // Chapter 31 opens the FLOOR and the ACT at once, and the act is the bigger door — so it wears
+    // the elevator plate and hands the floor's name to its right-hand label, where the star tally
+    // would otherwise sit. Chapter 36 onward are plain floor nameplates.
+    const opensAct = opensFloor && floor.floor === 1
+    if (opensFloor && mood) {
+      // Reads in the floor's accent even when the chapter is still AHEAD — a locked door you can
+      // read the sign on is the entire reason to put one on the map.
+      container.add(
+        this.add
+          .text(-GRID_W / 2 + 22, 0, opensAct ? 'ACT II · THE HIGH-ROLLER FLOORS' : floorPlateLabel(floor), {
+            fontFamily: FONT,
+            fontSize: opensAct ? '15px' : '17px',
+            fontStyle: '900',
+            color: css(mood.accent),
+          })
+          .setOrigin(0, 0.5)
+          .setLetterSpacing(1)
+          .setAlpha(state === 'ahead' ? 0.75 : 1)
+      )
+    } else {
+      container.add(
+        this.add
+          .text(-GRID_W / 2 + 22, 0, `CHAPTER ${chapter + 1}`, { fontFamily: FONT, fontSize: '19px', fontStyle: '900', color: ink })
+          .setOrigin(0, 0.5)
+          .setLetterSpacing(2)
+      )
+    }
     let earned = 0
     if (state !== 'ahead') {
       for (let n = first; n <= last; n++) earned += Math.min(3, grid.stars[n] ?? 0)
     }
     container.add(
       this.add
-        .text(GRID_W / 2 - 22, 0, state === 'ahead' ? `${first}–${last}` : `★${earned}/${(last - first + 1) * 3}`, {
-          fontFamily: FONT,
-          fontSize: '19px',
-          fontStyle: '900',
-          color: ink,
-        })
+        .text(
+          GRID_W / 2 - 22,
+          0,
+          opensAct && floor ? floor.name : state === 'ahead' ? `${first}–${last}` : `★${earned}/${(last - first + 1) * 3}`,
+          {
+            fontFamily: FONT,
+            fontSize: opensAct ? '15px' : '19px',
+            fontStyle: '900',
+            color: opensAct && mood ? css(mood.accent) : ink,
+          }
+        )
         .setOrigin(1, 0.5)
+        .setAlpha(opensAct && state === 'ahead' ? 0.75 : 1)
     )
     // A finished chapter wears its showroom trophy on the ribbon — the door's own advertisement.
-    if (state === 'done') {
+    // The act plate wears a pair of lift doors instead: it is not a door to the showroom.
+    if (opensAct) {
+      container.add(this.add.image(-GRID_W / 2 + 8, 0, this.elevatorMark()).setDisplaySize(14, 20))
+    } else if (state === 'done') {
       const trophy = trophyFor(chapter + 1)
       if (trophy) {
         const key = ensureGlyphTexture(this, `trophy:${chapter + 1}`, trophy.emoji, 96, 128)
@@ -640,10 +686,37 @@ export class LevelSelectScene extends Phaser.Scene {
       const screenY = ribbonCy + grid.content.y
       if (this.dragMoved >= 12 || screenY < grid.viewTop || screenY > grid.viewBottom) return
       sfx.uiTap()
-      openShowroom(this, { focusChapter: chapter + 1 })
+      // The act plate replays the reveal instead. The elevator card is the only explanation of what
+      // Act II IS, and it is a one-time card — without a way back to it, a player who tapped LATER
+      // (or force-quit through it) could never find out. `openAct2Card` re-latches harmlessly.
+      if (opensAct) void openAct2Card(this, 'home')
+      else openShowroom(this, { focusChapter: chapter + 1 })
     })
     container.add(zone)
     return container
+  }
+
+  /**
+   * A pair of lift doors, 28×40, baked once — the act plate's mark. An Image rather than a Graphics
+   * for the reason every plate here is: a Graphics costs a draw call and a re-tessellation EVERY
+   * FRAME, and this one would be on screen for as long as chapter 31's row is in the window.
+   */
+  private elevatorMark(): string {
+    const T = getTheme()
+    const key = `lvlact2:${T.id}`
+    if (this.textures.exists(key)) return key
+    const g = this.add.graphics()
+    g.fillStyle(T.goldDarkest, 1)
+    g.fillRect(0, 0, 28, 40)
+    for (const x of [1, 15]) {
+      g.fillStyle(T.goldDeep, 1)
+      g.fillRect(x, 1, 12, 38)
+      g.fillStyle(T.gold, 1)
+      g.fillRect(x + 2, 3, 8, 34)
+    }
+    g.generateTexture(key, 28, 40)
+    g.destroy()
+    return key
   }
 
   /**
@@ -1116,8 +1189,13 @@ export class LevelSelectScene extends Phaser.Scene {
     // which arcs at Phaser's default 32 segments: a 3.4px dot cannot show 32 sides, but it can pay for
     // them — a Graphics re-tessellates its whole command buffer every frame, so at ~600 dots that
     // default was tens of thousands of triangles per frame for pixels no one can resolve.
-    const dot = (x: number, y: number, lit: boolean): void => {
-      g.fillStyle(lit ? T.gold : T.suitWatermark, lit ? TRAIL_LIT_ALPHA : TRAIL_DIM_ALPHA)
+    // ACT II tints the LIT trail in the floor's own accent — the route changes colour when it leaves
+    // the main floor, which is the cheapest possible way to say "you are somewhere else now". Only
+    // the travelled half: the dim half is "unexplored" everywhere, and colouring it would be the map
+    // telling you what a floor feels like before you have been in it.
+    const dot = (x: number, y: number, lit: boolean, accent: number | null): void => {
+      const gold = accent ?? T.gold
+      g.fillStyle(lit ? gold : T.suitWatermark, lit ? TRAIL_LIT_ALPHA : TRAIL_DIM_ALPHA)
       g.fillEllipse(x, y, TRAIL_DOT_R * 2, TRAIL_DOT_R * 2, TRAIL_DOT_SIDES)
     }
     // Walk the chips in level order, dotting each n → n+1 gap; endpoints (chip centres) are left
@@ -1130,10 +1208,13 @@ export class LevelSelectScene extends Phaser.Scene {
       // Lit once the destination chip is unlocked; the segment LEAVING the current chip stays dim, so
       // the gold trail ends precisely at "you are here" and "beyond" reads as unexplored (§L4).
       const lit = n + 1 <= unlocked
+      // Keyed to the segment's DESTINATION, so the colour changes exactly at the level that is on
+      // the new floor — the last main-floor dot is still gold.
+      const accent = floorMood(n + 1)?.accent ?? null
       if ((n - 1) % GRID_COLS < GRID_COLS - 1) {
         // Same-row hop: a straight dotted run whose dots peek through the gaps between neighbouring chips.
         const steps = Math.max(2, Math.round(a.distance(b) / TRAIL_DOT_GAP))
-        for (let i = 1; i < steps; i++) dot(Phaser.Math.Linear(a.x, b.x, i / steps), a.y, lit)
+        for (let i = 1; i < steps; i++) dot(Phaser.Math.Linear(a.x, b.x, i / steps), a.y, lit, accent)
       } else {
         // Row wrap: a downward-bowed quadratic "carriage return" sweeping from the row's right end back
         // to the next row's left start, so the journey winds instead of cutting a hard diagonal.
@@ -1143,7 +1224,7 @@ export class LevelSelectScene extends Phaser.Scene {
         for (let i = 1; i < steps; i++) {
           const t = i / steps
           const u = 1 - t
-          dot(u * u * a.x + 2 * u * t * cpx + t * t * b.x, u * u * a.y + 2 * u * t * cpy + t * t * b.y, lit)
+          dot(u * u * a.x + 2 * u * t * cpx + t * t * b.x, u * u * a.y + 2 * u * t * cpy + t * t * b.y, lit, accent)
         }
       }
     }

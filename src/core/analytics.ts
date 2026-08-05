@@ -218,6 +218,23 @@ export const EVENTS = {
   MARKER_WON: 'marker_won',
   MARKER_LOST: 'marker_lost',
 
+  /**
+   * ACT II — THE HIGH-ROLLER FLOORS (Slice 1).
+   *
+   * `act2_reveal` {source} — THE PRIVATE ELEVATOR card rendered. `source` is 'finale' (chained off
+   * the chapter-30 car ceremony, the intended moment) or 'home' (the catch-up door for players who
+   * were already past 300 when the act shipped). The split is the whole point: 'home' counts a
+   * one-time back-fill cohort and will go to zero, so pooling the two would make the act look like
+   * it launched twice as well as it did.
+   *
+   * `floor_enter` {floor, level} — a floor's one-time door card. Deliberately NOT per level: fifty
+   * `level_start` rows already say how much of a floor gets played, and an event that fired on every
+   * one of them would answer the same question with fifty times the noise. What this measures is
+   * ARRIVAL — how many players ever reach floor 2 at all.
+   */
+  ACT2_REVEAL: 'act2_reveal',
+  FLOOR_ENTER: 'floor_enter',
+
   /** The update toast, which the PWA stale-build trap makes worth watching. */
   UPDATE_SHOWN: 'update_shown',
   UPDATE_APPLIED: 'update_applied',
