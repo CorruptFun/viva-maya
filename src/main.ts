@@ -11,6 +11,7 @@ import { ensureSalt } from './core/racesalt'
 import { captureRefFromUrl } from './core/referrals'
 import { setPersistListener } from './core/save'
 import { BootScene } from './scenes/BootScene'
+import { BoutiqueScene } from './scenes/BoutiqueScene'
 import { GameScene } from './scenes/GameScene'
 import { HomeScene } from './scenes/HomeScene'
 import { LevelSelectScene } from './scenes/LevelSelectScene'
@@ -241,7 +242,7 @@ function startGame(): void {
       mode: Phaser.Scale.FIT,
       autoCenter: Phaser.Scale.CENTER_BOTH,
     },
-    scene: [BootScene, HomeScene, LevelSelectScene, StoreScene, SlotScene, GameScene],
+    scene: [BootScene, HomeScene, LevelSelectScene, StoreScene, BoutiqueScene, SlotScene, GameScene],
   })
 
   // Stand the 3D room up on Phaser's OWN canvas + WebGL context (view3d/stage.ts): its sim ticks off

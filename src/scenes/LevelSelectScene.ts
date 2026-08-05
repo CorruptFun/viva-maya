@@ -7,6 +7,7 @@ import { CHAPTER_LEVELS, LEVEL_COUNT } from '../core/levels'
 import { loadSave } from '../core/save'
 import { trophyFor } from '../core/trophies'
 import { floorForChapter } from '../core/actII'
+import { boutiqueOpen } from '../core/boutique'
 import { chapterMood, floorMood, floorPlateLabel } from '../view/floormood'
 import { openAct2Card } from '../view/act2card'
 import { openShowroom } from '../view/showroom'
@@ -930,6 +931,18 @@ export class LevelSelectScene extends Phaser.Scene {
    * NOT interactive: it sits in the same band as the ‹ back button, and a readout that never claims a
    * tap can never take one from it.
    */
+  /**
+   * The star tally — and, once the boutique's door opens, the door itself.
+   *
+   * THE CURRENCY IS THE DOOR. LevelSelect's header is a budgeted band (title row, race marquee, mask
+   * top derived from the strip — see the block above), so a new pill up here would mean re-deriving
+   * the whole band for a shop. It also happens to be the right affordance: the one readout on the
+   * screen that says how many stars you have is exactly where "…and here is what they buy" belongs,
+   * and a player who has never had a reason to look at this number now has one.
+   *
+   * Deferred until `boutiqueOpen` — the same progressive-reveal rule Home applies to LEVELS and the
+   * GIFT STORE. Until then it is the plain readout it has always been, with no chevron and no tap.
+   */
   private addStarTally(x: number, y: number, stars: number): void {
     const T = getTheme()
     const w = 140
@@ -950,11 +963,45 @@ export class LevelSelectScene extends Phaser.Scene {
     const container = this.add.container(x, y).setDepth(50)
     container.add(this.add.image(0, 0, key))
     container.add(this.add.image(-w / 2 + 28, 0, 'star').setDisplaySize(28, 28))
+    const open = boutiqueOpen(loadSave())
     container.add(
       this.add
-        .text(w / 2 - 18, 1, stars.toLocaleString(), { fontFamily: FONT, fontSize: '25px', fontStyle: '900', color: T.goldText })
+        .text(w / 2 - (open ? 34 : 18), 1, stars.toLocaleString(), {
+          fontFamily: FONT,
+          fontSize: '25px',
+          fontStyle: '900',
+          color: T.goldText,
+        })
         .setOrigin(1, 0.5)
     )
+    if (!open) return
+    // The chevron carries the affordance, the way the weekly race strip's does — a readout that is
+    // also a door has to look like one, and colour alone never says "tap me".
+    container.add(
+      this.add
+        .text(w / 2 - 16, 1, '›', { fontFamily: FONT, fontSize: '27px', fontStyle: '900', color: T.goldText })
+        .setOrigin(0.5)
+    )
+    // ⚠️ ARMED ON `pointerdown`, fired on `pointerup` only if the press STARTED here. This screen's
+    // whole body is a swipe surface, and Phaser dispatches `pointerup` to whatever sits under the
+    // finger at RELEASE however far away the press began — so a flick up the grid that happens to
+    // end on this chip would otherwise leave the level map for a shop.
+    let armed = false
+    container
+      .setSize(w, h)
+      .setInteractive({ useHandCursor: true })
+      .on('pointerdown', () => {
+        armed = true
+      })
+      .on('pointerup', () => {
+        if (!armed) return
+        armed = false
+        sfx.uiTap()
+        startScene(this, 'boutique')
+      })
+      .on('pointerout', () => {
+        armed = false
+      })
   }
 
   // ───────────────────────────────────────────────────────────────────────────────────────────────
