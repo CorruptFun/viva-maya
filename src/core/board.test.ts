@@ -316,6 +316,50 @@ describe('THE REEL PULL — the column notch', () => {
   })
 })
 
+describe('matchSymbolFor — what THE TELL reads', () => {
+  it('names the symbol a swap would line up, and leaves the board exactly as it found it', () => {
+    // Column 3 is three cherries with a GAP at row 3; the cherry at (3,4) swipes LEFT into it.
+    const b = build([
+      'ch se di be cl ba ch se',
+      'se di ch be cl ba ch se',
+      'di be ch se cl ba ch se',
+      'be cl se ch cl ba ch se',
+      'cl ba ch se di be ch se',
+      'ba ch di be cl se di be',
+      'ch se di be cl ba ch se',
+      'se di be cl ba ch se di',
+    ])
+    const snap = gridOf(b).map(r => r.map(p => p!.id))
+    expect(b.matchSymbolFor(at(3, 3), at(3, 2))).toBe('cherry')
+    // Read-only in effect: it swaps and swaps straight back.
+    expect(gridOf(b).map(r => r.map(p => p!.id))).toEqual(snap)
+  })
+
+  it('answers null for a swap that lines up nothing, and for one a hazard refuses', () => {
+    const b = neutral() // no two neighbours in it can ever match
+    expect(b.matchSymbolFor(at(3, 3), at(3, 4))).toBeNull()
+    const blocked = neutral()
+    blocked.plant(at(3, 3), 'blocker')
+    expect(blocked.matchSymbolFor(at(3, 3), at(3, 4))).toBeNull()
+  })
+
+  it('agrees with findFirstValidMove on every seed — the tell can never point at a dead pair', () => {
+    for (let seed = 1; seed <= 80; seed++) {
+      const b = new Board(8, 8, 6, mulberry32(seed))
+      const move = b.findFirstValidMove()
+      expect(move).not.toBeNull()
+      // A special activation is a valid move with no run of its own, so null is a legal answer —
+      // but it must never be null because the move itself was bogus.
+      const symbol = b.matchSymbolFor(move!.a, move!.b)
+      if (symbol === null) {
+        const pa = b.get(move!.a)!
+        const pb = b.get(move!.b)!
+        expect({ seed, special: pa.kind !== 'normal' || pb.kind !== 'normal' }).toEqual({ seed, special: true })
+      }
+    }
+  })
+})
+
 describe('every activation path keeps the board and the view in step', () => {
   /** 120 seeds x every legal swap on the board: ~1s on a quiet machine, but 4-5s once `npm test`
    *  saturates the cores, because wall clock here scales with whatever else is running. That put it

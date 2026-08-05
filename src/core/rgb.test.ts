@@ -8,7 +8,7 @@
  * at one corner of the cabinet forever. `ringHue` earns its ping-pong branch here.
  */
 import { describe, expect, it } from 'vitest'
-import { frac, hsvToInt, ringAlpha, ringHue, roundedRectPath } from './rgb'
+import { arcLean, frac, hsvToInt, hueGap, hueOf, ringAlpha, ringHue, roundedRectPath } from './rgb'
 // `view/theme.ts` is Phaser-free (it imports only core), so a core test can read the theme table
 // directly — and it should: the arcs are data the maths is meaningless without.
 import { THEMES, THEME_ORDER } from '../view/theme'
@@ -111,6 +111,120 @@ describe('ringHue', () => {
 
   it('never divides by zero on an empty ring', () => {
     expect(Number.isFinite(ringHue(0, 0, 0.3, 0, 360))).toBe(true)
+  })
+})
+
+/**
+ * THE TELL (Act II) — the ring leaning toward the colour of the best move on the board.
+ *
+ * The whole reason it is a LEAN and not a hue shift is that the ring's arcs are law: shifting the
+ * band far enough to notice would push some theme's arc into a hue family that theme never uses, and
+ * Neon Vegas has five degrees of headroom. These are the assertions that make the lean safe to ship
+ * without re-auditing four themes every time it is retuned.
+ */
+describe('ringHue lean — THE TELL', () => {
+  const N = 48
+
+  it('changes nothing at zero, and defaults to zero for every existing caller', () => {
+    for (let i = 0; i < N; i++) {
+      expect(ringHue(i, N, 0.3, 340, 60, 0)).toBeCloseTo(ringHue(i, N, 0.3, 340, 60))
+    }
+  })
+
+  it('NEVER leaves the arc — at any lean, any phase, any position', () => {
+    // The load-bearing one. If this can fail, the lean can put a hue on the cabinet that the theme
+    // does not own, which is exactly what the per-theme arcs exist to prevent.
+    for (const [from, span] of [
+      [345, 70],
+      [310, 70],
+      [340, 70],
+      [185, 155],
+    ]) {
+      for (const lean of [-2, -1, -0.6, -0.2, 0, 0.2, 0.6, 1, 2]) {
+        for (let phase = 0; phase < 1; phase += 0.05) {
+          for (let i = 0; i < N; i++) {
+            const h = ringHue(i, N, phase, from, span, lean)
+            expect(h).toBeGreaterThanOrEqual(from - 1e-9)
+            expect(h).toBeLessThanOrEqual(from + span + 1e-9)
+          }
+        }
+      }
+    }
+  })
+
+  it('keeps the loop SEAMLESS — position n lands back on position 0', () => {
+    for (const lean of [-1, -0.5, 0.5, 1]) {
+      for (let phase = 0; phase < 1; phase += 0.1) {
+        expect(ringHue(N, N, phase, 310, 70, lean)).toBeCloseTo(ringHue(0, N, phase, 310, 70, lean))
+      }
+    }
+  })
+
+  it('stays MONOTONE in the underlying wave, so the gradient never folds back on itself', () => {
+    // A non-monotone reshape would put the same hue at two places on the way up, which reads as a
+    // banding artefact rather than as a sweep. |k| ≤ 1 is exactly the condition that prevents it.
+    for (const lean of [-1, -0.4, 0.4, 1]) {
+      const half = ringHue(0, 2, 0, 0, 100, lean) // shaped(0) = 0
+      expect(half).toBeCloseTo(0)
+      let prev = -Infinity
+      for (let s = 0; s <= 1.0001; s += 0.02) {
+        const shaped = s + lean * s * (1 - s)
+        expect(shaped).toBeGreaterThanOrEqual(prev - 1e-9)
+        prev = shaped
+      }
+    }
+  })
+
+  it('actually LEANS — a positive lean crowds the ring toward the arc\'s far end', () => {
+    const mean = (lean: number): number => {
+      let sum = 0
+      for (let i = 0; i < N; i++) sum += ringHue(i, N, 0, 340, 60, lean)
+      return sum / N
+    }
+    expect(mean(0.8)).toBeGreaterThan(mean(0) + 1)
+    expect(mean(-0.8)).toBeLessThan(mean(0) - 1)
+  })
+})
+
+describe('hueGap / hueOf / arcLean', () => {
+  it('measures the SHORT way around the wheel', () => {
+    expect(hueGap(10, 350)).toBeCloseTo(20)
+    expect(hueGap(350, 10)).toBeCloseTo(20)
+    expect(hueGap(0, 180)).toBeCloseTo(180)
+    expect(hueGap(0, 0)).toBe(0)
+  })
+
+  it('reads a hue back out of a packed colour', () => {
+    expect(hueOf(0xff0000)).toBeCloseTo(0)
+    expect(hueOf(0x00ff00)).toBeCloseTo(120)
+    expect(hueOf(0x0000ff)).toBeCloseTo(240)
+    expect(hueOf(0x808080)).toBe(0) // grey has no hue
+    // Round-trips against the forward transform it is the inverse of.
+    for (const h of [0, 37, 120, 210, 300, 359]) expect(hueOf(hsvToInt(h, 1, 1))).toBeCloseTo(h, 0)
+  })
+
+  it('pins the lean to whichever END of the arc the hue is nearer', () => {
+    // Golden Hour's arc: 345 (crimson) → 55 (gold).
+    expect(arcLean(345, 70, 345)).toBeCloseTo(-1) // exactly the start
+    expect(arcLean(345, 70, 55)).toBeCloseTo(1) // exactly the far end
+    expect(arcLean(345, 70, 20)).toBeCloseTo(0, 1) // dead centre → no opinion
+    // A cherry (rose) pulls crimson; a bell (gold) pulls gold. That is the whole feature.
+    expect(arcLean(345, 70, 340)).toBeLessThan(-0.5)
+    expect(arcLean(345, 70, 45)).toBeGreaterThan(0.5)
+  })
+
+  it('never answers outside [-1, 1], for any hue against any arc', () => {
+    for (const [from, span] of [
+      [345, 70],
+      [310, 70],
+      [185, 155],
+    ]) {
+      for (let h = 0; h < 360; h += 3) {
+        const k = arcLean(from, span, h)
+        expect(k).toBeGreaterThanOrEqual(-1)
+        expect(k).toBeLessThanOrEqual(1)
+      }
+    }
   })
 })
 
@@ -269,17 +383,11 @@ describe('theme hue arcs', () => {
   })
 })
 
-/** Hue in degrees of a packed `0xRRGGBB` — the inverse of `hsvToInt`'s hue channel. */
-function hueOf(rgb: number): number {
-  const r = ((rgb >> 16) & 0xff) / 255
-  const g = ((rgb >> 8) & 0xff) / 255
-  const b = (rgb & 0xff) / 255
-  const max = Math.max(r, g, b)
-  const d = max - Math.min(r, g, b)
-  if (d === 0) return 0
-  const h = 60 * (max === r ? (((g - b) / d) % 6) : max === g ? (b - r) / d + 2 : (r - g) / d + 4)
-  return h < 0 ? h + 360 : h
-}
+// `hueOf` used to live here as a private oracle for the arc-fitting test below. It moved into
+// `rgb.ts` when THE TELL needed it in production, and the arc test now imports it — which is a
+// stronger position than it was in, not a weaker one: the shared function is pinned directly above
+// against the primaries AND round-tripped through `hsvToInt`, where the private copy was never
+// asserted on at all.
 
 /** Does `hue` (0..360) fall on the arc `[from, from + span]`? Checks both wrap directions. */
 function arcContains(from: number, span: number, hue: number): boolean {

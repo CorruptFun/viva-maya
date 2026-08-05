@@ -40,6 +40,13 @@
  * at ATTACH time, so a theme swap only repaints because the picker restarts the scene (ui.ts's
  * close-if-changed) — a live re-tint would need this to re-read `getTheme()`.
  *
+ * THE TELL (Act II) rides the SAME clock. `setTell(tint)` leans the ring toward the colour of the
+ * best move on the board while it idles, and it does so by redistributing the ring's length across
+ * the arc rather than by moving the arc — because moving it would break the per-theme law above (Neon
+ * Vegas has five degrees of headroom before its arc reaches a hue it must never show). One eased
+ * scalar, computed once per paint; no second clock, no per-node tween, no shader. `ringHue`'s `lean`
+ * parameter carries the proof.
+ *
  * ACCESSIBILITY. Reduced motion paints the arc ONCE and never ticks — you keep the colour, you lose
  * the travel (a hue gradient is not vestibular motion). Reduce-flashing clamps the lap slow and
  * floors the brightness swing, so it breathes instead of strobing. Both are checked live per attach.
@@ -49,7 +56,7 @@
  * (a seamless closed loop, an arc that never leaves its band, even arc-length spacing) are pure.
  */
 import Phaser from 'phaser'
-import { frac, hsvToInt, ringAlpha, ringHue, roundedRectPath } from '../core/rgb'
+import { arcLean, frac, hsvToInt, hueOf, ringAlpha, ringHue, roundedRectPath } from '../core/rgb'
 import { quality, type QualityTier } from './quality'
 import { getTheme, prefersReducedMotion, reduceFlashing } from './theme'
 
@@ -143,6 +150,21 @@ const HALO_EVERY = 3
 /** The milled channel's own colour — a dark warm brown, never black, so it stays in the gold family. */
 const GROOVE_INK = 0x241804
 
+/**
+ * THE TELL (Act II) — how far the ring is allowed to lean toward the colour of the best move on the
+ * board, and how long it takes to get there.
+ *
+ * The lean redistributes the ring's LENGTH across its existing arc; it can never move the arc (see
+ * `ringHue`), so this number is a matter of taste rather than of safety. 0.7 is a clear lean that
+ * still reads as the same cabinet: at 1 the ring spends almost none of itself at the far end and the
+ * gradient goes flat, which looks broken rather than meaningful.
+ *
+ * The ease is deliberately slower than a move: a tell that snapped on every settle would be a
+ * flicker, and the House is supposed to be giving something away, not signalling.
+ */
+const TELL_MAX = 0.7
+const TELL_EASE_MS = 1400
+
 // ---------------------------------------------------------------------------
 // The ring
 // ---------------------------------------------------------------------------
@@ -191,6 +213,16 @@ export interface RgbRing {
   surge(strength?: number): void
   /** Current mode — lets a caller guard a delayed handoff (win → idle) the way the slots do. */
   mode(): RgbMode
+  /**
+   * THE TELL — lean the ring toward `tint` (a packed `0xRRGGBB`, normally a board symbol's colour),
+   * or `null` to settle back. Cheap and idempotent: it recomputes ONE number and the existing UPDATE
+   * clock eases the ring onto it, so a caller may set it on every settle without any tween churn.
+   *
+   * The ring never leaves its theme's arc doing this — see `ringHue`'s `lean`. Under reduced motion
+   * this is a no-op, like `surge`: the ring is painted once there and never ticks, and a colour that
+   * silently changed between paints would be worse than no tell at all.
+   */
+  setTell(tint: number | null): void
   /** Unhook the per-frame drive and destroy every layer. Safe to call twice. */
   destroy(): void
 }
@@ -319,6 +351,10 @@ export function attachRgbRing(
   let surgeMs = 0
   let surgePeak = 0
   let dead = false
+  // THE TELL: one target, one eased current value. Both scalars — no per-node state, and nothing
+  // here is a tween. `lean` is what `paint` hands to `ringHue`, once for the whole ring.
+  let leanTarget = 0
+  let lean = 0
 
   /** Paint the whole ring at the current phase. */
   const paint = (dim: number): void => {
@@ -335,12 +371,12 @@ export function attachRgbRing(
       // pinned at 1 so the band never turns translucent and lets the groove wash through as grey.
       // `dim` is deliberately NOT applied here: the idle throttle calms the ring through the halo
       // alone, because pulling the band's value down is the same move that turns gold into olive.
-      band[i].setTint(hsvToInt(ringHue(i, n, phase, hueFrom, span), sat, BAND_MIN + (1 - BAND_MIN) * w))
+      band[i].setTint(hsvToInt(ringHue(i, n, phase, hueFrom, span, lean), sat, BAND_MIN + (1 - BAND_MIN) * w))
     }
     for (let k = 0; k < halo.length; k++) {
       const i = haloIdx[k]
       const w = ringAlpha(i, n, phase, 0, 1, p.waves)
-      halo[k].setTint(hsvToInt(ringHue(i, n, phase, hueFrom, span), sat, 1))
+      halo[k].setTint(hsvToInt(ringHue(i, n, phase, hueFrom, span, lean), sat, 1))
       halo[k].setAlpha((lo + (p.hi - lo) * w) * dim * haloGain)
     }
   }
@@ -354,6 +390,7 @@ export function attachRgbRing(
         mode = m
       },
       surge: noop,
+      setTell: noop,
       mode: (): RgbMode => mode,
       destroy: () => destroyAll(),
     }
@@ -380,6 +417,13 @@ export function attachRgbRing(
 
     phase = frac(phase + dt / lap)
     if (surgeMs > 0) surgeMs = Math.max(0, surgeMs - dt)
+    // THE TELL eases here, with the phase, and BEFORE the write-thinning return below — a demoted
+    // device must keep drifting at the same rate and merely paint it less often, exactly as the lap
+    // does. Exponential approach, so a target that changes mid-drift is followed rather than snapped.
+    if (lean !== leanTarget) {
+      lean += (leanTarget - lean) * Math.min(1, dt / TELL_EASE_MS)
+      if (Math.abs(leanTarget - lean) < 0.002) lean = leanTarget
+    }
 
     const step = TIER_STEP_MS[quality.tier()]
     sinceWrite += dt
@@ -417,6 +461,12 @@ export function attachRgbRing(
       // Flash-averse players get the colour-and-speed surge without the brightness spike.
       surgePeak = reduceFlashing() ? 0.25 : 0.45 + s * 0.18
       surgeMs = SURGE_MS
+    },
+    setTell: (tint: number | null): void => {
+      // The arc is read from the theme at ATTACH time (see the header), so the lean is measured
+      // against the same `hueFrom`/`hueSpan` the ring is actually painting with — including a floor
+      // overlay's, since that was already folded in when `getTheme()` was read.
+      leanTarget = tint === null ? 0 : arcLean(hueFrom, hueSpan, hueOf(tint)) * TELL_MAX
     },
     mode: (): RgbMode => mode,
     destroy: destroyAll,

@@ -825,8 +825,13 @@ export function ensureHazardTexture(scene: Phaser.Scene, kind: HazardKind, varia
   return key
 }
 
-/** Representative colour per symbol — the "match by colour" accent carried onto specials. */
-const SYMBOL_TINT: Record<SymbolType, number> = {
+/**
+ * Representative colour per symbol — the "match by colour" accent carried onto specials, and (Act
+ * II) the colour THE TELL leans the cabinet marquee toward. Exported so there is exactly one answer
+ * to "what colour is a cherry": a second table would drift the moment a symbol was retinted, and the
+ * symptom would be the ring saying one thing while the board said another.
+ */
+export const SYMBOL_TINT: Record<SymbolType, number> = {
   cherry: P.rose,
   seven: 0xe0312e,
   diamond: 0x49c6ee,

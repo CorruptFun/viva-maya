@@ -81,11 +81,12 @@ import {
   rgbMarquee,
   setFloorOverlay,
 } from '../view/theme'
+import { isAct2Level } from '../core/actII'
 import { activeFloorMood, enterFloor } from '../view/floormood'
 import { maybeFloorDoor } from '../view/floordoor'
 import { addEndlessLeaderStrip } from '../view/leaderboardpanel'
 import { attachRgbRing, type RgbRing } from '../view/rgbmarquee'
-import { TEX_SIZE, ensurePieceTexture } from '../view/textures'
+import { SYMBOL_TINT, TEX_SIZE, ensurePieceTexture } from '../view/textures'
 import {
   FONT,
   GHOST_PILL,
@@ -1829,6 +1830,34 @@ export class GameScene extends Phaser.Scene {
     this.disarmHint()
     if (this.state !== 'idle') return
     this.hintTimer = this.time.delayedCall(5000, () => this.showHint())
+    this.refreshTell()
+  }
+
+  /**
+   * THE TELL (Act II) — while the board sits idle, the cabinet marquee leans toward the colour of
+   * the best move on it. The House has noticed you, and it gives a little away.
+   *
+   * Seated on the hint's arm/disarm pair on purpose: those two ALREADY mean "the board is settled
+   * and waiting" and "something is happening", which is precisely the tell's own condition, and
+   * sharing them means the tell can never disagree with the nudge about whether the board is idle.
+   * Unlike the nudge it fires immediately rather than after five seconds — the drift itself takes
+   * over a second, so a tell that waited for the nudge would only ever be seen by a player who had
+   * already given up.
+   *
+   * Three separate ways this costs nothing when it should: the ring is only attached when the
+   * player's RGB Marquee pref is on (with it off the legacy bulb ring runs and `cabinetRgb` is
+   * undefined), `setTell` is a no-op under reduced motion, and the whole thing is gated to Act II
+   * floors — the House does not read your board on the main floor.
+   */
+  private refreshTell(): void {
+    if (!this.cabinetRgb) return
+    const { act2 } = DIFFICULTY
+    if (!act2.enabled || !act2.tell || this.endless || !isAct2Level(this.level)) return
+    const move = this.board.findFirstValidMove()
+    const symbol = move ? this.board.matchSymbolFor(move.a, move.b) : null
+    // A special-piece activation has no run and therefore no colour to lean toward; so does a board
+    // mid-reshuffle. Both settle the ring rather than guessing.
+    this.cabinetRgb.setTell(symbol ? SYMBOL_TINT[symbol] : null)
   }
 
   /**
@@ -1871,6 +1900,7 @@ export class GameScene extends Phaser.Scene {
 
   /** Retire the idle-hint nudge: cancel the timer, stop the pulse, settle the pair, drop the ring. */
   private disarmHint(): void {
+    this.cabinetRgb?.setTell(null) // THE TELL goes with it — the board is no longer idle
     this.hintTimer?.remove(false)
     this.hintTimer = null
     this.hintTween?.stop()

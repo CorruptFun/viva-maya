@@ -19,11 +19,70 @@ export function frac(x: number): number {
  * the ring is a closed loop, so a linear sweep would snap from the arc's end back to its start at the
  * wrap point and leave a hard hue seam sitting at one corner of the cabinet forever. Narrow arcs
  * therefore ping-pong (0 → 1 → 0 around the ring), which closes the loop smoothly at both ends.
+ *
+ * ── `lean` (THE TELL) — EMPHASIS, NEVER BAND ────────────────────────────────────────────────
+ * `lean` in [-1, 1] redistributes how much of the ring's LENGTH sits near each end of the arc: at
+ * +1 most of the ring crowds the arc's far end, at -1 its start, at 0 nothing changes. It is the one
+ * shape a hue bias can take without breaking anything the ring promises, and the reason it is safe
+ * is worth writing down, because the obvious alternative is not:
+ *
+ *   · Shifting `from` toward a target hue MOVES THE BAND, and every theme arc is cut to hues that
+ *     theme already uses (`rgb.test.ts`: "no arc strays into a hue family its theme never uses").
+ *     Neon Vegas has FIVE degrees of headroom before its arc reaches the warm reds it must never
+ *     show. Any shift big enough to see is big enough to break that law on some theme.
+ *   · `s + k·s(1-s)` is monotone on [0,1] for |k| ≤ 1 (it is linear in its own derivative, so
+ *     checking the two endpoints is checking all of it), and it pins f(0)=0 and f(1)=1. So the hue
+ *     stays strictly inside [from, from+span] — the band is untouched, by construction — and both
+ *     ends of the ring still land on the same hue, so the loop stays seamless.
+ *
+ * The lean is one number computed per PAINT, not per node, and it is eased on the ring's existing
+ * UPDATE clock. Nothing here adds a tween, and nothing here needs a shader.
  */
-export function ringHue(i: number, n: number, phase: number, from: number, span: number): number {
+export function ringHue(i: number, n: number, phase: number, from: number, span: number, lean = 0): number {
   const t = frac(i / Math.max(1, n) + phase)
-  const shaped = span >= 360 ? t : 1 - Math.abs(2 * t - 1)
+  const base = span >= 360 ? t : 1 - Math.abs(2 * t - 1)
+  const k = lean < -1 ? -1 : lean > 1 ? 1 : lean
+  const shaped = k === 0 ? base : base + k * base * (1 - base)
   return from + shaped * span
+}
+
+/** Shortest distance between two hues around the wheel, in degrees — always 0..180. */
+export function hueGap(a: number, b: number): number {
+  const d = Math.abs(frac((a - b) / 360) * 360)
+  return d > 180 ? 360 - d : d
+}
+
+/**
+ * Hue in degrees of a packed `0xRRGGBB` — the inverse of `hsvToInt`'s hue channel. Greys have no
+ * hue and answer 0, which is the only sensible answer and never reaches the ring anyway (every piece
+ * tint it is asked about is a saturated colour).
+ */
+export function hueOf(rgb: number): number {
+  const r = ((rgb >> 16) & 0xff) / 255
+  const g = ((rgb >> 8) & 0xff) / 255
+  const b = (rgb & 0xff) / 255
+  const max = Math.max(r, g, b)
+  const d = max - Math.min(r, g, b)
+  if (d === 0) return 0
+  const h = 60 * (max === r ? (((g - b) / d) % 6) : max === g ? (b - r) / d + 2 : (r - g) / d + 4)
+  return h < 0 ? h + 360 : h
+}
+
+/**
+ * THE TELL's lean: which END of the arc `[from, from+span]` is nearer to `hue`, as a number in
+ * [-1, 1] ready to hand to `ringHue`. -1 is "all the way toward the arc's start", +1 its far end.
+ *
+ * A RATIO rather than a threshold, so the answer degrades gracefully instead of flipping: a hue the
+ * theme genuinely has (a cherry on the blush arc) pins the ring near that end, and a hue no arc
+ * contains (a clover on any warm theme) leans gently toward whichever end is less wrong. Every warm
+ * theme therefore says "green" as "the gold end", which is the honest translation — the ring is the
+ * cabinet's lighting and is not allowed to turn green to say so.
+ */
+export function arcLean(from: number, span: number, hue: number): number {
+  const d0 = hueGap(hue, from)
+  const d1 = hueGap(hue, from + span)
+  const sum = d0 + d1
+  return sum > 0 ? (d0 - d1) / sum : 0
 }
 
 /**

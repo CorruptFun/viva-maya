@@ -751,6 +751,27 @@ export class Board {
     return this.findFirstValidMove() !== null
   }
 
+  /**
+   * The SYMBOL a swap would line up, or null when it lines up nothing directly (an illegal swap, or
+   * a special-piece activation, which is a valid move that forms no run of its own).
+   *
+   * Read-only in effect: it swaps, looks, and swaps straight back — the same thing `wouldSwapMatch`
+   * already does, with the run's symbol kept instead of thrown away. Draws NO random numbers, which
+   * is what makes it safe to add to a shared board: it cannot move a seeded board's future by a
+   * single value, so the endless/race goldens are untouched.
+   *
+   * Deliberately separate from `findFirstValidMove` rather than folded into its return: that method
+   * runs inside `regenerate`'s fill loop and `seedHazards`, where the symbol would be computed
+   * hundreds of times and used never.
+   */
+  matchSymbolFor(a: Coord, b: Coord): SymbolType | null {
+    if (!this.wouldSwapMatch(a, b)) return null
+    this.swap(a, b)
+    const runs = this.findRuns()
+    this.swap(a, b)
+    return runs[0]?.symbol ?? null
+  }
+
   /** Author a cell: become `kind`, keeping the symbol unless one is given — daily-boost plants + DEV tooling. */
   plant(at: Coord, kind: PieceKind, symbol?: SymbolType): void {
     const p = this.get(at)
