@@ -14,6 +14,7 @@ import {
 import { ACT1_LEVELS, CHAPTER_COUNT, CHAPTER_LEVELS, LEVEL_COUNT, levelSpec } from './levels'
 import { DIFFICULTY, isTeachingLevel } from './difficulty'
 import { CHAPTER_PURSES, TROPHIES } from './trophies'
+import type { SymbolType } from './types'
 
 /**
  * ACT II's structural promises. Two of them are the kind that cost a player something real when
@@ -145,6 +146,71 @@ describe('the act is revocable', () => {
         objectives: base.objectives,
       })
     }
+  })
+})
+
+/**
+ * GOLDEN — floor 1's specs exactly as authored, `levels.test.ts`'s L1–30 table one act up.
+ *
+ * `[level, moves, [[symbol, count], …], scoreTarget?]`. The SYMBOLS are pinned as hard as the
+ * numbers: `levelSpec` draws them from a per-level stream, so a stray draw added anywhere before the
+ * objective loop would silently re-roll every goal on every level in the game. That is the exact
+ * trap `hazards.ts` documents, and this is the Act II half of the proof that nothing has sprung it.
+ *
+ * A failure here means SHIPPED LEVELS MOVED. Re-record only as a deliberate content change.
+ */
+const ACT2_GOLDEN: [number, number, [SymbolType, number][], number?][] = [
+  [301, 90, [['bell', 102], ['seven', 102]], 16100],
+  [302, 87, [['cherry', 102], ['bell', 102], ['diamond', 102]]],
+  [303, 87, [['diamond', 102], ['bell', 102], ['bar', 102]]],
+  [304, 87, [['cherry', 102], ['seven', 102], ['diamond', 102]]],
+  [305, 87, [['cherry', 102], ['seven', 102], ['bar', 102]]],
+  [306, 87, [['bell', 102], ['bar', 102]], 18900],
+  [307, 88, [['cherry', 103], ['bell', 103], ['seven', 103]]],
+  [308, 88, [['cherry', 103], ['clover', 103], ['bar', 103]]],
+  [309, 88, [['diamond', 103], ['bar', 103], ['cherry', 103]]],
+  [310, 88, [['bell', 103], ['bar', 103], ['clover', 103]]],
+  [311, 88, [['diamond', 103], ['cherry', 103]], 19100],
+  [312, 88, [['bar', 103], ['diamond', 103], ['cherry', 103]]],
+  [313, 88, [['cherry', 103], ['bar', 103], ['diamond', 103]]],
+  [314, 88, [['diamond', 103], ['bell', 103], ['cherry', 103]]],
+  [315, 88, [['bar', 103], ['seven', 103], ['bell', 103]]],
+  [316, 89, [['bell', 104], ['bar', 104]], 19300],
+  [317, 89, [['cherry', 104], ['bar', 104], ['clover', 104]]],
+  [318, 89, [['bell', 104], ['cherry', 104], ['clover', 104]]],
+  [319, 88, [['bar', 104], ['clover', 104], ['bell', 104]]],
+  [320, 88, [['cherry', 104], ['diamond', 104], ['seven', 104]]],
+  [321, 88, [['seven', 104], ['bar', 104]], 19300],
+  [322, 88, [['cherry', 104], ['diamond', 104], ['bell', 104]]],
+  [323, 88, [['bar', 104], ['clover', 104], ['cherry', 104]]],
+  [324, 88, [['seven', 104], ['bar', 104], ['clover', 104]]],
+  [325, 89, [['diamond', 105], ['seven', 105], ['clover', 105]]],
+  [326, 89, [['seven', 105], ['bar', 105]], 19500],
+  [327, 89, [['diamond', 105], ['clover', 105], ['bell', 105]]],
+  [328, 89, [['cherry', 105], ['bar', 105], ['diamond', 105]]],
+  [329, 89, [['diamond', 105], ['bell', 105], ['seven', 105]]],
+  [330, 89, [['seven', 105], ['diamond', 105], ['bar', 105]]],
+]
+
+describe('floor 1 as authored — GOLDEN', () => {
+  it('pins moves, goal symbols, counts and plaques for 301–330', () => {
+    for (const [level, moves, objectives, scoreTarget] of ACT2_GOLDEN) {
+      const s = levelSpec(level)
+      expect({ level, moves: s.moves, target: s.scoreTarget }).toEqual({ level, moves, target: scoreTarget })
+      expect({ level, o: s.objectives.map(o => [o.symbol, o.count]) }).toEqual({ level, o: objectives })
+      // Every one of them carries the rail — floor 1 IS the reel-pull floor.
+      expect({ level, pull: s.pull }).toEqual({ level, pull: true })
+    }
+  })
+
+  it('teaches 301 with room to learn in: the softest budget on the floor', () => {
+    // The teaching level's collect ratio must be the LOWEST of its decade. A new verb learned under
+    // the floor's own pressure is not taught, it is sprung.
+    const ratio = (L: number): number => {
+      const s = levelSpec(L)
+      return s.objectives.reduce((n, o) => n + o.count, 0) / s.moves
+    }
+    for (let L = 302; L <= 310; L++) expect({ L, harder: ratio(L) > ratio(301) }).toEqual({ L, harder: true })
   })
 })
 

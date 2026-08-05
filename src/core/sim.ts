@@ -92,6 +92,16 @@ export function everyValidMove(b: Board): { a: Coord; to: Coord }[] {
   return out
 }
 
+/**
+ * Columns THE REEL PULL could take on this board (Act II). Empty on every Act I level, because the
+ * caller only asks when the spec carries `pull`.
+ */
+export function everyPull(b: Board): number[] {
+  const out: number[] = []
+  for (let c = 0; c < b.cols; c++) if (b.canPull(c)) out.push(c)
+  return out
+}
+
 /** Goal-aware collect count for one wave: only goal symbols, never jackpots or blockers. */
 function goalValue(cleared: { piece: Piece }[], goals: Set<SymbolType>): number {
   let n = 0
@@ -155,6 +165,52 @@ function previewValue(b: Board, a: Coord, to: Coord, goals: Set<SymbolType>, pol
   )
 }
 
+/**
+ * What a player can SEE before committing a PULL — the same one-wave lookahead `previewValue` gives
+ * a swap, so the two options are compared on equal terms.
+ *
+ * ⚠️ PROXY BIAS, stated plainly. This scores only what the pull IMMEDIATELY matches, which means the
+ * proxy will essentially never spend a move on a pull that matches nothing — and repositioning for
+ * a move you can see two moves out is the entire strategic point of the verb. So the sim's Act II
+ * numbers are a FLOOR on player power and therefore a CEILING on difficulty: a level the banker can
+ * clear is comfortably clearable, and one it struggles with may still be fine. Do not tune Act II
+ * downward off these figures without first making the proxy plan a pull.
+ */
+function previewPull(b: Board, col: number, goals: Set<SymbolType>, policy: Policy): number {
+  if (!b.pullColumn(col)) return 0
+  const wave = b.matchWave()
+  if (!wave) return 0
+  if (policy === 'greedy') return wave.cleared.length
+  const h = wave.hazards
+  return (
+    goalValue(wave.cleared, goals) * 2 +
+    wave.cleared.length * 0.5 +
+    (h ? h.coatsStripped.length * 2 : 0) +
+    (h ? (h.blockersDamaged.length + h.blockersBroken.length) * 3 : 0)
+  )
+}
+
+/** Resolve a committed PULL through the real cascade loop, decrementing objectives as it goes. */
+function resolvePullTracking(b: Board, col: number, remaining: Map<SymbolType, number>): { cascade: number; points: number } {
+  if (!b.pullColumn(col)) return { cascade: 0, points: 0 }
+  let wave = b.matchWave()
+  let cascade = 0
+  let points = 0
+  while (wave) {
+    cascade++
+    points += wave.cleared.length * POINTS_PER_PIECE * cascade
+    for (const { piece } of wave.cleared) {
+      if (piece.kind === 'jackpot' || piece.kind === 'blocker') continue
+      const left = remaining.get(piece.symbol)
+      if (left !== undefined && left > 0) remaining.set(piece.symbol, left - 1)
+    }
+    b.applyGravity()
+    b.refill()
+    wave = b.matchWave()
+  }
+  return { cascade, points }
+}
+
 /** Build the board a real attempt at `level` would get, hazards included. */
 export function buildLevelBoard(level: number, seed: number): Board {
   const spec = levelSpec(level)
@@ -203,6 +259,11 @@ export function playLevel(level: number, seed: number, policy: Policy, specOverr
     }
 
     let pick = moves[0]
+    // THE REEL PULL competes with the swaps on the same yardstick — `pullCol` wins only when its
+    // opening wave beats every swap's. Guarded by the SPEC's flag, not by the level number, so an
+    // Act I measurement can never pick up a verb that level does not have and every recorded figure
+    // for L1–300 stays exactly where it was.
+    let pullCol = -1
     if (policy !== 'first') {
       const snap = snapshot(b)
       let best = -Infinity
@@ -214,11 +275,23 @@ export function playLevel(level: number, seed: number, policy: Policy, specOverr
           pick = mv
         }
       }
+      if (spec.pull) {
+        for (const col of everyPull(b)) {
+          const v = previewPull(b, col, goals, policy)
+          restore(b, snap)
+          if (v > best) {
+            best = v
+            pullCol = col
+          }
+        }
+      }
     }
 
-    // Track per-symbol progress through the committed wave.
+    // Track per-symbol progress through the committed wave. A pull costs the same one move a swap
+    // does — that is the whole trade the verb sells — so both land in the same loop iteration.
     const before = new Map(remaining)
-    const res = resolveSwapTracking(b, pick.a, pick.to, remaining)
+    const res =
+      pullCol >= 0 ? resolvePullTracking(b, pullCol, remaining) : resolveSwapTracking(b, pick.a, pick.to, remaining)
     chains.push(res.cascade)
     score += res.points
     for (const [s, v] of before) collected += Math.max(0, v - (remaining.get(s) ?? 0))

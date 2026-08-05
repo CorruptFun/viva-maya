@@ -228,6 +228,87 @@ function resolve(b: Board, first: ClearWave, tag: string, bad: string[]): void {
   if (cascade >= 60 && bad.length < 20) bad.push(`${tag}: cascade never settled`)
 }
 
+describe('THE REEL PULL — the column notch', () => {
+  it('rotates the column down one and wraps the bottom piece to the top, touching nothing else', () => {
+    const b = neutral()
+    const before = gridOf(b).map(r => r.map(p => p!.id))
+    const moves = b.pullColumn(3)!
+    expect(moves).not.toBeNull()
+    // Column 3: every id shifts down one, the bottom id lands in row 0.
+    for (let r = 1; r < 8; r++) expect(gridOf(b)[r][3]!.id).toBe(before[r - 1][3])
+    expect(gridOf(b)[0][3]!.id).toBe(before[7][3])
+    // Every OTHER column is byte-identical — a pull is one column's business.
+    for (let r = 0; r < 8; r++) {
+      for (let c = 0; c < 8; c++) {
+        if (c === 3) continue
+        expect(gridOf(b)[r][c]!.id).toBe(before[r][c])
+      }
+    }
+    // Every piece that moved is reported exactly once, with the right from/to — the same
+    // model↔view contract gravity signs, and the reason the view can tween this for free.
+    expect(moves).toHaveLength(8)
+    expect(new Set(moves.map(m => m.piece.id)).size).toBe(8)
+    for (const m of moves) expect(m.to.col).toBe(3)
+  })
+
+  it('refuses a column holding a blocker or a clamp — the rule those pieces already carry', () => {
+    const blocked = neutral()
+    blocked.plant(at(4, 2), 'blocker')
+    expect(blocked.canPull(2)).toBe(false)
+    expect(blocked.pullColumn(2)).toBeNull()
+    expect(blocked.canPull(3)).toBe(true)
+
+    const clamped = neutral()
+    const g = gridOf(clamped)
+    g[6][5] = { ...g[6][5]!, locked: true }
+    expect(clamped.canPull(5)).toBe(false)
+    expect(clamped.pullColumn(5)).toBeNull()
+
+    // A refused pull leaves the board completely untouched — no half-rotation.
+    const snap = gridOf(clamped).map(r => r.map(p => p!.id))
+    clamped.pullColumn(5)
+    expect(gridOf(clamped).map(r => r.map(p => p!.id))).toEqual(snap)
+  })
+
+  it('refuses off-board columns and garbage', () => {
+    const b = neutral()
+    for (const c of [-1, 8, 99, 1.5, Number.NaN]) {
+      expect(b.canPull(c)).toBe(false)
+      expect(b.pullColumn(c)).toBeNull()
+    }
+  })
+
+  it('carries specials through the wrap without consuming them', () => {
+    const b = neutral()
+    b.plant(at(7, 4), 'diceBomb')
+    const id = b.get(at(7, 4))!.id
+    expect(b.pullColumn(4)).not.toBeNull()
+    const wrapped = b.get(at(0, 4))!
+    expect({ id: wrapped.id, kind: wrapped.kind }).toEqual({ id, kind: 'diceBomb' })
+  })
+
+  it('survives a fuzz over every column of every seed, resolving like any other move', () => {
+    // The same invariant harness the swap fuzz uses: nothing leaves the board unreported, nothing
+    // arrives unreported, nothing is reported twice, and no special is consumed without detonating.
+    const bad: string[] = []
+    for (let seed = 1; seed <= 120; seed++) {
+      for (let c = 0; c < 8; c++) {
+        const b = salted(seed, 6)
+        if (!b.canPull(c)) continue
+        const idsBefore = new Set(pieces(b).keys())
+        expect(b.pullColumn(c)).not.toBeNull()
+        // A pull moves pieces, it never removes or mints them — check that BEFORE any wave runs.
+        const idsAfter = new Set(pieces(b).keys())
+        if (idsAfter.size !== idsBefore.size) bad.push(`s${seed} c${c}: the pull changed the piece count`)
+        for (const id of idsBefore) if (!idsAfter.has(id)) bad.push(`s${seed} c${c}: piece ${id} vanished in the pull`)
+        const wave = b.matchWave()
+        if (wave) resolve(b, wave, `s${seed} pull c${c}`, bad)
+      }
+    }
+    expect(bad).toEqual([])
+  })
+})
+
 describe('every activation path keeps the board and the view in step', () => {
   /** 120 seeds x every legal swap on the board: ~1s on a quiet machine, but 4-5s once `npm test`
    *  saturates the cores, because wall clock here scales with whatever else is running. That put it

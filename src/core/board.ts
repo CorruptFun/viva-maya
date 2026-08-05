@@ -670,6 +670,61 @@ export class Board {
     return spawns
   }
 
+  // ------------------------------------------------------------- the reel pull
+
+  /**
+   * THE REEL PULL (Act II) — slide one COLUMN down a single notch, the bottom piece riding over the
+   * top into row 0. Returns the moves for the view to tween, or NULL when the column refuses.
+   *
+   * ── DORMANT BY ABSENCE ──────────────────────────────────────────────────────────────────
+   * Purely additive: nothing above calls this, so every existing path through the board — endless
+   * included — behaves exactly as it did. That is the blocker precedent, and it is what lets
+   * `boardpick.test.ts`'s goldens pass unmodified while a new verb ships.
+   *
+   * ── THE TWO REFUSALS, AND WHY THEY ARE NOT BALANCE CHOICES ──────────────────────────────
+   * A column refuses when it holds a BLOCKER or a LOCKED piece, and both fall out of what those
+   * things already mean rather than out of tuning:
+   *   · a blocker never moves — it is not a piece in a column, it is a hole in one. `columnBoundaries`
+   *     already treats it as a wall that gravity cannot cross, and a pull is gravity with an opinion.
+   *   · a locked piece "still matches, but it will not move". A pull moves it. Same rule, one scale up.
+   * The second one is the reason this verb makes an OLD mechanic new: from 301 a clamp stops being
+   * texture and starts being a decision about which column you can still work with.
+   *
+   * Specials ride the wrap intact — a Wild Reel pulled off the bottom lands in row 0 still armed,
+   * because a pull is a move, not a clear, and nothing here consumes anything. The caller resolves
+   * the result through the ordinary wave pipeline, so a pull that lands a run cascades exactly like
+   * a swap and a pull that lands nothing is simply a move spent on position.
+   */
+  pullColumn(col: number): FallMove[] | null {
+    if (!Number.isInteger(col) || col < 0 || col >= this.cols) return null
+    const column: Piece[] = []
+    for (let r = 0; r < this.rows; r++) {
+      const p = this.grid[r][col]
+      // A hole means a wave is mid-resolve; refusing is right, and the scene never asks then anyway.
+      if (!p || p.kind === 'blocker' || p.locked) return null
+      column.push(p)
+    }
+    const moves: FallMove[] = []
+    const wrapped = column[this.rows - 1]
+    for (let r = this.rows - 1; r > 0; r--) {
+      this.grid[r][col] = column[r - 1]
+      moves.push({ piece: column[r - 1], from: { row: r - 1, col }, to: { row: r, col } })
+    }
+    this.grid[0][col] = wrapped
+    moves.push({ piece: wrapped, from: { row: this.rows - 1, col }, to: { row: 0, col } })
+    return moves
+  }
+
+  /** Would `pullColumn` succeed? The view's own question — it greys a rail handle that cannot pull. */
+  canPull(col: number): boolean {
+    if (!Number.isInteger(col) || col < 0 || col >= this.cols) return false
+    for (let r = 0; r < this.rows; r++) {
+      const p = this.grid[r][col]
+      if (!p || p.kind === 'blocker' || p.locked) return false
+    }
+    return true
+  }
+
   findFirstValidMove(): { a: Coord; b: Coord } | null {
     for (let r = 0; r < this.rows; r++) {
       for (let c = 0; c < this.cols; c++) {

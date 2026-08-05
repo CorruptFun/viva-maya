@@ -24,7 +24,18 @@ import { SYMBOLS } from './types'
 const FULL =
   (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env?.VM_FULL_SWEEP === '1'
 const SEEDS = FULL ? 40 : 10
-const CHECK_LEVELS = FULL ? [31, 45, 56, 65, 86, 100, 150, 220, 300] : [65, 150, 300]
+/**
+ * ACT II joins the sweep at 310 / 355 / 390 — one on each side of the floor-1/floor-2 seam plus the
+ * top of the shipped ladder. They matter more than their count suggests: hazard densities FLATLINE
+ * above 300 (every ramp in hazards.ts clamps there), so these three are the check that a flat
+ * hazard load under a rising collect demand is still winnable, and that the new verb has not moved
+ * cascade health or Plinko eligibility.
+ *
+ * ⚠️ The banker only takes a pull that matches something IMMEDIATELY (see sim.previewPull), so it
+ * plays Act II as a slightly better swapper rather than as a player using the verb. Every number
+ * here is therefore a FLOOR on player power — fine as a gate, worthless as an estimate.
+ */
+const CHECK_LEVELS = FULL ? [31, 45, 56, 65, 86, 100, 150, 220, 300, 310, 355, 390] : [65, 150, 300, 355]
 /** Playing the real board headlessly is not cheap, and the dense sweep is ~30s per gate. Vitest's
  *  5s default would fail these on wall clock rather than on merit — which is exactly the kind of
  *  false red that teaches people to ignore a suite. */
