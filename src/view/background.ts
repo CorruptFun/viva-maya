@@ -756,6 +756,55 @@ function floorFlourish(scene: Phaser.Scene, kind: FloorFlourish): void {
       },
     })
   }
+
+  if (kind === 'filamentBulb') {
+    // FLOOR 2 — a bare bulb on a cord in the top margin, swinging just enough to notice. The cord is
+    // a baked rectangle ROTATED about its top end, so the whole pendulum is transform-only and this
+    // file's no-per-frame-graphics-redraw rule holds; the bulb is positioned from the same angle, so
+    // it stays on the end of its own cord rather than drifting off it.
+    const px = 604 // pivot, in the top-right margin — clear of the score row's own furniture
+    const py = 26
+    const len = 132
+    const cord = scene.add
+      .rectangle(px, py, 2, len, 0xffcf8a, 0.16)
+      .setOrigin(0.5, 0)
+      .setDepth(Z.flourish)
+    const halo = scene.add
+      .image(px, py + len, 'bgglow')
+      .setDisplaySize(190, 190)
+      .setTint(0xffa733)
+      .setAlpha(0.11)
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setDepth(Z.flourish)
+    const bulb = scene.add
+      .image(px, py + len, 'bgdot')
+      .setDisplaySize(44, 44)
+      .setTint(0xffe6b8)
+      .setAlpha(0.2)
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setDepth(Z.flourish)
+    const proxy = { p: 0 }
+    scene.tweens.add({
+      targets: proxy,
+      p: 1,
+      duration: T_DRIFT * 1.1,
+      repeat: -1,
+      ease: 'Linear',
+      onUpdate: () => {
+        const t = proxy.p * Math.PI * 2
+        const a = 0.075 * Math.sin(t) // ~4.3° either side — a draught, not a shove
+        cord.setRotation(a)
+        const bx = px + Math.sin(a) * len
+        const by = py + Math.cos(a) * len
+        halo.setPosition(bx, by)
+        bulb.setPosition(bx, by)
+        // The filament dips as the bulb swings out, the way a real one browns at the ends of a sag.
+        const glow = 0.5 + 0.5 * Math.cos(t * 2)
+        halo.setAlpha(0.08 + 0.06 * glow)
+        bulb.setAlpha(0.15 + 0.07 * glow)
+      },
+    })
+  }
 }
 
 // --- Proscenium frame (E15) -------------------------------------------------

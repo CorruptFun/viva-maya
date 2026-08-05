@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import {
   ACT2_FROM,
   FLOORS,
@@ -15,7 +15,8 @@ import { ACT1_LEVELS, CHAPTER_COUNT, CHAPTER_LEVELS, LEVEL_COUNT, levelSpec } fr
 import { DIFFICULTY, isTeachingLevel } from './difficulty'
 import { CHAPTER_PURSES, TROPHIES } from './trophies'
 import type { SymbolType } from './types'
-import { activeFloor, activeFloorMood, enterFloor, moodedFloors } from '../view/floormood'
+import { activeFloor, activeFloorMood, chapterMood, enterFloor, moodedFloors } from '../view/floormood'
+import { DEFAULT_THEME_ID, THEMES, getTheme, setFloorOverlay } from '../view/theme'
 
 /**
  * ACT II's structural promises. Two of them are the kind that cost a player something real when
@@ -269,6 +270,73 @@ describe('the active floor', () => {
     } finally {
       a2.mood = was
       enterFloor(null)
+    }
+  })
+})
+
+/**
+ * THE FLOOR OVERLAY — "a mood MODULATES, it never replaces", proved rather than asserted in a
+ * comment. Two halves, and the first one is the half that was actually broken.
+ */
+describe('the floor overlay', () => {
+  const base = THEMES[DEFAULT_THEME_ID]
+
+  afterEach(() => setFloorOverlay(null))
+
+  it('leaves a token the mood never mentions at the THEME\'s value', () => {
+    // The caller builds the overlay from a mood's OPTIONAL fields, so a mood with no opinion about
+    // the bokeh still hands over `{ bokehWarm: undefined }`. Spread copies KEYS, so folding that in
+    // used to delete the theme's colour outright — a mood silently replacing a token it never named,
+    // which is the exact rule the overlay exists to enforce. It surfaces downstream as a NaN colour
+    // in the three.js room, never as a type error, so nothing but this catches it.
+    setFloorOverlay({ rgbHueFrom: 45, bokehWarm: undefined, moteTint: undefined })
+    const lit = getTheme()
+    expect(lit.rgbHueFrom).toBe(45)
+    expect(lit.bokehWarm).toBe(base.bokehWarm)
+    expect(lit.moteTint).toBe(base.moteTint)
+    // An audio room merges the same way: name one term, keep the rest.
+    setFloorOverlay({ audio: { bedRoot: 43.65 } })
+    expect(getTheme().audio.bedRoot).toBe(43.65)
+    expect(getTheme().audio.reverbMix).toBe(base.audio.reverbMix)
+  })
+
+  it('cannot reach a wash, a card, an ink or a cushion — on any shipped floor', () => {
+    // The type is the real guard (FloorOverlay is a Pick, not a Partial<Theme>). This proves the
+    // shipped moods actually travel through it: light and tone change, identity does not.
+    for (const f of FLOORS) {
+      const mood = chapterMood(f.chapterFrom)!
+      setFloorOverlay({
+        rgbHueFrom: mood.rgbHueFrom,
+        rgbHueSpan: mood.rgbHueSpan,
+        rgbSat: mood.rgbSat,
+        rayTint: mood.rayTint,
+        bokehWarm: mood.bokehWarm,
+        moteTint: mood.moteTint,
+        audio: mood.audio,
+      })
+      const lit = getTheme()
+      for (const key of ['washTop', 'washBottom', 'cardFill', 'ink', 'inkMuted', 'tileA', 'tileB', 'gold'] as const) {
+        expect({ floor: f.floor, key, same: lit[key] === base[key] }).toEqual({ floor: f.floor, key, same: true })
+      }
+      // ...and it DID light the room, or the mood is not doing its job.
+      expect({ floor: f.floor, arc: lit.rgbHueFrom }).toEqual({ floor: f.floor, arc: mood.rgbHueFrom })
+    }
+  })
+
+  it('gives every floor a SLICE of the wheel, never the wheel — the theme-arc law, one act up', () => {
+    // rgb.test.ts pins this for the four themes; a floor arc REPLACES a theme arc while the floor is
+    // live, so it inherits the same law. A 360° span would also flip `ringHue` onto its wrapping
+    // branch, which is not the branch any cabinet in this game uses.
+    for (const f of FLOORS) {
+      const mood = chapterMood(f.chapterFrom)!
+      expect({ floor: f.floor, ok: (mood.rgbHueSpan ?? 0) > 0 && (mood.rgbHueSpan ?? 0) < 360 }).toEqual({
+        floor: f.floor,
+        ok: true,
+      })
+      expect({ floor: f.floor, ok: (mood.rgbSat ?? 0) > 0 && (mood.rgbSat ?? 0) <= 1 }).toEqual({
+        floor: f.floor,
+        ok: true,
+      })
     }
   })
 })

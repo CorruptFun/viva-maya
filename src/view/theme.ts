@@ -450,9 +450,23 @@ let _floor: FloorOverlay | null = null
  * in `create()` and clears it on shutdown, so nothing outside a numbered Act II level can ever be
  * looking at a floor's light. Textures baked before this is set are NOT re-baked (the theme rule),
  * which is fine — everything an overlay reaches is tint or tone, computed at draw time.
+ *
+ * ⚠️ UNDEFINED KEYS ARE STRIPPED HERE, and that is load-bearing rather than tidy. The caller builds
+ * the overlay by reading a mood's OPTIONAL fields — `{ bokehWarm: mood.bokehWarm, … }` — so a mood
+ * that says nothing about the bokeh still hands over a `bokehWarm` KEY holding `undefined`. Object
+ * spread copies keys, not values-that-are-defined, so folding that into the theme replaced the
+ * theme's colour with `undefined`: a mood silently DELETING a token it never mentioned, which is the
+ * exact opposite of the modulate-never-replace rule the whole overlay exists to enforce. Downstream
+ * it surfaces as a NaN colour in the three.js room, not as a type error.
  */
 export function setFloorOverlay(overlay: FloorOverlay | null): void {
-  _floor = overlay
+  if (!overlay) {
+    _floor = null
+    return
+  }
+  const clean: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(overlay)) if (v !== undefined) clean[k] = v
+  _floor = clean as FloorOverlay
 }
 
 /** The current theme's full token set, with any floor overlay folded in. Never gates — free always. */

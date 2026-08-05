@@ -364,6 +364,193 @@ const highLimitRoom: HazardSkin = {
 }
 
 /**
+ * FLOOR 2 · THE SPEAKEASY — candlelight, oxblood and walnut. The obstacles are what is actually in
+ * the room behind the room: wax pooled where a candle has been burning all night, a barrel nobody
+ * has moved since it was rolled in, and a chain someone put on because there is no security here.
+ *
+ * Same discipline as floor 1: the rules read word-for-word the same, only the nouns change. And the
+ * silhouettes are deliberately unlike floor 1's — a barrel is round where a chip rack is square, and
+ * a chain crosses the cell where the clamp lies along one diagonal — because the two floors are seen
+ * a few minutes apart and "a different room" has to survive being remembered.
+ */
+const speakeasy: HazardSkin = {
+  id: 'speakeasy',
+  label: { coat: 'CANDLE WAX', blocker: 'OAK BARREL', lock: 'PADLOCK & CHAIN' },
+  coatNoun: 'wax',
+  blurb: {
+    coat: 'Some squares are under a night of candle wax. Make a match on top of one to scrape it clean — clear every last square to win the level.',
+    blocker: "Oak barrels don't match and can't be moved. Break one by clearing a square right next to it.",
+    lock: 'A chained piece still matches, but it will not move. Clear a square beside it to snap the chain.',
+  },
+  burstTint: { coat: 0xf0c98a, blocker: 0xa9743c, lock: 0x9aa3ad },
+
+  /**
+   * A cask on its side, iron-hooped, seen end-on-ish so the staves read. At 2 hp it is sound; at 1 a
+   * stave has sprung, the top hoop has slipped and it is leaking — which is the same "one more hit"
+   * grammar as the sprung chip rack and the cracked lockbox, told in this room's furniture.
+   */
+  drawBlocker: (g, size, hp, maxHp) => {
+    const cx = size / 2
+    const cy = size / 2
+    const sprung = hp < maxHp
+    const rw = size * 0.4 // half-width at the belly
+    const rh = size * 0.42 // half-height
+
+    // Shadow, then the barrel body: a fat ellipse, which is the shape no other obstacle on the
+    // tower has.
+    g.fillStyle(0x140b05, 0.45)
+    g.fillEllipse(cx + size * 0.02, cy + size * 0.05, rw * 2, rh * 2)
+    g.fillStyle(sprung ? 0x6b4620 : 0x59381a, 1)
+    g.fillEllipse(cx, cy, rw * 2, rh * 2)
+
+    // Staves: vertical light/dark bands, tapering with the belly so it reads as a curved surface.
+    for (let k = -2; k <= 2; k++) {
+      const x = cx + k * size * 0.145
+      const h = Math.sqrt(Math.max(0, 1 - (k * size * 0.145 / rw) ** 2)) * rh
+      g.fillStyle(k % 2 === 0 ? 0x7a5228 : 0x4a2e15, 0.9)
+      g.fillRect(x - size * 0.062, cy - h, size * 0.124, h * 2)
+    }
+
+    // Two iron hoops. Sprung: the top one has slipped off true and sits at an angle.
+    for (const [k, off] of [
+      [-0.6, sprung ? size * 0.03 : 0],
+      [0.6, 0],
+    ]) {
+      const h = Math.sqrt(Math.max(0, 1 - k * k)) * rh
+      g.fillStyle(sprung && k < 0 ? 0x6a6f76 : 0x9aa3ad, 1)
+      g.fillRect(cx - rw * Math.sqrt(1 - k * k) - size * 0.01, cy + k * rh - size * 0.035 + off, rw * 2 * Math.sqrt(1 - k * k) + size * 0.02, size * 0.07)
+      g.fillStyle(0xd6dde4, sprung && k < 0 ? 0.3 : 0.55)
+      g.fillRect(cx - rw * Math.sqrt(1 - k * k), cy + k * rh - size * 0.028 + off, rw * 2 * Math.sqrt(1 - k * k), size * 0.018)
+      void h
+    }
+
+    // The bung, and — once sprung — the trickle out of it.
+    g.fillStyle(0x2a1a0b, 1)
+    g.fillCircle(cx, cy, size * 0.062)
+    g.fillStyle(0x8a5c2a, 0.9)
+    g.fillCircle(cx - size * 0.012, cy - size * 0.014, size * 0.038)
+    if (sprung) {
+      g.fillStyle(0x5a1420, 0.85)
+      g.fillRoundedRect(cx - size * 0.022, cy + size * 0.05, size * 0.044, size * 0.3, size * 0.022)
+      g.fillStyle(0x8a2230, 0.7)
+      g.fillEllipse(cx, size * 0.87, size * 0.22, size * 0.07)
+    }
+  },
+
+  /**
+   * A chain laid across the piece with a heavy iron padlock at the crossing. Vertical-ish rather
+   * than diagonal, so it is never mistaken for floor 1's brass strap — and iron rather than brass,
+   * because down here the fixture was bought, not fitted.
+   */
+  drawLock: (g, size) => {
+    const cx = size / 2
+
+    // The chain: interlocking links marching down the cell, drawn as rings so the shape is unmistakable.
+    for (let k = 0; k < 6; k++) {
+      const y = size * 0.13 + k * size * 0.15
+      const wide = k % 2 === 0
+      g.fillStyle(0x14100a, 0.35)
+      g.fillEllipse(cx + size * 0.012, y + size * 0.018, size * (wide ? 0.2 : 0.13), size * (wide ? 0.13 : 0.2))
+      g.fillStyle(0x767e88, 1)
+      g.fillEllipse(cx, y, size * (wide ? 0.2 : 0.13), size * (wide ? 0.13 : 0.2))
+      g.fillStyle(0x3a3f46, 1)
+      g.fillEllipse(cx, y, size * (wide ? 0.13 : 0.07), size * (wide ? 0.07 : 0.13))
+      g.fillStyle(0xd6dde4, 0.4)
+      g.fillEllipse(cx - size * (wide ? 0.07 : 0.045), y - size * 0.03, size * 0.035, size * 0.02)
+    }
+
+    // The padlock, hanging where the chain crosses the middle.
+    g.fillStyle(0x14100a, 0.4)
+    g.fillRoundedRect(cx - size * 0.15, size * 0.44, size * 0.3, size * 0.26, size * 0.05)
+    g.lineStyle(Math.max(2, size * 0.036), 0x9aa3ad, 1)
+    g.beginPath()
+    g.arc(cx, size * 0.44, size * 0.085, Math.PI, 0)
+    g.strokePath()
+    g.fillStyle(0x5c636c, 1)
+    g.fillRoundedRect(cx - size * 0.145, size * 0.43, size * 0.29, size * 0.25, size * 0.05)
+    g.fillStyle(0x868e98, 1)
+    g.fillRoundedRect(cx - size * 0.145, size * 0.43, size * 0.29, size * 0.11, size * 0.05)
+    g.fillStyle(0x1c1f24, 1)
+    g.fillCircle(cx, size * 0.56, size * 0.032)
+    g.fillRect(cx - size * 0.014, size * 0.56, size * 0.028, size * 0.07)
+  },
+
+  /**
+   * A pool of candle wax gone hard on the square, ivory over amber, with drips off the near edge.
+   * The second layer is a night's more of it: deeper, warmer, and running further down.
+   */
+  drawCoat: (g, size, layers) => {
+    const deep = layers >= 2
+    const pad = size * 0.02
+    const w = size - pad * 2
+    const r = size * 0.13
+
+    // The stained square under the wax. Deeper than the wax by a clear margin: a coated cell has to
+    // read as COVERED at a glance against the cream tiles either side of it, and a pale pool on a
+    // pale ground is the one way this skin could fail where the baize upstairs cannot.
+    g.fillStyle(deep ? 0x8f5f22 : 0xbb8434, 1)
+    g.fillRoundedRect(pad, pad, w, w, r)
+
+    // Recessed read — the same idiom every coat uses, so "covered" means the same thing on all
+    // three floors even though the material does not.
+    g.fillStyle(0x3a2408, 0.26)
+    g.fillRoundedRect(pad, pad, w, size * 0.16, { tl: r, tr: r, bl: 0, br: 0 })
+    g.fillStyle(0xffe9bd, 0.18)
+    g.fillRoundedRect(pad, size - pad - size * 0.13, w, size * 0.13, { tl: 0, tr: 0, bl: r, br: r })
+
+    /**
+     * The wax itself: ONE opaque pool that covers most of the square, with a lumpy lower edge and a
+     * few runs hanging off it.
+     *
+     * Built as a slab plus overlapping discs along its bottom, all in the SAME opaque colour — the
+     * groove chain in `rgbmarquee.ts` takes the same approach for the same reason: opaque pieces
+     * union seamlessly, where semi-opaque ones compound into lumps at every overlap. The first pass
+     * drew the pool AS separate translucent blobs and it read as foliage rather than as wax
+     * (browser, level 351): a pool has one outline, not four.
+     */
+    const wax = deep ? 0xe8cf96 : 0xf6e3b8
+    const top = deep ? 0.16 : 0.22
+    const bottom = deep ? 0.72 : 0.66
+    g.fillStyle(wax, 1)
+    g.fillRect(size * 0.13, size * top, size * 0.74, size * (bottom - top))
+    // Lumpy edges: discs along the bottom lip and one at each shoulder, so the outline is a set
+    // thing rather than a rectangle.
+    for (const [bx, br] of deep
+      ? ([[0.24, 0.13], [0.44, 0.16], [0.64, 0.14], [0.82, 0.11]] as [number, number][])
+      : ([[0.3, 0.12], [0.52, 0.14], [0.72, 0.11]] as [number, number][])) {
+      g.fillCircle(size * bx, size * bottom, size * br)
+    }
+    g.fillCircle(size * 0.15, size * (top + 0.06), size * 0.075)
+    g.fillCircle(size * 0.85, size * (top + 0.08), size * 0.065)
+
+    // Runs off the lip — the detail that says WAX rather than "a pale tile". Tapered: a wide neck
+    // out of the pool down to a heavy bead, which is the shape a run actually sets in.
+    for (const [dx, len, wdt] of deep
+      ? ([[0.28, 0.24, 0.075], [0.52, 0.17, 0.065], [0.76, 0.2, 0.06]] as [number, number, number][])
+      : ([[0.36, 0.16, 0.07], [0.66, 0.12, 0.055]] as [number, number, number][])) {
+      const tip = bottom + len
+      g.fillRect(size * (dx - wdt / 2), size * (bottom - 0.04), size * wdt, size * (len + 0.04))
+      g.fillCircle(size * dx, size * tip, size * (wdt * 0.72))
+    }
+
+    // Where it caught the light while it was still running.
+    g.fillStyle(0xffffff, deep ? 0.2 : 0.3)
+    g.fillRoundedRect(size * 0.2, size * (top + 0.05), size * 0.26, size * 0.05, size * 0.025)
+    g.fillStyle(0x8f5f22, deep ? 0.32 : 0.22)
+    g.fillRoundedRect(size * 0.2, size * (bottom - 0.1), size * 0.5, size * 0.045, size * 0.022)
+
+    if (deep) {
+      // A second night of it sets in visible strata — one ridge where the first pool ended.
+      g.lineStyle(Math.max(2, size * 0.018), 0x8f5f22, 0.5)
+      g.beginPath()
+      g.moveTo(size * 0.16, size * 0.46)
+      g.lineTo(size * 0.84, size * 0.42)
+      g.strokePath()
+    }
+  },
+}
+
+/**
  * Skin per theme. Every current theme uses the default; a theme may override later without any
  * change here beyond one entry. `default` is required and is the fallback for unknown ids.
  */
@@ -378,6 +565,7 @@ export const HAZARD_SKINS: Partial<Record<ThemeId, HazardSkin>> & { default: Haz
  */
 export const FLOOR_HAZARD_SKINS: Readonly<Record<number, HazardSkin>> = {
   1: highLimitRoom,
+  2: speakeasy,
 }
 
 /**

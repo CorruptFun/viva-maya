@@ -24,6 +24,13 @@ import type { AudioPalette } from './theme'
  * whatever theme is loaded, so 2 floors × 4 themes needs no combinatorial testing — the theme keeps
  * looking like itself in every one of the eight.
  *
+ * ── ONE VOICE, ONE ROOM, PER FLOOR ──────────────────────────────────────────────────────────
+ * Each floor owns a palette, an RGB arc, an audio room, a hazard-skin set, a margin flourish and a
+ * croupier. They are meant to be read as a PROGRESSION rather than as six independent skins: the
+ * rooms get smaller and closer as you climb (floor 1's reverb is the wettest on the tower, and it
+ * gets drier from here), and the House's voice gets warier with them — floor 1 is an amused host,
+ * floor 2 a conspiratorial barkeep.
+ *
  * ── WHAT A MOOD REACHES ─────────────────────────────────────────────────────────────────────
  * The accent (nameplates, journey trail), the marquee's hue arc, the ambient light tints and the
  * audio room all travel through `theme.setFloorOverlay`, whose key list is the whitelist. The two
@@ -87,15 +94,32 @@ const FLOOR_MOODS: Readonly<Record<number, FloorMood>> = {
     blurb: 'Private tables. Real stakes. The arm on the right pulls a whole column.',
   },
   2: {
-    // PROVISIONAL — a light mood pending floor 2's own pass. Plum and low brass: the room behind the
-    // room, lit by less of everything.
-    accent: 0x8c3b6b,
-    rgbHueFrom: 300,
-    rgbHueSpan: 70,
-    rgbSat: 0.72,
-    moteTint: 0x9a4a78,
-    audio: { bedRoot: 46.25, waveBias: 'triangle', filterWarmth: 560, reverbMix: 0.42 },
-    croupier: 'Keep your voice down. Nobody in this room has a name, including you.',
+    // Candlelight, oxblood and walnut. Where floor 1 is brass under a high ceiling, this is a low
+    // one: a room lit by a dozen small flames rather than by the House.
+    //
+    // The arc is the NARROWEST on the tower — 20° to 55°, amber through to a dull gold, and under
+    // floor 1's saturation. That is the point of it: a speakeasy is not lit, it is candle-lit, and
+    // the marquee reading as one colour that barely moves says "low ceiling" better than any tint on
+    // the walls could. It sits inside every theme's warm half, so unlike floor 1's hundred-degree
+    // sweep it needs no argument with the blush themes at all.
+    accent: 0x8a2230,
+    rgbHueFrom: 20,
+    rgbHueSpan: 35,
+    rgbSat: 0.65,
+    rayTint: 0xd98b3a,
+    bokehWarm: 0xe0a457,
+    moteTint: 0xc9762f,
+    // F1 — a whole octave below floor 1's G1, on a triangle (more body than a sine, still no edge),
+    // through a darker filter and with LESS reverb than upstairs. That last one is the counter-
+    // intuitive part and it is deliberate: the wettest room is the one with the high ceiling, and the
+    // progression across the tower is wet → dry as the rooms get smaller and closer. A big reverb
+    // here would put the speakeasy in a hall.
+    audio: { bedRoot: 43.65, waveBias: 'triangle', filterWarmth: 520, reverbMix: 0.38 },
+    // A bare filament on a cord, swinging just enough to notice.
+    flourish: 'filamentBulb',
+    // The croupier is a BARKEEP here, and a warier one — floor 1's host was amused to be watched,
+    // this one would rather nobody was. The House gets less comfortable the higher you climb.
+    croupier: 'Sit where you like. I never saw you come in, and neither did the House.',
     blurb: 'The room behind the room. Same game, quieter, and nobody is watching the clock.',
   },
 }
