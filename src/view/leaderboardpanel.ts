@@ -36,6 +36,7 @@
 import Phaser from 'phaser'
 import { DESIGN_W } from '../config'
 import { sfx } from '../audio/sfx'
+import { EVENTS, track } from '../core/analytics'
 import { cloudSession } from '../core/cloud'
 import {
   DAYS_PER_WEEK,
@@ -54,13 +55,17 @@ import { endlessWeekBounds } from '../core/endlessramp'
 import {
   CHAMPION_PURSE,
   DAILY_PURSE,
+  chaseCopy,
+  devChaseSeeded,
   fetchDailyBoard,
   isLegacyWeek,
   fetchDailyChampion,
   fetchLevelBoard,
+  fetchLevelNeighbours,
   fetchWeeklyBoard,
   fetchWeeklyChampion,
   levelStanding,
+  saveChaseSnapshot,
 } from '../core/leaderboard'
 import type { Champion, LeaderboardEntry, RaceBoard } from '../core/leaderboard'
 import { LEVEL_COUNT } from '../core/levels'
@@ -1450,8 +1455,37 @@ export function addLevelRaceStrip(scene: Phaser.Scene, x: number, y: number, sav
     // only control and the screen's subject, so it wears the loud face. The heading matches the
     // panel title it opens ('LEVEL RACE', BOARDS.levels) so the tap keeps its promise.
     marquee: { heading: 'LEVEL RACE', icon: '🏆' },
-    initial: local,
+    initial: chaseLineCache ?? local,
+    /**
+     * THE CHASE takes this line when there is one, and the standings are the fallback.
+     *
+     * Both are views of `level_progress`, so this is one door to one room rather than a second
+     * strip competing with the first — which is also why the chase gets no furniture of its own up
+     * here: the header band between the title row and the grid mask is budgeted to the pixel (see
+     * LevelSelectScene's header block), and a second 60px strip would come straight out of the
+     * ladder.
+     *
+     * The chase wins the line because "#3 of 12" is a fact and "chasing Sam · 3 levels ahead" is a
+     * reason to close this screen and play. At the measured population the rank is also nearly
+     * static — a fifteen-player board moves ranks a few times a month — while the gap moves every
+     * time anyone on it clears a level.
+     *
+     * ONE fetch, not two: a window resolves the line on its own, and only its absence pays for the
+     * board read.
+     */
     refresh: async () => {
+      const w = await fetchLevelNeighbours()
+      if (w) {
+        // Warm the overtake baseline from here too, so a player who merely LOOKS at this screen has
+        // a cache — a first pass then lands on the win card instead of being swallowed as cold.
+        saveChaseSnapshot(w)
+        track(EVENTS.CHASE_SHOWN, {
+          gap_above: w.above[0]?.gap ?? -1,
+          gap_below: w.below[0]?.gap ?? -1,
+        })
+        chaseLineCache = chaseCopy(w).line
+        return chaseLineCache
+      }
       const b = await fetchLevelBoard(25)
       if (b.entries.length === 0) return null
       if (b.myRank === null) return `all time · ${b.entries.length} climbing · join them`
@@ -1461,6 +1495,14 @@ export function addLevelRaceStrip(scene: Phaser.Scene, x: number, y: number, sav
     open: () => openLevelRacePanel(scene),
   })
 }
+
+/**
+ * The last chase line this session painted — the module-level cache `raceLineCache` and `leaderCache`
+ * already establish, for the same reason: LevelSelect restarts on a stash change, and a strip that
+ * blanked back to "your climb · level 47" for a beat on every repaint would read as a glitch. Not
+ * keyed by day; the ladder has no rollover.
+ */
+let chaseLineCache: string | null = null
 
 /** What a standings strip shows and does — the only things that differ between the two boards. */
 interface StripSpec {
@@ -1540,7 +1582,9 @@ function addRaceStrip(scene: Phaser.Scene, x: number, y: number, spec: StripSpec
   container.once(Phaser.GameObjects.Events.DESTROY, () => {
     alive = false
   })
-  if (spec.refresh && cloudSession()) {
+  // `devChaseSeeded()` is DEV-only and false in every build: without it a `?chase=` fixture could
+  // never reach a strip, because no local build has a session to pass this gate.
+  if (spec.refresh && (cloudSession() || devChaseSeeded())) {
     void spec.refresh().then(next => {
       if (alive && next !== null) line.setText(next)
     })

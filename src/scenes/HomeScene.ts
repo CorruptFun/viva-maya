@@ -11,7 +11,16 @@ import {
   weekKey,
   weekKeyOfDay,
 } from '../core/endless'
-import { DAILY_PRIZE_TIERS, PRIZE_TIERS, checkDailyPrize, checkWeeklyPrize, fetchRaceRecap } from '../core/leaderboard'
+import {
+  DAILY_PRIZE_TIERS,
+  PRIZE_TIERS,
+  chaseCopy,
+  checkDailyPrize,
+  checkWeeklyPrize,
+  fetchLevelNeighbours,
+  fetchRaceRecap,
+  saveChaseSnapshot,
+} from '../core/leaderboard'
 import type { RacePrizeWin, RaceRecap } from '../core/leaderboard'
 import { ACT1_LEVELS, LEVEL_COUNT, levelBoostExclusions } from '../core/levels'
 import { DIFFICULTY } from '../core/difficulty'
@@ -498,9 +507,37 @@ export class HomeScene extends Phaser.Scene {
     // and two things called a streak within 600px of each other is one concept too many for a screen.
     // The wins-to-a-deal detail lives on the win card, which is where it can actually be acted on.
     const hot = save.winStreak > 0 ? `${sub}  ·  HOT STREAK ${save.winStreak}` : sub
-    this.add
+    // A repaint that lands after the scene has gone would set text on a destroyed object — the same
+    // SHUTDOWN latch the reveal chain below uses, declared here because this fetch starts earlier.
+    const subLineAlive = { on: true }
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      subLineAlive.on = false
+    })
+    const subLine = this.add
       .text(DESIGN_W / 2, 790, hot, { fontFamily: FONT, fontSize: '22px', color: getTheme().onBackdropMuted })
       .setOrigin(0.5)
+    /**
+     * THE CHASE rides this line too, and it takes the `best` segment's slot when it arrives.
+     *
+     * Same reasoning that put HOT STREAK here rather than in furniture of its own, one step further:
+     * the stack under PLAY is budgeted to the pixel (840→1210 fits the full set EXACTLY — see the
+     * band note below), so there is no room on Home for a strip, and this is already the one line on
+     * the screen about where you stand. `best` yields rather than appends because a third clause
+     * would run this line under 700px on a long handle, and between "your best score" and "someone
+     * is three levels ahead of you" only one of them is a reason to press PLAY.
+     *
+     * Asynchronous and SILENT on failure: signed out, offline, dormant or alone on the ladder all
+     * leave the line exactly as it painted. It never blanks and never shows a spinner — the chase is
+     * a bonus on a line that already said something true.
+     */
+    void fetchLevelNeighbours().then(w => {
+      if (!w || !subLineAlive.on) return
+      saveChaseSnapshot(w)
+      const copy = chaseCopy(w)
+      track(EVENTS.CHASE_SHOWN, { gap_above: w.above[0]?.gap ?? -1, gap_below: w.below[0]?.gap ?? -1 })
+      const chased = `Level ${currentLevel}  ·  ${copy.tag}`
+      subLine.setText(save.winStreak > 0 ? `${chased}  ·  HOT STREAK ${save.winStreak}` : chased)
+    })
 
     // Jackpot charge meter — a compact progress read-out in the hero area (fills one notch per level
     // win). Display-only: the wheel itself explodes in-game after the win that tops the meter off.

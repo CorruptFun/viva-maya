@@ -40,6 +40,8 @@ import {
   levelSpec,
   starsFor,
 } from '../core/levels'
+import { checkChaseOvertake } from '../core/leaderboard'
+import type { ChaseNeighbour } from '../core/leaderboard'
 import { MARKER_STAKES, markerOfferable, placeMarker, refundMarker, settleMarkerLoss, settleMarkerWin } from '../core/marker'
 import type { MarkerStake } from '../core/marker'
 import { CHAPTER_BOOSTS, CHAPTER_PURSES, claimChapter, trophyFor } from '../core/trophies'
@@ -266,6 +268,13 @@ export class GameScene extends Phaser.Scene {
   private heartbloomFired = false
   /** §E9 — set in finishWin when this win's score beats the stored best; drives the NEW BEST! ribbon. */
   private newBestThisWin = false
+  /**
+   * THE CHASE — the player this win went past, or null. Resolved ASYNCHRONOUSLY (three small reads on
+   * the level ladder), so the win card subscribes to it rather than waiting on it: a card that held
+   * its own entrance for a network round trip would make every win feel slower to buy a beat that
+   * only sometimes exists. Late is silent, which is the correct failure for a bonus.
+   */
+  private chaseOvertake: Promise<ChaseNeighbour | null> | null = null
 
   // --- Impact & weight (E5/E6) ---
   /** Trauma accumulator (0..1); shake magnitude is trauma², decayed each frame in update(). */
@@ -537,6 +546,7 @@ export class GameScene extends Phaser.Scene {
     this.jackpotOccurred = false // §E4 — reset per round (scene.restart re-runs create, not field inits)
     this.heartbloomFired = false
     this.newBestThisWin = false
+    this.chaseOvertake = null
 
     // DEV: ?lives=N forces the pool before the gate check.
     if (import.meta.env.DEV) {
@@ -5391,6 +5401,20 @@ export class GameScene extends Phaser.Scene {
     // something the game wants, so it must not cost you a run of wins you already have.
     const streak = isReplay ? prev.winStreak : bumpWinStreak()
     this.dealArmed = !isReplay && dealReady(streak)
+    /**
+     * THE CHASE — did this win go past somebody? Kicked off HERE, immediately after `recordResult`
+     * has advanced the save, so the window is cut around the rung the player just reached and the
+     * fetch has the whole celebration to resolve in.
+     *
+     * `!isReplay` because a replay advances nothing and there is nobody to pass — the pure diff
+     * refuses a replay on its own (`chaseOvertakes` compares the rungs), but not spending three
+     * queries to be told so is the cheaper half of the same rule.
+     *
+     * NEVER THE OTHER DIRECTION. There is deliberately no "you were passed" branch anywhere: the
+     * chase pulls, it does not punish, and being overtaken simply changes the line on Home the next
+     * time the player looks at it — the same discipline the lose card keeps about a broken streak.
+     */
+    this.chaseOvertake = isReplay ? null : checkChaseOvertake()
     const totalStars = Object.values(save.stars).reduce((sum, s) => sum + s, 0)
     const showCard = (): void => {
       this.showOverlay(true, stars, bonus, chipReward, false, true)
@@ -6719,6 +6743,31 @@ export class GameScene extends Phaser.Scene {
       this.tweens.add({ targets: subtitle, alpha: 1, delay: 300, duration: D.settle, ease: E.settle })
       settleActions.push(() => subtitle.setAlpha(1))
     }
+    /**
+     * THE CHASE's one beat — `YOU PASSED {name}`, taking the subtitle's seat.
+     *
+     * It takes a seat rather than adding a line because this card is already dense (rank word,
+     * subtitle, NEW BEST ribbon, stars, score, bonus, chips) and because the two are the same JOB:
+     * one warm line under the rank word. `warmWinSubtitle` is a seeded generic encouragement and
+     * this is a thing that actually happened to a real person on the ladder — when both exist, the
+     * true one wins. Gold rather than the subtitle's soft ink, and a pop rather than a fade, so it
+     * reads as an event and not as flavour text.
+     *
+     * It arrives LATE by nature (see `chaseOvertake`), so it is a repaint on a line that already
+     * says something rather than a hole waiting to be filled. A resolve after the card is gone hits
+     * the destroyed-object guard and does nothing.
+     */
+    void this.chaseOvertake?.then(passed => {
+      if (!passed || !subtitle.active) return
+      track(EVENTS.CHASE_OVERTAKE, { level: this.level })
+      subtitle.setText(`YOU PASSED ${passed.name.toUpperCase()}`)
+      subtitle.setColor(T.goldText)
+      subtitle.setLetterSpacing(1)
+      sfx.uiTap()
+      if (this.reducedMotion) return
+      subtitle.setScale(0.7).setAlpha(1)
+      this.tweens.add({ targets: subtitle, scale: 1, duration: D.pop, ease: backOut(OVERSHOOT.pop) })
+    })
 
     // §E9 NEW BEST! ribbon — a small rose banner across the card's top-left corner on a record score.
     if (this.newBestThisWin) {

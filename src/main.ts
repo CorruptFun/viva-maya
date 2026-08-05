@@ -6,6 +6,7 @@ import { bootstrapCloud, cloudAccessToken, cloudUserId, pushCloudSave } from './
 import { endlessBoardRng } from './core/boardpick'
 import { dayKey } from './core/endless'
 import { initInstallCapture } from './core/install'
+import { devSeedChase } from './core/leaderboard'
 import { installResumeGuard } from './core/resumeguard'
 import { ensureSalt } from './core/racesalt'
 import { captureRefFromUrl } from './core/referrals'
@@ -119,6 +120,14 @@ if (import.meta.env.DEV) {
     }
   })
 }
+// DEV: `?chase=<one|top|alone|long|…>` seeds THE CHASE's neighbour window. Seeded HERE rather than in
+// a scene because every screen the chase reaches needs it — Home's sub-line, LevelSelect's marquee and
+// the win card's YOU PASSED beat — and a scene-local hook would leave `?scene=levelselect&chase=one`
+// unseeded. Stripped from production by the DEV guard, on both sides (see devSeedChase).
+// ⚠️ SYNCHRONOUS, and a static import on purpose. A dynamic `import()` here resolves a tick too late:
+// the first scene has already built its strip by then, so the fixture silently does nothing on the
+// one entry point that needs it most (`?scene=levelselect&chase=…`).
+if (import.meta.env.DEV) devSeedChase(new URLSearchParams(location.search).get('chase'))
 // Ground truth: the install actually completed. It fires in the page the player installed FROM, so
 // it carries the same device_id as the install_shown that preceded it.
 window.addEventListener('appinstalled', () => track(EVENTS.INSTALL_ACCEPTED))

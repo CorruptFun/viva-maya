@@ -979,7 +979,37 @@ interface LadderRow {
  * (`level_progress_ladder`), not a second definition of "near". The chase must never name a
  * neighbour the board would rank somewhere else.
  */
+/**
+ * DEV: force a window (`?chase=<variant>`), in the spirit of `devSeedRaceLine` right below the strip
+ * it feeds. Every surface of this feature needs a signed-in session AND other players on the ladder,
+ * which no local build has — so without a seed the only way to see the line at all is to ship it.
+ * `import.meta.env.DEV` gates both the setter and the read, so nothing here survives a prod build.
+ */
+let devChase: ChaseWindow | null | undefined
+export function devSeedChase(variant: string | null): void {
+  const near = (name: string, gap: number, dir: 1 | -1): ChaseNeighbour => ({
+    name,
+    cleared: 42 + dir * gap,
+    gap,
+    key: chaseKey(name),
+  })
+  if (variant === null) return
+  if (variant === 'one') devChase = { mine: 42, above: [near('Maya', 1, 1)], below: [near('Rae', 3, -1)] }
+  else if (variant === 'top') devChase = { mine: 42, above: [], below: [near('Rae', 2, -1)] }
+  else if (variant === 'alone') devChase = null
+  else if (variant === 'long')
+    devChase = { mine: 42, above: [near('Neon_Ghost-77_Extra', 12, 1)], below: [near('Wilhelmina', 4, -1)] }
+  else devChase = { mine: 42, above: [near('Sam', 5, 1)], below: [near('Rae', 2, -1)] }
+}
+
+/** DEV: has `?chase=` seeded a window? The strips skip their refresh when signed out (no session, no
+ *  request), which would otherwise make the seed unreachable on exactly the surface it exists for. */
+export function devChaseSeeded(): boolean {
+  return import.meta.env.DEV && devChase !== undefined
+}
+
 export async function fetchLevelNeighbours(): Promise<ChaseWindow | null> {
+  if (import.meta.env.DEV && devChase !== undefined) return devChase
   try {
     const s = cloudSession()
     if (!s) return null
