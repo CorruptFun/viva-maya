@@ -376,8 +376,13 @@ export class BoutiqueScene extends Phaser.Scene {
       this.dragMoved = false
     })
     this.input.on('pointermove', (p: Phaser.Input.Pointer) => {
-      if (!p.isDown || this.scrollMax <= 0) return
+      if (!p.isDown) return
+      // ⚠️ The travel flag is set BEFORE the scroll guard, not inside it. A shelf short enough not to
+      // scroll still has a finger dragging across it, and `addPillButton` fires on a bare
+      // `pointerup` wherever the finger happens to land — so gating the flag on `scrollMax` would
+      // leave exactly the flick-buys-a-cushion case open on the screens where the list happens to fit.
       if (Math.abs(p.y - p.downY) > 6) this.dragMoved = true
+      if (this.scrollMax <= 0) return
       this.scrollY = Phaser.Math.Clamp(this.scrollY + (p.y - p.prevPosition.y), -this.scrollMax, 0)
       this.listLayer.setY(this.scrollY)
     })
