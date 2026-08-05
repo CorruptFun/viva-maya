@@ -123,6 +123,21 @@ export interface SaveData {
    *  marker is on the house" latch (core/marker.ts). freeSpinsDay's sibling: plain
    *  winner's-record on merge, no union needed (a stale value only ever re-offers one comp). */
   markerCompDay: string | null
+  /**
+   * THE BOUTIQUE's entire footprint on the save — the cosmetic ids this player has BOUGHT.
+   *
+   * There is deliberately no companion "stars spent" number: the star balance is DERIVED as
+   * (every star ever earned − the price of everything in here), so this one monotone set is both the
+   * inventory and the ledger. See core/boutique.ts's header for why that makes the feature
+   * merge-proof and crash-proof with zero server changes.
+   *
+   * `chapterRewards`' twin in every respect that matters: append-only, NEVER trimmed (the goods are
+   * owned forever and the shop displays them forever), and UNIONED on merge — buy a cushion on the
+   * phone and a chip face on the tablet and the merged save owns and has paid for both. Which of
+   * them is currently WORN is not here: that is a per-device preference in localStorage
+   * ('viva-maya:boutique'), like the theme.
+   */
+  ownedCosmetics: string[]
 }
 
 /** Most free spins the bank ever holds — earning past this is quietly forfeited. */
@@ -198,6 +213,7 @@ const DEFAULTS: SaveData = {
   handle: null,
   handleSetAt: 0,
   markerCompDay: null,
+  ownedCosmetics: [],
 }
 
 function fresh(): SaveData {
@@ -214,6 +230,7 @@ function fresh(): SaveData {
     championDays: [],
     raceRecapDays: [],
     chapterRewards: [],
+    ownedCosmetics: [],
     endlessDays: {},
     charms: [],
   }
@@ -345,6 +362,15 @@ export function coerceSave(raw: unknown): SaveData {
         : 0
     // Slice 0 Marker comp latch — absent in older saves → today's comp unused.
     base.markerCompDay = typeof data.markerCompDay === 'string' ? data.markerCompDay : null
+    // THE BOUTIQUE's owned set — absent in older saves → nothing bought, which reads as a full star
+    // balance and the house's own look. Deduped and string-filtered like `chapterRewards`, and
+    // deliberately NOT validated against the catalogue: this module stays dependency-light
+    // (core/boutique.ts imports IT), and an unknown id is harmless by design — `starsSpent` prices
+    // it at nothing and every reader looks goods up BY catalogue, so a newer client's purchase
+    // simply doesn't render here rather than corrupting the balance.
+    base.ownedCosmetics = Array.isArray(data.ownedCosmetics)
+      ? Array.from(new Set(data.ownedCosmetics.filter((x): x is string => typeof x === 'string')))
+      : []
     // v6 grace refill: the pool grew (3→10) and the break got much shorter — top EVERYONE up to
     // full on upgrade so nobody is left stranded at the old, stingier count (e.g. mid-session).
     const storedVersion = typeof data.v === 'number' ? (data.v as number) : 1

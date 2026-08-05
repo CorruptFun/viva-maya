@@ -57,6 +57,7 @@
  */
 import Phaser from 'phaser'
 import { arcLean, frac, hsvToInt, hueOf, ringAlpha, ringHue, roundedRectPath } from '../core/rgb'
+import { chasePattern } from './cosmetics'
 import { quality, type QualityTier } from './quality'
 import { getTheme, prefersReducedMotion, reduceFlashing } from './theme'
 
@@ -93,6 +94,26 @@ const PROFILES: Record<RgbMode, ModeProfile> = {
   heat: { lapMs: 780, lo: 0.2, hi: 1, waves: 2, spanScale: 0.45 },
   // Payout: three crests at speed, full arc — the ring reads as celebrating rather than working.
   win: { lapMs: 900, lo: 0.18, hi: 1, waves: 3, spanScale: 1 },
+}
+
+/**
+ * THE BOUTIQUE's chase patterns land HERE, and only here: the resting `idle` profile's crest count
+ * and lap time. Read once per attach (like the theme's hue arc) and folded into a private copy, so
+ * nothing mutates the shared `PROFILES` table and every other mode — spin, heat, win — is the
+ * cabinet's own choreography on every board, bought or not.
+ *
+ * ⚠️ A PATTERN MAY NEVER TOUCH A HUE. `hueFrom`/`hueSpan`/`sat` come off the theme and stay there:
+ * the arcs are each theme's identity, `core/rgb.test.ts` pins them, and Neon Vegas has about five
+ * degrees of headroom before its arc reaches a colour it must never show. Crest count and speed are
+ * the parts of this ring that are safe to sell.
+ *
+ * Reduce-flashing still wins over any of it — `FLASH_MIN_LAP` floors the lap after this is applied,
+ * so THE RUNNER's 1500ms lap becomes 1600ms for a player who needs it to.
+ */
+function profilesFor(): Record<RgbMode, ModeProfile> {
+  const chase = chasePattern()
+  if (!chase) return PROFILES
+  return { ...PROFILES, idle: { ...PROFILES.idle, waves: chase.waves, lapMs: chase.lapMs } }
 }
 
 /** Reduce-flashing (§E8) floors: no lap quicker than this, and never a swing below this alpha. */
@@ -239,6 +260,9 @@ export function attachRgbRing(
   opts: RgbRingOpts = {}
 ): RgbRing {
   const T = getTheme()
+  // Resolved once per attach, exactly like the theme's arc below — a bought chase is a property of
+  // the cabinet you sat down at, not something that can change under a running ring.
+  const profiles = profilesFor()
   const hueFrom = T.rgbHueFrom
   const hueSpan = T.rgbHueSpan
   const sat = T.rgbSat
@@ -358,7 +382,7 @@ export function attachRgbRing(
 
   /** Paint the whole ring at the current phase. */
   const paint = (dim: number): void => {
-    const p = PROFILES[mode]
+    const p = profiles[mode]
     const soft = reduceFlashing()
     // A surge rides on top of the profile: brighter floor, for as long as it has left.
     const s = surgeMs > 0 ? (surgeMs / SURGE_MS) * surgePeak : 0
@@ -406,7 +430,7 @@ export function attachRgbRing(
     const dt = delta > 0 ? Math.min(delta, MAX_STEP_MS) : 0
     if (!dt) return
 
-    const p = PROFILES[mode]
+    const p = profiles[mode]
     const soft = reduceFlashing()
     const idle = quality.idle()
     // A surge briefly quickens the lap on top of whatever the mode was already doing.

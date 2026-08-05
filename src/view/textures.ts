@@ -2,6 +2,7 @@ import Phaser from 'phaser'
 import { SYMBOLS } from '../core/types'
 import type { Piece, PieceKind, SymbolType } from '../core/types'
 import { css, THEMES } from './theme'
+import { chipFace, chipFaceSuffix } from './cosmetics'
 import { hazardSkin } from './hazardskins'
 import type { HazardKind } from '../core/difficulty'
 
@@ -345,7 +346,18 @@ function makeJackpot(scene: Phaser.Scene): void {
 }
 
 /** Casino chip token — for the slot-cabinet ambiance + win bursts. */
+/**
+ * The casino token. Baked into the key `'chip'`, which is read by name all over the app (the HUD
+ * balance pill, the Gift Store's flying coin, the win burst, Plinko's stake) — so THE BOUTIQUE's
+ * chip faces re-bake this key in place rather than adding a parallel one.
+ *
+ * The palette comes from `view/cosmetics.ts chipFace()`, whose house face is these exact literals;
+ * every form below (rim bevel, edge spots, inner ring, dished face, pip dome) is faked by stacking
+ * three tones in LIGHTNESS ORDER, so a face only reads correctly while `deep < main < light` holds
+ * inside each triple. `cosmetics.ts` states that as the contract for authoring one.
+ */
 function makeChip(scene: Phaser.Scene): void {
+  const F = chipFace(P)
   const g = scene.make.graphics({ x: 0, y: 0 }, false)
   const c = 24
   const r = 22
@@ -360,11 +372,11 @@ function makeChip(scene: Phaser.Scene): void {
   // Rim BEVEL: three stacked discs fake a lit rounded rim — deep rose shadow at
   // the lower-right, bright rose at the upper-left, main tone between (the same
   // offset-disc trick drawBomb uses for its lit upper form). Keeps the silhouette.
-  g.fillStyle(P.roseDeep, 1) // roseDeep — shadowed lower-right crescent
+  g.fillStyle(F.rimDeep, 1) // shadowed lower-right crescent
   g.fillCircle(c, c, r)
-  g.fillStyle(P.roseLight, 1) // roseLight — lit upper-left edge
+  g.fillStyle(F.rimLight, 1) // lit upper-left edge
   g.fillCircle(c - 1.6, c - 1.8, r - 0.6)
-  g.fillStyle(0xc4223e, 1) // original rim tone (identity preserved)
+  g.fillStyle(F.rimMain, 1) // the rim's own tone
   g.fillCircle(c - 0.4, c - 0.6, r - 2.4)
 
   // 8 cream edge spots — each with a faint black seat so it reads inset, then the
@@ -376,22 +388,22 @@ function makeChip(scene: Phaser.Scene): void {
     const sy = c + Math.sin(a) * sr
     g.fillStyle(0x000000, 0.16) // dark seat under the spot
     g.fillCircle(sx, sy + 0.6, 3.7)
-    g.fillStyle(P.cardFillWarm, 1) // cream spot
+    g.fillStyle(F.spot, 1) // the edge spot
     g.fillCircle(sx, sy - 0.4, 3.2)
   }
 
   // Gold inner ring — beveled with the same three-disc trick: goldDeep groove,
   // goldBright lit edge, gold main tone.
-  g.fillStyle(P.goldDeep, 1) // goldDeep — groove / lower-right shadow
+  g.fillStyle(F.ringDeep, 1) // groove / lower-right shadow
   g.fillCircle(c, c, r * 0.62 + 1)
-  g.fillStyle(P.goldBright, 1) // goldBright — lit upper-left
+  g.fillStyle(F.ringLight, 1) // lit upper-left
   g.fillCircle(c - 1, c - 1.2, r * 0.62)
-  g.fillStyle(P.gold, 1) // gold main tone
+  g.fillStyle(F.ringMain, 1) // the ring's own tone
   g.fillCircle(c - 0.3, c - 0.4, r * 0.62 - 1.4)
 
   // Cream face with subtle CONCAVE shading (black pooled low) + a top-lit sheen,
   // so the recessed centre reads dished instead of flat.
-  g.fillStyle(P.cardFillWarm, 1)
+  g.fillStyle(F.face, 1)
   g.fillCircle(c, c, r * 0.5)
   g.fillStyle(0x000000, 0.08) // concave shadow across the lower face
   g.fillEllipse(c, c + 4, r * 0.9, r * 0.5)
@@ -403,11 +415,11 @@ function makeChip(scene: Phaser.Scene): void {
   const pr = r * 0.22
   g.fillStyle(0x000000, 0.1) // pressed-in seat around the pip
   g.fillCircle(c, c + 0.5, pr + 1.6)
-  g.fillStyle(P.roseDeep, 1) // roseDeep base
+  g.fillStyle(F.pipDeep, 1) // the pip's base
   g.fillCircle(c, c + 0.4, pr)
-  g.fillStyle(P.rose, 1) // rose top (offset up = lit dome)
+  g.fillStyle(F.pipMain, 1) // its top (offset up = lit dome)
   g.fillCircle(c, c - 0.4, pr - 0.6)
-  g.fillStyle(P.roseLight, 0.7) // specular highlight
+  g.fillStyle(F.pipLight, 0.7) // specular highlight
   g.fillCircle(c - 1, c - 1.6, pr * 0.34)
 
   // Unifying GLOSS sweep across the whole upper half — the signature glassy arc
@@ -418,6 +430,32 @@ function makeChip(scene: Phaser.Scene): void {
 
   g.generateTexture('chip', 48, 48)
   g.destroy()
+  bakedChipFace = chipFaceSuffix()
+}
+
+/**
+ * Which chip face is currently sitting in the `'chip'` key. Empty string = the house face, which is
+ * also what a build that never opens the boutique bakes at boot.
+ */
+let bakedChipFace = ''
+
+/**
+ * Re-bake `'chip'` if the equipped face has changed — how THE BOUTIQUE's chip faces take effect.
+ *
+ * It re-bakes THE SAME KEY rather than minting `chip:midnight` and teaching a dozen call sites to
+ * ask for it: `'chip'` is read by name from the HUD rail, the Gift Store's flying coin, the win
+ * burst and Plinko, and a parallel key would mean a face that only applied wherever someone
+ * remembered to route it.
+ *
+ * ⚠️ CALL IT ONLY WHERE NO `'chip'` IMAGE IS ALIVE. `textures.remove` destroys the Texture, so a
+ * display object still holding its frame renders broken until the next scene build. The one caller
+ * is BoutiqueScene, which re-bakes at the top of `create()` — after the previous scene's display
+ * list has been torn down and before it builds anything of its own.
+ */
+export function ensureChipFace(scene: Phaser.Scene): void {
+  if (chipFaceSuffix() === bakedChipFace) return
+  scene.textures.remove('chip')
+  makeChip(scene)
 }
 
 /** Mini playing card (red diamond pip) — a glossy stock card so it reads dimensional beside the

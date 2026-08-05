@@ -86,6 +86,7 @@ import { activeFloorMood, enterFloor } from '../view/floormood'
 import { maybeFloorDoor } from '../view/floordoor'
 import { addEndlessLeaderStrip } from '../view/leaderboardpanel'
 import { attachRgbRing, type RgbRing } from '../view/rgbmarquee'
+import { cushionTints, winTrail } from '../view/cosmetics'
 import { SYMBOL_TINT, TEX_SIZE, ensurePieceTexture } from '../view/textures'
 import {
   FONT,
@@ -2114,8 +2115,10 @@ export class GameScene extends Phaser.Scene {
     // replaces the old flat one-graphics checkerboard at ≈ +1 persistent draw call.
     // §E12 High-Contrast: a second, higher-contrast checkerboard tint set (the warm default's two
     // tints are near-identical whispers), plus a 3px inset so the dark floor shows as cell separators.
-    const TILE_A = this.hc ? T.tileHcA : T.tileA
-    const TILE_B = this.hc ? T.tileHcB : T.tileB
+    // THE BOUTIQUE's cushions ride here. `cushionTints` returns the a11y pair whenever `hc` is on —
+    // it checks that FIRST — so a bought table can never re-hide the grid the contrast switch exists
+    // to reveal, and with nothing bought it hands back exactly `T.tileA`/`T.tileB`.
+    const [TILE_A, TILE_B] = cushionTints(T, this.hc)
     // §G9 — the default gets an inset too (2px vs High-Contrast's 3px). Without one the cushions
     // touch and the deepened floor above has nothing to show through; the inset IS the grid line.
     // Kept a hair tighter than HC so the default still reads as a warm continuous felt tray rather
@@ -2287,19 +2290,24 @@ export class GameScene extends Phaser.Scene {
   private burstTokens(count = 10): void {
     const cx = BOARD_X + BOARD_W / 2
     const cy = this.boardTop + BOARD_W / 2
+    // THE BOUTIQUE's win trail: which two tokens come off the board, and what colour. The house
+    // trail is the original `chip`/`card` pair with no tint at all, so a player who has bought
+    // nothing sees this celebration exactly as it has always been.
+    const trail = winTrail()
     for (let i = 0; i < count; i++) {
-      const key = i % 2 === 0 ? 'chip' : 'card'
+      const key = trail.tokens[i % 2]
       const token = this.add
         .image(cx + (Math.random() * 2 - 1) * 110, cy + (Math.random() * 2 - 1) * 110, key)
         .setDepth(24)
         .setScale(0)
+      if (trail.tint !== null) token.setTint(trail.tint)
       const ang = Math.random() * Math.PI * 2
       const dist = 150 + Math.random() * 170
       this.tweens.add({
         targets: token,
         x: cx + Math.cos(ang) * dist,
         y: cy + Math.sin(ang) * dist - 40,
-        scale: 0.85,
+        scale: trail.scales[i % 2],
         rotation: (Math.random() * 2 - 1) * 3,
         delay: i * 16, // Pass 2 overlap: fan the burst into a staggered volley...
         duration: 680 - i * 16, // ...while every token still lands on the same beat (delay+dur constant)

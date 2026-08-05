@@ -77,6 +77,15 @@ function pickHandle(a: SaveData, b: SaveData): Partial<SaveData> {
  * doc above warns against — no two numbers are blended, each day keeps whichever save saw the better
  * run. It has to work this way now that a WEEK's standing is the SUM of its days: play Tuesday on the
  * phone and Wednesday on the tablet and a winner-takes-all merge would silently halve the week.
+ *
+ * `stars` joins on the SAME argument, and for a reason that only became sharp when the stars got a
+ * sink (THE BOUTIQUE). It is a map of per-LEVEL bests, `recordResult` only ever raises an entry, and
+ * a week's standing being a sum of days is exactly a balance being a sum of levels: three-star L40 on
+ * the phone, one-star it on a tablet that happens to be further unlocked, and a winner-takes-all
+ * merge silently confiscates two stars. That was survivable while stars were a number that only went
+ * up on a screen; now it is a balance the player can watch go DOWN, having bought nothing — the one
+ * failure the derived-balance design (core/boutique.ts) exists to make impossible. The union is what
+ * makes `starsEarned` monotone, and the monotone sum is what makes the derived balance safe.
  */
 function unionLatches(a: SaveData, b: SaveData): Partial<SaveData> {
   const both = (x: string[] = [], y: string[] = []): string[] => Array.from(new Set([...x, ...y]))
@@ -104,7 +113,13 @@ function unionLatches(a: SaveData, b: SaveData): Partial<SaveData> {
     // merge would re-pay a purse; the union also guarantees a trophy earned on either device shows in
     // the showroom on both. Sorted so the showroom and catch-up card read in chapter order.
     chapterRewards: bothN(a.chapterRewards, b.chapterRewards),
+    // Bought cosmetics are a monotone set exactly like chapterRewards, and the price of everything
+    // in it IS the star ledger (core/boutique.ts) — so unioning is what makes a purchase on one
+    // device both ARRIVE on the other and be CHARGED there. Losing one to a merge would hand the
+    // player their stars back and take the goods away in the same breath.
+    ownedCosmetics: both(a.ownedCosmetics, b.ownedCosmetics),
     endlessDays: bestPerDay(a.endlessDays, b.endlessDays),
+    stars: bestPerKey(a.stars, b.stars),
     ...mergeCharms(a, b),
   }
 }
@@ -119,6 +134,29 @@ function bestPerDay(
     if (typeof n !== 'number' || !Number.isFinite(n)) continue
     const cur = out[day]
     if (typeof cur !== 'number' || !Number.isFinite(cur) || n > cur) out[day] = n
+  }
+  return out
+}
+
+/**
+ * Per-key max of two per-LEVEL star maps — `bestPerDay` for `save.stars`, kept separate only
+ * because the key type differs (`Record<number, number>`; `Object.entries` hands back strings and
+ * the index signature will not take them without the cast).
+ *
+ * Non-finite values are skipped rather than compared: `coerceSave` accepts the stars object
+ * wholesale (it never walks the entries), so a hand-edited or foreign blob can carry a NaN, and
+ * `NaN > n` is false in a way that would silently keep the junk instead of the real best.
+ */
+function bestPerKey(
+  a: Record<number, number> = {},
+  b: Record<number, number> = {}
+): Record<number, number> {
+  const out: Record<number, number> = { ...a }
+  for (const [k, n] of Object.entries(b)) {
+    if (typeof n !== 'number' || !Number.isFinite(n)) continue
+    const key = Number(k)
+    const cur = out[key]
+    if (typeof cur !== 'number' || !Number.isFinite(cur) || n > cur) out[key] = n
   }
   return out
 }
