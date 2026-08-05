@@ -104,11 +104,12 @@ export function isFloorOpening(level: number): boolean {
 // nothing but the move budget — an allowance would turn a strategic tool into a resource to hoard,
 // and `splitPendingBoosts`' lesson is that a second inventory is a second thing to keep in sync.
 //
-// Two refusals, both derived from mechanics rather than chosen for balance (see `Board.pullColumn`):
-// a column holding a LOCKED piece will not pull (a clamp is a piece that does not move, and the
-// whole column is a move), and neither will one holding a BLOCKER (an obstacle never moves at all —
-// the same rule, one kind up). Clamps therefore graduate from texture to strategy the moment the
-// rail exists, which is the cheapest possible way to make an old mechanic new again.
+// One refusal, derived from the mechanic rather than chosen for balance (see `Board.pullColumn`): a
+// column holding a BLOCKER will not pull, because a blocker is the one piece that never moves at all
+// — segment gravity already treats it as a wall. That single rule is what gives the verb its shape
+// up here: at 301 five of the eight columns are blocked, and they open as the lockboxes break, so
+// "which column can I still work with" is a live question that answers itself as the level goes on.
+// ⚠️ Clamped pieces RIDE the pull. Refusing them read well and measured terribly — see pullColumn.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** First level carrying the rail. Its own constant so the band can move without touching the act. */

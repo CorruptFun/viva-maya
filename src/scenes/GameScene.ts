@@ -90,6 +90,7 @@ import {
   inkShadow,
   openHazardIntro,
   openMinimumIntro,
+  openPullIntro,
   openOnboarding,
   startScene,
   openSpecialIntro,
@@ -434,6 +435,24 @@ export class GameScene extends Phaser.Scene {
   /** The looping pulse on the aim board-frame — killed explicitly (Phaser 3.90 won't sweep it on destroy). */
   private bombAimTween?: Phaser.Tweens.Tween
 
+  // ── THE REEL PULL (Act II) ─────────────────────────────────────────────────────────────────
+  /** True when this level's spec carries the rail. Numbered levels only — endless never asks. */
+  private canPullLevel = false
+  /** The chrome rail under the board, or undefined on every level without one. */
+  private pullRail?: Phaser.GameObjects.Container
+  /** One handle per column, in column order — re-dressed as clamps and lockboxes come and go. */
+  private pullHandles: Phaser.GameObjects.Image[] = []
+  /**
+   * The column a press ARMED, or -1. ⚠️ Set on pointerDOWN and only ever read on pointerup, which is
+   * the whole safety property: Phaser dispatches pointerup to whatever sits under the finger at
+   * RELEASE, however far away the press began, so a rail that fired on a bare pointerup would yank a
+   * column every time a swipe happened to end on it. The race strip learned this the hard way
+   * (view/leaderboardpanel.ts addRaceStrip) and this rail abuts the same swipe surface — the board.
+   */
+  private pullArmed = -1
+  private pullArmX = 0
+  private pullArmY = 0
+
   private autoplay = false
   private autoplayDelay = 450
   private activeBoosts: BoostType[] = []
@@ -649,6 +668,15 @@ export class GameScene extends Phaser.Scene {
     this.bombAimLayer = undefined
     this.bombAimTween = undefined
     this.autoplay = import.meta.env.DEV && new URLSearchParams(location.search).has('auto')
+    // THE REEL PULL — read from the SPEC, and read HERE, inside the reset block, for the reason
+    // written on `scoreTarget` above: this block runs after the mode fork, so a bare `= false` reset
+    // anywhere in it would stomp an assignment made earlier and the whole mechanic would no-op.
+    // `scene.restart()` re-runs create but not the field initialisers, which is the other half of
+    // why every new field has to be reset in here rather than declared and forgotten.
+    this.pullRail = undefined
+    this.pullHandles = []
+    this.pullArmed = -1
+    this.canPullLevel = !this.endless && this.spec.pull === true
     if (!this.endless) this.applyBoosts(takePendingBoosts(levelBoostExclusions(this.level)))
 
     if (import.meta.env.DEV) {
@@ -777,6 +805,7 @@ export class GameScene extends Phaser.Scene {
     // is DEFERRED — the intro card runs over an empty tray, then the board builds in as it exits.
     // The same condition gates playLevelIntro inside showGoalCallout below.
     this.buildPieceLayer(this.wantsLevelIntro())
+    if (this.canPullLevel) this.buildPullRail()
     this.buildParticles()
     if (!this.endless) this.buildPowerBar() // mid-level helper shelf below the jackpot meter (numbered levels only)
 
@@ -961,7 +990,12 @@ export class GameScene extends Phaser.Scene {
     if (this.endless || this.introOpen) return false
     // 'minimum' rides the hazard-intro latch machinery (save.hazardIntros, teach-once, one card
     // per level) but is a WIN TERM, not a hazard — it gets its own card body below.
-    const present: (HazardKind | 'minimum')[] = []
+    const present: (HazardKind | 'minimum' | 'pull')[] = []
+    // THE REEL PULL leads. It is the only NEW VERB on the board — everything else in this list is a
+    // rule about pieces the player can already move — and level 301 carries a plaque as well as the
+    // rail (every act opens on a …01, and the plaque cadence is …01/…06). Teaching the plaque first
+    // on the level that introduces a new way to play would bury the thing that is actually new.
+    if (this.canPullLevel) present.push('pull')
     if (this.scoreTarget > 0) present.push('minimum')
     if (this.board.coatsRemaining() > 0) present.push('coat')
     for (let r = 0; r < ROWS && present.length < 4; r++) {
@@ -981,7 +1015,8 @@ export class GameScene extends Phaser.Scene {
       this.introOpen = false
       then() // §G7 — see maybeOnboarding
     }
-    if (unseen === 'minimum') openMinimumIntro(this, this.scoreTarget, done)
+    if (unseen === 'pull') openPullIntro(this, done)
+    else if (unseen === 'minimum') openMinimumIntro(this, this.scoreTarget, done)
     else openHazardIntro(this, unseen, done)
     return true
   }
@@ -3249,6 +3284,19 @@ export class GameScene extends Phaser.Scene {
       this.dragFrom = null // a strip gesture is never a board drag
       return
     }
+    // THE REEL PULL rail. Claimed here, on pointerDOWN, and claimed BEFORE the board paths for the
+    // same reason the cheat strip is: the rail sits outside the grid, so a press on it would resolve
+    // to no cell and quietly clear the player's selection. Arming (rather than firing) is what makes
+    // it safe next to a swipe surface — see the field doc on `pullArmed`.
+    const railCol = this.pullColumnAt(p.worldX, p.worldY)
+    if (railCol >= 0) {
+      this.pullArmed = this.state === 'idle' ? railCol : -1
+      this.pullArmX = p.worldX
+      this.pullArmY = p.worldY
+      this.dragFrom = null // a rail gesture is never a board drag
+      return
+    }
+    this.pullArmed = -1
     // Bomb aim mode: the tap PLACES the purchased blast instead of selecting a piece. A tap off the
     // board (e.g. the Cancel pill below it) resolves to no cell → the bomb stays armed. Armed only from
     // idle, but guard state anyway so a stray tap can never start a resolve on an unsettled board.
@@ -3342,6 +3390,17 @@ export class GameScene extends Phaser.Scene {
     // a tap on the strip is not a selection, and the code's rhythm must not disturb the board.
     if (this.cheatFrom) {
       this.cheatFrom = null
+      return
+    }
+    // THE REEL PULL fires here — but ONLY because the press started on the rail. Two extra guards
+    // make the gesture read like a control rather than a tripwire: the release has to still be on
+    // the rail, and the finger must not have wandered (a press-and-drag-away is a cancel, which is
+    // what every other pressable in this game means by it).
+    if (this.pullArmed >= 0) {
+      const col = this.pullArmed
+      this.pullArmed = -1
+      const strayed = Math.hypot(p.worldX - this.pullArmX, p.worldY - this.pullArmY) > CELL * 0.6
+      if (!strayed && this.pullColumnAt(p.worldX, p.worldY) === col) void this.tryPull(col)
       return
     }
     // §G1 — a tap-tap pair completed mid-resolve books its swap too, so the two input idioms stay
@@ -3724,6 +3783,167 @@ export class GameScene extends Phaser.Scene {
       wave = this.board.matchWave([b, a])
     }
 
+    this.spendMove()
+    await this.resolveLoop(wave)
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // THE REEL PULL — Act II's new verb.
+  //
+  // A chrome rail of eight handles sits in the 48px lane between the board's bottom edge and the
+  // standing brief. Press one and the whole column slides down a notch, the bottom piece riding over
+  // the top. It costs a move and resolves through the ordinary wave pipeline, so a pull that lands a
+  // run cascades exactly like a swap — and a pull that lands nothing is still a legal move, because
+  // buying position with a move is the trade the verb exists to sell.
+  //
+  // ⚠️ THE LANE IS BUDGETED, NOT FOUND. `briefY = boardTop + ROWS*CELL + 48` and the board ends at
+  // `boardTop + ROWS*CELL`, so the rail lives inside those 48px and nothing else may move into them.
+  // It reads `boardTop`, never BOARD_Y, for the same reason every other thing seated below the board
+  // does — and it is never built in endless, which is what keeps it clear of CHEAT_ZONE_TOP entirely.
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  /** Centre-line of the rail — inside the board→brief lane, derived from the same two numbers. */
+  private pullRailY(): number {
+    return this.boardTop + ROWS * CELL + 20
+  }
+
+  /** One baked handle face per state — two textures for eight handles (the N-Graphics rule). */
+  private pullHandleTexture(live: boolean): string {
+    const T = getTheme()
+    const key = `pullhandle:${T.id}:${live ? 'live' : 'dead'}`
+    if (this.textures.exists(key)) return key
+    const w = CELL - 16
+    const h = 22
+    const g = this.add.graphics()
+    if (live) {
+      // Chrome: a dark seat, a bright bar, a specular streak along the top third. It has to read as
+      // METAL against a board made of warm gold, or it looks like another gold button.
+      g.fillStyle(0x2a2f3d, 1)
+      g.fillRoundedRect(0, 0, w, h, 8)
+      g.fillStyle(0x9aa3b5, 1)
+      g.fillRoundedRect(2, 2, w - 4, h - 5, 7)
+      g.fillStyle(0xe8edf5, 0.9)
+      g.fillRoundedRect(5, 4, w - 10, 6, 3)
+      // The knob — the part that says "pull me" rather than "press me".
+      g.fillStyle(T.rose, 1)
+      g.fillCircle(w / 2, h / 2 + 1, 6)
+      g.fillStyle(0xffffff, 0.45)
+      g.fillCircle(w / 2 - 2, h / 2 - 1, 2)
+    } else {
+      g.fillStyle(0x2a2f3d, 0.35)
+      g.fillRoundedRect(0, 0, w, h, 8)
+      g.fillStyle(0x6b7280, 0.45)
+      g.fillRoundedRect(2, 2, w - 4, h - 5, 7)
+    }
+    g.generateTexture(key, w, h)
+    g.destroy()
+    return key
+  }
+
+  private buildPullRail(): void {
+    const y = this.pullRailY()
+    this.pullRail = this.add.container(0, 0).setDepth(3)
+    this.pullHandles = []
+    for (let c = 0; c < COLS; c++) {
+      const cx = BOARD_X + c * CELL + CELL / 2
+      const handle = this.add.image(cx, y, this.pullHandleTexture(true))
+      this.pullRail.add(handle)
+      this.pullHandles.push(handle)
+    }
+    this.refreshPullRail()
+  }
+
+  /** Grey the handles of columns that cannot pull — a clamp or a lockbox refuses the whole column. */
+  private refreshPullRail(): void {
+    if (!this.pullRail) return
+    for (let c = 0; c < this.pullHandles.length; c++) {
+      const live = this.board.canPull(c)
+      // The dead face is ALREADY drawn at low opacity, so the alpha here stays high: at 0.55 the
+      // two compounded and the blocked handles all but vanished, which read as "there are three
+      // handles" rather than "there are eight and five are held" (browser, 2026-08-04).
+      this.pullHandles[c].setTexture(this.pullHandleTexture(live)).setAlpha(live ? 1 : 0.85)
+    }
+  }
+
+  /** The column a press at `worldX/worldY` arms, or -1 when the press was not on the rail. */
+  private pullColumnAt(worldX: number, worldY: number): number {
+    if (!this.canPullLevel || !this.pullRail) return -1
+    const y = this.pullRailY()
+    // A generous vertical band (the art is 22px, the target is 36) that still clears the board's own
+    // bottom row above it and the standing brief below it.
+    if (Math.abs(worldY - y) > 18) return -1
+    const col = Math.floor((worldX - BOARD_X) / CELL)
+    return col >= 0 && col < COLS ? col : -1
+  }
+
+  /**
+   * Pull one column. Spends a move whether or not it matches — repositioning IS the move.
+   *
+   * Reduced motion gets the notch instantly with no spring, which is the honest translation: the
+   * information (the column moved down one) survives, only the flourish goes.
+   */
+  private async tryPull(col: number): Promise<void> {
+    if (this.state !== 'idle' || this.introOpen || this.movesLeft <= 0) return
+    const moves = this.board.pullColumn(col)
+    if (!moves) {
+      // A refused column is a RULE, so it gets a rule's feedback: the thud the game already uses for
+      // an illegal swap, plus a shove on the handle that will not move.
+      sfx.invalidThud()
+      const handle = this.pullHandles[col]
+      if (handle && !this.reducedMotion) {
+        this.tweens.add({ targets: handle, y: handle.y + 4, duration: 70, yoyo: true, repeat: 1, ease: 'Sine.easeInOut' })
+      }
+      this.punch({ trauma: 0.16, dirX: 0, dirY: 1 })
+      return
+    }
+    this.state = 'swapping'
+    this.disarmHint()
+    this.disarmSelectTelegraph()
+    sfx.swap()
+
+    const wrap = moves.find(m => m.from.row === ROWS - 1 && m.to.row === 0)
+    const tweens: Promise<unknown>[] = []
+    for (const m of moves) {
+      const sprite = this.sprites.get(m.piece.id)
+      if (!sprite) continue
+      const to = this.cellToXY(m.to)
+      if (m === wrap) {
+        // The wrap: drop the piece above row 0 and slide it in, exactly the way a refill arrives.
+        // The piece layer is masked, so the moment above the board is invisible and the piece simply
+        // appears at the top of the column — which is what "it rode over the top" should look like.
+        sprite.setPosition(to.x, this.boardTop - CELL / 2)
+      }
+      tweens.push(
+        this.t({
+          targets: sprite,
+          x: to.x,
+          y: to.y,
+          duration: this.reducedMotion ? 0 : 190,
+          ease: this.reducedMotion ? 'Linear' : 'Quad.easeOut',
+        })
+      )
+    }
+    // The handle itself takes the stroke — the arm goes down and springs back like a real one.
+    const handle = this.pullHandles[col]
+    if (handle && !this.reducedMotion) {
+      this.tweens.add({ targets: handle, y: handle.y + 10, duration: 110, yoyo: true, ease: 'Quad.easeOut' })
+    }
+    await Promise.all(tweens)
+
+    this.spendMove()
+    this.refreshPullRail()
+    // `matchWave()` with no `prefer`: a pull has no "swapped cell", so a special minted by it spawns
+    // at the run's own intersection/middle — the same rule a cascade match already uses.
+    await this.resolveLoop(this.board.matchWave())
+  }
+
+  /**
+   * ONE move spent, one place. Extracted from `trySwap` when the reel pull arrived: two copies of
+   * "decrement, retire the marker offer, repaint, warn, pulse" would have drifted the first time any
+   * one of those five changed, and the symptom would be a move that costs differently depending on
+   * how you spent it.
+   */
+  private spendMove(): void {
     this.movesLeft--
     this.moveMade = true
     // First committed move: the marker offer (if still open) leaves the table, and a placed
@@ -3744,7 +3964,6 @@ export class GameScene extends Phaser.Scene {
         ease: 'Sine.easeInOut',
       })
     }
-    await this.resolveLoop(wave)
   }
 
   /** Play waves until the board settles, then check for win/lose. */
@@ -3770,6 +3989,10 @@ export class GameScene extends Phaser.Scene {
         this.log(this.dbgStage)
         wave = this.board.matchWave()
       }
+      // The board settled: a clamp may have popped or a lockbox broken, so a column that refused the
+      // rail a moment ago may now accept it. Re-dressed HERE rather than per wave, because a handle
+      // flickering mid-cascade would be telling the player about a board they cannot touch yet.
+      if (this.pullRail) this.refreshPullRail()
       this.megaFinish(cascade) // the "in awe" release — a deep chain erupts once more as it settles
       this.fadeCombo() // E11: the cascade settled — resolve the combo readout (composes with the win peak)
       this.maybeAwardFreeSpins(cascade) // R4: a MEGA-grade chain banks free spins + flies the golden ticket

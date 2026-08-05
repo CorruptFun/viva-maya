@@ -681,14 +681,21 @@ export class Board {
    * included — behaves exactly as it did. That is the blocker precedent, and it is what lets
    * `boardpick.test.ts`'s goldens pass unmodified while a new verb ships.
    *
-   * ── THE TWO REFUSALS, AND WHY THEY ARE NOT BALANCE CHOICES ──────────────────────────────
-   * A column refuses when it holds a BLOCKER or a LOCKED piece, and both fall out of what those
-   * things already mean rather than out of tuning:
-   *   · a blocker never moves — it is not a piece in a column, it is a hole in one. `columnBoundaries`
-   *     already treats it as a wall that gravity cannot cross, and a pull is gravity with an opinion.
-   *   · a locked piece "still matches, but it will not move". A pull moves it. Same rule, one scale up.
-   * The second one is the reason this verb makes an OLD mechanic new: from 301 a clamp stops being
-   * texture and starts being a decision about which column you can still work with.
+   * ── THE ONE REFUSAL: A BLOCKER, AND ONLY A BLOCKER ──────────────────────────────────────
+   * A blocker never moves. It is not a piece in a column, it is a hole in one — `columnBoundaries`
+   * already treats it as a wall gravity cannot cross, and a pull is gravity with an opinion. So a
+   * column holding one refuses, and that refusal is the verb's real constraint: at 301 five of the
+   * eight columns are blocked, and they open up as the lockboxes break.
+   *
+   * ⚠️ A CLAMPED PIECE RIDES THE PULL, and the design's first answer said the opposite. Two reasons
+   * it had to change, one principled and one measured:
+   *   · A clamp means "still matches, but will not SWAP". It has never meant "will not FALL" —
+   *     `applyGravity` moves locked pieces every cascade of every level. A pull that refused them
+   *     would make gravity and the rail disagree about the same piece, which is not a rule, it is a
+   *     bug with a story.
+   *   · Measured at level 301 (browser, 2026-08-04): lock density is at its 12-cell ceiling by the
+   *     late band, and 12 clamps over 8 columns left ALL EIGHT refusing. The rail was dead on its
+   *     own teaching level. A constraint that is always on is not strategy, it is an off switch.
    *
    * Specials ride the wrap intact — a Wild Reel pulled off the bottom lands in row 0 still armed,
    * because a pull is a move, not a clear, and nothing here consumes anything. The caller resolves
@@ -701,7 +708,7 @@ export class Board {
     for (let r = 0; r < this.rows; r++) {
       const p = this.grid[r][col]
       // A hole means a wave is mid-resolve; refusing is right, and the scene never asks then anyway.
-      if (!p || p.kind === 'blocker' || p.locked) return null
+      if (!p || p.kind === 'blocker') return null
       column.push(p)
     }
     const moves: FallMove[] = []
@@ -720,7 +727,7 @@ export class Board {
     if (!Number.isInteger(col) || col < 0 || col >= this.cols) return false
     for (let r = 0; r < this.rows; r++) {
       const p = this.grid[r][col]
-      if (!p || p.kind === 'blocker' || p.locked) return false
+      if (!p || p.kind === 'blocker') return false
     }
     return true
   }

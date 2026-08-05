@@ -2147,6 +2147,79 @@ export function openMinimumIntro(scene: Phaser.Scene, target: number, onClose?: 
 }
 
 /**
+ * THE REEL PULL's teach card (Act II, level 301) — the first NEW VERB the game has added since it
+ * shipped, so it gets real art rather than a glyph: a slot arm mid-stroke with the column it just
+ * pulled, drawn once into a texture (a Graphics on a card would re-tessellate every frame for a
+ * picture that never changes).
+ */
+export function openPullIntro(scene: Phaser.Scene, onClose?: () => void): void {
+  const W = 720
+  const reduced = prefersReducedMotion()
+  const layer = scene.add.container(0, 0).setDepth(65)
+  const scrimKit = addFocusScrim(scene, { alpha: 0.6, ink: 0x2a2417 })
+  const scrim = scrimKit.hit.setInteractive()
+  const close = (): void => {
+    layer.destroy()
+    onClose?.()
+  }
+  scrim.on('pointerup', close)
+  paintTeachCard(scene, layer, close, {
+    cx: W / 2,
+    cy: 560,
+    cardW: 600,
+    cardH: 520,
+    reduced,
+    title: 'THE REEL PULL',
+    texture: pullArmTexture(scene),
+    // Three lines max at 25px — a fourth clips behind GOT IT (see openMinimumIntro).
+    blurb:
+      'The handles under the board pull a whole column down one, and the bottom piece rides over the top. It costs a move — even when nothing matches.',
+    scrim,
+    scrimArt: scrimKit.art,
+  })
+}
+
+/** The slot arm and its column, baked once. Authored on a 132 grid — paintTeachCard's swatch size. */
+function pullArmTexture(scene: Phaser.Scene): string {
+  const T = getTheme()
+  const key = `teach:pull:${T.id}`
+  if (scene.textures.exists(key)) return key
+  const S = 132
+  const g = scene.add.graphics()
+  // The column: three cells stacked, the top one arriving (offset up and faded) so the picture reads
+  // as MID-MOVE rather than as a static stack of tiles.
+  const cw = 46
+  const cx = 30
+  for (let i = 0; i < 3; i++) {
+    const y = 26 + i * 34
+    g.fillStyle(T.goldDeep, 1)
+    g.fillRoundedRect(cx, y, cw, 30, 8)
+    g.fillStyle(T.cardFillWarm, 1)
+    g.fillRoundedRect(cx + 3, y + 3, cw - 6, 24, 6)
+  }
+  // The down-arrow through the column — the direction is the whole rule.
+  g.fillStyle(T.rose, 0.92)
+  g.fillRect(cx + cw / 2 - 4, 34, 8, 70)
+  g.fillTriangle(cx + cw / 2 - 14, 100, cx + cw / 2 + 14, 100, cx + cw / 2, 124)
+  // The arm: a chrome shaft on the right with a red knob, drawn at the bottom of its stroke.
+  g.fillStyle(0x2a2f3d, 1)
+  g.fillRoundedRect(100, 20, 16, 92, 8)
+  g.fillStyle(0x9aa3b5, 1)
+  g.fillRoundedRect(103, 23, 10, 86, 5)
+  g.fillStyle(0xe8edf5, 0.85)
+  g.fillRoundedRect(105, 26, 3, 80, 2)
+  g.fillStyle(0x2a2f3d, 1)
+  g.fillCircle(108, 112, 15)
+  g.fillStyle(T.rose, 1)
+  g.fillCircle(108, 112, 12)
+  g.fillStyle(0xffffff, 0.5)
+  g.fillCircle(104, 108, 4)
+  g.generateTexture(key, S, S)
+  g.destroy()
+  return key
+}
+
+/**
  * §G11 · the teach-once card for a SPECIAL PIECE, fired the first time the player actually makes one.
  *
  * The specials — Wild Reel, Dice Bomb, Jackpot Chip — are the best thing about this board and the

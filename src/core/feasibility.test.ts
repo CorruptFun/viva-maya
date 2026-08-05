@@ -31,11 +31,20 @@ const SEEDS = FULL ? 40 : 10
  * hazard load under a rising collect demand is still winnable, and that the new verb has not moved
  * cascade health or Plinko eligibility.
  *
+ * Banker win rates measured at 40 seeds when the floors shipped (2026-08-04) — L300 is 18% for
+ * scale, so Act II sits comfortably ABOVE the end of Act I:
+ *     310 → 53% · 340 → 38% · 350 → 40% · 355 → 20% · 360 → 38% · 390 → 43% · 400 → 40%
+ *
+ * ⚠️ 355 IS DELIBERATELY NOT IN THE QUICK SET. `everWon` over 10 seeds at a 20% win rate fails by
+ * chance about one run in nine, and a gate that red-lights on the dice teaches people to re-run the
+ * suite until it passes — which is how a real failure gets waved through. It keeps its place in the
+ * dense sweep, where 40 seeds make the same assertion mean something.
+ *
  * ⚠️ The banker only takes a pull that matches something IMMEDIATELY (see sim.previewPull), so it
  * plays Act II as a slightly better swapper rather than as a player using the verb. Every number
  * here is therefore a FLOOR on player power — fine as a gate, worthless as an estimate.
  */
-const CHECK_LEVELS = FULL ? [31, 45, 56, 65, 86, 100, 150, 220, 300, 310, 355, 390] : [65, 150, 300, 355]
+const CHECK_LEVELS = FULL ? [31, 45, 56, 65, 86, 100, 150, 220, 300, 310, 355, 390] : [65, 150, 300, 390]
 /** Playing the real board headlessly is not cheap, and the dense sweep is ~30s per gate. Vitest's
  *  5s default would fail these on wall clock rather than on merit — which is exactly the kind of
  *  false red that teaches people to ignore a suite. */

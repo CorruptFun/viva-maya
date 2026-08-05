@@ -251,23 +251,30 @@ describe('THE REEL PULL — the column notch', () => {
     for (const m of moves) expect(m.to.col).toBe(3)
   })
 
-  it('refuses a column holding a blocker or a clamp — the rule those pieces already carry', () => {
+  it('refuses a column holding a blocker — the one piece that never moves', () => {
     const blocked = neutral()
     blocked.plant(at(4, 2), 'blocker')
     expect(blocked.canPull(2)).toBe(false)
     expect(blocked.pullColumn(2)).toBeNull()
     expect(blocked.canPull(3)).toBe(true)
+    // A refused pull leaves the board completely untouched — no half-rotation.
+    const snap = gridOf(blocked).map(r => r.map(p => p?.id ?? 0))
+    blocked.pullColumn(2)
+    expect(gridOf(blocked).map(r => r.map(p => p?.id ?? 0))).toEqual(snap)
+  })
 
+  it('carries a CLAMPED piece through the pull, because gravity already does', () => {
+    // A clamp means "still matches, but will not SWAP" — it has never meant "will not fall", and
+    // `applyGravity` moves locked pieces every cascade. Refusing them here also emptied the rail
+    // outright in the late band, where lock density is at its ceiling (measured at L301).
     const clamped = neutral()
     const g = gridOf(clamped)
     g[6][5] = { ...g[6][5]!, locked: true }
-    expect(clamped.canPull(5)).toBe(false)
-    expect(clamped.pullColumn(5)).toBeNull()
-
-    // A refused pull leaves the board completely untouched — no half-rotation.
-    const snap = gridOf(clamped).map(r => r.map(p => p!.id))
-    clamped.pullColumn(5)
-    expect(gridOf(clamped).map(r => r.map(p => p!.id))).toEqual(snap)
+    const id = g[6][5]!.id
+    expect(clamped.canPull(5)).toBe(true)
+    expect(clamped.pullColumn(5)).not.toBeNull()
+    const moved = clamped.get(at(7, 5))!
+    expect({ id: moved.id, locked: moved.locked }).toEqual({ id, locked: true })
   })
 
   it('refuses off-board columns and garbage', () => {
