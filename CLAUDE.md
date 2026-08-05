@@ -162,6 +162,43 @@ Live: <https://corruptfun.github.io/viva-maya/>
   the level being played, so `BLAST` is deliberately not `DICE BOMB`. Only one
   free-substitution mapping is honest (`moves5 ← extraMoves`); the negative cases
   carry tests.
+- **THE BOUTIQUE derives its balance and stores only OWNERSHIP — and that makes
+  its price list immutable.** The save gained exactly one field, `ownedCosmetics`
+  (`core/boutique.ts`); the star balance is *every star ever earned minus the price
+  of everything owned*. There is no "spent" counter and there must never be one:
+  the append IS the deduction, which is what makes the whole feature merge-proof
+  (a monotone set unions across devices like every other latch), crash-proof and
+  free of server changes. ⚠️ Because prices are subtracted at READ time, **editing
+  a shipped price is a refund** — or a surprise charge — applied silently to
+  everyone who owns that item on their next open. Add rows; never edit or delete
+  one. `boutique.test.ts` pins the table as a GOLDEN for exactly that reason.
+  `save.stars` was hardened to a per-key max on merge in the same commit (the
+  `endlessDays` argument): winner-takes-all could confiscate a level's stars, which
+  was survivable while stars were a number that only went up on a screen and is not
+  now that it is a balance. Cosmetics sell a LOOK only — the four themes stay free,
+  the a11y high-contrast cushion pair always beats a bought table, and a chase
+  pattern moves the marquee's crest count and lap, **never a hue** (the per-theme
+  arcs are the ring's law — see the marquee bullet). The equipped set is per-device
+  localStorage; ownership rides the cloud save.
+- **THE PIT BOSS is the ONE sanctioned exception to "hazards only ever shrink".**
+  From 351 (`core/pitboss.ts`) the House deals clamps — and fresh felt from 381 —
+  onto a live table through `Board.dealLocks`/`dealCoats`/`dealBlocker`.
+  `hazards.ts`'s safety-property comment names it, and nothing else may join it
+  without the same treatment. Its fairness constitution is what the mechanic is
+  worth, not decoration: the schedule is a pure function of the level (identical
+  every attempt, so a failed level is learnable as a rhythm), every deal is
+  telegraphed a full move ahead, the dealer stands on your last 5 moves, deals sit
+  ≥4 moves apart, a breather gets an empty chair, and it pressures the TABLE — a
+  banked special is off limits and `dealLocks` puts back any clamp that would take
+  the last legal swap. It fires from `resolveLoop`'s idle handoff (the seam Plinko
+  uses), after the win/lose checks, so it can never interrupt a cascade or un-win a
+  level. `sim.playLevel` plays the same book — a gate that measured an
+  uninterfered-with table would be green and wrong. ⚠️ **Every multiple of 5 is a
+  breather, so 355/365/390 measure the boss's day off**; `feasibility.test.ts` uses
+  **363 and 387**. And the move allowance pays for the FELT only: one move per deal
+  was measured as a large overpayment (Floor 2 came out easier than Floor 1), because
+  the banker proxy cannot feel a clamp at all — that number bounds how *harmless* the
+  mechanic is, not how harmful.
 - **`beforeinstallprompt` is captured, not observed.** `core/install.ts` takes
   custody so the game can offer its own button (`view/installsheet.ts`); the
   passive listener that used to sit in `main.ts` is gone. ⚠️ **iOS exposes no
@@ -202,12 +239,15 @@ edit to make green.
 | path | role |
 |---|---|
 | `src/main.ts`, `src/config.ts` | entry + tunables |
-| `src/scenes/` | Phaser scenes — Boot, Home, Game, LevelSelect, Store, Slot |
+| `src/scenes/` | Phaser scenes — Boot, Home, Game, LevelSelect, Store, Boutique, Slot |
 | `src/core/` | game logic + its tests — board, merge, levels, endless, daily, slots, hazards, analytics, push, cheat, rgb |
 | `src/core/inventory.ts` | canonical boost names (`BOOST_META`) + the stash model — see the note above |
 | `src/core/install.ts` | "add to home screen" custody; the platform split lives here |
 | `src/core/resumeguard.ts` | recovers a game loop that never restarted after a resume |
 | `src/core/trophies.ts` | chapter trophies — catalog, purse table, tier ladder, the claim latch (see the note above) |
+| `src/core/pitboss.ts` | THE PIT BOSS — the deal schedule and its fairness bounds (see the note above) |
+| `src/core/boutique.ts` | THE BOUTIQUE — the cosmetic catalog, the IMMUTABLE price table, the derived star balance |
+| `src/view/cosmetics.ts` | what each cosmetic LOOKS like — cushion tints, chip faces, win trails, chase patterns |
 | `src/view/stash.ts` | the stash panel + its two doors (Home line, LevelSelect `🎁 N` pill) |
 | `src/view/installsheet.ts` | the install sheet — DOM, so the iOS guide can point at real browser chrome |
 | `src/view/raceunlockcard.ts` | the one-time DAILY RACE UNLOCKED reveal |

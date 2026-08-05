@@ -89,6 +89,8 @@ data (`ClearWave`, `FallMove[]`, `Spawn[]`, `BlastEvent[]`). Tuning happens in
 | `src/core/plinko.ts` | Plinko bonus drop: the weighted slot table, `rollSlotIndex`, and `dropPath` — the RIG that builds a bounce sequence guaranteed to reach the pre-chosen slot |
 | `src/core/levels.ts` | `ACT1_LEVELS=300` / `LEVEL_COUNT=400`; deterministic `levelSpec(n)` — seeded per-level objectives, symbol count, move budget and score plaque |
 | `src/core/actII.ts` | ACT II — the floor table (`FLOORS`), THE REEL PULL band, THE ROPED RUN (`act2Plan`); pure logic, no view imports |
+| `src/core/pitboss.ts` | ACT II — THE PIT BOSS: the deal schedule, its fairness bounds and the cell picker; pure logic |
+| `src/core/boutique.ts` | THE BOUTIQUE — the cosmetic catalogue, the IMMUTABLE price table and the derived star balance |
 | `src/core/save.ts` | `localStorage` save (key `viva-maya:v1`, schema **v13**): load/persist, shape-tolerant migrations, `recordResult`/`recordScore`/`takePendingBoosts` |
 | `src/core/daily.ts` | Daily check-in logic: `todayKey`, streak math (`advanceDailyRitual` + `milestoneDue`), `CHECKIN_CHIPS` ladder, and the classic `PRIZES` table (now the slots' gift floor — see `freeSlotSpin` in `store.ts`) |
 | `src/core/endless.ts` | Endless race: `dayKey`/`weekKey` (**fixed `RACE_TZ = America/Edmonton`**), `dayEndsAt`/`weekEndsAt`/`formatRaceRemaining`, `weekKeyOfDay` (the daily→weekly rollup), `seedForKey` (FNV-1a), shared seeded RNG, `endlessWeekStanding` (daily bests summed), `recordEndless` (with the `ENDLESS_MAX_CHEAT_SCORE` backstop), `endlessUnlocked` (after L10), `endlessRngForDay` (salted — see §3) |
@@ -114,6 +116,7 @@ data (`ClearWave`, `FallMove[]`, `Spawn[]`, `BlastEvent[]`). Tuning happens in
 | File | Purpose |
 |---|---|
 | `src/view/textures.ts` | `createAllTextures` (emoji + composed glyphs/tokens at boot) and `ensurePieceTexture` (lazy special overlays); `TEX_SIZE=128` |
+| `src/view/cosmetics.ts` | THE BOUTIQUE's look tables — cushion tints, chip-face palettes, win trails, chase patterns (core names it, the view dresses it) |
 | `src/view/background.ts` | `addCasinoBackdrop(scene, 'home'|'menu'|'game')` — gradient wash, twinkling marquee strips, corner bokeh, suit watermarks, drifting motes/tokens |
 | `src/view/ui.ts` | Shared widgets: `FONT`, pill styles, `addPillButton`, `addMarquee`, `addLivesHud`, `addStreakBadge`, mute/help/sound chips, and the help + sound-picker overlays |
 
@@ -335,8 +338,40 @@ are ordinary ones on the plain extended curve (`actII.test.ts` asserts it).
   marquee leans toward the best move's symbol colour by redistributing the ring's length
   across its arc — never by moving the arc, which would break the per-theme hue law. One
   eased scalar on the ring's existing UPDATE hook; no extra tween, no shader.
+- **THE PIT BOSS** (`core/pitboss.ts`, from 351): the House takes a telegraphed turn at
+  the table every few moves — a CLAMP DEAL, and FRESH FELT from 381. The first mechanic in
+  the game that ADDS to a live level, which is why `hazards.ts`'s safety-property comment
+  now names it as its one sanctioned exception. `dealPlan(level, moves)` is a pure function
+  of the level (same rhythm every attempt); `dealTargets` picks the cells one move early so
+  they can be marked; `Board.dealLocks`/`dealCoats`/`dealBlocker` are the additive mutators,
+  dormant by absence. Fires from `resolveLoop`'s idle handoff, after the win/lose checks.
+  Stands off the last 5 moves, ≥4 moves apart, empty chair on every breather, never a
+  banked special, and `dealLocks` reverts any clamp that would take the last legal swap.
+  `sim.playLevel` plays the same book, so the feasibility gates measure the shipped table
+  (365/390 were both breathers — **363 and 387** joined `CHECK_LEVELS` for real coverage).
+  The move allowance pays for the FELT only: per-deal was measured as a large overpayment.
 - Endless and the daily/weekly race are untouched — everything keys off a level NUMBER,
   and `boardpick.test.ts`'s goldens pass unmodified.
+
+### THE BOUTIQUE — `src/core/boutique.ts`, `src/view/cosmetics.ts`, `src/scenes/BoutiqueScene.ts`
+The star sink. `boutique.ts` names and prices the goods (pure, testable); `cosmetics.ts`
+decides what each one LOOKS like — the same core/view split `hazardskins.ts` keeps.
+- **Derive the balance, store only ownership.** One new save field, `ownedCosmetics`;
+  `starBalance = starsEarned − Σ price(owned)`. No spend counter exists, so nothing has to
+  be reconciled across devices — the set unions like every other latch. **Prices are
+  append-only and immutable**: they are subtracted at read time, so editing one is a refund
+  (or a surprise charge) to everyone who owns it. `boutique.test.ts` pins them as a GOLDEN.
+- Four slots: `cushion` (the board's tint pair — the a11y high-contrast pair always wins),
+  `chip` (re-bakes the shared `'chip'` texture via `ensureChipFace`, which is why equipping
+  restarts the scene), `trail` (what `burstTokens` throws on a win) and `chase` (the RGB
+  ring's idle crest count + lap time — **never** a hue; the per-theme arcs are law).
+- The equipped set is per-device localStorage (`viva-maya:boutique`); ownership rides the
+  cloud save. `equipped()` resolves against ownership, so a restored backup that predates a
+  purchase degrades to the house look rather than wearing something unpaid for.
+- Door: LevelSelect's star tally, once `boutiqueOpen` (progressive reveal). It arms on
+  `pointerdown` — the screen's body is a swipe surface.
+- Shipped alongside: the **`stars` per-key-max merge**, without which a cross-device merge
+  could shrink a balance the player can now watch.
 
 ### Lives / energy — `src/core/lives.ts`, `GameScene` gate
 Pool: `LIVES_MAX=5`, one life every `LIFE_REGEN_MS=20min` of **wall-clock** time (device

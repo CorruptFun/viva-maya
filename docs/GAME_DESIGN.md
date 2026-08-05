@@ -305,8 +305,53 @@ clears a RANDOM present color. Swap-combos (both consumed, epicenter = drag dest
   HIGH-ROLLER WING). THE PRIVATE ELEVATOR is a one-time reveal card on the raceunlockcard pattern
   (`view/act2card.ts`, latched by `save.seenAct2Reveal`); each floor's first level shows a one-time
   croupier door card (`view/floordoor.ts`, latched by `save.floorIntros`).
+- THE PIT BOSS (Slice 2, `core/pitboss.ts`, from 351 — Floor 2's own mechanic). Every few moves the
+  House takes a visible turn at the table: a CLAMP DEAL puts a dealer's clamp on a few squares, and
+  from 381 a FRESH FELT deal lays new baize. It is the FIRST thing in this game that adds work to a
+  level in progress, and the whole of its value is in the constitution that makes that fair:
+  the schedule is a pure function of the level (identical every attempt, so a failed level is
+  learnable as a RHYTHM); every deal is telegraphed a full move ahead with a mark on each square it
+  will take; the dealer stands on your last five moves; deals are at least four moves apart; the
+  work is paid for in the move budget up front; a breather (`L % 5 === 0`) gets an EMPTY CHAIR; and
+  it pressures the TABLE, never your pieces — a special you banked is off limits, and a clamp that
+  would take the last legal swap off the board is put back. It fires from the idle handoff at the
+  tail of `resolveLoop` (the seam Plinko already uses), after the win/lose checks have returned, so
+  it can never interrupt a cascade or un-win a level. `sim.ts` plays the same schedule, so the
+  feasibility gates measure the table that ships.
+  - THE ALLOWANCE IS PRICED AT MEASURED COST, not per deal. Paying a move per deal made Floor 2
+    measurably EASIER than Floor 1 (banker proxy, 40 seeds: win rates rose 5–20pp). What is paid for
+    is the felt, which provably adds to the win condition; the clamp is free, because it provably
+    removes nothing and lifts on the next clear beside it. The proxy cannot feel a clamp at all —
+    that is a bound on how harmless the mechanic is, not an estimate of it.
+  - Dealt felt raises the sweep counter's DENOMINATOR, and the counter flashes in the House's own
+    colour when it happens — a number that silently went from 4/12 to 4/14 would read as a bug.
 - Endless and the daily/weekly race are UNTOUCHED. Everything above keys off a level NUMBER and
   endless has none; `boardpick.test.ts`'s goldens are the tripwire and pass unmodified.
+
+## THE BOUTIQUE — the star sink (Slice 2; `src/core/boutique.ts`, `src/view/cosmetics.ts`)
+Stars have been earned since the game's first week and have never been spendable. The boutique is
+where they go: a shop selling a LOOK and nothing else — board cushions, chip faces, win trails and
+marquee chase patterns. Reached from LevelSelect's star tally, which becomes the door once the
+cheapest thing on the counter is in reach (progressive reveal, the rule Home applies to LEVELS and
+the GIFT STORE). Two shelves: THE COUNTER, open early and deliberately reachable by a mid-ladder
+player, and THE HIGH-ROLLER CASE, silhouetted until 301.
+
+- **DERIVE THE BALANCE, STORE ONLY OWNERSHIP.** The save gains exactly one field,
+  `ownedCosmetics`, and the balance is `(every star ever earned) − (the price of everything owned)`.
+  There is no "stars spent" counter and there must never be one. That single decision makes the
+  feature merge-proof (a monotone set unions across devices like every other latch — buy on two
+  phones and the merged save owns and has paid for both), crash-proof (the append IS the deduction,
+  so there is no window where one happened and the other did not) and migration-free.
+- **PRICES ARE APPEND-ONLY AND IMMUTABLE.** Because the balance subtracts prices at READ time,
+  editing a shipped price silently re-charges or REFUNDS everyone who owns that item on their next
+  app open. `boutique.test.ts` pins the whole table as a GOLDEN for exactly that reason.
+- **The `stars` merge was hardened alongside it** — per-key max, the `endlessDays` argument verbatim.
+  Winner-takes-all could confiscate a level's stars to a merge, which was survivable while stars
+  were a number that only went up on a screen and is not now that it is a balance.
+- Defaults stay free forever and equipping is free; the equipped SET is per-device localStorage (a
+  look is a preference, like the theme), while OWNERSHIP rides the cloud save. Nothing sold here
+  touches a rate, a reward or a difficulty knob, the four free themes stay free, and the a11y
+  high-contrast cushion pair always wins over a bought table.
 
 ## Hazards — locks, coats, blockers (src/core/difficulty.ts + src/core/hazards.ts)
 - Numbered levels ONLY — endless is a same-board fairness contract and levelSpec is not even on
