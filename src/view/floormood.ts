@@ -3,6 +3,11 @@ import { FLOORS, floorFor, floorForChapter } from '../core/actII'
 import type { Floor } from '../core/actII'
 import type { AudioPalette } from './theme'
 
+// ⚠️ NO PHASER IMPORT, and keep it that way. This module is pure data plus lookups, so a core test
+// can assert that every shipped floor has a mood (`actII.test.ts`) — the moment a Phaser import
+// lands here that assertion dies with "window is not defined". The door CARD, which does need
+// Phaser, lives next door in `floordoor.ts` for exactly this reason.
+
 /**
  * HOW A FLOOR FEELS — the appearance half of `core/actII.ts`, kept apart from what a floor IS,
  * exactly as `hazardskins.ts` is kept apart from `difficulty.ts`. Core names the floors; this dresses
@@ -19,12 +24,19 @@ import type { AudioPalette } from './theme'
  * whatever theme is loaded, so 2 floors × 4 themes needs no combinatorial testing — the theme keeps
  * looking like itself in every one of the eight.
  *
- * ── SLICE 1 STATUS ──────────────────────────────────────────────────────────────────────────
- * Floor 1 (THE HIGH-LIMIT ROOM) is the authored one: hue arc, audio room, hazard skin and flourish
- * all tuned against the running game. Floor 2 (THE SPEAKEASY) ships a LIGHT mood — accent, arc and
- * audio room only, no skin of its own — because its full pass belongs to the slice that builds its
- * mechanic. It is deliberately not left blank: fifty levels with no identity at all, sitting next to
- * fifty with one, reads as unfinished rather than as restrained.
+ * ── SLICE 1 STATUS — WHAT IS AND IS NOT BUILT ───────────────────────────────────────────────
+ * BUILT: the accent (nameplates, journey trail), the marquee's hue arc, the ambient light tints and
+ * the audio room, all applied through `theme.setFloorOverlay` — plus the croupier's door card
+ * (`floordoor.ts`). Floor 1's numbers were tuned against the running game; floor 2 ships a LIGHT
+ * mood (accent, arc, audio) because its full pass belongs with the slice that builds its mechanic.
+ * It is deliberately not left blank: fifty levels with no identity, next to fifty with one, reads as
+ * unfinished rather than as restrained.
+ *
+ * NOT BUILT, and deliberately absent rather than stubbed: PER-FLOOR HAZARD SKINS (the designed
+ * BAIZE / CHIP RACK / DEALER'S CLAMP set for floor 1) and the brass table-lamp MARGIN FLOURISH.
+ * `hazardskins.ts` keys skins by ThemeId and has no floor lookup yet; adding one is that file's
+ * documented two-step, and it belongs in a pass that can verify the art. A `skin` field sitting here
+ * doing nothing would have been worse than its absence — it would read as wired.
  */
 
 /** A floor's dressing. Every field OPTIONAL and every one a modulation — see the rule above. */
@@ -43,9 +55,6 @@ export interface FloorMood {
   /** The room you can HEAR — merged over the theme's palette by audio/sfx.ts. Tonal only; a mood
    *  never changes loudness, exactly as a theme never does. */
   audio?: Partial<AudioPalette>
-  /** Hazard skin id (view/hazardskins.ts FLOOR_SKINS) — how this floor's felt/lockboxes/clamps read.
-   *  Undefined keeps the theme's skin, which is what floor 2 does. */
-  skin?: string
   /** The croupier's introduction, spoken once on the floor's door card. One voice per floor: floor 1
    *  is the amused host who has decided to enjoy watching you. */
   croupier: string
@@ -68,7 +77,6 @@ const FLOOR_MOODS: Readonly<Record<number, FloorMood>> = {
     // G1. A fifth below the default bed and darker through the filter: a smaller, more expensive
     // room than the main floor, with the reverb pulled in close.
     audio: { bedRoot: 49.0, waveBias: 'sine', filterWarmth: 700, reverbMix: 0.3 },
-    skin: 'highLimit',
     croupier: 'Good evening. The table is yours — take your time, the House is in no hurry.',
     blurb: 'Private tables. Real stakes. The arm on the right pulls a whole column.',
   },

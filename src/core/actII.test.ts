@@ -15,6 +15,7 @@ import { ACT1_LEVELS, CHAPTER_COUNT, CHAPTER_LEVELS, LEVEL_COUNT, levelSpec } fr
 import { DIFFICULTY, isTeachingLevel } from './difficulty'
 import { CHAPTER_PURSES, TROPHIES } from './trophies'
 import type { SymbolType } from './types'
+import { moodedFloors } from '../view/floormood'
 
 /**
  * ACT II's structural promises. Two of them are the kind that cost a player something real when
@@ -232,5 +233,11 @@ describe('the shipped rollout', () => {
 
   it('ships two floors — the high-limit room and the speakeasy', () => {
     expect(FLOORS.map(f => f.name)).toEqual(['THE HIGH-LIMIT ROOM', 'THE SPEAKEASY'])
+  })
+
+  it('every shipped floor is DRESSED — no floor arrives without an identity', () => {
+    // Fifty levels with no room around them, sitting next to fifty with one, reads as unfinished
+    // rather than as restraint. A floor and its mood ship together or the floor does not ship.
+    expect(moodedFloors()).toEqual(FLOORS.map(f => f.floor))
   })
 })

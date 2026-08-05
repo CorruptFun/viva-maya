@@ -425,14 +425,46 @@ export function getThemeId(): ThemeId {
   return _themeId
 }
 
-/** The current theme's full token set. Never gates — selection is always free. */
+/**
+ * ── THE FLOOR OVERLAY (Act II) ──────────────────────────────────────────────────────────────
+ *
+ * A high-roller floor gets to change how the ROOM is lit without changing the player's theme, and
+ * this is the seam that does it: while a floor is active, `getTheme()` hands back the chosen theme
+ * with a handful of keys replaced. One seam serves the marquee's hue arc, the ambient tints and the
+ * audio room at once — `audio/sfx.ts` alone reads `getTheme().audio` from a dozen places, and
+ * threading a floor parameter through all of them would have been a dozen chances to miss one.
+ *
+ * ⚠️ THE KEY LIST IS THE LAW. Only these fields may be overlaid, and none of them is a surface the
+ * player's theme owns: no `washTop`/`washBottom`, no card fill, no ink, no cushion, no page chrome.
+ * The floor owns the light; the theme owns the cabinet. Widening this type is how that stops being
+ * true, so it is spelled out rather than left as `Partial<Theme>`.
+ */
+export type FloorOverlay = Partial<
+  Pick<Theme, 'rgbHueFrom' | 'rgbHueSpan' | 'rgbSat' | 'rayTint' | 'bokehWarm' | 'moteTint'>
+> & { audio?: Partial<AudioPalette> }
+
+let _floor: FloorOverlay | null = null
+
+/**
+ * Light the room for a floor, or clear it with `null`. Scene-scoped by convention: GameScene sets it
+ * in `create()` and clears it on shutdown, so nothing outside a numbered Act II level can ever be
+ * looking at a floor's light. Textures baked before this is set are NOT re-baked (the theme rule),
+ * which is fine — everything an overlay reaches is tint or tone, computed at draw time.
+ */
+export function setFloorOverlay(overlay: FloorOverlay | null): void {
+  _floor = overlay
+}
+
+/** The current theme's full token set, with any floor overlay folded in. Never gates — free always. */
 export function getTheme(): Theme {
-  return THEMES[_themeId]
+  const base = THEMES[_themeId]
+  if (!_floor) return base
+  return { ...base, ..._floor, audio: { ...base.audio, ..._floor.audio } }
 }
 
 /** Alias for `getTheme()` — the current active theme. */
 export function activeTheme(): Theme {
-  return THEMES[_themeId]
+  return getTheme()
 }
 
 /** Select a theme: persist it and repaint the page chrome. Callers restart the scene to repaint art. */

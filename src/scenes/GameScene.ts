@@ -71,7 +71,17 @@ import type { JackpotMeter } from '../view/jackpot'
 import { D, E, OVERSHOOT, backOut, heartbeat } from '../view/motion'
 import { quality } from '../view/quality'
 import { vibratePattern } from '../view/haptics'
-import { css, getTheme, hapticsOff, prefersReducedMotion, reduceFlashing as prefReduceFlashing, rgbMarquee } from '../view/theme'
+import {
+  css,
+  getTheme,
+  hapticsOff,
+  prefersReducedMotion,
+  reduceFlashing as prefReduceFlashing,
+  rgbMarquee,
+  setFloorOverlay,
+} from '../view/theme'
+import { floorMood } from '../view/floormood'
+import { maybeFloorDoor } from '../view/floordoor'
 import { addEndlessLeaderStrip } from '../view/leaderboardpanel'
 import { attachRgbRing, type RgbRing } from '../view/rgbmarquee'
 import { TEX_SIZE, ensurePieceTexture } from '../view/textures'
@@ -677,6 +687,36 @@ export class GameScene extends Phaser.Scene {
     this.pullHandles = []
     this.pullArmed = -1
     this.canPullLevel = !this.endless && this.spec.pull === true
+    /**
+     * THE FLOOR MOOD. Set BEFORE the backdrop, the cabinet and the marquee are built, because every
+     * one of them reads `getTheme()` once at construction — the same apply-at-create model themes
+     * themselves use. Cleared on shutdown, so nothing outside a numbered Act II level is ever lit by
+     * a floor (a restart fires SHUTDOWN too, and this re-registers each create).
+     *
+     * The overlay carries LIGHT and TONE only — never a wash, a card or an ink. See theme.ts's
+     * FloorOverlay type, which spells the whitelist out rather than accepting `Partial<Theme>`.
+     */
+    const mood = this.endless ? null : floorMood(this.level)
+    setFloorOverlay(
+      mood
+        ? {
+            rgbHueFrom: mood.rgbHueFrom,
+            rgbHueSpan: mood.rgbHueSpan,
+            rgbSat: mood.rgbSat,
+            rayTint: mood.rayTint,
+            bokehWarm: mood.bokehWarm,
+            moteTint: mood.moteTint,
+            audio: mood.audio,
+          }
+        : null
+    )
+    // The bed is already running from whatever screen we came in from, so it has to be told; the
+    // reverb bus is retuned in the same call. Theme swaps use this exact seam.
+    sfx.refreshTheme()
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      setFloorOverlay(null)
+      sfx.refreshTheme()
+    })
     if (!this.endless) this.applyBoosts(takePendingBoosts(levelBoostExclusions(this.level)))
 
     if (import.meta.env.DEV) {
@@ -870,7 +910,22 @@ export class GameScene extends Phaser.Scene {
   private teachAfterIntro(): void {
     if (!this.scene.isActive()) return
     const hazard = (): void => void this.maybeHazardIntro(() => {})
-    if (!this.maybeOnboarding(hazard)) hazard()
+    // THE FLOOR DOOR sits between the rules and the exceptions, and it goes AFTER onboarding but
+    // BEFORE the teach cards on purpose: the House introduces the room, then the room's new rule
+    // gets explained. Reversed, level 301 would teach a verb in a place the player has not been
+    // told they have arrived at.
+    const floor = (): void => {
+      this.introOpen = true
+      const done = (): void => {
+        this.introOpen = false
+        hazard()
+      }
+      if (!maybeFloorDoor(this, this.level, done)) {
+        this.introOpen = false
+        hazard()
+      }
+    }
+    if (!this.maybeOnboarding(floor)) floor()
   }
 
   /**
