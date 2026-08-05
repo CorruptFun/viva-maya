@@ -87,7 +87,8 @@ data (`ClearWave`, `FallMove[]`, `Spawn[]`, `BlastEvent[]`). Tuning happens in
 | `src/core/rng.ts` | `mulberry32` seedable PRNG + `randInt` — reproducible board/level/week generation |
 | `src/core/board.ts` | The board model: fill-without-matches, run detection, match waves, special creation, `blastOf` (the one definition of what each special detonates) + combo/chain detonation (`chainExpand`), gravity, refill, valid-move/hint search, `plant` |
 | `src/core/plinko.ts` | Plinko bonus drop: the weighted slot table, `rollSlotIndex`, and `dropPath` — the RIG that builds a bounce sequence guaranteed to reach the pre-chosen slot |
-| `src/core/levels.ts` | `LEVEL_COUNT=300`; deterministic `levelSpec(n)` — seeded per-level objectives, symbol count, and move budget |
+| `src/core/levels.ts` | `ACT1_LEVELS=300` / `LEVEL_COUNT=400`; deterministic `levelSpec(n)` — seeded per-level objectives, symbol count, move budget and score plaque |
+| `src/core/actII.ts` | ACT II — the floor table (`FLOORS`), THE REEL PULL band, THE ROPED RUN (`act2Plan`); pure logic, no view imports |
 | `src/core/save.ts` | `localStorage` save (key `viva-maya:v1`, schema **v13**): load/persist, shape-tolerant migrations, `recordResult`/`recordScore`/`takePendingBoosts` |
 | `src/core/daily.ts` | Daily check-in logic: `todayKey`, streak math (`advanceDailyRitual` + `milestoneDue`), `CHECKIN_CHIPS` ladder, and the classic `PRIZES` table (now the slots' gift floor — see `freeSlotSpin` in `store.ts`) |
 | `src/core/endless.ts` | Endless race: `dayKey`/`weekKey` (**fixed `RACE_TZ = America/Edmonton`**), `dayEndsAt`/`weekEndsAt`/`formatRaceRemaining`, `weekKeyOfDay` (the daily→weekly rollup), `seedForKey` (FNV-1a), shared seeded RNG, `endlessWeekStanding` (daily bests summed), `recordEndless` (with the `ENDLESS_MAX_CHEAT_SCORE` backstop), `endlessUnlocked` (after L10), `endlessRngForDay` (salted — see §3) |
@@ -105,7 +106,7 @@ data (`ClearWave`, `FallMove[]`, `Spawn[]`, `BlastEvent[]`). Tuning happens in
 |---|---|
 | `src/scenes/BootScene.ts` | Builds all textures, then routes to `home` (or a DEV-param destination) |
 | `src/scenes/HomeScene.ts` | Home: heart emblem, marquee, lives HUD + streak flame, PLAY / LEVELS / LUCKY SLOTS / ENDLESS entries, help + sound chips |
-| `src/scenes/LevelSelectScene.ts` | Masked, drag-scrollable 5-wide grid of 300 level chips (stars/locks) — rows built only as they scroll into view — auto-scrolled to current; endless banner; from-win chip celebration |
+| `src/scenes/LevelSelectScene.ts` | Masked, drag-scrollable 5-wide grid of `LEVEL_COUNT` level chips (stars/locks) — rows built only as they scroll into view — auto-scrolled to current; chapter ribbons (showroom doors, floor nameplates); endless banner; from-win chip celebration |
 | `src/scenes/GameScene.ts` | The game: turn state machine, input (swipe + tap-tap), resolve/cascade loop, HUD, boosts, lives gate, win/lose/endless endings, win-sequence celebration |
 
 **View (shared rendering)**
@@ -265,7 +266,9 @@ cascade ≥2; **MEGA WIN** at ≥4 (siren + big vibrate + cabinet flash). Win ad
 `+60 × unused moves`. `BEST` = highest single score, persisted.
 
 ### Levels — `src/core/levels.ts` + `src/core/difficulty.ts`, `LevelSelectScene`
-`LEVEL_COUNT=300` (30 chapters × `CHAPTER_LEVELS=10`). `levelSpec(n)` is deterministic
+`LEVEL_COUNT=400` (40 chapters × `CHAPTER_LEVELS=10`), of which `ACT1_LEVELS=300` is the
+first act — two constants, not one, because raising the ladder must not re-price the act
+below it (see "Act II"). `levelSpec(n)` is deterministic
 (seed `0xC0FFEE ^ n·2654435761`): same goals every attempt, random board per attempt.
 - **Objectives:** collect N of 1 symbol (L1–2), 2 (L3–7), 3 (L8+); each
   `N = min(110, max(12, round(32·(n/10)^0.34)))` — a concave power curve,
@@ -298,16 +301,42 @@ cascade ≥2; **MEGA WIN** at ≥4 (siren + big vibrate + cabinet flash). Win ad
 `recordResult` persists best-of stars and unlocks `n+1`. The **first-ever** clear of a
 chapter-closing level (`n % 10 === 0`) plays the chapter trophy CEREMONY instead of the
 old milestone splash: a permanent trophy into THE SHOWROOM (`view/showroom.ts`, doors
-on the LevelSelect chapter ribbons), a one-time escalating purse (`CHAPTER_PURSES`,
-100→1,000, lifetime `CHAPTER_PURSE_TOTAL` 8,200 — test-pinned), and a boost on every
+on the LevelSelect chapter ribbons — TWO WINGS since Act II: MAIN FLOOR 1–30 and
+HIGH-ROLLER WING 31–40), a one-time escalating purse (`CHAPTER_PURSES`,
+100→1,000, lifetime `CHAPTER_PURSE_TOTAL` 11,000 — test-pinned), and a boost on every
 5th chapter. Award-first; the claim latch is `save.chapterRewards`, the same list the
 showroom renders, unioned on device merge (a one-time Home catch-up card back-pays
 players already past boundaries). **Repeat** clears of a milestone level play the
 full-screen "LEVEL n! · ★ N STARS EARNED" star-tally splash (heart shower + fanfare)
 before the calm result card. L300's first clear plays the one-time ALL CLEAR finale,
-then hands off to chapter 30's car ceremony. Leaderboard tier badges (🥉→🏎️) are
+then hands off to chapter 30's car ceremony. Leaderboard tier badges (🥉→🏎️→🎖️) are
 DERIVED client-side from `level_progress.cleared` via `chaptersFromCleared` — never
 submitted, no badge column anywhere.
+
+### Act II — the high-roller floors — `src/core/actII.ts`, `src/view/floormood.ts`
+Levels **301–400**, chapters 31–40, in two themed FLOORS of 50 (F1 THE HIGH-LIMIT ROOM,
+F2 THE SPEAKEASY) out of six designed. `actII.ts` is the spec and `DIFFICULTY.act2` the
+panic switch — per feature, independently revocable, and with the act off those levels
+are ordinary ones on the plain extended curve (`actII.test.ts` asserts it).
+- **THE REEL PULL** (`Board.pullColumn`, from 301): a chrome rail under the board pulls
+  one COLUMN down a notch, the bottom piece wrapping to row 0, for one move. It resolves
+  through the ordinary wave pipeline. A column holding a BLOCKER refuses; a clamped piece
+  rides. The rail arms on `pointerdown` (CLAUDE.md's swipe-surface rule).
+- **THE ROPED RUN** (`act2Plan`, 311–315): PERMUTES the hazard plan into a contiguous
+  block of columns so half the rail is roped off and each broken box frees the handle
+  above it. Counts, hit points and coat layers are bit-identical, so the demand budget
+  cannot move. Folded into both `GameScene` and `sim.buildLevelBoard`.
+- **Floor moods** (`view/floormood.ts` → `theme.setFloorOverlay`): the floor owns the
+  ROOM (light, audio room, hazard skins, margin flourish, marquee arc), the theme owns the
+  CABINET (wash, cards, ink, cushions). The overlay type is a `Pick`, so that split is
+  structural. `enterFloor`/`activeFloorMood` carry the two consumers a theme overlay
+  cannot serve — the hazard skin and the flourish.
+- **THE TELL** (`ringHue`'s `lean`, `RgbRing.setTell`): on an idle Act II board the
+  marquee leans toward the best move's symbol colour by redistributing the ring's length
+  across its arc — never by moving the arc, which would break the per-theme hue law. One
+  eased scalar on the ring's existing UPDATE hook; no extra tween, no shader.
+- Endless and the daily/weekly race are untouched — everything keys off a level NUMBER,
+  and `boardpick.test.ts`'s goldens pass unmodified.
 
 ### Lives / energy — `src/core/lives.ts`, `GameScene` gate
 Pool: `LIVES_MAX=5`, one life every `LIFE_REGEN_MS=20min` of **wall-clock** time (device
@@ -536,8 +565,10 @@ Separate keys: **`viva-maya:muted`** (`'1'`/`'0'`), **`viva-maya:swapSound`**
 
 Fields whose absence has a safe default are also added **without** a version bump — the
 shape-tolerant loader simply defaults them (`chapterRewards`, `heldBoosts`,
-`seenRaceUnlock`, the referral/free-spin group…). Save.ts's own migration comments are
-the authority on which fields rode which bump.
+`seenRaceUnlock`, the referral/free-spin group, and Act II's `seenAct2Reveal` +
+`floorIntros`, both one-time card latches unioned on device merge…). Save.ts's own
+migration comments are the authority on which fields rode which bump. **Act II added no
+server migrations at all** — every latch it introduced is client-side.
 
 ---
 

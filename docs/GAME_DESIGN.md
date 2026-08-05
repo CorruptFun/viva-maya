@@ -217,9 +217,12 @@ clears a RANDOM present color. Swap-combos (both consumed, epicenter = drag dest
 
 ## Levels (src/core/levels.ts + src/core/difficulty.ts — those two files are the spec)
 - levelSpec(n) is deterministic per level (seed 0xC0FFEE ^ n·2654435761): same goals every
-  attempt; boards are random per attempt. LEVEL_COUNT = 300, grouped into 30 chapters of
-  CHAPTER_LEVELS = 10 (see "Chapters, trophies & the showroom"). LevelSelect is a masked,
-  drag-scrollable grid that auto-scrolls to the current level, building only the rows in view.
+  attempt; boards are random per attempt. LEVEL_COUNT = 400, grouped into 40 chapters of
+  CHAPTER_LEVELS = 10 (see "Chapters, trophies & the showroom"). ACT1_LEVELS = 300 is a SEPARATE
+  constant — how far the campaign's first act runs, which is what every shipped curve, plaque and
+  ramp is anchored to; LEVEL_COUNT is only how far the ladder currently reaches (see "Act II"
+  below). LevelSelect is a masked, drag-scrollable grid that auto-scrolls to the current level,
+  building only the rows in view.
 - Objectives: collect N of 1 symbol (L1–2), 2 symbols (L3–7), 3 (L8+); per-objective
   N = min(110, max(12, round(32·(n/10)^0.34))) — a concave power curve, ≈15 → 32 → 102 at
   L1 → L10 → L300 (the 110 clamp is never reached inside 1–300). Collected = cleared pieces of
@@ -262,9 +265,56 @@ clears a RANDOM present color. Swap-combos (both consumed, epicenter = drag dest
   tables. Back out free before your first move; first busted marker each day is comped
   (save.markerCompDay).
 
+## Act II — the high-roller floors (Slice 1, levels 301–400; src/core/actII.ts is the spec)
+- Act I is levels 1–300 (ACT1_LEVELS), ending on the chapter-30 car. Act II is the House playing
+  back: six themed FLOORS of 50 levels, of which two ship — F1 THE HIGH-LIMIT ROOM 301–350
+  (chapters 31–35) and F2 THE SPEAKEASY 351–400 (36–40). `FLOORS` in actII.ts is the table;
+  `DIFFICULTY.act2` is the panic switch (per-feature and independently revocable — with the act
+  off, 301–400 are ordinary levels on the plain extended curve, asserted in actII.test.ts).
+- THE 300 SEAM. `ACT1_LEVELS` and `LEVEL_COUNT` were one constant and are now two, because raising
+  the ladder must not re-price the act below it: `minimumTargetFrac` divides by ACT1_LEVELS, so
+  every shipped Act I plaque golden is untouched. Hazard densities FLATLINE above 300 by design
+  (every ramp in hazards.ts clamps there) — a floor-1 board carries exactly a L300 board's felt,
+  lockboxes and clamps, because stacking a fresh hazard ramp on a fresh mechanic is how you get an
+  unplayable teaching level.
+- THE REEL PULL (`Board.pullColumn` + a chrome 8-handle rail under the board, from 301): a slot arm
+  pulls one COLUMN down a notch, the bottom piece riding over the top into row 0. It costs a move
+  and resolves through the ordinary wave pipeline, so a pull that lands a run cascades like a swap —
+  and a pull that lands nothing is a move spent on POSITION, which is the trade the verb sells. One
+  refusal, derived from the mechanic: a column holding a BLOCKER will not pull (gravity already
+  treats a blocker as a wall). A CLAMPED piece rides the pull — gravity moves locked pieces too, and
+  refusing them emptied the rail outright in the late band. The rail arms on `pointerdown`, per
+  CLAUDE.md's rule for any control abutting a swipe surface.
+- THE ROPED RUN (311–315, `act2Plan`): the curated band where the verb and the sharp hazard argue.
+  It PERMUTES the hazard plan — same boxes, same hit points, same coats, same locks, moved — into a
+  contiguous block of columns, so half the rail is visibly roped off and breaking one box frees the
+  handle above it. Same call folded into `GameScene` and `sim.buildLevelBoard`, so the feasibility
+  gates measure the board that is actually played. The row pattern is MEASURED, not drawn (see the
+  comment on `ROPE_ROWS`).
+- FLOOR MOODS (`view/floormood.ts`, applied through `theme.setFloorOverlay`): the floor owns the
+  ROOM, the theme owns the CABINET. A mood may tint the light — glows, rays, motes, the marquee's
+  hue arc, the audio room, the hazard skins, the margin flourish — and may never touch a wash, a
+  card, an ink or a cushion. The overlay's key list is a `Pick`, not a `Partial<Theme>`, which is
+  what makes that structural rather than a convention.
+- THE TELL (`ringHue`'s `lean` + `RgbRing.setTell`): while the board idles, the cabinet marquee
+  leans toward the colour of the best available move. It redistributes the ring's LENGTH across its
+  existing arc rather than moving the arc, so no theme's hue band can be violated; one eased scalar
+  on the ring's existing UPDATE clock, no extra tween, no shader. Act II levels only.
+- Trophies and purses extend to chapter 40 (lifetime CHAPTER_PURSE_TOTAL 11,000), the tier ladder
+  gains 🎖️ HIGH-ROLLER CASE at 40 chapters, and the showroom grows a second wing (MAIN FLOOR /
+  HIGH-ROLLER WING). THE PRIVATE ELEVATOR is a one-time reveal card on the raceunlockcard pattern
+  (`view/act2card.ts`, latched by `save.seenAct2Reveal`); each floor's first level shows a one-time
+  croupier door card (`view/floordoor.ts`, latched by `save.floorIntros`).
+- Endless and the daily/weekly race are UNTOUCHED. Everything above keys off a level NUMBER and
+  endless has none; `boardpick.test.ts`'s goldens are the tripwire and pass unmodified.
+
 ## Hazards — locks, coats, blockers (src/core/difficulty.ts + src/core/hazards.ts)
 - Numbered levels ONLY — endless is a same-board fairness contract and levelSpec is not even on
-  its code path. Names are behavioural; appearance is a view-layer skin (view/hazardskins.ts).
+  its code path. Names are behavioural; appearance is a view-layer skin (view/hazardskins.ts),
+  resolved FLOOR → THEME → default. Floor 1 dresses them as BAIZE / CHIP RACK / DEALER'S CLAMP and
+  floor 2 as CANDLE WAX / OAK BARREL / PADLOCK & CHAIN; the rule copy is word-for-word the default's
+  with the nouns swapped, so a re-dressed obstacle can never read as a new mechanic. The FELT n/m
+  HUD counter and the standing brief read the skin too (`label.coat` / `coatNoun`).
 - LOCK (live, from L31): the piece still MATCHES but cannot be SWAPPED until an adjacent clear
   frees it. Cheapest mechanic (~−4% collects/move); used for texture.
 - COAT (live, from L56): a coated table square that clears when a match lands on it — the one
@@ -285,23 +335,28 @@ clears a RANDOM present color. Swap-combos (both consumed, epicenter = drag dest
   contract.
 
 ## Chapters, trophies & the showroom (src/core/trophies.ts + view/showroom.ts + view/trophyceremony.ts)
-- 300 levels = 30 chapters of CHAPTER_LEVELS=10 (core/levels.ts — the one constant; LevelSelect
-  ribbons, the win flow and trophies all read it).
+- 400 levels = 40 chapters of CHAPTER_LEVELS=10 (core/levels.ts — the one constant, FROZEN because
+  LevelSelect's `rowIndexAt` is a closed form; the ribbons, the win flow and trophies all read it).
+  Chapters 1–30 are Act I, 31–40 the first two high-roller floors.
 - First-ever clear of a chapter's closing level pays, once per chapter: a permanent TROPHY
   (TROPHIES catalogue — chapter 30 is THE CAR on the rotating plinth, 29 its wheels, the
-  showroom's own near-miss tease), a one-time chip PURSE (CHAPTER_PURSES, escalating 100→1,000
-  with steps on every 5th; lifetime total CHAPTER_PURSE_TOTAL = 8,200, test-pinned in
-  trophies.test.ts), and on milestone chapters a BOOST into pendingBoosts.
+  showroom's own near-miss tease; 31–40 are the high-roller floors' own furniture, closing on
+  🔦 THE DOORMAN'S TORCH at 39 and 🎭 THE MASKS at 40), a one-time chip PURSE (CHAPTER_PURSES,
+  escalating 100→1,000 with steps on every 5th; lifetime total CHAPTER_PURSE_TOTAL = 11,000,
+  test-pinned in trophies.test.ts), and on milestone chapters a BOOST into pendingBoosts.
 - AWARD-FIRST via claimChapter; the claim latch is save.chapterRewards — the SAME list the
   showroom renders, so the purse latch and the trophy shelf can never disagree. Unioned on
   device merge; never trimmed. A one-time Home catch-up card (claimChapterCatchUp) back-pays
   players already past chapter boundaries.
-- THE SHOWROOM (view/showroom.ts): 30 plinths behind doors on the LevelSelect chapter ribbons;
-  locked trophies render as flat navy silhouettes, so every glyph must survive that treatment
-  (the catalogue's comments name the failures — no coins, cards, rosettes or pianos).
-- Leaderboard tier badges (🥉→🏎️) are DERIVED, never submitted: floor(cleared/10) through
-  TROPHY_TIERS via chaptersFromCleared — deliberately the only place that coupling lives. No
-  badge column exists anywhere; see CLAUDE.md's trophy-badge bullet before touching.
+- THE SHOWROOM (view/showroom.ts): 40 plinths behind doors on the LevelSelect chapter ribbons, in
+  TWO WINGS (MAIN FLOOR 1–30 / HIGH-ROLLER WING 31–40) with a per-wing hero and tally — the panel's
+  own height is unchanged, which is what the tab rail was budgeted against. Locked trophies render
+  as flat navy silhouettes, so every glyph must survive that treatment (the catalogue's comments
+  name the failures — no coins, cards, rosettes or pianos).
+- Leaderboard tier badges (🥉→🏎️→🎖️) are DERIVED, never submitted: floor(cleared/10) through
+  TROPHY_TIERS via chaptersFromCleared — deliberately the only place that coupling lives. Act II
+  added the 🎖️ HIGH-ROLLER CASE rung at 40 chapters, so the whole of Act I now sits under one rung,
+  which is the point. No badge column exists anywhere; see CLAUDE.md's trophy-badge bullet first.
 
 ## Endless race — daily boards, weekly season (src/core/endless.ts + GameScene endless mode)
 - Unlocks after ENDLESS_UNLOCK_LEVEL=10 (fixed, independent of LEVEL_COUNT — save.unlocked > 10;
@@ -447,8 +502,10 @@ Migrations: v1 {best} → v2 (+unlocked/stars) → v3 (+daily) → v4 (+endless:
 winStreak — absent in older saves → an empty Series I album and a cold streak)
 → v11 (endless goes DAILY: endlessWeek/endlessBest → endlessDays, +championDays)
 → v12 (+raceRecapDays, the seen-latch for yesterday's result card) → v13 (+handle/handleSetAt).
-Fields whose absence has a safe default (chapterRewards, heldBoosts, seenRaceUnlock…) are added
-WITHOUT a version bump — the shape-tolerant loader defaults them.
+Fields whose absence has a safe default (chapterRewards, heldBoosts, seenRaceUnlock, and Act II's
+seenAct2Reveal + floorIntros — both one-time card latches, unioned on device merge) are added
+WITHOUT a version bump — the shape-tolerant loader defaults them. Act II added ZERO server
+migrations; every one of its latches is client-side.
 The pre-v11 endless pair is deliberately NOT carried across — it held a best for a week-long board that
 no longer exists, and filing it under any day would credit a score nobody could earn on that layout.
 Loader is shape-tolerant (old saves default new fields). Mute flag is separate: 'viva-maya:muted'.

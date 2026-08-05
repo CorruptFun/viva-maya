@@ -136,7 +136,8 @@ export function trophyFor(chapter: number): ChapterTrophy | null {
  * or two of play) pay a few wins' worth; the late-game grinds pay 300–400; chapter 30 pays a
  * champion purse exactly once per lifetime, so the weekly crown stays the biggest REPEATABLE prize.
  *
- * The lifetime total (CHAPTER_PURSE_TOTAL, 8,200) is what the economy actually grants a player who
+ * The lifetime total (CHAPTER_PURSE_TOTAL, 11,000 — 8,200 through Act I, plus 2,800 across the
+ * first two high-roller floors) is what the economy actually grants a player who
  * finishes the game — fixed, one-time, identical for everyone, and therefore inflation-safe
  * regardless of player count. trophies.test.ts pins every value and the sum; retune them there.
  */
