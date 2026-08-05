@@ -235,6 +235,20 @@ export const EVENTS = {
   ACT2_REVEAL: 'act2_reveal',
   FLOOR_ENTER: 'floor_enter',
 
+  /**
+   * `pit_boss_deal` {level, kind} — THE PIT BOSS actually dealt (Slice 2). Fired on the LANDING, not
+   * on the telegraph, and not once per level: the schedule already says how many deals a level was
+   * going to make, so what is worth counting is how many of them the board could actually take. A
+   * level whose deals are routinely REFUSED (nowhere legal to clamp, every square already felted)
+   * is one where the mechanic is silently absent, and the gap between the plan and this row is the
+   * only thing that would ever say so.
+   *
+   * `kind` splits clamp from felt because they are not the same instrument — the felt is the one
+   * that moves the win condition, so a fail-rate that rises with it is a different diagnosis from
+   * one that rises with both.
+   */
+  PIT_BOSS_DEAL: 'pit_boss_deal',
+
   /** The update toast, which the PWA stale-build trap makes worth watching. */
   UPDATE_SHOWN: 'update_shown',
   UPDATE_APPLIED: 'update_applied',

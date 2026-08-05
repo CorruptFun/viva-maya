@@ -2220,6 +2220,75 @@ function pullArmTexture(scene: Phaser.Scene): string {
 }
 
 /**
+ * THE PIT BOSS's teach card (Act II, level 351) — the first time in this game's life that something
+ * gets HARDER while you are playing it, so the card's whole job is to say the three things that make
+ * that fair before it happens: he is on a schedule, he shows you first, and he leaves your last five
+ * moves alone. A player who reads this and then watches a ring appear has been dealt with honestly;
+ * one who does not has been ambushed.
+ */
+export function openPitBossIntro(scene: Phaser.Scene, onClose?: () => void): void {
+  const W = 720
+  const reduced = prefersReducedMotion()
+  const layer = scene.add.container(0, 0).setDepth(65)
+  const scrimKit = addFocusScrim(scene, { alpha: 0.6, ink: 0x2a2417 })
+  const scrim = scrimKit.hit.setInteractive()
+  const close = (): void => {
+    layer.destroy()
+    onClose?.()
+  }
+  scrim.on('pointerup', close)
+  paintTeachCard(scene, layer, close, {
+    cx: W / 2,
+    cy: 560,
+    cardW: 600,
+    cardH: 520,
+    reduced,
+    title: 'THE PIT BOSS',
+    texture: pitBossTexture(scene),
+    // Three lines max at 25px — a fourth clips behind GOT IT (see openMinimumIntro).
+    blurb:
+      'Upstairs the House plays back. Every few moves he marks a square and takes it on your next one — always the same moves, always shown first, never in your last five.',
+    scrim,
+    scrimArt: scrimKit.art,
+  })
+}
+
+/** The boss's marked square, baked once. Authored on a 132 grid — paintTeachCard's swatch size. */
+function pitBossTexture(scene: Phaser.Scene): string {
+  const T = getTheme()
+  const key = `teach:pitboss:${T.id}`
+  if (scene.textures.exists(key)) return key
+  const S = 132
+  const g = scene.add.graphics()
+  // Four cushions. The one he has marked wears the warning ring; the picture IS the telegraph, so
+  // a player recognises it the first time they see it on their own board.
+  const cw = 54
+  for (let i = 0; i < 4; i++) {
+    const x = 8 + (i % 2) * 62
+    const y = 8 + Math.floor(i / 2) * 62
+    g.fillStyle(0x000000, 0.12)
+    g.fillRoundedRect(x, y + 3, cw, cw, 12)
+    g.fillStyle(T.tileA, 1)
+    g.fillRoundedRect(x, y, cw, cw, 12)
+  }
+  // The mark: a thick rose ring on the lower-right cushion, plus a stub of the dealer's clamp
+  // arriving over it — "this square, next move".
+  const mx = 8 + 62 + cw / 2
+  const my = 8 + 62 + cw / 2
+  g.lineStyle(6, T.rose, 0.95)
+  g.strokeCircle(mx, my, 23)
+  g.fillStyle(0x2a2f3d, 1)
+  g.fillRoundedRect(mx - 22, my - 9, 44, 18, 6)
+  g.fillStyle(0x9aa3b5, 1)
+  g.fillRoundedRect(mx - 19, my - 6, 38, 9, 4)
+  g.fillStyle(T.goldBright, 0.9)
+  g.fillCircle(mx, my, 5)
+  g.generateTexture(key, S, S)
+  g.destroy()
+  return key
+}
+
+/**
  * §G11 · the teach-once card for a SPECIAL PIECE, fired the first time the player actually makes one.
  *
  * The specials — Wild Reel, Dice Bomb, Jackpot Chip — are the best thing about this board and the

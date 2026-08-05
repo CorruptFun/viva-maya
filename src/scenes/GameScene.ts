@@ -56,6 +56,9 @@ import { EVENTS, track } from '../core/analytics'
 import { devSetLives, formatCountdown, grantLife, refreshLives, spendLifeFor } from '../core/lives'
 import { levelProgress, maya, pendingOccasion, warmLoseLine, warmWinSubtitle, wasNearMiss } from '../core/maya'
 import { mulberry32 } from '../core/rng'
+import type { Rng } from '../core/rng'
+import { dealPlan, dealTargets } from '../core/pitboss'
+import type { Deal } from '../core/pitboss'
 import { addChips, addFreeSpins, bumpJackpotMeter, consumeBoost, bumpWinStreak, freeSpinRoom, loadSave, markFinaleSeen, markOccasionSeen, persistSave, recordResult, recordScore, resetWinStreak, spendChips, spendJackpotCharge, takePendingBoosts } from '../core/save'
 import { freeSourceFor, freeStockFor } from '../core/inventory'
 import { LIFE_REFILL_PRICE, POWER_ITEMS } from '../core/store'
@@ -103,6 +106,7 @@ import {
   inkShadow,
   openHazardIntro,
   openMinimumIntro,
+  openPitBossIntro,
   openPullIntro,
   openOnboarding,
   startScene,
@@ -236,9 +240,25 @@ export class GameScene extends Phaser.Scene {
   private coatCells = new Map<string, Phaser.GameObjects.Image>()
   /** Clamp furniture by piece id, mirroring `armedGlows`: same create/sync/destroy discipline. */
   private lockOverlays = new Map<number, Phaser.GameObjects.Image>()
-  /** Coats present when the level started — the denominator for the sweep counter. */
+  /** Coats present when the level started — the denominator for the sweep counter. THE PIT BOSS is
+   *  the one thing that can raise it mid-level (`landDeal`), which is exactly why the counter has to
+   *  say so out loud when it happens. */
   private coatsTotal = 0
   private coatLabel?: Phaser.GameObjects.Text
+  // ── THE PIT BOSS (core/pitboss.ts) ────────────────────────────────────────────────────────────
+  /** This level's book. Empty on every level without a boss — endless included, by construction. */
+  private bossPlan: Deal[] = []
+  /** How far through the book we are. */
+  private bossNext = 0
+  /** Moves the player has actually SPENT — what the schedule is measured in (see `spendMove`). */
+  private movesSpent = 0
+  /** The boss's own placement stream, so a deal can never disturb the board's. */
+  private bossRng: Rng = mulberry32(1)
+  /** The deal that has been SHOWN and is waiting to land, with the cells it will take. Placement is
+   *  decided a move early precisely so it can be telegraphed — that is the constitution's clause 2. */
+  private bossPending: { deal: Deal; cells: Coord[] } | null = null
+  /** The telegraph furniture, torn down the moment the deal lands. */
+  private bossMarks: Phaser.GameObjects.GameObject[] = []
   /**
    * Soft CREAM shimmer halo behind each on-board NORMAL piece whose symbol is still a needed
    * objective — the "collect me" tell. Deliberately cool/white and phase-shimmered (see update)
@@ -601,6 +621,18 @@ export class GameScene extends Phaser.Scene {
     this.goalGlows.clear()
     this.coatCells.clear()
     this.lockOverlays.clear()
+    // THE PIT BOSS's book, opened. ⚠️ ASSIGNED FROM THE SPEC here rather than blanked — this reset
+    // block runs AFTER the mode fork above, and a bare `= []` would silently no-op the whole
+    // mechanic (the shipped bug that killed HOUSE MINIMUM's first build). `dealPlan` returns [] for
+    // endless, for Act I and for every breather on its own, so there is no second guard to keep in
+    // sync. Its placement stream is fresh per attempt: WHEN the House acts is fixed and learnable,
+    // WHERE depends on the board, which is random per attempt exactly as the hazard symbols are.
+    this.bossPlan = this.endless ? [] : dealPlan(this.level, this.spec.moves)
+    this.bossNext = 0
+    this.movesSpent = 0
+    this.bossPending = null
+    this.bossMarks = []
+    this.bossRng = mulberry32((Math.random() * 2 ** 31) | 0)
     this.reducedMotion = this.prefersReducedMotion()
     this.hc = hcBoard() // §E12 — high-contrast board mode (darker floor + tints + thicker ring)
     this.hcRing = undefined // drop any stale ref from a prior create (restart doesn't re-init fields)
@@ -1055,11 +1087,16 @@ export class GameScene extends Phaser.Scene {
     if (this.endless || this.introOpen) return false
     // 'minimum' rides the hazard-intro latch machinery (save.hazardIntros, teach-once, one card
     // per level) but is a WIN TERM, not a hazard — it gets its own card body below.
-    const present: (HazardKind | 'minimum' | 'pull')[] = []
-    // THE REEL PULL leads. It is the only NEW VERB on the board — everything else in this list is a
-    // rule about pieces the player can already move — and level 301 carries a plaque as well as the
-    // rail (every act opens on a …01, and the plaque cadence is …01/…06). Teaching the plaque first
-    // on the level that introduces a new way to play would bury the thing that is actually new.
+    const present: (HazardKind | 'minimum' | 'pull' | 'pitboss')[] = []
+    // THE PIT BOSS leads on the level he arrives. He is the only thing in this list that ACTS — the
+    // rest are rules about a table that then sits still — and 351 carries a plaque as well (the
+    // cadence puts one on every …51 as surely as on every …01). A player meeting an opponent for the
+    // first time must be told about the opponent, not about the minimum he is playing under.
+    if (this.bossPlan.length > 0) present.push('pitboss')
+    // THE REEL PULL leads otherwise. It is the only NEW VERB on the board — everything else in this
+    // list is a rule about pieces the player can already move — and level 301 carries a plaque as
+    // well as the rail. Teaching the plaque first on the level that introduces a new way to play
+    // would bury the thing that is actually new.
     if (this.canPullLevel) present.push('pull')
     if (this.scoreTarget > 0) present.push('minimum')
     if (this.board.coatsRemaining() > 0) present.push('coat')
@@ -1080,7 +1117,8 @@ export class GameScene extends Phaser.Scene {
       this.introOpen = false
       then() // §G7 — see maybeOnboarding
     }
-    if (unseen === 'pull') openPullIntro(this, done)
+    if (unseen === 'pitboss') openPitBossIntro(this, done)
+    else if (unseen === 'pull') openPullIntro(this, done)
     else if (unseen === 'minimum') openMinimumIntro(this, this.scoreTarget, done)
     else openHazardIntro(this, unseen, done)
     return true
@@ -2597,15 +2635,21 @@ export class GameScene extends Phaser.Scene {
     // still said "felt" over a board laid with something else would be the one always-visible piece
     // of copy disagreeing with the board it describes.
     const coat = hazardSkin().coatNoun
+    // THE PIT BOSS overrides the sentence outright on the levels he works. Everything else this line
+    // can say is a rule about a table that then sits still; "the pit boss is working this table" is
+    // the only thing on it that will act on its own, so it is the one fact worth the one line — and
+    // the same reasoning that puts him first in the teach-card queue.
     const brief = this.endless
       ? "Biggest score wins today's board"
-      : this.scoreTarget > 0
-        ? this.coatsTotal > 0
-          ? `Goals, ${coat}, and the house minimum — beat all three`
-          : 'Match the goals and beat the house minimum'
-        : this.coatsTotal > 0
-          ? `Match the goal symbols and sweep every ${coat} square`
-          : 'Match the highlighted goal symbols before moves run out'
+      : this.bossPlan.length > 0
+        ? 'The pit boss works this table — he marks a square before he takes it'
+        : this.scoreTarget > 0
+          ? this.coatsTotal > 0
+            ? `Goals, ${coat}, and the house minimum — beat all three`
+            : 'Match the goals and beat the house minimum'
+          : this.coatsTotal > 0
+            ? `Match the goal symbols and sweep every ${coat} square`
+            : 'Match the highlighted goal symbols before moves run out'
     /**
      * SEATED OFF THE BOARD, not off a literal. It used to read `988 + ENDLESS_BOARD_DROP`, which
      * applied the ENDLESS drop on EVERY level — so on a numbered level the brief fell 84px past the
@@ -3251,6 +3295,171 @@ export class GameScene extends Phaser.Scene {
       repeat: 2,
       ease: 'Sine.easeInOut',
       onComplete: () => sprite.setX(x0),
+    })
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────────────────────
+  // THE PIT BOSS — the House's turn at the table. Rules and schedule live in `core/pitboss.ts`;
+  // this is the half the player watches.
+  //
+  // The whole loop is two steps in one place, run at every idle handoff: LAND what was telegraphed,
+  // then TELEGRAPH what is next. Keeping them together is what makes "you always get a move's
+  // warning" true by construction rather than by two timings agreeing.
+  // ─────────────────────────────────────────────────────────────────────────────────────────────
+
+  private runPitBoss(): void {
+    if (this.bossPlan.length === 0 || this.state === 'ended') return
+    const due = this.bossPending
+    if (due && this.movesSpent >= due.deal.atMove) {
+      this.bossPending = null
+      this.clearBossMarks()
+      this.landDeal(due.deal, due.cells)
+    }
+    // One move ahead, and no further: showing two deals at once would turn a warning into a forecast.
+    if (!this.bossPending && this.bossNext < this.bossPlan.length) {
+      const next = this.bossPlan[this.bossNext]
+      if (this.movesSpent + 1 >= next.atMove) {
+        this.bossNext++
+        const cells = dealTargets(this.board, next.kind, next.cells, this.bossRng)
+        // A board with nowhere legal to deal simply gets no deal. Skipping is always correct; the
+        // alternative is forcing one onto a cell the rules said no to.
+        if (cells.length > 0) {
+          this.bossPending = { deal: next, cells }
+          this.showDealTelegraph(next, cells)
+        }
+      }
+    }
+  }
+
+  /**
+   * The warning. A ring on every cell the House is about to take, plus one line naming what is
+   * coming — the marks say WHERE and the line says WHAT, and a player needs both to answer it.
+   *
+   * Drawn as sprites off the existing `ring` texture rather than a Graphics: a Graphics re-tessellates
+   * every frame for a picture that never changes, and three rings would be three draw calls of that.
+   */
+  private showDealTelegraph(deal: Deal, cells: Coord[]): void {
+    const T = getTheme()
+    const tint = deal.kind === 'felt' ? T.rose : T.accent
+    for (const at of cells) {
+      const p = this.cellToXY(at)
+      const mark = this.add
+        .image(p.x, p.y, 'ring')
+        .setDisplaySize(CELL * 0.92, CELL * 0.92)
+        .setTint(tint)
+        .setDepth(19)
+        .setAlpha(this.reducedMotion ? 0.85 : 0.5)
+      this.bossMarks.push(mark)
+      // The pulse is the "not yet, but next move" — a static ring reads as something already there.
+      if (!this.reducedMotion) {
+        this.tweens.add({
+          targets: mark,
+          alpha: 0.95,
+          scale: mark.scale * 1.08,
+          duration: 620,
+          yoyo: true,
+          repeat: -1,
+          ease: 'Sine.easeInOut',
+        })
+      }
+    }
+    const label = deal.kind === 'felt' ? `THE PIT BOSS  ·  FRESH ${hazardSkin().label.coat}` : `THE PIT BOSS  ·  ${hazardSkin().label.lock}`
+    const text = this.add
+      .text(DESIGN_W / 2, this.boardTop - 12, label, {
+        fontFamily: FONT,
+        fontSize: '19px',
+        fontStyle: '900',
+        color: css(tint),
+      })
+      .setOrigin(0.5, 1)
+      .setDepth(19)
+      .setLetterSpacing(2)
+    this.bossMarks.push(text)
+    sfx.uiTap()
+  }
+
+  private clearBossMarks(): void {
+    for (const m of this.bossMarks) {
+      this.tweens.killTweensOf(m)
+      m.destroy()
+    }
+    this.bossMarks = []
+  }
+
+  /**
+   * The deal lands. Everything the board refuses (a special the player banked, a clamp that would
+   * have taken the last legal move, a square that already carries felt) simply does not happen —
+   * `dealLocks`/`dealCoats` return only what they actually changed, so what is animated here is
+   * always exactly what is true on the board.
+   */
+  private landDeal(deal: Deal, cells: Coord[]): void {
+    const done = deal.kind === 'clamp' ? this.board.dealLocks(cells) : this.board.dealCoats(cells)
+    if (done.length === 0) return
+    if (deal.kind === 'clamp') {
+      for (const at of done) {
+        const piece = this.board.get(at)
+        if (!piece || this.lockOverlays.has(piece.id)) continue
+        const pos = this.cellToXY(at)
+        // The same furniture `spriteFor` builds for a seeded clamp — created here because the piece
+        // it lands on already exists, so nothing is about to rebuild its sprite.
+        const clamp = this.add.image(pos.x, pos.y, ensureHazardTexture(this, 'lock')).setDisplaySize(PIECE_SIZE, PIECE_SIZE)
+        this.pieceLayer.add(clamp)
+        this.lockOverlays.set(piece.id, clamp)
+        this.dropIn(clamp)
+      }
+    } else {
+      for (const at of done) {
+        const pos = this.cellToXY(at)
+        const felt = this.add.image(pos.x, pos.y, ensureHazardTexture(this, 'coat', 1)).setDisplaySize(CELL, CELL)
+        this.pieceLayer.add(felt)
+        this.pieceLayer.sendToBack(felt)
+        this.coatCells.set(`${at.row},${at.col}`, felt)
+        this.dropIn(felt)
+      }
+      // ⚠️ THE DENOMINATOR MOVES. Dealt felt is real work, so it joins the count — and a counter that
+      // silently went from 4/12 to 4/14 would read as a bug, which is why `houseAccent` flashes it in
+      // the boss's own colour on the same beat. The number going UP has to look deliberate.
+      this.coatsTotal += done.length
+      this.refreshCoatLabel()
+      this.houseAccentCoatLabel()
+    }
+    // The House's own sound: the reel CLUNK, not a failure thud. It is a machine doing something,
+    // and a mechanic that arrived on the "you did something wrong" sound would read as a penalty.
+    sfx.reelClunk()
+    this.punch({ trauma: this.reducedMotion ? 0 : 0.16 })
+    track(EVENTS.PIT_BOSS_DEAL, { level: this.level, kind: deal.kind })
+  }
+
+  /** A dealt thing arrives rather than appearing — the House put it there, on this beat. */
+  private dropIn(o: Phaser.GameObjects.Image): void {
+    if (this.reducedMotion) return
+    const s = o.scaleX
+    o.setScale(s * 1.7).setAlpha(0)
+    // ⚠️ Tweened to the CAPTURED scale, never to `scale: 1` — these are `setDisplaySize`d images, and
+    // a tween to 1 lands them at their native texture size.
+    this.tweens.add({ targets: o, scaleX: s, scaleY: s, alpha: 1, duration: 240, ease: 'Back.easeOut' })
+  }
+
+  /** Flash the sweep counter in the boss's colour, so a rising denominator reads as the House's doing. */
+  private houseAccentCoatLabel(): void {
+    const label = this.coatLabel
+    if (!label) return
+    label.setColor(css(getTheme().rose))
+    if (this.reducedMotion) {
+      this.time.delayedCall(900, () => this.refreshCoatLabel())
+      return
+    }
+    this.tweens.add({
+      targets: label,
+      scale: 1.22,
+      duration: 200,
+      yoyo: true,
+      repeat: 1,
+      ease: 'Sine.easeInOut',
+      onComplete: () => {
+        label.setScale(1)
+        this.refreshCoatLabel()
+      },
     })
   }
 
@@ -4058,6 +4267,10 @@ export class GameScene extends Phaser.Scene {
    */
   private spendMove(): void {
     this.movesLeft--
+    // THE PIT BOSS's clock. Counted separately from `movesLeft` on purpose: bought moves and the
+    // continue offer both move that number, and a schedule that drifted every time a player topped
+    // themselves up would stop being the fixed rhythm its fairness rests on.
+    this.movesSpent++
     this.moveMade = true
     // First committed move: the marker offer (if still open) leaves the table, and a placed
     // marker locks in — no backout once the hand is played.
@@ -4136,6 +4349,13 @@ export class GameScene extends Phaser.Scene {
         return
       }
       if (!this.board.hasValidMove()) await this.reshuffle()
+      // THE PIT BOSS takes his turn — HERE, and only here. This is the idle handoff: the board has
+      // settled, the win and lose checks above have already returned, and the reshuffle has run. So
+      // a deal can never interrupt a cascade (clause 6), can never un-win a level you had already
+      // finished, and never lands on a board you cannot play. It runs BEFORE the Plinko offer for
+      // the same reason the offer sits after the result checks: the overlay must open onto a board
+      // that is finished changing.
+      this.runPitBoss()
       // A SUPER-MEGA-grade chain can buy a Plinko drop. Offered only HERE — after the win/lose checks
       // above have returned — so the overlay can never collide with the result card, and only on a
       // board that's about to be playable again. When it opens it OWNS the handback (its CLAIM
@@ -5316,6 +5536,9 @@ export class GameScene extends Phaser.Scene {
   // -------------------------------------------------------------- endings
 
   private finishWin(): void {
+    // The House stops dealing the moment the hand is over — a telegraph left pulsing under the
+    // result card would be promising a move that is never going to happen.
+    this.clearBossMarks()
     this.log('finishWin')
     this.state = 'ended'
     this.clearBookedSwap() // §G1 — a swipe aimed during the winning cascade dies with the level
@@ -6206,6 +6429,9 @@ export class GameScene extends Phaser.Scene {
   }
 
   private finishLose(): void {
+    // The House stops dealing the moment the hand is over — a telegraph left pulsing under the
+    // result card would be promising a move that is never going to happen.
+    this.clearBossMarks()
     this.log('finishLose')
     this.state = 'ended'
     this.clearBookedSwap() // §G1
@@ -6238,6 +6464,9 @@ export class GameScene extends Phaser.Scene {
   }
 
   private finishEndless(): void {
+    // The House stops dealing the moment the hand is over — a telegraph left pulsing under the
+    // result card would be promising a move that is never going to happen.
+    this.clearBossMarks()
     this.log('finishEndless', 'cheats', this.cheatFires)
     this.state = 'ended'
     this.clearBookedSwap() // §G1
