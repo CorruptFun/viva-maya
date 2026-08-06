@@ -7,6 +7,7 @@ import { endlessBoardRng } from './core/boardpick'
 import { dayKey } from './core/endless'
 import { initInstallCapture } from './core/install'
 import { devSeedChase } from './core/leaderboard'
+import { installLoopSleep } from './core/apploop'
 import { installResumeGuard } from './core/resumeguard'
 import { ensureSalt } from './core/racesalt'
 import { captureRefFromUrl } from './core/referrals'
@@ -287,12 +288,12 @@ function startGame(): void {
   // or steps until the tab is visible again; `wake()` resumes it. Wall-clock logic
   // (daily spin / lives) reads Date.now() on demand, so it self-corrects on resume;
   // SFX are transient one-shots whose AudioContext resumes on the next input.
-  if (typeof document !== 'undefined') {
-    document.addEventListener('visibilitychange', () => {
-      if (document.hidden) game.loop?.sleep()
-      else game.loop?.wake()
-    })
-  }
+  //
+  // ⚠️ This used to be four lines of `visibilitychange` right here, and that single event was NOT
+  // enough to undo the sleep — 41 measured `resume_stall` events, every one of them reporting a loop
+  // still asleep on a visibly foregrounded page. `focus` and `pageshow` are independent resume
+  // signals on Android and on an installed iOS PWA. core/apploop owns the whole lifecycle now.
+  installLoopSleep(game)
 
   // ⚠️ Registered AFTER the sleep/wake pair above, and the order matters: listeners fire in
   // registration order, so `wake()` has already run by the time the guard starts watching. A guard

@@ -69,6 +69,14 @@ export const EVENTS = {
   LEVEL_FAIL: 'level_fail',
   /** {level} — backed out mid-level, which reads very differently from losing. */
   LEVEL_QUIT: 'level_quit',
+  /**
+   * {level, moves} — a level in progress was picked back up after the page went away
+   * (core/levelresume.ts). Deliberately NOT a second `level_start`: this is the same attempt
+   * continuing, so counting it as a start would inflate the attempt count of exactly the long levels
+   * that get interrupted most. Its own rate is also the measurement of how often players are losing
+   * the page mid-level at all.
+   */
+  LEVEL_RESUME: 'level_resume',
 
   /** {score} */
   ENDLESS_START: 'endless_start',

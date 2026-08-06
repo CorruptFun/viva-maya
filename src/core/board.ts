@@ -26,6 +26,18 @@ import type { HazardPlan } from './hazards'
  */
 const NO_EFFECTS: HazardEffects = { coatsStripped: [], blockersDamaged: [], blockersBroken: [], unlocked: [] }
 
+/** Every legal `PieceKind`, for validating a snapshot read back out of localStorage. */
+const PIECE_KINDS: readonly PieceKind[] = ['normal', 'wildReelRow', 'wildReelCol', 'diceBomb', 'jackpot', 'blocker']
+
+/** A JSON-safe copy of a board's whole state — see `toSnapshot`. */
+export interface BoardSnapshot {
+  rows: number
+  cols: number
+  nextId: number
+  grid: (Piece | null)[][]
+  coats: number[][] | null
+}
+
 export class Board {
   private grid: (Piece | null)[][] = []
   private nextId = 1
@@ -111,6 +123,87 @@ export class Board {
     // A plan can lock enough of the board to leave no legal swap. Reshuffling here (which preserves
     // every hazard, see regenerate) is far better than handing the player a dead board on move one.
     if (!this.findFirstValidMove()) this.regenerate()
+  }
+
+  // ------------------------------------------------------------- snapshot
+
+  /**
+   * A plain-data copy of everything that makes this board THIS board. Round-trips through JSON.
+   *
+   * `Piece` is already plain data (id / symbol / kind / locked / hp), so the grid needs no encoding —
+   * just a deep copy, so a later mutation of the live board cannot reach back into a snapshot the
+   * caller is holding.
+   *
+   * ⚠️ The RNG is deliberately NOT captured. It only ever feeds future refills, and on a numbered
+   * level those come from `Math.random()` seeding at construction anyway — every board is a fresh
+   * random one. Capturing the stream would imply a determinism guarantee this class does not make,
+   * and would tempt someone to try the same trick on the daily race board, where the seed is the
+   * whole security model (see core/racesalt.ts).
+   */
+  toSnapshot(): BoardSnapshot {
+    return {
+      rows: this.rows,
+      cols: this.cols,
+      nextId: this.nextId,
+      grid: this.grid.map(row => row.map(p => (p ? { ...p } : null))),
+      coats: this.coats ? this.coats.map(row => [...row]) : null,
+    }
+  }
+
+  /**
+   * Adopt a snapshot, or refuse it and leave the board untouched.
+   *
+   * Returns false rather than throwing, and validates every field, because the only caller reads
+   * these out of localStorage — which is user-editable, survives across app versions, and is exactly
+   * the kind of input that must never be able to crash a game on launch. A rejected snapshot costs
+   * the player their level-in-progress; a trusted one could cost them the game entirely.
+   */
+  restoreSnapshot(snap: BoardSnapshot | null | undefined): boolean {
+    if (!snap || snap.rows !== this.rows || snap.cols !== this.cols) return false
+    if (!Array.isArray(snap.grid) || snap.grid.length !== this.rows) return false
+
+    const grid: (Piece | null)[][] = []
+    let maxId = 0
+    for (const row of snap.grid) {
+      if (!Array.isArray(row) || row.length !== this.cols) return false
+      const out: (Piece | null)[] = []
+      for (const p of row) {
+        if (p == null) {
+          out.push(null)
+          continue
+        }
+        if (typeof p.id !== 'number' || !Number.isFinite(p.id)) return false
+        if (!SYMBOLS.includes(p.symbol)) return false
+        if (!PIECE_KINDS.includes(p.kind)) return false
+        maxId = Math.max(maxId, p.id)
+        out.push({
+          id: p.id,
+          symbol: p.symbol,
+          kind: p.kind,
+          ...(p.locked === true ? { locked: true } : {}),
+          ...(typeof p.hp === 'number' ? { hp: p.hp } : {}),
+        })
+      }
+      grid.push(out)
+    }
+
+    let coats: number[][] | null = null
+    if (snap.coats != null) {
+      if (!Array.isArray(snap.coats) || snap.coats.length !== this.rows) return false
+      coats = []
+      for (const row of snap.coats) {
+        if (!Array.isArray(row) || row.length !== this.cols) return false
+        if (row.some(v => typeof v !== 'number' || !Number.isFinite(v) || v < 0)) return false
+        coats.push([...row])
+      }
+    }
+
+    this.grid = grid
+    this.coats = coats
+    // Never trust the stored counter to be ahead of the grid: a duplicate piece id would make two
+    // cells share one sprite, and the view keys its sprite map by id.
+    this.nextId = Math.max(typeof snap.nextId === 'number' ? snap.nextId : 0, maxId + 1)
+    return true
   }
 
   /** Total coat layers still on the table — the second half of the win condition. 0 when unused. */

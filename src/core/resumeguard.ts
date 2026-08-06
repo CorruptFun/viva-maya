@@ -41,8 +41,8 @@ const SECOND_CHECK_MS = 1200
 
 interface LoopLike {
   frame: number
+  /** Phaser 3.90's TimeStep has NO `sleeping` flag — `sleep()` only clears this one. Don't add it back. */
   running?: boolean
-  sleeping?: boolean
   wake(seamless?: boolean): void
   sleep(): void
 }
@@ -62,21 +62,39 @@ function diagnostics(game: GameLike): Record<string, unknown> {
   } catch {
     scenes = '?'
   }
+  // GameScene mirrors its state machine onto the body dataset; on a stall these are the most useful
+  // fields there are, because `resolving` points straight at cause 3 and `idle` rules it out, while
+  // `stage` names the exact await a hung cascade is sitting on.
+  //
+  // ⚠️ This read used to come back EMPTY on every real device: the writer was behind
+  // `import.meta.env.DEV`, so all 41 production stalls reported `boardState: ""`. GameScene
+  // publishes it unconditionally now (see `publishState`) — if this field goes blank again, that
+  // gate has grown back.
   let boardState = ''
+  let boardStage = ''
+  let heldFor: number | null = null
   try {
-    // GameScene mirrors its state machine here for DEV debugging; on a stall it is the single most
-    // useful field, because `resolving` points straight at cause 3 and `idle` rules it out.
     const raw = document.body?.dataset?.vegas
-    boardState = raw ? String(JSON.parse(raw).state ?? '') : ''
+    const snap = raw ? (JSON.parse(raw) as Record<string, unknown>) : null
+    if (snap) {
+      boardState = String(snap.state ?? '')
+      boardStage = String(snap.stage ?? '')
+      heldFor = typeof snap.held === 'number' ? snap.held : null
+    }
   } catch {
     boardState = '?'
   }
   return {
     contextLost: game.renderer?.contextLost === true,
+    // The decisive field. `running` is only ever cleared by `sleep()`, so `false` on a page this
+    // guard has already confirmed VISIBLE means the app came back without anything waking the loop —
+    // which is what all 41 stalls between 2026-08-04 and 08-06 turned out to be. core/apploop now
+    // listens to `focus` and `pageshow` as well, so a recurrence here means a third resume signal.
     running: game.loop?.running === true,
-    sleeping: game.loop?.sleeping === true,
     scenes,
     boardState,
+    boardStage,
+    heldFor,
   }
 }
 

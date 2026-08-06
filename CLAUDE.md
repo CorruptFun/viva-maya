@@ -170,12 +170,77 @@ Live: <https://corruptfun.github.io/viva-maya/>
   `install_result` with outcome `guided` is the closest signal Apple permits.
 - **The resume guard reloads the page, so its false-positive guard is critical.**
   `core/resumeguard.ts` watches for the game loop failing to advance after a
-  resume. `main.ts` stops the loop on purpose while hidden, so **a hidden page
-  has a frozen frame counter by design**, and Android fires `focus` on
+  resume. `core/apploop.ts` stops the loop on purpose while hidden, so **a hidden
+  page has a frozen frame counter by design**, and Android fires `focus` on
   still-hidden pages — every check re-confirms visibility *at the moment it
   runs*. ⚠️ Its nudge calls `sleep()` **before** `wake()`: Phaser's `wake()` opens
   with `if (this.running) return`, so a loop with `running === true` and a dead
   requestAnimationFrame can never be woken by `wake()` alone.
+  Its `boardState` field reads `document.body.dataset.vegas`, which
+  `GameScene.publishState()` writes **unconditionally** — that used to sit behind
+  `import.meta.env.DEV`, so every production stall reported `boardState: ""`. If
+  that field goes blank again, the DEV gate has grown back.
+- **Sleeping the loop is one event; waking it is three, and that asymmetry was a
+  real freeze.** `core/apploop.ts` owns the anti-drain sleep. It sleeps only on
+  `visibilitychange`→hidden, but wakes on `visibilitychange`, **`focus` and
+  `pageshow`**, because a phone can foreground an app without firing a visibility
+  change (Android's notification shade / split screen / some launchers; an
+  installed iOS PWA through the app switcher). `visibilitychange` alone was the
+  only wake trigger until 2026-08-06, and it measurably wasn't enough: 41
+  `resume_stall` events across 3 devices, **every one** reporting
+  `running: false` on a page the watchdog had already confirmed visible —
+  i.e. the game came back frozen. Two rules keep the fix from being worse than
+  the bug, and `apploop.test.ts` pins both: **never wake a hidden page** (Android
+  fires `focus` on hidden pages; waking there throws away the whole battery win)
+  and **never sleep on `blur`** (a page can lose focus while fully visible, and
+  sleeping there freezes a board the player is looking at). `running` is the only
+  real flag — Phaser 3.90's TimeStep has **no `sleeping` property**, so a
+  diagnostic reading one is reporting a constant `false`.
+- **`GameScene.t()` must always settle, or the board is bricked.** `resolveLoop`
+  awaits a chain of tween promises; one that never resolves pins `state` at
+  `resolving` **forever** — no input, no error, no recovery but a force-quit.
+  `tweens.killTweensOf()` calls `tween.destroy()`, and 3.90's `destroy()` nulls
+  `callbacks` and calls `removeAllListeners()` **without dispatching anything** —
+  no `onComplete`, no `onStop`. Since `settleSquash` calls `killTweensOf` on a
+  board sprite on every single landing, `t()` resolves on `onComplete` **or**
+  `onStop` **or** a deadline (`TWEEN_DEADLINE_SLACK_MS`), and a fired deadline
+  sets `tweenStranded` so `resolveLoop` runs `resyncSprites()` — the model was
+  never wrong, only the view. ⚠️ That deadline is a **Phaser** timer on purpose: a
+  `window.setTimeout` would keep running while the app is backgrounded and tear
+  down a cascade that was merely paused. The 64-tween deal-in has the same shape
+  and the same kind of net (`DEAL_IN_DEADLINE_MS`).
+- **A level in progress survives the page going away — and the rule that keeps
+  that honest is "snapshot only on idle".** `core/levelresume.ts` stores the
+  board, moves, score, objectives and per-level allowances so a reload doesn't
+  cost the player their level (the resume guard reloads deliberately; iOS
+  discards a backgrounded PWA's web view; the update toast reloads; things
+  crash). Level 104 is 64 moves — losing 54 of them to an app switch is the
+  difference between a game you keep and one you delete. ⚠️ The snapshot is
+  written **only on a settled board** and **cleared the instant a move is
+  spent**, so the only thing restorable is a position the player already reached
+  and stopped at. Force-quitting mid-cascade to re-roll a refill or a Plinko drop
+  finds nothing and loses the level exactly as before. **Any call site that
+  snapshots mid-resolve turns this into a rewind button.** It is single-slot,
+  its own localStorage key (never `SaveData` — that would sync a half-played
+  board to another device), and endless is deliberately excluded: it seeds from
+  the race board and posts a score, so a resumable run adds surface to the
+  score-defence story for very little (an endless run is a free, unlimited-retry
+  2-minute sprint). On restore, `resumed` suppresses what belongs to the START of
+  an attempt rather than to `create()` — the `level_start` event (a resume emits
+  `level_resume`, so win rates stay honest), `takePendingBoosts()` (**it
+  CONSUMES**, and those boosts are already planted on the restored board) and the
+  goal card.
+  ⚠️ **Anything the player has already PAID for on this level must be in the
+  snapshot, and spending chips does not move the state machine** — so the idle
+  transition hook never fires for it, and those sites call `snapshotLevel()`
+  themselves. `markerStake` is the one that bites: `placeMarker` spends the chips
+  the instant the marker slides and the ending settles them, so dropping it would
+  take up to 500 chips and then never pay the hand out — silently, because
+  nothing left in the level would remember a bet had been placed. `grantMoves`
+  (the single funnel for every bought move, helper shelf *and* continue offer)
+  stores on the spot for the same reason. When a new per-level cost lands, the
+  test to apply is "did the player pay for this, and would a reload make them pay
+  twice or not at all?"
 
 ## Run it
 
@@ -187,8 +252,8 @@ npm run build    # tsc && vite build
 ```
 
 Tests are colocated: `src/core/*.test.ts` (board, merge, hazards, endless,
-plinko rate, slots rate, cheat, endless pace, rgb). Run them — the game logic has
-real coverage.
+plinko rate, slots rate, cheat, endless pace, rgb, apploop, level resume). Run
+them — the game logic has real coverage.
 
 `slots.rate.test.ts`, `plinko.rate.test.ts` and `endless.pace.test.ts` are
 **economy guards**, not unit tests: they measure what a machine actually pays
@@ -206,7 +271,9 @@ edit to make green.
 | `src/core/` | game logic + its tests — board, merge, levels, endless, daily, slots, hazards, analytics, push, cheat, rgb |
 | `src/core/inventory.ts` | canonical boost names (`BOOST_META`) + the stash model — see the note above |
 | `src/core/install.ts` | "add to home screen" custody; the platform split lives here |
+| `src/core/apploop.ts` | the anti-drain loop sleep + every signal that undoes it — see the note above |
 | `src/core/resumeguard.ts` | recovers a game loop that never restarted after a resume |
+| `src/core/levelresume.ts` | mid-level snapshot/restore — see the "snapshot only on idle" note above |
 | `src/core/trophies.ts` | chapter trophies — catalog, purse table, tier ladder, the claim latch (see the note above) |
 | `src/view/stash.ts` | the stash panel + its two doors (Home line, LevelSelect `🎁 N` pill) |
 | `src/view/installsheet.ts` | the install sheet — DOM, so the iOS guide can point at real browser chrome |

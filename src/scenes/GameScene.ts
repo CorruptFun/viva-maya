@@ -43,13 +43,15 @@ import {
 } from '../core/levels'
 import { checkChaseOvertake } from '../core/leaderboard'
 import type { ChaseNeighbour } from '../core/leaderboard'
-import { markerOfferable, markerStakesFor, placeMarker, refundMarker, settleMarkerLoss, settleMarkerWin } from '../core/marker'
+import { MARKER_STAKES, markerOfferable, markerStakesFor, placeMarker, refundMarker, settleMarkerLoss, settleMarkerWin } from '../core/marker'
 import type { MarkerStake } from '../core/marker'
 import { CHAPTER_BOOSTS, CHAPTER_PURSES, claimChapter, trophyFor } from '../core/trophies'
 import type { ChapterGrant } from '../core/trophies'
 import { playChapterCeremony } from '../view/trophyceremony'
 import { openAct2Card } from '../view/act2card'
 import { hazardPlan } from '../core/hazards'
+import { clearLevelSnapshot, loadLevelSnapshot, saveLevelSnapshot } from '../core/levelresume'
+import type { LevelSnapshot } from '../core/levelresume'
 import { ensureHazardTexture } from '../view/textures'
 import { hazardSkin } from '../view/hazardskins'
 import { DIFFICULTY, type HazardKind } from '../core/difficulty'
@@ -168,6 +170,21 @@ const MEDALLION_CAP = 4
 const PIECE_SCALE = PIECE_SIZE / TEX_SIZE
 const DRAG_THRESHOLD = CELL * 0.3
 /**
+ * How far past its own finish time an awaited tween may run before `t()` gives up on it and lets the
+ * cascade continue without it. Sized to be unreachable by a slow frame and reachable by a dead one:
+ * the longest awaited tween in the resolve path is a full-height fall (FALL_BASE_MS + 8×FALL_PER_CELL_MS,
+ * ~450ms), so 1.5s is several times any legitimate overrun even on a device the quality governor has
+ * dropped to its floor. See `t()` for why waiting forever is the failure mode that matters.
+ */
+const TWEEN_DEADLINE_SLACK_MS = 1500
+/**
+ * The board deal-in hands input back from inside 64 tween callbacks; this is how long the scene will
+ * wait for all of them before handing it back anyway. Generous — the deal itself is COL_STAGGER×8 +
+ * a full-height fall, comfortably under 1s — because the only thing on the other side of this timer
+ * is a level that never becomes playable at all.
+ */
+const DEAL_IN_DEADLINE_MS = 6000
+/**
  * §G1 · how long a swap aimed mid-cascade stays booked. Sized against the resolve it has to outlive:
  * a wave is ~CLEAR_MS + a fall (~100–450ms), so a typical x3–x4 chain settles inside ~1.5s and the
  * book survives it. Much longer and a swipe fires long after the player stopped meaning it; much
@@ -283,7 +300,31 @@ export class GameScene extends Phaser.Scene {
   private cabinetGlow?: Phaser.GameObjects.Image
   /** True while a win surge (flashCabinet) briefly owns cabinetGlow's alpha, so the heartbeat drive in update() yields (C1). */
   private cabinetSurge = false
-  private state: GameState = 'idle'
+  /**
+   * The turn state — a PROPERTY, not a bare field, so that entering a state is timestamped.
+   *
+   * Every transition writes `stateSince`, which buys two things nothing else could: the stall report
+   * can say how long the board has been held (see publishState), and the unstick watchdog can tell a
+   * cascade that is genuinely still running from one that has been "resolving" for half a minute.
+   * Assignment sites are unchanged — `this.state = 'idle'` still reads as a plain field everywhere.
+   */
+  private _state: GameState = 'idle'
+  /** Wall clock (ms) at which `state` last changed. Wall clock, NOT the game loop — see unstick(). */
+  private stateSince = 0
+  private get state(): GameState {
+    return this._state
+  }
+  private set state(next: GameState) {
+    if (next === this._state) return
+    this.stateSince = Date.now()
+    this._state = next
+    // ⚠️ The board becoming playable is THE snapshot point, and hanging it off the transition rather
+    // than off the half-dozen places that perform it is deliberate: resolveLoop, its own catch, the
+    // deal-in, the intro handoff, the continue offer and the Plinko/jackpot claims all hand input
+    // back, and a resume that silently skipped one of them would look like data loss the next time
+    // that particular path was the last thing the player did.
+    if (next === 'idle') this.snapshotLevel()
+  }
   /** §E4 latch — a jackpot chip detonated this round, so the Heartbloom hero win fires even below 3-star. */
   private jackpotOccurred = false
   /** §E4 guard — the Heartbloom (giant heart of light + Maya leitmotif) fires at most ONCE per round. */
@@ -538,6 +579,23 @@ export class GameScene extends Phaser.Scene {
   private apMoved = 0
   private dbgStage = ''
   private sid = 0
+  /**
+   * Set by `t()` when an awaited tween blew its deadline and the cascade carried on without it. The
+   * board MODEL is unaffected (it never depended on the tween) but a sprite is now stranded between
+   * cells, so resolveLoop snaps the view back onto the model before handing input back.
+   */
+  private tweenStranded = false
+  /**
+   * This create() picked a level up mid-play (core/levelresume.ts) rather than starting one.
+   *
+   * Gates everything that belongs to the START of an attempt rather than to a scene build: the
+   * level_start event, the pending-boost consume, and the goal card. Getting any of those wrong is
+   * worse than not resuming at all — a second `takePendingBoosts()` would silently eat prizes the
+   * player already had planted on the board they are looking at.
+   */
+  private resumed = false
+  /** The adopted snapshot, held only until `restoreLevelCounters` re-applies its per-level counters. */
+  private resumeSnap: LevelSnapshot | null = null
 
   private log(...args: unknown[]): void {
     if (import.meta.env.DEV) console.log(`[vm ${this.sid}]`, ...args)
@@ -623,14 +681,31 @@ export class GameScene extends Phaser.Scene {
     }
     this.coatsTotal = this.board.coatsRemaining()
     this.movesLeft = this.spec.moves
-    // Placed AFTER the lives gate returns, so a bounced entry is not counted as an attempt — a level
-    // the player couldn't even get into must not drag down its own win rate.
-    if (this.endless) track(EVENTS.ENDLESS_START, { day: this.endlessDayKey })
-    else track(EVENTS.LEVEL_START, { level: this.level, moves: this.spec.moves })
     this.objectives = this.spec.objectives.map(o => ({ symbol: o.symbol, remaining: o.count, total: o.count }))
-    this.score = 0
-    this.shownScore = 0
-    this.scoreMilestone = 10000 // W3 — first gold milestone pop
+
+    // ── Mid-level resume (core/levelresume.ts) ──────────────────────────────────
+    // Adopt a stored board for THIS level, if one is waiting. Deliberately placed after the fresh
+    // build above rather than instead of it: the fresh level is the fallback for every rejected
+    // snapshot, so a corrupt or stale one costs the player their progress and nothing more.
+    // `resumed` then suppresses everything that must happen once per ATTEMPT rather than once per
+    // create() — see the three call sites below it.
+    this.resumed = !this.endless && this.restoreLevel()
+
+    // Placed AFTER the lives gate returns, so a bounced entry is not counted as an attempt — a level
+    // the player couldn't even get into must not drag down its own win rate. A resume is not an
+    // attempt either: it is the SAME attempt continuing, and counting it again would inflate every
+    // per-level start count by however often that level gets interrupted — which is exactly the
+    // levels that take longest, so the distortion would land where the analysis matters most.
+    if (this.endless) track(EVENTS.ENDLESS_START, { day: this.endlessDayKey })
+    else if (!this.resumed) track(EVENTS.LEVEL_START, { level: this.level, moves: this.spec.moves })
+    else track(EVENTS.LEVEL_RESUME, { level: this.level, moves: this.movesLeft })
+    this.score = this.resumed ? this.score : 0
+    this.shownScore = this.score // a resumed level opens on its real total, with no count-up to it
+    // W3 — the next gold milestone pop. Derived rather than hard-coded to 10000, so a RESUMED level
+    // re-arms above whatever it had already banked: picked up at 17,240 the next pop is 25k, not a
+    // replay of every threshold the player already crossed. `nextScoreMilestone(0)` is 10000, so a
+    // fresh level is unchanged — and the ladder (10k/25k/50k/100k…) stays defined in exactly one place.
+    this.scoreMilestone = this.nextScoreMilestone(this.score)
     this.state = 'idle'
     this.sprites.clear()
     this.armedGlows.clear()
@@ -763,7 +838,12 @@ export class GameScene extends Phaser.Scene {
       setFloorOverlay(null)
       sfx.refreshTheme()
     })
-    if (!this.endless) this.applyBoosts(takePendingBoosts(levelBoostExclusions(this.level)))
+    // The per-level allowances the reset block just zeroed, put back — see restoreLevelCounters.
+    this.restoreLevelCounters()
+    // ⚠️ NOT on a resume. `takePendingBoosts` CONSUMES the queue, and the boosts it would consume are
+    // already planted on the board being restored — taking them again would delete real prizes from
+    // the stash to plant duplicates of pieces the player can already see.
+    if (!this.endless && !this.resumed) this.applyBoosts(takePendingBoosts(levelBoostExclusions(this.level)))
 
     if (import.meta.env.DEV) {
       // URL knobs for automated checks: ?goal=N ?moves=N ?auto=MS ?plant=1
@@ -928,10 +1008,14 @@ export class GameScene extends Phaser.Scene {
     this.input.on('pointermove', (p: Phaser.Input.Pointer) => this.onMove(p))
     this.input.on('pointerup', (p: Phaser.Input.Pointer) => this.onUp(p))
 
-    if (import.meta.env.DEV) {
-      this.updateDebug()
-      this.time.addEvent({ delay: 300, loop: true, callback: () => this.updateDebug() })
-    }
+    // ⚠️ NOT dev-gated any more, and that matters. core/resumeguard's stall report reads
+    // `document.body.dataset.vegas` for its `boardState` field — the one field that separates "the
+    // requestAnimationFrame died" from "the resolve loop is hung on a tween promise" — and this
+    // whole block used to sit behind `import.meta.env.DEV`. So every `resume_stall` ever sent from
+    // production carried `boardState: ""`, and 41 of them told us nothing about the board. The
+    // expensive half (the hint search + the on-screen strip) is still DEV-only, inside updateDebug.
+    this.publishState()
+    this.time.addEvent({ delay: 300, loop: true, callback: () => this.publishState() })
     // The animated deal-in sets state='resolving' and owns the idle handoff (autoplay + hint) once
     // the board finishes assembling; an instant fill (reduced motion) leaves us idle → hand off now.
     if (this.state === 'idle') {
@@ -1259,10 +1343,38 @@ export class GameScene extends Phaser.Scene {
     // a level with a high QUIT rate but a normal loss rate is a boredom/confusion problem, not a
     // difficulty one. Lumping them together would hide that distinction entirely.
     if (!this.endless) track(EVENTS.LEVEL_QUIT, { level: this.level, moved: this.moveMade })
+    // Backing out is a DECISION to abandon the board — it already cost a life above. Keeping the
+    // snapshot would make the back button a free "park this level and come back", which is a
+    // different (and much bigger) design choice than surviving an app switch.
+    clearLevelSnapshot()
     startScene(this,'levelselect')
   }
 
-  /** DEV only: expose model state via DOM (dataset + visible strip) for external tooling. */
+  /**
+   * ALWAYS ON — mirror the turn state onto `document.body.dataset.vegas`.
+   *
+   * This is the black box. core/resumeguard reads it when it reports a stall, and it is what makes a
+   * frozen game diagnosable from telemetry alone: `state: 'idle'` means the loop died under a board
+   * that was fine, while `state: 'resolving'` plus a `stage` says the cascade is hung mid-wave and
+   * names the await it is hung on. Kept deliberately small and free of any board scan — it runs
+   * every 300ms on every device, unlike the DEV strip below.
+   */
+  private publishState(): void {
+    if (typeof document === 'undefined') return
+    document.body.dataset.vegas = JSON.stringify({
+      level: this.endless ? 'endless' : this.level,
+      state: this.state,
+      stage: this.dbgStage,
+      moves: this.movesLeft,
+      score: this.score,
+      // Age of the current state, in seconds. A hung resolve is indistinguishable from a busy one in
+      // a single sample; this is what makes it obvious in a report.
+      held: Math.round((Date.now() - this.stateSince) / 1000),
+    })
+    if (import.meta.env.DEV) this.updateDebug()
+  }
+
+  /** DEV only: the hint search + the on-screen strip — too expensive to run on real devices. */
   private updateDebug(): void {
     if (!import.meta.env.DEV) return
     const hint = this.board.findFirstValidMove()
@@ -1271,14 +1383,6 @@ export class GameScene extends Phaser.Scene {
     const text = `L${this.level} ${this.state} [${this.dbgStage}] mv=${this.movesLeft} sc=${this.score} obj=${obj} hint=${
       hint ? `${describe(hint.a)}->${describe(hint.b)}` : 'none'
     }`
-    document.body.dataset.vegas = JSON.stringify({
-      level: this.level,
-      state: this.state,
-      moves: this.movesLeft,
-      score: this.score,
-      objectives: this.objectives.map(o => ({ symbol: o.symbol, remaining: o.remaining })),
-      hint,
-    })
     let el = document.getElementById('dbg')
     if (!el) {
       el = document.createElement('div')
@@ -1288,6 +1392,85 @@ export class GameScene extends Phaser.Scene {
       document.body.appendChild(el)
     }
     el.textContent = text
+  }
+
+  /**
+   * Adopt a stored mid-level board for this level. False = nothing usable; the fresh level stands.
+   *
+   * Order matters: the BOARD is restored first and everything else only follows if it took, so a
+   * snapshot the board rejects (wrong size, corrupt grid, hand-edited localStorage) can never leave
+   * the scene holding one level's moves over another level's board.
+   */
+  private restoreLevel(): boolean {
+    const snap = loadLevelSnapshot(this.level)
+    if (!snap || !this.board.restoreSnapshot(snap.board)) return false
+
+    this.resumeSnap = snap
+    this.movesLeft = snap.moves
+    this.score = snap.score
+    this.coatsTotal = snap.coatsTotal
+    this.moveMade = snap.moveMade
+    // Objectives are matched by SYMBOL, not by index: the spec is the authority on WHICH symbols this
+    // level collects, and the snapshot only says how many are left. A spec that changed under a
+    // stored level (a rebalance shipped between the save and the resume) then keeps its own goals and
+    // simply loses the stale counts, instead of collecting a symbol the board no longer contains.
+    for (const objective of this.objectives) {
+      const stored = snap.objectives.find(o => o.symbol === objective.symbol)
+      if (stored && typeof stored.remaining === 'number') {
+        objective.remaining = Phaser.Math.Clamp(stored.remaining, 0, objective.total)
+      }
+    }
+    this.log('resumed level', this.level, 'moves', this.movesLeft, 'score', this.score)
+    return true
+  }
+
+  /**
+   * The second half of a resume: the per-level allowance counters.
+   *
+   * Split out ONLY because create()'s "drop stale refs from the previous round" block sits between
+   * the two, and that block zeroes every one of these. Restoring them alongside the board would work
+   * until you read the file top to bottom and saw them reset again forty lines later — which is how
+   * a resumed level would quietly hand back a fresh bomb allowance and a second Plinko drop.
+   */
+  private restoreLevelCounters(): void {
+    const snap = this.resumeSnap
+    if (!snap) return
+    this.bombsUsed = snap.bombsUsed
+    this.purchasedMoves = snap.purchasedMoves
+    this.plinkoUsedThisLevel = snap.plinkoUsed
+    this.minPlaqueMet = snap.minPlaqueMet === true
+    // The marker's chips were already spent when it was slid; the ending owes the player a
+    // settlement for them. Validated against the real stake table rather than trusted, since this
+    // came out of localStorage and an unrecognised value would settle a hand nobody placed.
+    if ((MARKER_STAKES as readonly number[]).includes(snap.markerStake)) {
+      this.markerStake = snap.markerStake as MarkerStake
+    }
+    this.resumeSnap = null
+  }
+
+  /**
+   * Store the level in progress. Call ONLY on a settled board — see core/levelresume.ts on why that
+   * is the property that keeps this from being a rewind button.
+   */
+  private snapshotLevel(): void {
+    // Called from the `state` setter, which runs during create() before the board exists and on the
+    // lives-gate path where it never will — so every field it reads is checked, not assumed.
+    if (this.endless || !this.board || !this.spec) return
+    if (this.state !== 'idle' || this.movesLeft <= 0) return
+    saveLevelSnapshot({
+      level: this.level,
+      moves: this.movesLeft,
+      score: this.score,
+      objectives: this.objectives.map(o => ({ symbol: o.symbol, remaining: o.remaining, total: o.total })),
+      coatsTotal: this.coatsTotal,
+      moveMade: this.moveMade,
+      bombsUsed: this.bombsUsed,
+      purchasedMoves: this.purchasedMoves,
+      plinkoUsed: this.plinkoUsedThisLevel,
+      markerStake: this.markerStake,
+      minPlaqueMet: this.minPlaqueMet,
+      board: this.board.toSnapshot(),
+    })
   }
 
   /** Daily-spin prizes: head starts applied to this level, consumed win or lose. */
@@ -1394,7 +1577,10 @@ export class GameScene extends Phaser.Scene {
    * so the board can never end up both un-dealt and intro-less.
    */
   private wantsLevelIntro(): boolean {
-    return !this.reducedMotion && !this.endless && this.objectives.length > 0
+    // A resume is mid-level, so the "here is what you're collecting" card would be announcing goals
+    // the player is already half-way through — and the counters it ticks up from zero would read as
+    // if their progress had been wiped. The board deals straight in instead.
+    return !this.reducedMotion && !this.endless && !this.resumed && this.objectives.length > 0
   }
 
   /**
@@ -2413,8 +2599,17 @@ export class GameScene extends Phaser.Scene {
       .text(BOARD_X + BOARD_W, 62, 'SCORE', { fontFamily: FONT, fontSize: '18px', color: '#8a8577' })
       .setOrigin(1, 0)
       .setLetterSpacing(3)
+    // Seeded from `shownScore`, not hard-coded to '0': a resumed level opens on the total it was
+    // already carrying. The score readout is otherwise only ever written by the count-up in update(),
+    // which fires on a GAIN — so a literal here left a resumed board showing 0 until the next match
+    // banked points, then jumping to the real figure.
     this.scoreText = this.add
-      .text(BOARD_X + BOARD_W, 84, '0', { fontFamily: FONT, fontSize: '34px', color: T.onBackdropInk, fontStyle: 'bold' })
+      .text(BOARD_X + BOARD_W, 84, this.shownScore.toLocaleString(), {
+        fontFamily: FONT,
+        fontSize: '34px',
+        color: T.onBackdropInk,
+        fontStyle: 'bold',
+      })
       .setOrigin(1, 0)
       .setShadow(0, 2, 'rgba(0,0,0,0.12)', 4, false, true)
     // Mute chip nudged to y=34 (from 40) so its lower arc clears the SCORE label.
@@ -2691,6 +2886,18 @@ export class GameScene extends Phaser.Scene {
       'onBackdrop'
     )
     this.maybeOfferMarker(briefY)
+    // A RESUMED level re-enters with its hand already played: the plaque owes `target - score`, not
+    // the whole target it was just built with, and a marker that is already down has to say so
+    // instead of leaving the brief looking like nothing was staked. Both are no-ops on a fresh level
+    // (owed === target, no stake), so there is no second path to keep in step.
+    this.updateMinimumPlaque()
+    if (this.resumed && this.markerStake > 0) {
+      this.dismissMarkerRow(true)
+      // …and if the hand was already played, the tag states the stake instead of offering a back-out
+      // it would refuse: `backOutMarker` gates on `moveMade`, so the "tap to take back" copy would be
+      // a button that does nothing. Same call the first move makes.
+      if (this.moveMade) this.lockMarkerTag()
+    }
     // AFTER DARK. Seated here rather than earlier in create() because it needs `cabinetRgb`, which
     // the board build attaches — and it must never run before the ring exists or the marquee half of
     // the beat is silently dropped while the sweep still plays.
@@ -2859,6 +3066,11 @@ export class GameScene extends Phaser.Scene {
     if (n <= 0) return
     this.movesLeft += n
     this.purchasedMoves += n
+    // The chips are already gone, so the stored level has to know about the moves they bought.
+    // Spending chips does not move the state machine, so the transition hook in `state` never fires
+    // here — this is the funnel for BOTH the helper shelf and the continue offer, which is why one
+    // call covers every bought move. See core/levelresume.ts.
+    this.snapshotLevel()
     this.movesText.setText(String(this.movesLeft))
     this.movesText.setColor(this.movesLeft <= 5 ? getTheme().warn : getTheme().ink)
     if (this.movesLeft > 3) this.stopMovesPulse()
@@ -3088,6 +3300,18 @@ export class GameScene extends Phaser.Scene {
     const FALL_MS = FALL_BASE_MS + FALL_PER_CELL_MS * ROWS // full-height drop
     const total = ROWS * COLS
     let landed = 0
+    // ⚠️ Input comes back from inside a tween callback that has to fire 64 times, and `settleSquash`
+    // calls `killTweensOf` on these very sprites on every landing. One swallowed onComplete and the
+    // level is unplayable from the first frame with nothing on screen to say why. The deal-in is
+    // cosmetic, so the safety net is simply to hand the board over on a timer as well.
+    const dealGuard = this.time.delayedCall(DEAL_IN_DEADLINE_MS, () => {
+      if (this.state !== 'resolving') return
+      this.log('deal-in deadline', landed, '/', total)
+      this.resyncSprites()
+      this.state = 'idle'
+      this.scheduleAutoplay()
+      this.armHint()
+    })
     for (let c = 0; c < COLS; c++) {
       // dropCells = ROWS → the whole column starts stacked just above the top edge and pours in.
       for (let r = 0; r < ROWS; r++) {
@@ -3109,6 +3333,7 @@ export class GameScene extends Phaser.Scene {
             // together, so this lands in step with the r===0 thunk; full-height drop → max-size puff.
             if (r === ROWS - 1) this.floorDust(to.x, to.y, ROWS)
             if (++landed >= total) {
+              dealGuard.remove()
               this.state = 'idle'
               this.scheduleAutoplay()
               this.armHint()
@@ -4128,6 +4353,13 @@ export class GameScene extends Phaser.Scene {
     // marker locks in — no backout once the hand is played.
     if (this.markerRow) this.dismissMarkerRow()
     if (this.markerStake > 0 && this.briefText?.input) this.lockMarkerTag()
+    // ⚠️ A move is being spent, so the stored board is now the PAST. Dropping it here is what makes
+    // the resume honest: nothing can be restored except a position the player settled on, so
+    // force-quitting mid-cascade to re-roll a refill or a Plinko drop finds nothing to go back to.
+    // The board is re-stored on the idle handoff at the end of resolveLoop. Being inside `spendMove`
+    // rather than in `trySwap` is what makes that true of EVERY way a move can be spent, for the
+    // same reason this method exists at all.
+    clearLevelSnapshot()
     this.movesText.setText(String(this.movesLeft))
     if (this.movesLeft <= 5) this.movesText.setColor(getTheme().warn)
     // Getting tight — start a gentle looping pulse on the moves number (once, no stacking). Gated
@@ -4167,6 +4399,12 @@ export class GameScene extends Phaser.Scene {
         this.log(this.dbgStage)
         wave = this.board.matchWave()
       }
+      // A tween was abandoned somewhere in the chain above, so at least one sprite is sitting where
+      // a killed animation left it. Put the view back on the model before anything reads it — the
+      // hit test derives from cell coordinates, so a stranded sprite is a piece the player can see
+      // in one place and only tap in another. Ahead of the rail re-dress below, so that dresses a
+      // board whose view already agrees with its model.
+      if (this.tweenStranded) this.resyncSprites()
       // The board settled: a clamp may have popped or a lockbox broken, so a column that refused the
       // rail a moment ago may now accept it. Re-dressed HERE rather than per wave, because a handle
       // flickering mid-cascade would be telling the player about a board they cannot touch yet.
@@ -5360,6 +5598,30 @@ export class GameScene extends Phaser.Scene {
     return Promise.all(tweens)
   }
 
+  /**
+   * Snap every live sprite back onto the cell the model says it occupies.
+   *
+   * The recovery half of `t()`'s deadline. Nothing here consults the view — the board model is the
+   * only input — so it is a total resync rather than a patch-up, and it is safe to run at any point
+   * where no tween promise is outstanding (in practice: the end of a resolve).
+   */
+  private resyncSprites(): void {
+    this.tweenStranded = false
+    track(EVENTS.RESUME_STALL, { stage: 'tween_stranded', boardState: this.state, level: this.level })
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        const at = { row: r, col: c }
+        const piece = this.board.get(at)
+        if (!piece) continue
+        const sprite = this.sprites.get(piece.id)
+        if (!sprite?.active) continue
+        const to = this.cellToXY(at)
+        this.tweens.killTweensOf(sprite)
+        sprite.setPosition(to.x, to.y).setScale(PIECE_SCALE).setAlpha(1).setAngle(0)
+      }
+    }
+  }
+
   private async reshuffle(): Promise<void> {
     this.state = 'shuffling'
     sfx.reshuffleSwirl()
@@ -5394,6 +5656,7 @@ export class GameScene extends Phaser.Scene {
   private finishWin(): void {
     this.log('finishWin')
     this.state = 'ended'
+    clearLevelSnapshot() // the level is over — nothing left to pick back up
     this.clearBookedSwap() // §G1 — a swipe aimed during the winning cascade dies with the level
     this.stopMovesPulse()
     this.powerBar?.setVisible(false) // retire the helper shelf — the result card takes the screen
@@ -6298,6 +6561,7 @@ export class GameScene extends Phaser.Scene {
   private finishLose(): void {
     this.log('finishLose')
     this.state = 'ended'
+    clearLevelSnapshot() // a lost level must not be resumable — that would be an infinite retry
     this.clearBookedSwap() // §G1
     this.stopMovesPulse()
     this.powerBar?.setVisible(false) // retire the helper shelf — the result card takes the screen
@@ -7498,6 +7762,10 @@ export class GameScene extends Phaser.Scene {
       return
     }
     this.markerStake = stake
+    // ⚠️ Store it NOW, not at the next idle transition — sliding a marker spends the chips but does
+    // not move the state machine, so nothing else here would fire. A reload in the gap between this
+    // and the first move would otherwise take up to 500 chips and settle nothing.
+    this.snapshotLevel()
     this.chipHud?.update(balance)
     track(EVENTS.MARKER_TAKEN, { level: this.level, stake })
     this.dismissMarkerRow(true)
@@ -7524,6 +7792,7 @@ export class GameScene extends Phaser.Scene {
     if (this.markerStake === 0 || this.moveMade) return
     const balance = refundMarker(this.markerStake)
     this.markerStake = 0
+    this.snapshotLevel() // and taken back off the table again — same reason as armMarker
     this.chipHud?.update(balance)
     const t = this.briefText
     if (t) {
@@ -8168,9 +8437,56 @@ export class GameScene extends Phaser.Scene {
     this.movesText?.setScale(1)
   }
 
+  /**
+   * An awaited tween. THE ONE INVARIANT: this promise must always settle, or the board is bricked.
+   *
+   * `resolveLoop` awaits these in a chain, so a promise that never resolves leaves `state` pinned at
+   * `resolving` FOREVER — no input, no error, no recovery short of a force-quit. That is one of the
+   * three faults core/resumeguard exists to catch, and it is not hypothetical:
+   *
+   *  - `tweens.killTweensOf(target)` calls `tween.destroy()`, and 3.90's `destroy()` nulls
+   *    `callbacks` and calls `removeAllListeners()` WITHOUT dispatching anything. No onComplete, no
+   *    onStop, nothing. Every `killTweensOf` in this file is one board sprite away from a dead board,
+   *    and `settleSquash` calls it on a board sprite on every single landing.
+   *  - `tween.stop()` DOES dispatch `onStop` — hence the second callback below, which costs nothing.
+   *  - Anything else that strands a tween across a background/foreground cycle.
+   *
+   * So there is a deadline as well. Every call site here is a plain `duration` (+ optional `delay`)
+   * with no repeat/yoyo/loop, which makes the finish time exactly computable; SLACK then absorbs
+   * frame hitches and quality-governor slowdowns. Overshooting it means something already went
+   * wrong, so the promise resolves and `resolveLoop` carries on with the board model — which never
+   * stopped being correct — as the source of truth.
+   *
+   * ⚠️ The deadline is a PHASER timer, deliberately. It is driven by the game loop, so it stops with
+   * the loop while the app is backgrounded. A `window.setTimeout` here would fire during a legitimate
+   * sleep and tear down a cascade that was merely paused, turning the battery win into a bug.
+   */
   private t(config: Record<string, unknown>): Promise<void> {
+    const delay = typeof config.delay === 'number' ? config.delay : 0
+    const duration = typeof config.duration === 'number' ? config.duration : 0
     return new Promise(resolve => {
-      this.tweens.add({ ...config, onComplete: () => resolve() } as unknown as Phaser.Types.Tweens.TweenBuilderConfig)
+      let settled = false
+      let guard: Phaser.Time.TimerEvent | undefined
+      const finish = (): void => {
+        if (settled) return
+        settled = true
+        guard?.remove()
+        resolve()
+      }
+      this.tweens.add({
+        ...config,
+        onComplete: finish,
+        onStop: finish,
+      } as unknown as Phaser.Types.Tweens.TweenBuilderConfig)
+      guard = this.time.delayedCall(delay + duration + TWEEN_DEADLINE_SLACK_MS, () => {
+        if (settled) return
+        // The board is about to move on without this tween, so its target is wherever it was
+        // stranded. Flag it; resolveLoop snaps every sprite back onto the model before handing the
+        // board back, so a rescued cascade cannot leave a piece floating between cells.
+        this.tweenStranded = true
+        this.log('tween deadline', this.dbgStage)
+        finish()
+      })
     })
   }
 
