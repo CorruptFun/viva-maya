@@ -611,6 +611,12 @@ export const FUNNEL_DEFS: FunnelDef[] = [
       { name: EVENTS.INSTALL_OFFER_SHOWN, label: 'Offer shown' },
       { name: EVENTS.INSTALL_ACCEPTED, label: 'Accepted' },
     ],
+    // ⚠️ An ASIDE, never a step, and promoting it would produce a conversion rate that means
+    // nothing. An installed iOS PWA gets its OWN localStorage, so it mints a fresh `device_id` —
+    // measured 2026-08-06, 6 of the 8 installed devices had only ever reported standalone, i.e.
+    // they appeared as new devices already installed. The three steps above all fire on the
+    // BROWSER's id (`install_accepted` included: appinstalled fires in the page installed from),
+    // while this one fires on the installed app's id. Same person, two rows, no join.
     aside: [{ name: EVENTS.INSTALL_REWARD, label: 'Reward paid' }],
   },
   {
