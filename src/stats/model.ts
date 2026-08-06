@@ -600,11 +600,18 @@ export const FUNNEL_DEFS: FunnelDef[] = [
   {
     id: 'install',
     title: 'PWA install',
-    note: 'Installs are believed to predict retention — this is the test.',
+    note: 'Measured 2026-08-06: installed players averaged 36 opens to browser-only’s 10. “Offer shown” is OUR banner; the other two are Chromium-only, so iOS is invisible in them.',
     steps: [
-      { name: EVENTS.INSTALL_SHOWN, label: 'Nudge seen' },
+      // `install_shown` is the BROWSER deciding an install is available (Chromium's
+      // beforeinstallprompt). `install_offer_shown` is our banner actually reaching the screen. The
+      // gap between those two rows is the leak this funnel could not previously see at all: the
+      // banner self-destructs after 14s and on scene change, both silently, so before 2026-08-06 a
+      // player who saw it and ignored it was indistinguishable from one who was never shown it.
+      { name: EVENTS.INSTALL_SHOWN, label: 'Browser ready' },
+      { name: EVENTS.INSTALL_OFFER_SHOWN, label: 'Offer shown' },
       { name: EVENTS.INSTALL_ACCEPTED, label: 'Accepted' },
     ],
+    aside: [{ name: EVENTS.INSTALL_REWARD, label: 'Reward paid' }],
   },
   {
     id: 'push',

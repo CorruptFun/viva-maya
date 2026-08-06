@@ -50,6 +50,22 @@ export interface SaveData {
    *  in every respect: absent in older saves → false, latched the moment the card renders, and
    *  UNIONED on merge (core/merge.ts) so a second device cannot replay it. */
   seenAct2Reveal: boolean
+  /**
+   * Latch for the one-time RACE REMINDER offer — the push opt-in card (view/pushoptin.ts), shown on
+   * Home after a player's first daily race. `seenRaceUnlock`'s twin in shape, but latched on the
+   * card's DISMISSAL rather than on its render: a reveal that was force-quit through has still been
+   * seen, whereas an OFFER that was force-quit through has not been answered, and re-asking an
+   * unanswered question costs nothing. What must never happen twice is the browser permission prompt
+   * itself, and that is gated by the permission state, not by this.
+   */
+  seenPushOffer: boolean
+  /**
+   * Claim latch for the INSTALL REWARD — the one-time purse paid on the first launch of the
+   * installed app (`core/install.ts claimInstallReward`). A claim latch, not a "seen" latch: it
+   * gates real chips and a boost, so it lives under iron rule 4 (award-first, latch in the save)
+   * alongside `chapterRewards` and `championWeeks`, and is unioned on merge for the same reason.
+   */
+  installRewardClaimed: boolean
   /** Floor numbers (Act II) whose one-time floor-door card has been shown. `hazardIntros`' twin —
    *  a teach-once latch, string-keyed, union-merged, and shape-tolerant on the way in. */
   floorIntros: string[]
@@ -179,6 +195,8 @@ const DEFAULTS: SaveData = {
   seenIntro: false,
   seenRaceUnlock: false,
   seenAct2Reveal: false,
+  seenPushOffer: false,
+  installRewardClaimed: false,
   floorIntros: [],
   heldBoosts: [],
   jackpotMeter: 0,
@@ -281,6 +299,14 @@ export function coerceSave(raw: unknown): SaveData {
     // Act II latches. Absent in every save written before 2026-08-04 → the reveal plays once on the
     // next visit, which is the intended behaviour for the cohort already sitting on level 301.
     base.seenAct2Reveal = data.seenAct2Reveal === true
+    // Absent in every save written before 2026-08-06 → false, so the existing racer cohort — the
+    // players with the most reason to want a reminder — gets the offer on their next visit rather
+    // than never, exactly as `seenRaceUnlock` did for the already-unlocked cohort.
+    base.seenPushOffer = data.seenPushOffer === true
+    // Absent in older saves → unclaimed. Safe in the generous direction: an already-installed player
+    // from before this shipped gets the purse once on their next open, which is the intended
+    // behaviour — they did the thing the reward is for, they just did it before there was one.
+    base.installRewardClaimed = data.installRewardClaimed === true
     base.floorIntros = Array.isArray(data.floorIntros)
       ? data.floorIntros.filter((x): x is string => typeof x === 'string')
       : []
@@ -616,6 +642,24 @@ export function markAct2RevealSeen(): void {
   const save = loadSave()
   if (!save.seenAct2Reveal) {
     save.seenAct2Reveal = true
+    persistSave(save)
+  }
+}
+
+/**
+ * Latch the RACE REMINDER offer (view/pushoptin.ts) so the card is only ever put in front of a
+ * player once.
+ *
+ * ⚠️ Called on the card's way OUT, not on the way in — the one deliberate difference from
+ * `markRaceUnlockSeen`. A one-time reveal spends itself by being rendered; an offer spends itself by
+ * being ANSWERED, and a player whose phone died mid-card answered nothing. The thing that genuinely
+ * cannot be re-spent is the browser's permission prompt, and `Notification.permission` already
+ * guards that on its own — this latch only decides whether we ask a second time in our own words.
+ */
+export function markPushOfferSeen(): void {
+  const save = loadSave()
+  if (!save.seenPushOffer) {
+    save.seenPushOffer = true
     persistSave(save)
   }
 }

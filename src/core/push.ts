@@ -27,6 +27,7 @@
 // cloudUserId is deliberately NOT imported: user_id is no longer sent from the client at all.
 // register_push_subscription (0012) reads it from the JWT server-side, so it cannot be forged.
 import { cloudAccessToken } from './cloud'
+import type { SaveData } from './save'
 
 const env = import.meta.env as unknown as Record<string, string | undefined>
 const SUPABASE_URL = env.VITE_SUPABASE_URL
@@ -204,6 +205,44 @@ export async function enablePush(): Promise<EnableResult> {
     return { ok: true }
   } catch {
     return { ok: false, reason: 'failed' }
+  }
+}
+
+/**
+ * Whether to put the RACE REMINDER card (view/pushoptin.ts) in front of this player right now.
+ *
+ * Lives here rather than beside the card because it is a composition of the three capability checks
+ * above — and because a gate that decides whether to spend a PERMANENT browser permission ask has to
+ * be testable without booting Phaser. `SaveData` is a type-only import, so the dormant contract at
+ * the top of this file is untouched: no new runtime dependency, nothing new to configure.
+ *
+ * Every `false` is a case where the card would either be a lie or a waste of the one-time latch, so
+ * the gate is deliberately strict:
+ *
+ *  - **Already answered** (`seenPushOffer`) — asked once, in our own words, ever.
+ *  - **Has not raced yet** — `endlessDays` is `{}` until the first run, so this is the "first race
+ *    happened" signal, and a reminder about a board closing is meaningless before then. It is the
+ *    entire premise of the card's copy.
+ *  - **Can't subscribe here** — 'needs-install' on an iPhone outside an installed PWA, 'unsupported'
+ *    on a browser without the APIs or a build with no VAPID key. Burning the latch to say "not on
+ *    this device" would mean never offering it on the device they go on to install to; that case
+ *    already belongs to the install nudge.
+ *  - **The browser already decided** — 'granted' with a live subscription means it is on, and
+ *    'denied' is permanent and unreachable from inside the page. Offering either is offering nothing.
+ *
+ * Async because the live-subscription check is. Never throws; a failure answers `false`, which fails
+ * toward not nagging.
+ */
+export async function pushOfferDue(save: SaveData): Promise<boolean> {
+  try {
+    if (save.seenPushOffer) return false
+    if (Object.keys(save.endlessDays ?? {}).length === 0) return false
+    if (pushSupport() !== 'ready') return false
+    if (pushPermission() === 'denied') return false
+    if (await isPushEnabled()) return false
+    return true
+  } catch {
+    return false
   }
 }
 

@@ -275,4 +275,32 @@ describe('mergeSaves — chapter trophies and the race-unlock latch', () => {
       expect(merged.floorIntros.slice().sort()).toEqual(['1', '2'])
     }
   })
+
+  it('seenPushOffer joins the union — the race-reminder card is offered once per PLAYER, not per device', () => {
+    // A push subscription belongs to a browser install, so the phone and the tablet each need their
+    // own — but "do you want to be reminded" is a question about the person, and someone who already
+    // said no on the phone should not be asked again by the tablet. Settings → Race reminder is
+    // still there per device for whoever wants it on the second one.
+    const asked = save({ unlocked: 14, seenPushOffer: true })
+    const deeperUnasked = save({ unlocked: 90, seenPushOffer: false })
+    expect(mergeSaves(asked, deeperUnasked).seenPushOffer).toBe(true)
+    expect(mergeSaves(deeperUnasked, asked).seenPushOffer).toBe(true)
+  })
+
+  it('installRewardClaimed joins the union — the install purse can never be paid twice', () => {
+    // A CLAIM latch, not a "seen" one: losing it to a progress-winner merge re-pays 150 chips AND a
+    // Jackpot Chip, which is the double-award championWeeks sits in this list to prevent. Installing
+    // on a phone and then a tablet pays once — the reward buys the first install, not each one.
+    const paid = save({ unlocked: 12, installRewardClaimed: true })
+    const deeperUnpaid = save({ unlocked: 88, installRewardClaimed: false })
+    expect(mergeSaves(paid, deeperUnpaid).installRewardClaimed).toBe(true)
+    expect(mergeSaves(deeperUnpaid, paid).installRewardClaimed).toBe(true)
+  })
+
+  it('an older save with no seenPushOffer field coerces to "not yet asked", never to "asked"', () => {
+    // The field is absent from every save written before 2026-08-06. Coercing the wrong way would
+    // silently exclude the entire existing racer cohort — the players with the most reason to want
+    // the reminder — from ever being offered it.
+    expect(coerceSave({ unlocked: 40 }).seenPushOffer).toBe(false)
+  })
 })

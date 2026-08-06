@@ -25,6 +25,21 @@ const GOLD = '#d18a00'
 
 let shownThisSession = false
 
+/**
+ * True while this banner is on screen. The mirror of installsheet's `installUiOpen()`, and it exists
+ * for the same reason: these two surfaces occupy the identical strip at the bottom of Home, so
+ * whichever mounts second has to be able to ask. HomeScene's first pass picks one of the two by
+ * branching on `maybeShowInstallOffer`'s return, but a LATE `beforeinstallprompt` can arrive after
+ * this one has already mounted, and that retry has nothing else to check.
+ */
+export function installNudgeOpen(): boolean {
+  try {
+    return !!document.getElementById(BANNER_ID)
+  } catch {
+    return false
+  }
+}
+
 /** True when running as an installed / standalone PWA (iOS `navigator.standalone` or display-mode). */
 function isStandalone(): boolean {
   try {

@@ -16,7 +16,7 @@
 
 import type Phaser from 'phaser'
 import { EVENTS, track } from '../core/analytics'
-import { iosBrowser, installState, promptInstall } from '../core/install'
+import { INSTALL_REWARD_CHIPS, iosBrowser, installState, promptInstall } from '../core/install'
 import type { IosBrowser } from '../core/install'
 
 // ⚠️ INVARIANT for the `innerHTML` calls below: every string assigned to innerHTML in this file is a
@@ -133,9 +133,20 @@ export function openInstallSheet(scene?: Phaser.Scene, source = 'unknown'): bool
   // Concrete, not marketing: these are the two things installing actually changes for the player.
   why.innerHTML =
     'It opens full screen like a real app, works offline, and it’s the only way to get a nudge when the daily race resets.'
-  why.style.cssText = `font-size:14px;line-height:1.45;color:${MUTED};margin-bottom:16px`
+  why.style.cssText = `font-size:14px;line-height:1.45;color:${MUTED};margin-bottom:14px`
 
-  card.append(h, why)
+  // The reward, restated on the sheet rather than left behind on the banner. A player who tapped
+  // through because of a prize and then meets a screen that never mentions it again has been
+  // bait-and-switched, even when the chips do arrive — and on iOS this screen is a THREE-STEP
+  // instruction, which is exactly where the motivation needs to still be visible.
+  const prize = document.createElement('div')
+  prize.innerHTML =
+    `🍀 <b>${INSTALL_REWARD_CHIPS} chips + a Jackpot Chip</b> are waiting the first time you open it.`
+  prize.style.cssText =
+    `font-size:14px;line-height:1.45;color:${INK};margin-bottom:16px;padding:11px 13px;` +
+    'border-radius:12px;background:#fdf4dd;border:1px solid #f0e0b6'
+
+  card.append(h, why, prize)
 
   const done = (): void => closeInstallSheet()
 
@@ -290,6 +301,12 @@ export function maybeShowInstallOffer(scene: Phaser.Scene): boolean {
 }
 
 function mountOffer(scene: Phaser.Scene, mode: 'ready' | 'manual-ios'): void {
+  // Fired HERE, at the mount, not at the schedule in maybeShowInstallOffer — the 1.8s delay can be
+  // outrun by a player tapping PLAY, and an offer that was scheduled but never rendered must not
+  // count as one that was seen. This is the event the whole funnel was missing; see its note in
+  // core/analytics.ts.
+  track(EVENTS.INSTALL_OFFER_SHOWN, { mode, source: 'home_banner' })
+
   const bar = document.createElement('div')
   bar.id = OFFER_ID
   bar.style.cssText =
@@ -306,15 +323,23 @@ function mountOffer(scene: Phaser.Scene, mode: 'ready' | 'manual-ios'): void {
   const col = document.createElement('div')
   col.style.cssText = 'flex:1 1 auto;min-width:0'
   const title = document.createElement('div')
-  title.textContent = 'Add to your home screen'
+  // Leads with the PRIZE, not the feature. "Opens full screen, works offline" describes a benefit
+  // the player cannot evaluate before installing; a Jackpot Chip and a chip count are concrete and
+  // already-understood currency. Measured 2026-08-06: 10.7% of real players were installed, and of
+  // the 67 who were not, only 4 produced any response to this banner at all.
+  // No verb: the text column is ~220px between the icon and the CTA, and "Get " was enough to wrap
+  // the title onto a second line, which pushed the whole banner taller than the strip it sits in.
+  title.textContent = `${INSTALL_REWARD_CHIPS} chips + a Jackpot Chip`
   title.style.cssText = `font-size:14px;font-weight:800;color:${GOLD};margin-bottom:2px`
   const body = document.createElement('div')
   // Honest per platform: promising "one tap" on iOS, where no install API exists, would be a lie the
-  // very next screen exposes.
+  // very next screen exposes. The reward is stated as paid on OPENING it, because that is when
+  // `claimInstallReward` actually fires — on iOS there is no install event to pay against, and a
+  // prize that appears to arrive late is a broken promise even when the chips are correct.
   body.textContent =
     mode === 'ready'
-      ? 'One tap — opens full screen, works offline.'
-      : 'Takes three taps — opens full screen, works offline.'
+      ? 'One tap to add it — yours on first open.'
+      : 'Three taps to add it — yours on first open.'
   body.style.cssText = `font-size:13px;line-height:1.4;color:${MUTED}`
   col.append(title, body)
 

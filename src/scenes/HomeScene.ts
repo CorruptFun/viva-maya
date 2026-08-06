@@ -11,6 +11,7 @@ import {
   weekKey,
   weekKeyOfDay,
 } from '../core/endless'
+import { pushOfferDue } from '../core/push'
 import {
   DAILY_PRIZE_TIERS,
   PRIZE_TIERS,
@@ -46,11 +47,14 @@ import {
   openRaceRulesPanel,
 } from '../view/leaderboardpanel'
 import { addScreenGloss } from '../view/fx'
-import { maybeShowInstallNudge } from '../view/installnudge'
+import { installNudgeOpen, maybeShowInstallNudge } from '../view/installnudge'
 import { maybeShowInstallOffer } from '../view/installsheet'
+import { claimInstallReward, onInstallStateChange } from '../core/install'
 import { nextLevelSummary } from '../core/inventory'
 import { openStash, stashBadgeCount } from '../view/stash'
 import { openRaceUnlockCard } from '../view/raceunlockcard'
+import { openPushOptIn } from '../view/pushoptin'
+import { openInstallRewardCard } from '../view/installrewardcard'
 import { openAct2Card } from '../view/act2card'
 import { addJackpotMeter } from '../view/jackpot'
 import { D, E, OVERSHOOT, backOut, fadeRise, heartbeat, popIn } from '../view/motion'
@@ -191,6 +195,23 @@ export class HomeScene extends Phaser.Scene {
     // DOM is still empty here and a DOM check would let both schedule. See its doc comment.
     const offeringInstall = maybeShowInstallOffer(this)
     if (!offeringInstall) maybeShowInstallNudge(this)
+    // ⚠️ Chromium fires `beforeinstallprompt` on its OWN schedule, and it routinely lands after this
+    // create() has already asked `installState()` and been told 'unavailable'. When that happens the
+    // banner never mounts for this visit — while main.ts has already `preventDefault()`ed the
+    // browser's own install bar. Capturing the prompt and then showing nothing is strictly worse
+    // than never capturing, which is the exact risk core/install.ts's header names. `onInstallState-
+    // Change` was built for this and NOTHING had ever subscribed to it. Measured 2026-08-06: of 67
+    // real players not installed, 14 had a prompt captured and only 4 produced any banner response.
+    onInstallStateChange(() => {
+      if (!this.scene.isActive()) return
+      // The sign-in nudge took the slot on the first pass and sits in the identical strip; the
+      // scheduled mount only knows about its own two surfaces, so this is the one check it can't do.
+      if (installNudgeOpen()) return
+      maybeShowInstallOffer(this)
+    })
+    // Single global callback slot — leaving it bound would fire against a dead scene after the
+    // player starts a level.
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => onInstallStateChange(null))
     const currentLevel = Math.min(save.unlocked, LEVEL_COUNT)
     const reduced = this.prefersReducedMotion()
     // ── Progressive reveal ───────────────────────────────────────────────────────────────────────
@@ -895,7 +916,25 @@ export class HomeScene extends Phaser.Scene {
     })
     try {
       const q = import.meta.env.DEV ? new URLSearchParams(location.search) : null
-      // 0 · THE PRIVATE ELEVATOR — ACT II's one-time reveal, first in the queue.
+      // 0 · THE INSTALL REWARD — paid on the FIRST launch of the installed app, and therefore first
+      // in this queue. It is the direct, promised consequence of something the player did seconds
+      // ago, and a promise kept late reads as a promise broken: the install banner said the prize
+      // would be waiting when they opened it, so it cannot queue behind a coronation. Granted
+      // award-first inside `claimInstallReward` (iron rule 4), which also owns the standalone and
+      // already-claimed checks — a non-installed player never reaches the card. DEV: `?installgift`.
+      let installReward = claimInstallReward()
+      if (q?.has('installgift') && !installReward) {
+        installReward = { chips: 150, boost: 'jackpot', balance: loadSave().chips }
+      }
+      if (installReward && alive.on) {
+        track(EVENTS.INSTALL_REWARD, { chips: installReward.chips, boost: installReward.boost })
+        await openInstallRewardCard(this, installReward)
+        // The pill was built from the save BEFORE the grant, so it is showing the pre-purse balance
+        // until this fires — the same reason the coronation refreshes it after paying out.
+        pill.update(loadSave().chips)
+      }
+      if (!alive.on) return
+      // 0.1 · THE PRIVATE ELEVATOR — ACT II's one-time reveal.
       //
       // This is the CATCH-UP door. The intended one is chained off the chapter-30 car ceremony, and
       // everyone who clears 300 from now on meets it there. This exists for the cohort who had
@@ -1014,6 +1053,17 @@ export class HomeScene extends Phaser.Scene {
       for (const reward of rewards) {
         if (!alive.on) return
         await this.openFriendToast(reward, pill, refreshLives)
+      }
+      if (!alive.on) return
+      // 5 · RACE REMINDER — the push opt-in, offered on the Home visit after a player's FIRST daily
+      // race and never again (view/pushoptin.ts owns the gate and the latch).
+      //
+      // Dead last on purpose, and it is the only entry here that is an ASK rather than a payout or a
+      // reveal. Nothing the player earned should ever queue behind a request from us — and landing
+      // after a coronation or a recap is where the pitch is warmest anyway, because they have just
+      // been shown a board result they care about. DEV: `?pushoffer`.
+      if ((q?.has('pushoffer') || (await pushOfferDue(loadSave()))) && alive.on) {
+        await openPushOptIn(this)
       }
     } finally {
       this.celebrating = false

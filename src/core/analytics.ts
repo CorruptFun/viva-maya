@@ -58,7 +58,19 @@ const OPTOUT_KEY = 'viva-maya:analytics-off'
  * The server normalises shape and buckets anything unrecognised as 'unknown'.
  */
 export const EVENTS = {
-  /** Once per app open. The denominator for literally every other rate on this list. */
+  /**
+   * Once per app open. The denominator for literally every other rate on this list.
+   *
+   * props: {standalone, lang}. `standalone` is the ONLY cross-platform "this player is installed"
+   * signal there is — Apple fires no install event, so on iOS a later open reporting standalone is
+   * the ground truth, and it is what the install reward triggers on (core/install.ts).
+   *
+   * ⚠️ Deliberately carries NO platform / user-agent prop, even though the iOS-vs-Android split
+   * would be useful: public/privacy.html promises in plain language that an event carries nothing
+   * "about your phone", and this is the one event every client sends on every open. The split is
+   * taken instead from `install_offer_shown`'s `mode` — same answer, scoped to the players actually
+   * being offered an install, rather than broadening what is collected from everybody.
+   */
   APP_OPEN: 'app_open',
 
   /** {level} — a level actually began (not merely browsed to on the map). */
@@ -134,6 +146,33 @@ export const EVENTS = {
    */
   INSTALL_SHEET: 'install_sheet',
   INSTALL_RESULT: 'install_result',
+
+  /**
+   * The home banner actually MOUNTED. Added 2026-08-06 to close the hole that made every number
+   * above unreadable: the banner self-destructs after 14s and on scene change, both SILENTLY, so
+   * `install_result` only ever fired when a player pressed × or reached an outcome. "Few results"
+   * was therefore equally consistent with *nobody saw it* and *everybody saw it and ignored it* —
+   * two problems with opposite fixes, and no way to tell them apart. Measured on 2026-08-06: of 67
+   * real players not installed, 14 had a one-tap install captured and only 4 produced any result at
+   * all, which is exactly the ambiguity this resolves.
+   *
+   * props: {mode, source}. `mode` is the same InstallState as `install_sheet`, which is what makes
+   * the iOS ('manual-ios') and Chromium ('ready') halves separable WITHOUT putting a platform prop
+   * on app_open — see the note there.
+   *
+   * No migration needed: the RPC's `counts` block is a plain `group by name`, so a new event shows
+   * up in the dashboard's raw counts on its own. The hardcoded `name in (...)` lists in 0014/0015/
+   * 0021/0022 scope the LEVEL funnel specifically, not what is visible at all. Purpose-built funnel
+   * CHARTS are client-side (`src/stats/model.ts`), which is where this was added to the install one.
+   */
+  INSTALL_OFFER_SHOWN: 'install_offer_shown',
+
+  /**
+   * The install REWARD paid out — a one-time grant on the first launch of the installed app.
+   * props: {chips, boost}. Fired from the card, after the grant, so it counts money that really
+   * moved rather than intentions.
+   */
+  INSTALL_REWARD: 'install_reward',
 
   /**
    * Resume health (core/resumeguard.ts), added 2026-08-03 after a Galaxy S25 player reported the

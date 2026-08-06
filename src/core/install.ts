@@ -31,6 +31,63 @@
  * the game behaves exactly as it did before.
  */
 
+import { loadSave, persistSave } from './save'
+import type { BoostType } from './types'
+
+/**
+ * ── THE INSTALL REWARD ───────────────────────────────────────────────────────
+ * A one-time purse for adding the game to the home screen. Sized into the chapter-purse band
+ * (100–300 chips, `core/trophies.ts`) because it is the same KIND of faucet: a bounded, granted,
+ * once-per-player grant. Iron rule 1 holds — chips stay earned-only, and this is granted, never
+ * purchasable.
+ *
+ * ⚠️ It pays on the FIRST LAUNCH OF THE INSTALLED APP, not on tapping the install button, and that
+ * is the whole design:
+ *   • **iOS has no install event.** Apple fires nothing — a later open reporting `standalone` is the
+ *     only evidence an install happened at all. Rewarding the button tap would mean either paying
+ *     iOS players for a tap that installed nothing, or excluding them from the offer entirely on the
+ *     one platform where installing is hardest AND is the sole route to a web push.
+ *   • **It cannot be farmed by intent.** The player has to actually install and actually open it.
+ *   • **It lands at the right moment.** The first launch of the real app opens with the prize it was
+ *     promised, which is the beat that makes the install feel worth having done.
+ *
+ * The JACKPOT CHIP rides `pendingBoosts`, which endless never consumes — iron rule 2 (the race stays
+ * boost-free) is untouched.
+ */
+export const INSTALL_REWARD_CHIPS = 150
+export const INSTALL_REWARD_BOOST: BoostType = 'jackpot'
+
+/** What the install reward actually paid, so the card can state it rather than guess. */
+export interface InstallReward {
+  chips: number
+  boost: BoostType
+  /** Chip balance AFTER the grant. */
+  balance: number
+}
+
+/**
+ * Pay the install reward if it is due — ONE atomic load→check→grant→persist, the same shape as
+ * `claimChapter`, so a crash can never bank the latch without the purse or the purse without the
+ * latch.
+ *
+ * Returns null, leaving the save untouched, when the player is not running installed or has already
+ * been paid (on this device or any synced one). Never throws.
+ */
+export function claimInstallReward(): InstallReward | null {
+  try {
+    if (!isStandalone()) return null
+    const save = loadSave()
+    if (save.installRewardClaimed) return null
+    save.installRewardClaimed = true
+    save.chips += INSTALL_REWARD_CHIPS
+    save.pendingBoosts.push(INSTALL_REWARD_BOOST)
+    persistSave(save)
+    return { chips: INSTALL_REWARD_CHIPS, boost: INSTALL_REWARD_BOOST, balance: save.chips }
+  } catch {
+    return null
+  }
+}
+
 /** The captured Chromium prompt. Not in the TS DOM lib, so it is typed here. */
 interface BeforeInstallPromptEvent extends Event {
   prompt(): Promise<void>

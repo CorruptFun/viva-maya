@@ -168,6 +168,46 @@ Live: <https://corruptfun.github.io/viva-maya/>
   install API at all** — never add a one-tap path there. The iOS half is an
   illustrated Share → Add to Home Screen guide, tailored per browser, and
   `install_result` with outcome `guided` is the closest signal Apple permits.
+- **The install REWARD pays on the first standalone open, not on the install
+  tap** — and that is forced, not a preference. Apple fires no install event, so
+  a later `app_open` with `standalone: true` is the only evidence an install
+  happened; paying the tap would either pay iOS players for a tap that installed
+  nothing or exclude them from the offer entirely, on the one platform where
+  installing is hardest *and* is the sole route to a web push.
+  `claimInstallReward` (`core/install.ts`) owns the standalone + already-claimed
+  checks and grants award-first per the economy's iron rule 4 — the latch
+  `save.installRewardClaimed` is unioned on merge, because losing it to a
+  progress-winner merge re-pays the purse. The JACKPOT CHIP rides
+  `pendingBoosts`, which endless never consumes, so iron rule 2 (the race stays
+  boost-free) is untouched. ⚠️ `install_offer_shown` fires at the banner's
+  **mount**, not when it is scheduled: the banner self-destructs after 14s and
+  on scene change, both silently, so before it existed "few `install_result`s"
+  was equally consistent with *nobody saw it* and *everybody ignored it* — two
+  problems with opposite fixes. And `onInstallStateChange` must stay subscribed
+  (HomeScene): Chromium's `beforeinstallprompt` routinely lands after Home's
+  `create()`, and `main.ts` has already `preventDefault()`ed the browser's own
+  install bar, so capturing it and then showing nothing is strictly worse than
+  never capturing.
+- **The push opt-in gets ONE ask per install, ever, and `pushOfferDue` is what
+  spends it.** `Notification.requestPermission()` is one-shot: a denial is
+  permanent, the browser never re-prompts, and the player has to dig through site
+  settings to undo it. So the real prompt is only ever reached by tapping REMIND
+  ME on the NEVER MISS A BOARD card (`view/pushoptin.ts`) — a soft ask, offered
+  once, on the Home visit after a player's FIRST daily race. Never fire the
+  browser prompt on load, and never widen the gate for reach: `pushOfferDue`
+  (`core/push.ts`, `push.test.ts` pins every branch) refuses before the first
+  race, on an iPhone outside an installed PWA, and when the browser has already
+  decided — each of those is a case where the card would burn the ask for
+  nothing. ⚠️ The one-time latch (`save.seenPushOffer`) is set on the card's way
+  OUT, not on render, unlike `seenRaceUnlock`: a reveal spends itself by being
+  seen, an offer spends itself by being *answered*, so a transient network
+  failure keeps the retry alive instead of costing the player the feature. The
+  Settings → Race reminder toggle stays as the second door for everyone who says
+  no; both doors fire the same three analytics events, split by a `surface` prop
+  rather than new event names — the dashboard views hardcode the names they chart
+  (`name in (...)` across migrations 0014/0015/0021/0022), so a *new* event is
+  invisible until a new migration ships and fails silently, whereas a new prop
+  rides along for free.
 - **The resume guard reloads the page, so its false-positive guard is critical.**
   `core/resumeguard.ts` watches for the game loop failing to advance after a
   resume. `core/apploop.ts` stops the loop on purpose while hidden, so **a hidden
@@ -278,6 +318,8 @@ edit to make green.
 | `src/view/stash.ts` | the stash panel + its two doors (Home line, LevelSelect `🎁 N` pill) |
 | `src/view/installsheet.ts` | the install sheet — DOM, so the iOS guide can point at real browser chrome |
 | `src/view/raceunlockcard.ts` | the one-time DAILY RACE UNLOCKED reveal |
+| `src/view/pushoptin.ts` | the NEVER MISS A BOARD push opt-in card — see the note above; the gate is `pushOfferDue` in `core/push.ts` |
+| `src/view/installrewardcard.ts` | the install reward's payout card — the receipt for `claimInstallReward` |
 | `src/view/showroom.ts` | THE SHOWROOM trophy case — doors on the LevelSelect chapter ribbons |
 | `src/view/trophyceremony.ts` | the chapter-complete ceremony + the one-time catch-up card |
 | `src/view/platekit.ts` | the material + lighting law (E7): plates, spotlight scrims, `goldFace` — `ui.ts` re-exports the legacy names |

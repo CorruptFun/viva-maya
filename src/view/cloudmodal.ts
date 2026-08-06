@@ -372,9 +372,14 @@ export function openCloudModal(): void {
     paint()
     // Below the two early returns above on purpose: a player who can't be offered push at all was
     // not offered anything, and belongs outside the funnel's denominator, not at 0% of it.
+    // `surface` splits this funnel from the one the RACE REMINDER card drives (view/pushoptin.ts).
+    // Without it the two are pooled, and they answer different questions: this one measures people
+    // who went looking, that one measures people who were asked. Same event NAMES on purpose — the
+    // dashboard views hardcode the names they chart, so a new one would be invisible until a
+    // migration ships, whereas a new prop rides along for free.
     if (!pushOfferTracked) {
       pushOfferTracked = true
-      track(EVENTS.PUSH_SHOWN)
+      track(EVENTS.PUSH_SHOWN, { surface: 'settings' })
     }
 
     btn.addEventListener('click', () => {
@@ -391,9 +396,9 @@ export function openCloudModal(): void {
         enabled = res.ok
         btn.disabled = false
         if (res.ok) {
-          track(EVENTS.PUSH_ENABLED)
+          track(EVENTS.PUSH_ENABLED, { surface: 'settings' })
         } else {
-          track(EVENTS.PUSH_BLOCKED, { reason: res.reason ?? 'failed' })
+          track(EVENTS.PUSH_BLOCKED, { reason: res.reason ?? 'failed', surface: 'settings' })
         }
         paint()
         if (!res.ok && res.reason === 'failed') status.textContent = 'Couldn’t turn reminders on. Please try again.'

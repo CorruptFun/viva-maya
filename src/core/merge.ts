@@ -92,6 +92,18 @@ function unionLatches(a: SaveData, b: SaveData): Partial<SaveData> {
     // late the way that one was. A one-time act reveal replaying because you opened a tablet is the
     // exact bug the note above records.
     seenAct2Reveal: a.seenAct2Reveal || b.seenAct2Reveal,
+    // The RACE REMINDER offer. Joined with the field, like the elevator above. Worth being explicit
+    // about why a DEVICE-shaped fact rides the cloud save: a push subscription belongs to a browser
+    // install (core/push.ts, 0011), so the phone and the tablet each need their own. The union means
+    // the tablet won't re-ask a player who already declined on the phone — which is the right call,
+    // because the question is "do you want to be reminded", answered once per person, and Settings →
+    // Race reminder is still there per device for whoever wants it on the second one.
+    seenPushOffer: a.seenPushOffer || b.seenPushOffer,
+    // A CLAIM latch, not a "seen" one — losing it to a progress-winner merge would re-pay the purse
+    // and the boost, the exact double-award `championWeeks` sits in this list to prevent. ⚠️ It is
+    // per-PLAYER, not per-device, so installing on a phone and then a tablet pays once. That is the
+    // deliberate reading: the reward exists to buy the first install, not to buy each one.
+    installRewardClaimed: a.installRewardClaimed || b.installRewardClaimed,
     referralWelcomeClaimed: a.referralWelcomeClaimed || b.referralWelcomeClaimed,
     hazardIntros: both(a.hazardIntros, b.hazardIntros),
     specialIntros: both(a.specialIntros, b.specialIntros),
