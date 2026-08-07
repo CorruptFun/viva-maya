@@ -75,6 +75,21 @@ export interface SaveData {
    */
   seenSlotsIntro: boolean
   /**
+   * Latch for the one-time ⚡ LIGHTNING ROUND UNLOCKED reveal (`view/lightningunlockcard.ts`).
+   * `seenRaceUnlock`'s twin: latched on RENDER, unioned on merge, absent in older saves → false.
+   */
+  seenLightningUnlock: boolean
+  /**
+   * Best ROUNDS SURVIVED in a lightning round, all-time.
+   *
+   * ⚠️ A RECORD, not a latch — it merges by MAX (core/merge.ts), not by OR. Riding the progress
+   * winner would let a further-along device with a worse storm run erase a real personal best, and a
+   * best that can go DOWN is the one thing a personal best may never do. It is also the mode's only
+   * persistent state: nothing else here is spent, banked or claimed, because a lightning run costs
+   * nothing (design rule 2).
+   */
+  lightningBest: number
+  /**
    * Claim latch for the INSTALL REWARD — the one-time purse paid on the first launch of the
    * installed app (`core/install.ts claimInstallReward`). A claim latch, not a "seen" latch: it
    * gates real chips and a boost, so it lives under iron rule 4 (award-first, latch in the save)
@@ -212,6 +227,8 @@ const DEFAULTS: SaveData = {
   seenAct2Reveal: false,
   seenPushOffer: false,
   seenSlotsIntro: false,
+  seenLightningUnlock: false,
+  lightningBest: 0,
   installRewardClaimed: false,
   floorIntros: [],
   heldBoosts: [],
@@ -323,6 +340,13 @@ export function coerceSave(raw: unknown): SaveData {
     // than a migration convenience: the players who need this reveal most are the existing ones who
     // have been walking past the cabinet for weeks. They get it once, on their next visit.
     base.seenSlotsIntro = data.seenSlotsIntro === true
+    // Absent in every save written before the storm shipped → unseen and no record, which is exactly
+    // right: an existing player past level 5 gets the reveal on their next visit.
+    base.seenLightningUnlock = data.seenLightningUnlock === true
+    base.lightningBest =
+      typeof data.lightningBest === 'number' && Number.isFinite(data.lightningBest)
+        ? Math.max(0, Math.floor(data.lightningBest))
+        : 0
     // Absent in older saves → unclaimed. Safe in the generous direction: an already-installed player
     // from before this shipped gets the purse once on their next open, which is the intended
     // behaviour — they did the thing the reward is for, they just did it before there was one.
@@ -663,6 +687,33 @@ export function markSlotsIntroSeen(): void {
     save.seenSlotsIntro = true
     persistSave(save)
   }
+}
+
+/** Latch the ⚡ LIGHTNING ROUND reveal — `markRaceUnlockSeen`'s twin, latched on render. */
+export function markLightningUnlockSeen(): void {
+  const save = loadSave()
+  if (!save.seenLightningUnlock) {
+    save.seenLightningUnlock = true
+    persistSave(save)
+  }
+}
+
+/**
+ * Record a finished lightning run. Returns the resulting best, and whether this run set it.
+ *
+ * Monotonic by construction — a worse run can never lower the record. That is the whole contract: it
+ * is the only number the mode keeps, and a personal best that could go down would make the Home line
+ * lie about what the player has actually done.
+ */
+export function recordLightningRun(rounds: number): { best: number; isRecord: boolean } {
+  const save = loadSave()
+  const r = Math.max(0, Math.floor(rounds))
+  const isRecord = r > save.lightningBest
+  if (isRecord) {
+    save.lightningBest = r
+    persistSave(save)
+  }
+  return { best: save.lightningBest, isRecord }
 }
 
 /**

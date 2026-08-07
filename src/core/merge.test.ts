@@ -274,6 +274,22 @@ describe('mergeSaves — chapter trophies and the race-unlock latch', () => {
     expect(mergeSaves(deeperUnseen, seen).seenSlotsIntro).toBe(true)
   })
 
+  it('lightningBest merges by MAX, not by riding the progress winner', () => {
+    // The one RECORD in the union list. A further-along device with a worse storm run must not erase
+    // a real personal best — a best that can go down is the one thing a best may never do.
+    const goodRun = save({ unlocked: 8, lightningBest: 14 })
+    const deeperWorse = save({ unlocked: 200, lightningBest: 3 })
+    expect(mergeSaves(goodRun, deeperWorse).lightningBest).toBe(14)
+    expect(mergeSaves(deeperWorse, goodRun).lightningBest).toBe(14)
+  })
+
+  it('seenLightningUnlock joins the union — the storm reveal plays exactly once', () => {
+    const seen = save({ unlocked: 6, seenLightningUnlock: true })
+    const deeperUnseen = save({ unlocked: 120, seenLightningUnlock: false })
+    expect(mergeSaves(seen, deeperUnseen).seenLightningUnlock).toBe(true)
+    expect(mergeSaves(deeperUnseen, seen).seenLightningUnlock).toBe(true)
+  })
+
   it('the Act II latches join the union — the elevator and each floor door play exactly once', () => {
     // seenRaceUnlock's twins, added WITH the fields rather than after the bug (see the note above).
     // The elevator reveal is chained off a once-in-a-lifetime ceremony; replaying it because the

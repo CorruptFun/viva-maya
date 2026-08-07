@@ -61,7 +61,7 @@ import { EVENTS, track } from '../core/analytics'
 import { devSetLives, formatCountdown, grantLife, refreshLives, spendLifeFor } from '../core/lives'
 import { levelProgress, maya, pendingOccasion, warmLoseLine, warmWinSubtitle, wasNearMiss } from '../core/maya'
 import { mulberry32 } from '../core/rng'
-import { addChips, addFreeSpins, bumpJackpotMeter, consumeBoost, bumpWinStreak, freeSpinRoom, loadSave, markFinaleSeen, markOccasionSeen, persistSave, recordResult, recordScore, resetWinStreak, spendChips, spendJackpotCharge, takePendingBoosts } from '../core/save'
+import { addChips, addFreeSpins, bumpJackpotMeter, consumeBoost, bumpWinStreak, freeSpinRoom, loadSave, markFinaleSeen, markOccasionSeen, persistSave, recordLightningRun, recordResult, recordScore, resetWinStreak, spendChips, spendJackpotCharge, takePendingBoosts } from '../core/save'
 import { freeSourceFor, freeStockFor } from '../core/inventory'
 import { LIFE_REFILL_PRICE, POWER_ITEMS } from '../core/store'
 import type { PowerItem } from '../core/store'
@@ -5896,7 +5896,10 @@ export class GameScene extends Phaser.Scene {
     this.runTimer = undefined
     const survived = Math.max(0, this.run.round - 1)
     this.log('finishLightning', 'rounds', survived)
-    track(EVENTS.LIGHTNING_END, { rounds: survived, quota: quotaFor(this.run.round) })
+    // Banked BEFORE the card renders, like every other result here: a force-quit mid-card must not
+    // cost a record the player actually set. Monotonic, so re-entering this can never lower it.
+    const { best, isRecord } = recordLightningRun(survived)
+    track(EVENTS.LIGHTNING_END, { rounds: survived, best, record: isRecord })
 
     const T = getTheme()
     const W = DESIGN_W
@@ -5949,6 +5952,19 @@ export class GameScene extends Phaser.Scene {
         })
         .setOrigin(0.5)
         .setLetterSpacing(3)
+    )
+    // The record line does double duty: it celebrates a new best, and otherwise it states the number
+    // to beat — which is the whole return hook for a mode with no leaderboard to chase.
+    layer.add(
+      this.add
+        .text(
+          W / 2,
+          py + 302,
+          isRecord ? '⚡ NEW BEST' : best > 0 ? `BEST — ${best}` : 'Your first run on the board',
+          { fontFamily: FONT, fontSize: '20px', fontStyle: isRecord ? '900' : 'normal', color: isRecord ? T.goldText : T.inkFaint }
+        )
+        .setOrigin(0.5)
+        .setLetterSpacing(isRecord ? 3 : 1)
     )
     layer.add(
       addPillButton(this, W / 2, py + ph - 108, 300, 64, 'GO AGAIN', GOLD_PILL, () =>

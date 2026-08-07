@@ -53,6 +53,8 @@ import { claimInstallReward, onInstallStateChange } from '../core/install'
 import { nextLevelSummary } from '../core/inventory'
 import { openStash, stashBadgeCount } from '../view/stash'
 import { openFreeSpinCard } from '../view/freespincard'
+import { openLightningUnlockCard } from '../view/lightningunlockcard'
+import { lightningUnlocked } from '../core/lightning'
 import { openRaceUnlockCard } from '../view/raceunlockcard'
 import { openPushOptIn } from '../view/pushoptin'
 import { openInstallRewardCard } from '../view/installrewardcard'
@@ -978,6 +980,24 @@ export class HomeScene extends Phaser.Scene {
         // "SEE THE BOARD" hands them straight to the standings — the whole point is that they end up
         // looking at the thing, not merely told it exists.
         if (showBoard) openRacePanel(this)
+      }
+      if (!alive.on) return
+      // 0.3 · ⚡ LIGHTNING ROUND UNLOCKED — the one-time reveal for the storm.
+      //
+      // Ahead of the FREE SPIN card because it is a genuinely NEW mode arriving, where that one is a
+      // thing that was always there finally being named; and it opens at level 5, so on the visit
+      // where both could fire this is the newer fact. Both latch themselves, so neither can repeat
+      // and the ordering only decides which leads on the one visit they collide. DEV: `?stormunlock`.
+      const stormSave = loadSave()
+      if ((q?.has('stormunlock') || (lightningUnlocked(stormSave) && !stormSave.seenLightningUnlock)) && alive.on) {
+        const { playNow } = await openLightningUnlockCard(this)
+        if (!alive.on) return
+        // Straight into the storm — the point is that they end up playing it, not merely told it
+        // exists. Returns: nothing below may run over a scene swap.
+        if (playNow) {
+          startScene(this, 'game', { lightning: true })
+          return
+        }
       }
       if (!alive.on) return
       // 0.4 · FREE SPIN — the one-time reveal that says out loud what the LUCKY SLOTS cabinet holds.

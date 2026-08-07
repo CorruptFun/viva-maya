@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
+import { ENDLESS_UNLOCK_LEVEL } from './endless'
 import {
   CARRY_FRACTION,
+  LIGHTNING_UNLOCK_LEVEL,
+  lightningUnlocked,
   MAX_STRIKES,
   MIN_SECONDS,
   QUOTA_STEP,
@@ -117,6 +120,27 @@ describe('lightning — strikes and the end of a run', () => {
     expect(strike(run)).toEqual(frozen)
     expect(nextRound(run)).toEqual(frozen)
     expect(quotaMet(run)).toBe(false) // an over run is never "one more round" away
+  })
+})
+
+describe('lightning — the gate', () => {
+  it('opens the moment LIGHTNING_UNLOCK_LEVEL is BEATEN, not when it is reached', () => {
+    // `unlocked` is the highest level the player MAY attempt, so sitting ON the gate level means it
+    // is unbeaten. Same `>` reading endlessUnlocked uses; a `>=` here would open the storm one level
+    // early and land the reveal on a player mid-way through the level that is supposed to buy it.
+    expect(lightningUnlocked({ unlocked: LIGHTNING_UNLOCK_LEVEL })).toBe(false)
+    expect(lightningUnlocked({ unlocked: LIGHTNING_UNLOCK_LEVEL + 1 })).toBe(true)
+  })
+
+  it('is closed for a brand-new save and tolerates a missing field', () => {
+    expect(lightningUnlocked({ unlocked: 1 })).toBe(false)
+    expect(lightningUnlocked({})).toBe(false)
+  })
+
+  it('opens before the daily race, so the storm is the first mode a player meets', () => {
+    // The ordering is the point of picking 5 (owner call): whichever mode comes first is the one that
+    // teaches a player that modes exist at all.
+    expect(LIGHTNING_UNLOCK_LEVEL).toBeLessThan(ENDLESS_UNLOCK_LEVEL)
   })
 })
 

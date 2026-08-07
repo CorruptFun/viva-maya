@@ -67,6 +67,30 @@ export const CARRY_FRACTION = 0.5
  */
 export const LIGHTNING_MOVES = 9999
 
+/**
+ * Levels cleared before the storm opens.
+ *
+ * ⚠️ A gate, but NOT a tax — and the reasoning is measured rather than felt. As of 2026-08-07 the
+ * ungated LUCKY SLOTS cabinet had been opened by 24 of 73 real players (33%), against 40 (55%) for
+ * the daily race, which is gated at level 10. The gated thing beat the ungated one by 22 points,
+ * because what a gate really buys is a MOMENT — the one-time reveal that says a thing now exists.
+ * A door that has always been there is never new, and a thing that is never new is wallpaper.
+ *
+ * 5 rather than 10 (owner call): it lands BEFORE the race gate, so the storm is the first mode a
+ * player meets and the thing that teaches them modes exist at all. Every 5th level is also a breather
+ * (half hazard density), so the reveal arrives right after an easy win.
+ */
+export const LIGHTNING_UNLOCK_LEVEL = 5
+
+/**
+ * Is the storm open? True once `LIGHTNING_UNLOCK_LEVEL` has been BEATEN, not merely reached — hence
+ * `>`, matching `endlessUnlocked`'s reading of `unlocked` exactly. (`unlocked` is the highest level
+ * the player MAY attempt, so sitting on 5 means 5 is unbeaten.)
+ */
+export function lightningUnlocked(save: { unlocked?: number }): boolean {
+  return (save.unlocked ?? 1) > LIGHTNING_UNLOCK_LEVEL
+}
+
 export interface LightningRun {
   /** 1-based. Increments ONLY when a quota is met — never on a strike. See rule 1. */
   round: number

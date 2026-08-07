@@ -103,6 +103,11 @@ function unionLatches(a: SaveData, b: SaveData): Partial<SaveData> {
     // one-time card that a progress-winner merge could drop would simply play again on the other
     // device, and a reveal that repeats reads as the game not remembering you.
     seenSlotsIntro: a.seenSlotsIntro || b.seenSlotsIntro,
+    seenLightningUnlock: a.seenLightningUnlock || b.seenLightningUnlock,
+    // ⚠️ MAX, not OR — a RECORD rather than a latch, and the only field in this list that is one.
+    // Letting it ride the progress winner would mean a further-along device with a worse storm run
+    // erases a real personal best, and a best that can go DOWN is the one thing a best may not do.
+    lightningBest: Math.max(a.lightningBest || 0, b.lightningBest || 0),
     // A CLAIM latch, not a "seen" one — losing it to a progress-winner merge would re-pay the purse
     // and the boost, the exact double-award `championWeeks` sits in this list to prevent. ⚠️ It is
     // per-PLAYER, not per-device, so installing on a phone and then a tablet pays once. That is the
