@@ -1,7 +1,7 @@
 import Phaser from 'phaser'
 import { sfx } from '../audio/sfx'
 import { DESIGN_W, restScrollY, viewportCenterY, worldH } from '../config'
-import { hasAnySpin, todayKey } from '../core/daily'
+import { hasAnySpin, spinAvailable, todayKey } from '../core/daily'
 import {
   DAYS_PER_WEEK,
   endlessUnlocked,
@@ -52,6 +52,7 @@ import { maybeShowInstallOffer } from '../view/installsheet'
 import { claimInstallReward, onInstallStateChange } from '../core/install'
 import { nextLevelSummary } from '../core/inventory'
 import { openStash, stashBadgeCount } from '../view/stash'
+import { openFreeSpinCard } from '../view/freespincard'
 import { openRaceUnlockCard } from '../view/raceunlockcard'
 import { openPushOptIn } from '../view/pushoptin'
 import { openInstallRewardCard } from '../view/installrewardcard'
@@ -312,8 +313,9 @@ export class HomeScene extends Phaser.Scene {
     const refreshLivesHud = (): void => livesHud.update(refreshLives())
     refreshLivesHud()
     this.time.addEvent({ delay: 1000, loop: true, callback: refreshLivesHud })
-    // Daily-spin streak flame — hidden at streak 0.
-    addStreakBadge(this, DESIGN_W / 2, 176, save.streak)
+    // Daily-spin streak flame — hidden at streak 0. Reads as a STAKE rather than a readout while
+    // today's pull is still unspent, which is the only window in which the streak can be acted on.
+    addStreakBadge(this, DESIGN_W / 2, 176, save.streak, spinAvailable(save))
 
     // §E9 time-of-day greeting — NAMELESS by default; the name appears ONLY when maya.showName.
     // On a configured special date it becomes the occasion greeting (the app "already knew").
@@ -636,7 +638,18 @@ export class HomeScene extends Phaser.Scene {
     // Banked free spins → a glowing "×N FREE SPINS" badge pinned to the LUCKY SLOTS corner. Rides
     // INSIDE the pill container so the daily's beat carries it; the glow pulse is its own beat
     // (reduce-flashing → static soft glow; reduced motion → static badge, no pop, no pulse).
-    if (save.freeSpins > 0) daily.add(this.buildFreeSpinsBadge(save.freeSpins))
+    // What is actually waiting, in words — see buildFreeSpinsBadge for why this is no longer gated on
+    // banked spins alone. The DAILY pull leads whenever it is unspent: it is the one every player
+    // holds, and unlike a banked spin it EXPIRES tonight, so it is the fact with a deadline on it.
+    const dailyDue = spinAvailable(save)
+    const badgeText = dailyDue
+      ? save.freeSpins > 0
+        ? `FREE SPIN +${save.freeSpins}`
+        : 'FREE SPIN TODAY'
+      : save.freeSpins > 0
+        ? `×${save.freeSpins} FREE SPINS`
+        : null
+    if (badgeText) daily.add(this.buildFreeSpinsBadge(badgeText))
     // THE STASH DOOR. Rides under the daily pill wherever it was seated (a first-run spin banks a
     // boost while the rows above are still deferred, so this can't key off the full stack's geometry).
     //
@@ -965,6 +978,31 @@ export class HomeScene extends Phaser.Scene {
         // "SEE THE BOARD" hands them straight to the standings — the whole point is that they end up
         // looking at the thing, not merely told it exists.
         if (showBoard) openRacePanel(this)
+      }
+      if (!alive.on) return
+      // 0.4 · FREE SPIN — the one-time reveal that says out loud what the LUCKY SLOTS cabinet holds.
+      //
+      // AFTER the race reveal because the race is the bigger, rarer moment and a player who just
+      // unlocked it should meet that first; the two can only collide on a single visit and the
+      // ordering decides which leads. BEFORE the coronations for the same reason the race card is:
+      // it explains a surface the later cards can pay into.
+      //
+      // Gated on a FIRST WIN (`unlocked > 1`), not on first open — chips and boosts describe a
+      // currency a brand-new player has never held, so the card would be explaining nothing to them.
+      // Gated on the pull actually being AVAILABLE, so it can never open with "free spin today" over
+      // a cabinet the player already emptied this morning. DEV: `?freespin`.
+      const spinSave = loadSave()
+      const spinIntroDue = !spinSave.seenSlotsIntro && spinSave.unlocked > 1 && spinAvailable(spinSave)
+      if ((q?.has('freespin') || spinIntroDue) && alive.on) {
+        const { spinNow } = await openFreeSpinCard(this)
+        if (!alive.on) return
+        track(EVENTS.SLOTS_INTRO, { result: spinNow ? 'spin' : 'later', streak: spinSave.streak })
+        // Hand them straight to the cabinet — the point is that they end up looking at the machine,
+        // not merely being told it exists. Returns: nothing below this should run over a scene swap.
+        if (spinNow) {
+          startScene(this, 'slots')
+          return
+        }
       }
       if (!alive.on) return
       // 0.5 · CHAPTER TROPHY CATCH-UP — the one-time back-fill: every chapter beaten before the
@@ -1915,13 +1953,26 @@ export class HomeScene extends Phaser.Scene {
    * A rose tab (rose = the "special" accent, distinct on the gold pill) with a soft gold glow:
    * pulse gated by reduceFlashing (static soft glow) and reduced motion (static badge, no pop).
    */
-  private buildFreeSpinsBadge(n: number): Phaser.GameObjects.Container {
+  /**
+   * The badge pinned to the LUCKY SLOTS pill's corner — what is waiting behind the door, in words.
+   *
+   * ⚠️ It takes a LABEL, not a count, and that is the fix. It used to render only for BANKED free
+   * spins (`save.freeSpins > 0`), which meant the daily pull — the one every player holds, every
+   * day, and the only thing behind that door on day one — announced itself solely by the pill being
+   * gold rather than grey. Gold is unlearnable: it means nothing until you have already opened the
+   * door you are not opening. Measured 2026-08-07, only 24 of 73 real players ever had.
+   *
+   * The pill's own label stays `LUCKY SLOTS`, deliberately: the machine is front and centre BY NAME
+   * (see the entry above), and a badge that states the offer beside a pill that states the identity
+   * says both things at once, where a swapped label would trade one for the other.
+   */
+  private buildFreeSpinsBadge(text: string): Phaser.GameObjects.Container {
     const T = getTheme()
     const reduced = this.prefersReducedMotion()
     const c = this.add.container(140, -40)
     c.setAngle(-6)
     const label = this.add
-      .text(0, 0, `×${n} FREE SPINS`, { fontFamily: FONT, fontSize: '17px', fontStyle: '900', color: T.onRose })
+      .text(0, 0, text, { fontFamily: FONT, fontSize: '17px', fontStyle: '900', color: T.onRose })
       .setOrigin(0.5)
       .setLetterSpacing(1)
     const w = label.width + 28

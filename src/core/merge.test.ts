@@ -264,6 +264,16 @@ describe('mergeSaves — chapter trophies and the race-unlock latch', () => {
     expect(mergeSaves(deeperUnseen, seen).seenRaceUnlock).toBe(true)
   })
 
+  it('seenSlotsIntro joins the union — the FREE SPIN reveal plays exactly once per player', () => {
+    // Added WITH the field rather than after the bug, like the Act II latches below. The reveal is
+    // the fix for a measured discovery failure (24 of 73 players had ever opened the cabinet), so a
+    // merge that replayed it would be re-teaching the one thing this card exists to teach once.
+    const seen = save({ unlocked: 6, seenSlotsIntro: true })
+    const deeperUnseen = save({ unlocked: 90, seenSlotsIntro: false })
+    expect(mergeSaves(seen, deeperUnseen).seenSlotsIntro).toBe(true)
+    expect(mergeSaves(deeperUnseen, seen).seenSlotsIntro).toBe(true)
+  })
+
   it('the Act II latches join the union — the elevator and each floor door play exactly once', () => {
     // seenRaceUnlock's twins, added WITH the fields rather than after the bug (see the note above).
     // The elevator reveal is chained off a once-in-a-lifetime ceremony; replaying it because the

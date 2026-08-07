@@ -254,6 +254,17 @@ export const EVENTS = {
    */
   SLOTS_OPENED: 'slots_opened',
   SLOTS_SPUN: 'slots_spun',
+  /**
+   * The one-time FREE SPIN reveal (view/freespincard.ts) — fired at the card's MOUNT, with the
+   * player's answer riding a `result` prop ('spin' | 'later') rather than a second event name. Same
+   * split-by-prop shape the push opt-in uses, and for the same reason: a new prop rides along for
+   * free, where a new NAME is invisible to any dashboard view that hardcodes its list.
+   *
+   * The pairing with SLOTS_OPENED is the whole measurement. Before this card, 24 of 73 real players
+   * had ever opened the cabinet — and "few opens" was equally consistent with *nobody knew it was
+   * there* and *everybody looked and declined*, two problems with opposite fixes.
+   */
+  SLOTS_INTRO: 'slots_intro',
 
   /**
    * THE MARKER (Slice 0) — the opt-in side bet on numbered levels 151+. `offered` → `taken` is the

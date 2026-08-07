@@ -60,6 +60,21 @@ export interface SaveData {
    */
   seenPushOffer: boolean
   /**
+   * Latch for the one-time FREE SPIN reveal — the card that finally says out loud that the LUCKY
+   * SLOTS cabinet holds a free pull every day (`view/freespincard.ts`).
+   *
+   * `seenRaceUnlock`'s twin in every respect, including latching on RENDER rather than on dismissal:
+   * it is a reveal, and a reveal spends itself by being seen (contrast `seenPushOffer`, an OFFER,
+   * which spends itself by being answered).
+   *
+   * WHY IT EXISTS: measured 2026-08-07, only 24 of 73 real players had ever opened the cabinet —
+   * worse than the daily race, which is GATED at level 10. The door was never hidden; it is a gold
+   * pill front and centre on Home. What was hidden was the offer: the daily spin announced itself
+   * ONLY by that pill being gold rather than grey, and gold is unlearnable — it means nothing until
+   * you have already opened the door you are not opening.
+   */
+  seenSlotsIntro: boolean
+  /**
    * Claim latch for the INSTALL REWARD — the one-time purse paid on the first launch of the
    * installed app (`core/install.ts claimInstallReward`). A claim latch, not a "seen" latch: it
    * gates real chips and a boost, so it lives under iron rule 4 (award-first, latch in the save)
@@ -196,6 +211,7 @@ const DEFAULTS: SaveData = {
   seenRaceUnlock: false,
   seenAct2Reveal: false,
   seenPushOffer: false,
+  seenSlotsIntro: false,
   installRewardClaimed: false,
   floorIntros: [],
   heldBoosts: [],
@@ -303,6 +319,10 @@ export function coerceSave(raw: unknown): SaveData {
     // players with the most reason to want a reminder — gets the offer on their next visit rather
     // than never, exactly as `seenRaceUnlock` did for the already-unlocked cohort.
     base.seenPushOffer = data.seenPushOffer === true
+    // Absent in every save written before 2026-08-07 → false, which is the WHOLE POINT here rather
+    // than a migration convenience: the players who need this reveal most are the existing ones who
+    // have been walking past the cabinet for weeks. They get it once, on their next visit.
+    base.seenSlotsIntro = data.seenSlotsIntro === true
     // Absent in older saves → unclaimed. Safe in the generous direction: an already-installed player
     // from before this shipped gets the purse once on their next open, which is the intended
     // behaviour — they did the thing the reward is for, they just did it before there was one.
@@ -628,6 +648,19 @@ export function markRaceUnlockSeen(): void {
   const save = loadSave()
   if (!save.seenRaceUnlock) {
     save.seenRaceUnlock = true
+    persistSave(save)
+  }
+}
+
+/**
+ * Latch the FREE SPIN reveal — `markRaceUnlockSeen`'s twin, latched on RENDER for the same reason:
+ * a player who force-quits mid-card has still SEEN it, and re-showing a one-time reveal is worse
+ * than skipping it.
+ */
+export function markSlotsIntroSeen(): void {
+  const save = loadSave()
+  if (!save.seenSlotsIntro) {
+    save.seenSlotsIntro = true
     persistSave(save)
   }
 }

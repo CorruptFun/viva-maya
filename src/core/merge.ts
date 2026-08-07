@@ -99,6 +99,10 @@ function unionLatches(a: SaveData, b: SaveData): Partial<SaveData> {
     // because the question is "do you want to be reminded", answered once per person, and Settings →
     // Race reminder is still there per device for whoever wants it on the second one.
     seenPushOffer: a.seenPushOffer || b.seenPushOffer,
+    // The FREE SPIN reveal, joined with the field for the reason spelled out on seenRaceUnlock: a
+    // one-time card that a progress-winner merge could drop would simply play again on the other
+    // device, and a reveal that repeats reads as the game not remembering you.
+    seenSlotsIntro: a.seenSlotsIntro || b.seenSlotsIntro,
     // A CLAIM latch, not a "seen" one — losing it to a progress-winner merge would re-pay the purse
     // and the boost, the exact double-award `championWeeks` sits in this list to prevent. ⚠️ It is
     // per-PLAYER, not per-device, so installing on a phone and then a tablet pays once. That is the

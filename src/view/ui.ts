@@ -612,18 +612,34 @@ export function addMarquee(scene: Phaser.Scene, centerX: number, y: number, opts
  * home screen when streak > 0. The 🔥 lives in its own text object (no letterSpacing)
  * because letterSpacing splits emoji surrogate pairs in Phaser's glyph renderer.
  * Returns null when there's no streak to show.
+ *
+ * ⚠️ `atRisk` (today's pull still unspent) changes the copy from a READOUT to a STAKE, and that is
+ * the whole point of the flag: `3 DAY STREAK` states a number the player can do nothing with, while
+ * `3 DAYS — SPIN TODAY` states the one thing that is about to be lost and the one action that keeps
+ * it. Half the players who ever open the cabinet never return to it, and the daily reset is already
+ * a real reason to — it was simply never said out loud anywhere.
+ *
+ * Still hidden at streak 0, deliberately: a player with no streak has nothing at stake yet, and the
+ * FREE SPIN TODAY badge on the LUCKY SLOTS pill is already carrying the offer for them. A second
+ * "start a streak" prompt up here would be the same fact twice on one screen.
  */
 export function addStreakBadge(
   scene: Phaser.Scene,
   centerX: number,
   y: number,
-  streak: number
+  streak: number,
+  atRisk = false
 ): Phaser.GameObjects.Container | null {
   if (streak <= 0) return null
   const container = scene.add.container(centerX, y)
   const flame = scene.add.text(0, 0, '🔥', { fontFamily: 'sans-serif', fontSize: '32px' }).setOrigin(0.5)
   const label = scene.add
-    .text(0, 0, `${streak} DAY STREAK`, { fontFamily: FONT, fontSize: '22px', fontStyle: '900', color: getTheme().goldText })
+    .text(0, 0, atRisk ? `${streak} DAYS — SPIN TODAY` : `${streak} DAY STREAK`, {
+      fontFamily: FONT,
+      fontSize: '22px',
+      fontStyle: '900',
+      color: getTheme().goldText,
+    })
     .setOrigin(0, 0.5)
     .setLetterSpacing(2)
   const gap = 8
