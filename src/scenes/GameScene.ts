@@ -61,7 +61,7 @@ import { EVENTS, track } from '../core/analytics'
 import { devSetLives, formatCountdown, grantLife, refreshLives, spendLifeFor } from '../core/lives'
 import { levelProgress, maya, pendingOccasion, warmLoseLine, warmWinSubtitle, wasNearMiss } from '../core/maya'
 import { mulberry32 } from '../core/rng'
-import { addChips, addFreeSpins, bumpJackpotMeter, consumeBoost, bumpWinStreak, freeSpinRoom, loadSave, markFinaleSeen, markOccasionSeen, persistSave, recordLightningRun, recordResult, recordScore, resetWinStreak, spendChips, spendJackpotCharge, takePendingBoosts } from '../core/save'
+import { addChips, addFreeSpins, bumpJackpotMeter, consumeBoost, bumpWinStreak, freeSpinRoom, loadSave, markFinaleSeen, markOccasionSeen, persistSave, chargeStorm, spendStormCharge, recordLightningRun, recordResult, recordScore, resetWinStreak, spendChips, spendJackpotCharge, takePendingBoosts } from '../core/save'
 import { freeSourceFor, freeStockFor } from '../core/inventory'
 import { LIFE_REFILL_PRICE, POWER_ITEMS } from '../core/store'
 import type { PowerItem } from '../core/store'
@@ -92,11 +92,16 @@ import { maybeFloorDoor } from '../view/floordoor'
 import { addEndlessLeaderStrip } from '../view/leaderboardpanel'
 import { attachRgbRing, type RgbRing } from '../view/rgbmarquee'
 import { strikeBolt } from '../view/lightning'
+import { openStormIntroCard } from '../view/stormintrocard'
 import {
+  chargeFor,
   chargesLeft,
   credit,
   LIGHTNING_MOVES,
   MAX_STRIKES,
+  STORM_GOAL,
+  stormDue,
+  stormPayout,
   nextRound,
   quotaFor,
   quotaMet,
@@ -516,6 +521,12 @@ export class GameScene extends Phaser.Scene {
   private lightning = false
   /** The lightning run — rounds, quota progress, strikes. Pure state; see core/lightning.ts. */
   private run: LightningRun = startRun()
+  /** ⚡ Live storm charge, mirrored from the save so the in-level meter can repaint without a reload. */
+  private stormCharge = 0
+  /** The numbered level a storm was entered FROM, restored via the level snapshot on the way out. */
+  private returnLevel = 0
+  /** One storm per level. Without it a level finishing far past the line could fire twice in a row. */
+  private stormFiredThisLevel = false
   /** Milliseconds left in the current lightning round. Driven by a PHASER timer, never setTimeout. */
   private runMs = 0
   /** The round clock. Paused while the storm owns the board, so a strike never eats the next round. */
@@ -651,7 +662,13 @@ export class GameScene extends Phaser.Scene {
     super('game')
   }
 
-  init(data: { level?: number; endless?: boolean; lightning?: boolean }): void {
+  init(data: { level?: number; endless?: boolean; lightning?: boolean; returnLevel?: number }): void {
+    // Set BEFORE `lightning` is read anywhere. A storm entered from a numbered level carries that
+    // level's number so the payout card can hand the player back to it; the level itself rides the
+    // existing snapshot (core/levelresume.ts), which already stores everything a level owns —
+    // including anything paid for on it — precisely because it was built for "the level goes away
+    // and comes back". A storm detour is that, exactly.
+    this.returnLevel = Math.max(0, Math.floor(data?.returnLevel ?? 0))
     // ⚡ LIGHTNING ROUND rides the ENDLESS shape deliberately: `this.endless` stays true for it, so
     // every "is this not a numbered level?" branch — hearts, objectives, boosts, hazard intros, the
     // level-resume snapshot, the power bar — already answers correctly without touching 40-odd call
@@ -673,6 +690,12 @@ export class GameScene extends Phaser.Scene {
     // already-settled value. Assigning it inside create() would work only for as long as nothing
     // moved above the first read, which is exactly the kind of ordering nobody re-checks.
     this.boardTop = BOARD_Y + (this.endless ? ENDLESS_BOARD_DROP : 0)
+    // ⚠️ SEEDED FROM THE SAVE, not left at 0. The charge is a cross-LEVEL meter — a scene field that
+    // reset every level could only ever fire a storm from one level's own clearing, which is roughly
+    // a third of the goal, so the storm would never arrive at all. `scene.restart` does not re-run
+    // field initialisers either, hence both of these being set here rather than declared-and-hoped.
+    this.stormCharge = loadSave().stormCharge
+    this.stormFiredThisLevel = false
   }
 
   create(): void {
@@ -4556,6 +4579,12 @@ export class GameScene extends Phaser.Scene {
       // board that's about to be playable again. When it opens it OWNS the handback (its CLAIM
       // restores idle), so return rather than falling through to the three lines below.
       if (this.offerPlinko(cascade)) return
+      // ⚡ THE STORM — the charge has filled, so it takes the board. In Plinko's slot deliberately:
+      // after the win/lose checks (so it can never collide with a result card), on a settled board
+      // (a strike tears down every sprite the resolver holds), and NOT at level end, where the win
+      // chain is already three deep (wheel → deal → plinko) and a fourth thing would be buried.
+      // Like Plinko, it OWNS the handback — here by leaving for the storm entirely.
+      if (this.maybeStorm()) return
       this.state = 'idle'
       // §G1 — hand the board back to a swap the player already aimed, before arming the idle nudges.
       // A flushed swap re-enters `resolveLoop`, which owns the next handoff; arming the hint here too
@@ -4707,6 +4736,9 @@ export class GameScene extends Phaser.Scene {
     // ⚡ The lightning quota counts PIECES, not moves — so a cascade credits every wave it sets off,
     // which is what makes chasing a big chain the right way to beat the clock rather than a luxury.
     this.creditLightning(wave.cleared.length)
+    // ⚡ …and on a NUMBERED level the same clears charge the storm meter, normalised against this
+    // level's own move budget so the cadence is identical at L5 and L250 (see `chargeFor`).
+    if (!this.endless) this.stormCharge = chargeStorm(chargeFor(wave.cleared.length, this.spec.moves))
     if (cascade >= 2) {
       this.showCombo(cascade)
       // Cascade rumble routed through the single trauma authority (crisp + decayed, never muddy).
@@ -5760,6 +5792,35 @@ export class GameScene extends Phaser.Scene {
     await this.swapBoard(toastText, 'lightning')
   }
 
+  // ------------------------------------------------- ⚡ the storm
+
+  /**
+   * Fire the storm if the charge has filled. Returns true when it took the screen.
+   *
+   * ⚠️ It leaves the scene, and the LEVEL's survival rests entirely on the snapshot that the
+   * `state → 'idle'` transition has already written (see `snapshotLevel`). That is safe only because
+   * this is called from a settled board with moves left — the exact condition the snapshot itself
+   * requires — so a fresh one is guaranteed to exist by the time we get here. Do not call this from
+   * anywhere that is not already past `snapshotLevel`'s own guards.
+   */
+  private maybeStorm(): boolean {
+    if (this.endless || this.stormFiredThisLevel || this.introOpen) return false
+    if (!stormDue(this.stormCharge)) return false
+    // Spend the charge BEFORE leaving, so a crash between here and the storm cannot leave a meter
+    // that re-fires on every settled board forever. Overflow rolls forward rather than evaporating.
+    this.stormFiredThisLevel = true
+    this.stormCharge = spendStormCharge(STORM_GOAL)
+    track(EVENTS.STORM_TRIGGERED, { level: this.level })
+    // Teach it once, on the way in, before the board is taken — the pattern hazard and special
+    // intros already use. It owns the handoff into the storm.
+    if (!loadSave().seenStormIntro) {
+      void openStormIntroCard(this).then(() => startScene(this, 'game', { lightning: true, returnLevel: this.level }))
+      return true
+    }
+    startScene(this, 'game', { lightning: true, returnLevel: this.level })
+    return true
+  }
+
   // ------------------------------------------------- ⚡ the lightning round
 
   /**
@@ -5896,10 +5957,16 @@ export class GameScene extends Phaser.Scene {
     this.runTimer = undefined
     const survived = Math.max(0, this.run.round - 1)
     this.log('finishLightning', 'rounds', survived)
-    // Banked BEFORE the card renders, like every other result here: a force-quit mid-card must not
-    // cost a record the player actually set. Monotonic, so re-entering this can never lower it.
+    // Banked BEFORE the card renders — iron rule 4, and the same award-first rule the wheel, the
+    // daily spin and Plinko all follow: a force-quit mid-card must never cost a prize that was won.
+    // The record is monotonic, so re-entering this can only ever raise it.
     const { best, isRecord } = recordLightningRun(survived)
-    track(EVENTS.LIGHTNING_END, { rounds: survived, best, record: isRecord })
+    const purse = stormPayout(survived)
+    // The HUD pill was built from the pre-storm balance, so it has to be told — otherwise it sits
+    // there reading the old number directly beside a card announcing "+55 CHIPS". Same refresh the
+    // coronation does after paying its purse.
+    this.chipHud?.update(addChips(purse))
+    track(EVENTS.LIGHTNING_END, { rounds: survived, best, record: isRecord, chips: purse })
 
     const T = getTheme()
     const W = DESIGN_W
@@ -5953,26 +6020,43 @@ export class GameScene extends Phaser.Scene {
         .setOrigin(0.5)
         .setLetterSpacing(3)
     )
-    // The record line does double duty: it celebrates a new best, and otherwise it states the number
-    // to beat — which is the whole return hook for a mode with no leaderboard to chase.
+    // The record line does double duty: it celebrates a new best, and otherwise states the number to
+    // beat — the whole competitive hook for a bonus with no leaderboard behind it.
     layer.add(
       this.add
         .text(
           W / 2,
-          py + 302,
-          isRecord ? '⚡ NEW BEST' : best > 0 ? `BEST — ${best}` : 'Your first run on the board',
+          py + 300,
+          isRecord ? '⚡ NEW BEST' : best > 0 ? `BEST — ${best}` : 'Your first storm',
           { fontFamily: FONT, fontSize: '20px', fontStyle: isRecord ? '900' : 'normal', color: isRecord ? T.goldText : T.inkFaint }
         )
         .setOrigin(0.5)
         .setLetterSpacing(isRecord ? 3 : 1)
     )
+    // The purse. Always paid — a storm is EARNED, so it can only ever leave you better off; there is
+    // no branch here where the player walks away with nothing (see stormPayout's floor).
     layer.add(
-      addPillButton(this, W / 2, py + ph - 108, 300, 64, 'GO AGAIN', GOLD_PILL, () =>
-        this.scene.restart({ lightning: true })
+      inkShadow(
+        this.add
+          .text(W / 2, py + 352, `+${purse} CHIPS`, {
+            fontFamily: FONT,
+            fontSize: '34px',
+            fontStyle: '900',
+            color: T.goldText,
+          })
+          .setOrigin(0.5)
+          .setLetterSpacing(2),
+        'numeral'
       )
     )
+    // Back to the level the storm interrupted — restored from its snapshot, moves and objectives
+    // exactly as they were. `returnLevel` is 0 only for the dev route, which has no level to go back
+    // to and lands on Home instead.
     layer.add(
-      addPillButton(this, W / 2, py + ph - 40, 220, 50, 'HOME', GHOST_PILL, () => startScene(this, 'home'))
+      addPillButton(this, W / 2, py + ph - 62, 320, 64, this.returnLevel > 0 ? 'BACK TO YOUR LEVEL' : 'DONE', GOLD_PILL, () => {
+        if (this.returnLevel > 0) startScene(this, 'game', { level: this.returnLevel })
+        else startScene(this, 'home')
+      })
     )
     if (!this.reducedMotion) {
       layer.setAlpha(0)

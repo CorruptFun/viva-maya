@@ -75,6 +75,26 @@ export interface SaveData {
    */
   seenSlotsIntro: boolean
   /**
+   * Teach-once latch for ⚡ THE STORM — shown as the first storm arrives, never again.
+   *
+   * A TEACH latch, in the family of `hazardIntros` / `specialIntros` rather than of `seenRaceUnlock`:
+   * the storm is not unlocked, it simply happens, and this explains the rule the first time the
+   * player meets it. Unioned on merge like every other teach latch, so a second device does not
+   * re-teach a rule already learned.
+   */
+  seenStormIntro: boolean
+  /**
+   * ⚡ THE STORM's charge, in LEVEL-EQUIVALENTS (see `core/lightning.ts` — `chargeFor`). Fires at
+   * `STORM_GOAL` and is spent back down by that much, so overflow from a big finish rolls into the
+   * next storm rather than evaporating.
+   *
+   * Rides the progress winner on merge exactly as `jackpotMeter` does, and for the same reason: it is
+   * a METER, not a record and not a latch. Two devices each holding a part-full meter should not have
+   * them summed (that mints a storm nobody earned) nor maxed (a device left mid-charge would freeze
+   * the other's progress); the further-along save simply carries its own.
+   */
+  stormCharge: number
+  /**
    * Best ROUNDS SURVIVED in a storm, all-time.
    *
    * ⚠️ A RECORD, not a latch — it merges by MAX (core/merge.ts), not by OR. Riding the progress
@@ -222,6 +242,8 @@ const DEFAULTS: SaveData = {
   seenAct2Reveal: false,
   seenPushOffer: false,
   seenSlotsIntro: false,
+  seenStormIntro: false,
+  stormCharge: 0,
   lightningBest: 0,
   installRewardClaimed: false,
   floorIntros: [],
@@ -334,6 +356,11 @@ export function coerceSave(raw: unknown): SaveData {
     // than a migration convenience: the players who need this reveal most are the existing ones who
     // have been walking past the cabinet for weeks. They get it once, on their next visit.
     base.seenSlotsIntro = data.seenSlotsIntro === true
+    base.seenStormIntro = data.seenStormIntro === true
+    base.stormCharge =
+      typeof data.stormCharge === 'number' && Number.isFinite(data.stormCharge)
+        ? Math.max(0, data.stormCharge)
+        : 0
     // Absent in every save written before the storm shipped → no record, which is right: the first
     // storm a returning player rides sets it.
     base.lightningBest =
@@ -680,6 +707,40 @@ export function markSlotsIntroSeen(): void {
     save.seenSlotsIntro = true
     persistSave(save)
   }
+}
+
+/** Latch the storm's teach card — a rule is taught once, like every hazard and special before it. */
+export function markStormIntroSeen(): void {
+  const save = loadSave()
+  if (!save.seenStormIntro) {
+    save.seenStormIntro = true
+    persistSave(save)
+  }
+}
+
+/**
+ * Add to the storm charge and report the new total. Called per settled wave, so it is deliberately
+ * cheap and additive — nothing here decides whether the storm fires (`stormDue` does, at the scene's
+ * own settled-board moment).
+ */
+export function chargeStorm(amount: number): number {
+  if (!(amount > 0)) return loadSave().stormCharge
+  const save = loadSave()
+  save.stormCharge += amount
+  persistSave(save)
+  return save.stormCharge
+}
+
+/**
+ * Spend one storm's worth of charge. Subtracts `goal` rather than zeroing, so a level that finished
+ * well past the line rolls its overflow into the next storm instead of throwing it away — the same
+ * courtesy `nextRound` extends inside a storm.
+ */
+export function spendStormCharge(goal: number): number {
+  const save = loadSave()
+  save.stormCharge = Math.max(0, save.stormCharge - goal)
+  persistSave(save)
+  return save.stormCharge
 }
 
 /**

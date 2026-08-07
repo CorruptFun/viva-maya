@@ -67,6 +67,71 @@ export const CARRY_FRACTION = 0.5
  */
 export const LIGHTNING_MOVES = 9999
 
+// ─────────────────────────────────────────────────────────────────────────────
+// THE CHARGE — how a storm is EARNED.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Pieces a level clears per MOVE. **Measured, not chosen** — swept L3–L296 × 40 seeds through
+ * `sim.playLevel().pieces` on 2026-08-07.
+ *
+ * ⚠️ The measurement is the reason this constant exists at all, and the reason the meter is not a
+ * plain piece counter. Raw pieces per level run 115 (L3) → 576 (L250), a **5.0x spread** — so a flat
+ * goal would fire a storm every ~9 levels for a beginner and every ~1.7 for a veteran, i.e. rarest
+ * for the player who most needs the reward. But that spread is ENTIRELY the move budget growing with
+ * the curve: pieces per move is flat at 6.16–6.94 from L8 to L250. Dividing it out normalises the
+ * cadence across the whole game by construction.
+ *
+ * Also measured: a passive policy and a typical one clear near-identical counts (359 vs 363), so this
+ * cadence is **skill-independent** — a steady drumbeat, not a reward for playing well. That is right
+ * for a trigger (the storm itself is where skill pays), but it means the meter can never honestly be
+ * sold as something a better player fills faster.
+ */
+export const PIECES_PER_MOVE = 6.2
+
+/**
+ * Charge needed to bring the storm, in LEVEL-EQUIVALENTS. A level played to its budget contributes
+ * about 1.0, so this reads directly as "a storm every three and a half levels".
+ */
+export const STORM_GOAL = 3.5
+
+/**
+ * One wave's contribution to the charge: pieces cleared, as a fraction of what this level's own move
+ * budget is expected to clear. Guarded against a zero/absent budget so a malformed spec cannot mint
+ * an infinite charge.
+ */
+export function chargeFor(piecesCleared: number, levelMoves: number): number {
+  if (!(levelMoves > 0) || !(piecesCleared > 0)) return 0
+  return piecesCleared / (PIECES_PER_MOVE * levelMoves)
+}
+
+/** Is the storm owed? */
+export function stormDue(charge: number): boolean {
+  return charge >= STORM_GOAL
+}
+
+/** How full the meter reads, 0..1 — what the in-level charge bar draws. */
+export function stormProgress(charge: number): number {
+  return Math.max(0, Math.min(1, charge / STORM_GOAL))
+}
+
+/**
+ * Chips a storm pays for surviving `rounds`.
+ *
+ * A fixed-size gift with a hard ceiling, never a rate — iron rule 1's whole basis. The floor is
+ * deliberate: a storm that paid nothing for a bad run would make an EARNED bonus feel like a test,
+ * and the one thing this shape guarantees is that a storm can only ever leave you better off. For
+ * scale, a level win pays ~30–60 and one jackpot wheel spin averages ~114.
+ */
+export const STORM_PAY_FLOOR = 15
+export const STORM_PAY_PER_ROUND = 20
+export const STORM_PAY_CAP = 120
+
+export function stormPayout(rounds: number): number {
+  const r = Math.max(0, Math.floor(rounds))
+  return Math.min(STORM_PAY_CAP, STORM_PAY_FLOOR + r * STORM_PAY_PER_ROUND)
+}
+
 export interface LightningRun {
   /** 1-based. Increments ONLY when a quota is met — never on a strike. See rule 1. */
   round: number

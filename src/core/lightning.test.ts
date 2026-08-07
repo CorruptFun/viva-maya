@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import {
   CARRY_FRACTION,
+  chargeFor,
   MAX_STRIKES,
+  STORM_GOAL,
+  STORM_PAY_CAP,
+  STORM_PAY_FLOOR,
+  stormDue,
+  stormPayout,
+  stormProgress,
   MIN_SECONDS,
   QUOTA_STEP,
   START_QUOTA,
@@ -117,6 +124,85 @@ describe('lightning — strikes and the end of a run', () => {
     expect(strike(run)).toEqual(frozen)
     expect(nextRound(run)).toEqual(frozen)
     expect(quotaMet(run)).toBe(false) // an over run is never "one more round" away
+  })
+})
+
+/**
+ * THE CHARGE — the trigger's economy guard, in the family of plinko.rate.test.ts. These numbers are
+ * RE-DERIVED from a sweep, never edited to go green: `PIECES_PER_MOVE` came from L3–L296 × 40 seeds
+ * through `sim.playLevel().pieces` on 2026-08-07.
+ */
+describe('storm — the charge is normalised across the whole level curve', () => {
+  // Measured pieces-per-level and the matching move budgets, early / mid / late.
+  const CURVE: Array<[label: string, pieces: number, moves: number]> = [
+    ['L8', 195, 31],
+    ['L50', 322, 52],
+    ['L120', 429, 67],
+    ['L250', 576, 83],
+  ]
+
+  it('a level played to its budget contributes about ONE level-equivalent, everywhere', () => {
+    for (const [label, pieces, moves] of CURVE) {
+      const contribution = chargeFor(pieces, moves)
+      expect(contribution, `${label} contributes ~1`).toBeGreaterThan(0.85)
+      expect(contribution, `${label} contributes ~1`).toBeLessThan(1.2)
+    }
+  })
+
+  it('⚠️ the cadence does NOT drift across the curve — the whole reason the goal is not raw pieces', () => {
+    // A flat piece goal would have fired every ~9 levels for a beginner and ~1.7 for a veteran:
+    // rarest for the player who most needs the reward. Normalising by the move budget is what fixes
+    // it, and this is the assertion that would fail if someone "simplified" chargeFor back to pieces.
+    const rates = CURVE.map(([, pieces, moves]) => chargeFor(pieces, moves))
+    const spread = Math.max(...rates) / Math.min(...rates)
+    expect(spread, 'early-vs-late cadence spread').toBeLessThan(1.3)
+    // The raw piece counts these came from really do span ~3x, so the guard above is load-bearing.
+    const rawSpread = Math.max(...CURVE.map(c => c[1])) / Math.min(...CURVE.map(c => c[1]))
+    expect(rawSpread).toBeGreaterThan(2.5)
+  })
+
+  it('fires roughly every 3-4 levels', () => {
+    const perLevel = chargeFor(429, 67) // the mid-curve sample
+    const levels = STORM_GOAL / perLevel
+    expect(levels).toBeGreaterThan(2.5)
+    expect(levels).toBeLessThan(4.5)
+  })
+
+  it('cannot mint charge from a malformed spec', () => {
+    expect(chargeFor(100, 0)).toBe(0)
+    expect(chargeFor(100, -5)).toBe(0)
+    expect(chargeFor(0, 40)).toBe(0)
+    expect(chargeFor(-10, 40)).toBe(0)
+  })
+
+  it('stormDue flips exactly at the goal, and progress reads 0..1', () => {
+    expect(stormDue(STORM_GOAL - 0.01)).toBe(false)
+    expect(stormDue(STORM_GOAL)).toBe(true)
+    expect(stormProgress(0)).toBe(0)
+    expect(stormProgress(STORM_GOAL / 2)).toBeCloseTo(0.5, 5)
+    expect(stormProgress(STORM_GOAL * 3)).toBe(1) // clamped, never past full
+  })
+})
+
+describe('storm — the payout can only ever leave you better off', () => {
+  it('pays a floor even for a storm survived zero rounds', () => {
+    // An EARNED bonus that could pay nothing would read as a test rather than a reward, and would
+    // break the one property this shape exists to guarantee.
+    expect(stormPayout(0)).toBe(STORM_PAY_FLOOR)
+    expect(stormPayout(0)).toBeGreaterThan(0)
+  })
+
+  it('rises with rounds survived and is hard-capped', () => {
+    expect(stormPayout(3)).toBeGreaterThan(stormPayout(1))
+    expect(stormPayout(999)).toBe(STORM_PAY_CAP)
+    for (const r of [0, 1, 5, 50, 5000]) expect(stormPayout(r)).toBeLessThanOrEqual(STORM_PAY_CAP)
+  })
+
+  it('stays a fixed-size gift, in-band against what already exists', () => {
+    // Iron rule 1: every faucet is a fixed-size gift, never a rate. For scale a level win pays
+    // ~30-60 and one jackpot wheel spin averages ~114 — a storm must not eclipse the wheel.
+    expect(STORM_PAY_CAP).toBeLessThanOrEqual(150)
+    expect(stormPayout(2)).toBeGreaterThan(30)
   })
 })
 

@@ -103,6 +103,11 @@ function unionLatches(a: SaveData, b: SaveData): Partial<SaveData> {
     // one-time card that a progress-winner merge could drop would simply play again on the other
     // device, and a reveal that repeats reads as the game not remembering you.
     seenSlotsIntro: a.seenSlotsIntro || b.seenSlotsIntro,
+    // A TEACH latch, alongside hazardIntros/specialIntros: a rule learned on the phone must not be
+    // re-taught on the tablet. ⚠️ `stormCharge` deliberately does NOT join this list — it is a METER,
+    // and rides the progress winner exactly as `jackpotMeter` does. Unioning it would either mint a
+    // storm nobody earned (summed) or freeze one device's progress behind another's (maxed).
+    seenStormIntro: a.seenStormIntro || b.seenStormIntro,
     // ⚠️ MAX, not OR — a RECORD rather than a latch, and the only field in this list that is one.
     // Letting it ride the progress winner would mean a further-along device with a worse storm run
     // erases a real personal best, and a best that can go DOWN is the one thing a best may not do.

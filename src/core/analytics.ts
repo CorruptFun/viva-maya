@@ -272,6 +272,12 @@ export const EVENTS = {
    * too tight; a long tail means the clock floor arrives too late to end anything.
    */
   LIGHTNING_END: 'lightning_end',
+  /**
+   * ⚡ A storm was EARNED and took the board. Paired with `lightning_end` it gives the two numbers the
+   * feature lives or dies on: how often the charge actually fires in real play (against the ~1-per-3.5
+   * -levels the meter was measured for), and whether players who get one survive past round 1.
+   */
+  STORM_TRIGGERED: 'storm_triggered',
 
   /**
    * THE MARKER (Slice 0) — the opt-in side bet on numbered levels 151+. `offered` → `taken` is the
