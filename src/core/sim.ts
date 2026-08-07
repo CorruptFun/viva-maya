@@ -42,6 +42,12 @@ export interface LevelRun {
   /** Final score, counted the way GameScene's playWave does (`cleared × 20 × cascade`). What the
    *  HOUSE MINIMUM win term reads, and what minimum.rate.test.ts calibrates the plaque against. */
   score: number
+  /**
+   * Total pieces cleared over the run — what THE STORM's charge meter counts. Tallied rather than
+   * derived from `score`, because score folds in the cascade multiplier and cannot be inverted back
+   * to a piece count.
+   */
+  pieces: number
   /** Settled chain depth for each move played. */
   chains: number[]
   maxCascade: number
@@ -211,14 +217,16 @@ function resolvePullTracking(
   col: number,
   remaining: Map<SymbolType, number>,
   hot: boolean
-): { cascade: number; points: number } {
-  if (!b.pullColumn(col)) return { cascade: 0, points: 0 }
+): { cascade: number; points: number; pieces: number } {
+  if (!b.pullColumn(col)) return { cascade: 0, points: 0, pieces: 0 }
   let wave = b.matchWave()
   let cascade = 0
   let points = 0
+  let pieces = 0
   while (wave) {
     cascade++
     points += wave.cleared.length * POINTS_PER_PIECE * waveMult(cascade, hot)
+    pieces += wave.cleared.length
     for (const { piece } of wave.cleared) {
       if (piece.kind === 'jackpot' || piece.kind === 'blocker') continue
       const left = remaining.get(piece.symbol)
@@ -228,7 +236,7 @@ function resolvePullTracking(
     b.refill()
     wave = b.matchWave()
   }
-  return { cascade, points }
+  return { cascade, points, pieces }
 }
 
 /**
@@ -269,6 +277,7 @@ export function playLevel(level: number, seed: number, policy: Policy, specOverr
   const chains: number[] = []
   let collected = 0
   let score = 0
+  let pieces = 0
   let blockerCellTurns = 0
   const scoreTarget = spec.scoreTarget ?? 0
   // Read from the SPEC, never from the level number — a `specOverride` measurement (minimum.rate's
@@ -326,6 +335,7 @@ export function playLevel(level: number, seed: number, policy: Policy, specOverr
         : resolveSwapTracking(b, pick.a, pick.to, remaining, hot)
     chains.push(res.cascade)
     score += res.points
+    pieces += res.pieces
     for (const [s, v] of before) collected += Math.max(0, v - (remaining.get(s) ?? 0))
   }
 
@@ -337,6 +347,7 @@ export function playLevel(level: number, seed: number, policy: Policy, specOverr
     needed,
     coatsLeft: b.coatsRemaining(),
     score,
+    pieces,
     chains,
     maxCascade: chains.length > 0 ? Math.max(...chains) : 0,
     blockerCellTurns,
@@ -351,21 +362,23 @@ function resolveSwapTracking(
   to: Coord,
   remaining: Map<SymbolType, number>,
   hot: boolean
-): { cascade: number; points: number } {
+): { cascade: number; points: number; pieces: number } {
   b.swap(a, to)
   let wave = b.swapActivation(a, to)
   if (!wave) {
     if (b.findRuns().length === 0) {
       b.swap(a, to)
-      return { cascade: 0, points: 0 }
+      return { cascade: 0, points: 0, pieces: 0 }
     }
     wave = b.matchWave([to, a])
   }
   let cascade = 0
   let points = 0
+  let pieces = 0
   while (wave) {
     cascade++
     points += wave.cleared.length * POINTS_PER_PIECE * waveMult(cascade, hot)
+    pieces += wave.cleared.length
     for (const { piece } of wave.cleared) {
       if (piece.kind === 'jackpot' || piece.kind === 'blocker') continue
       const left = remaining.get(piece.symbol)
@@ -375,7 +388,7 @@ function resolveSwapTracking(
     b.refill()
     wave = b.matchWave()
   }
-  return { cascade, points }
+  return { cascade, points, pieces }
 }
 
 /** Aggregate several seeds of one level. */
@@ -489,26 +502,28 @@ export function playEndless(
 }
 
 /** resolveSwap, but totting up points the way GameScene's playWave does. */
-function scoreSwap(b: Board, a: Coord, to: Coord): { cascade: number; points: number } {
+function scoreSwap(b: Board, a: Coord, to: Coord): { cascade: number; points: number; pieces: number } {
   b.swap(a, to)
   let wave = b.swapActivation(a, to)
   if (!wave) {
     if (b.findRuns().length === 0) {
       b.swap(a, to)
-      return { cascade: 0, points: 0 }
+      return { cascade: 0, points: 0, pieces: 0 }
     }
     wave = b.matchWave([to, a])
   }
   let cascade = 0
   let points = 0
+  let pieces = 0
   while (wave) {
     cascade++
     points += wave.cleared.length * POINTS_PER_PIECE * cascade
+    pieces += wave.cleared.length
     b.applyGravity()
     b.refill()
     wave = b.matchWave()
   }
-  return { cascade, points }
+  return { cascade, points, pieces }
 }
 
 /** Ascending-sorted percentile of a sample (p in 0..1). */
