@@ -236,6 +236,54 @@ Live: <https://corruptfun.github.io/viva-maya/>
   sleeping there freezes a board the player is looking at). `running` is the only
   real flag — Phaser 3.90's TimeStep has **no `sleeping` property**, so a
   diagnostic reading one is reporting a constant `false`.
+- **The game answers on TWO origins, and `corrupt.solutions` is a PROXY of Pages —
+  not a second deployment.** `corruptfun.github.io/viva-maya/` is the legacy
+  address; `corrupt.solutions/games/viva-maya/` is canonical and is what every
+  invite link mints (`view/invite.ts`; the trailing slash is load-bearing). A
+  corrupt.solutions response carries `server: Vercel` **and** GitHub's own
+  `x-github-request-id` passed through — one deployment, two origins, identical
+  bytes. ⚠️ **That is why the fix is not a redirect:** a 3xx on the Pages origin
+  would be fetched and re-served by the proxy, pointing the canonical address at
+  itself. The handoff therefore lives in the bundle *both* origins serve, and
+  `handoffTarget` (`core/originmigrate.ts`) decides by **hostname** which copy it
+  is running as. **That gate is the entire safety argument** — answer it wrong and
+  the canonical origin redirects to itself forever, for everyone at once, which is
+  far worse than the storage split it fixes. `originmigrate.test.ts` pins it, and a
+  sessionStorage latch bounds even a wrong answer to one hop per tab.
+  Storage does not cross origins, so each one has its own save, device id,
+  referral stash, settings, install and push subscription — a real invite was lost
+  exactly this way (captured in one context, signed in from another), and one human
+  counts as two devices. The handoff travels in the URL **fragment**, never the
+  query string, so a save never lands in a Vercel or GitHub access log. On arrival
+  it **never overwrites** an existing key and merges a colliding save with
+  `mergeSaves` (monotonic), which is what makes a hostile fragment boring rather
+  than dangerous; there is deliberately **no `document.referrer` check**, because a
+  browser that strips the referrer would silently cost a real player their save.
+  Two refusals are deliberate and must stay: an **installed PWA** is never
+  redirected (navigating a standalone window off-scope ejects it into the browser
+  on iOS, breaking the app the player installed), and an **oversized payload keeps
+  the player put** rather than hopping without it. Measured worst case is ~14k
+  chars against a 30k cap. `app_open`'s **`host` prop** is what makes any of this
+  observable — before it, "how many players are still on the legacy address" could
+  not be asked at all.
+- **A waiting service worker is APPLIED at boot and only OFFERED mid-session, and
+  that asymmetry is the whole design.** The PWA is `registerType: 'prompt'`, and a
+  prompt players can decline forever is not an update mechanism: measured
+  2026-08-07, 47 devices active over three days sat on **13 distinct builds with
+  only 6 on HEAD**, some running a bundle 12 commits old the same day. So
+  `onRegisteredSW` finding `registration.waiting` — a worker already waiting
+  *before this page loaded*, meaning the player just opened the app and nothing is
+  in progress — now applies it silently, while `onNeedRefresh` (it went waiting
+  *during* play) still shows the toast. ⚠️ Never collapse the two into
+  `registerType: 'autoUpdate'`: that reloads whenever the worker lands, **including
+  mid-cascade**, and `levelresume` only snapshots a SETTLED board with endless
+  excluded entirely — so the reload it saves you is paid for with a lost level.
+  The silent path is gated by `claimAutoUpdate` (`core/swupdate.ts`, pinned by
+  `swupdate.test.ts`): a boot window, and a **sessionStorage** latch spent on the
+  way IN. The latch's storage is load-bearing — it must survive the reload it
+  authorises (or a worker that installs but never takes control reload-loops the
+  app with no way out) and die with the tab (or the next launch can't update). A
+  blocked-storage or unusable-clock read falls back to the toast, never guesses.
 - **`GameScene.t()` must always settle, or the board is bricked.** `resolveLoop`
   awaits a chain of tween promises; one that never resolves pins `state` at
   `resolving` **forever** — no input, no error, no recovery but a force-quit.
@@ -312,6 +360,8 @@ edit to make green.
 | `src/core/inventory.ts` | canonical boost names (`BOOST_META`) + the stash model — see the note above |
 | `src/core/install.ts` | "add to home screen" custody; the platform split lives here |
 | `src/core/apploop.ts` | the anti-drain loop sleep + every signal that undoes it — see the note above |
+| `src/core/swupdate.ts` | may a waiting service worker be applied SILENTLY right now — the boot window + the anti-reload-loop latch (`main.ts` owns the wiring) |
+| `src/core/originmigrate.ts` | the legacy-origin → `corrupt.solutions` profile handoff and its hostname gate — see the two-origins note above |
 | `src/core/resumeguard.ts` | recovers a game loop that never restarted after a resume |
 | `src/core/levelresume.ts` | mid-level snapshot/restore — see the "snapshot only on idle" note above |
 | `src/core/trophies.ts` | chapter trophies — catalog, purse table, tier ladder, the claim latch (see the note above) |

@@ -673,6 +673,13 @@ export function initAnalytics(
       (window.matchMedia?.('(display-mode: standalone)').matches ||
         (navigator as unknown as { standalone?: boolean }).standalone === true),
     lang: typeof navigator !== 'undefined' ? navigator.language : undefined,
+    // WHICH ORIGIN served this session. The game answers on two that do not share localStorage
+    // (core/originmigrate.ts), so one human on both counts as two devices — and until this prop
+    // existed the split was INVISIBLE here: nothing in the event row recorded the host, so "how
+    // many players are still on the legacy address" could not be asked at all, let alone answered.
+    // A prop rather than a new event name on purpose: it is queryable the moment it lands, where a
+    // new name would need a dashboard migration before it charted anywhere.
+    host: typeof window !== 'undefined' ? window.location.hostname : undefined,
   })
 }
 

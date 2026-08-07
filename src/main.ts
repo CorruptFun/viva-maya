@@ -11,7 +11,9 @@ import { installLoopSleep } from './core/apploop'
 import { installResumeGuard } from './core/resumeguard'
 import { ensureSalt } from './core/racesalt'
 import { captureRefFromUrl } from './core/referrals'
+import { adoptHandoffFromUrl, migrateFromLegacyOrigin } from './core/originmigrate'
 import { setPersistListener } from './core/save'
+import { AUTO_UPDATE_FALLBACK_MS, claimAutoUpdate } from './core/swupdate'
 import { BootScene } from './scenes/BootScene'
 import { GameScene } from './scenes/GameScene'
 import { HomeScene } from './scenes/HomeScene'
@@ -33,6 +35,25 @@ import { attachStage, prepareStage } from './view3d/stage'
 // build FOREVER (every later visit repeats the same silent no-op). Observed exactly that: a live
 // registration reporting `waiting: true` with no toast, serving the previous bundle indefinitely.
 // So we also probe for an already-waiting worker at registration time, below.
+//
+// ⚠️ PROBING WAS NOT ENOUGH, and the field proved it (measured 2026-08-07): 47 devices active over
+// three days were spread across 13 DISTINCT BUILDS, only 6 of them on HEAD, with devices running a
+// bundle 12 commits old the same day. A toast the player can simply not tap is not an update
+// mechanism — `update_shown` outran `update_applied` on a quarter of the devices that saw it.
+// So an already-waiting worker is now APPLIED rather than offered. The split below is the whole
+// design, and it is a statement about what the player is doing at that instant:
+//
+//   waiting BEFORE this page loaded (onRegisteredSW) → they just opened the app, nothing is in
+//     progress, so take the update silently. Costs a reload nobody can perceive during boot.
+//   went waiting DURING this page's life (onNeedRefresh) → they are already playing, so ASK.
+//     A reload here can cost a board: levelresume only snapshots a SETTLED board, and endless is
+//     excluded from it entirely, so a forced reload mid-cascade is a real loss of progress.
+//
+// Net effect: a player is now at most ONE launch behind instead of pinned forever, and no player
+// is ever yanked out of a level. This is deliberately NOT `registerType: 'autoUpdate'`, which
+// reloads whenever the worker lands — including mid-level — and would have exactly that cost.
+// The "may we apply silently right now?" decision (boot window + the anti-reload-loop latch) lives
+// in core/swupdate.ts, where swupdate.test.ts pins it.
 const updateSW = registerSW({
   immediate: true,
   onNeedRefresh() {
@@ -40,7 +61,21 @@ const updateSW = registerSW({
   },
   onRegisteredSW(_swUrl, registration) {
     // The missed case above: a worker that was ALREADY waiting before this page even loaded.
-    if (registration?.waiting) showUpdateToast(applyUpdate)
+    if (!registration?.waiting) return
+    if (!claimAutoUpdate(performance.now())) {
+      showUpdateToast(applyUpdate)
+      return
+    }
+    // Rides the EXISTING event name with a `mode` prop rather than minting `update_auto_applied`:
+    // the dashboard's funnel SQL hardcodes the names it charts, so a new name needs a migration to
+    // become visible while a new prop is queryable the moment it lands.
+    track(EVENTS.UPDATE_APPLIED, { mode: 'auto' })
+    void applyUpdate()
+    // If activation never lands (a worker that refuses to take control, `controllerchange` never
+    // firing) the session latch is already spent — so fall back to the visible prompt rather than
+    // stranding the player on the old build with no toast at all, which is strictly worse than the
+    // behaviour this replaced. The reload, when it works, kills this timer with the page.
+    window.setTimeout(() => showUpdateToast(applyUpdate), AUTO_UPDATE_FALLBACK_MS)
   },
 })
 
@@ -141,6 +176,12 @@ try {
   // unsupported — no-op
 }
 
+// ORIGIN MIGRATION, arriving half. The game answers on two origins that do not share localStorage
+// (core/originmigrate.ts explains why, and why the fix cannot be a redirect). This adopts a profile
+// handed over from the legacy address and must run BEFORE anything reads storage — applyPageChrome
+// below already reads the theme, and the first scene reads the save. No-op on a normal visit.
+adoptHandoffFromUrl()
+
 // Cloud save (dormant unless VITE_SUPABASE_* is configured): mirror every local persist to the cloud.
 // Registered here so save.ts stays backend-agnostic; no-ops entirely when signed out / unconfigured.
 setPersistListener(pushCloudSave)
@@ -148,6 +189,13 @@ setPersistListener(pushCloudSave)
 // Referral capture: stash a ?ref=CODE invite before anything can navigate it away (local-only,
 // never overwrites an earlier invite; registration happens after sign-in — core/referrals.ts).
 captureRefFromUrl()
+
+// ORIGIN MIGRATION, departing half — deliberately AFTER the capture above, so a `?ref=CODE` opened
+// on the legacy address rides along in the handoff as well as in the preserved query string. Losing
+// an invite to this exact origin split is the bug that prompted the whole migration.
+// Returns true only on the legacy host; every other origin (including the canonical one, which
+// serves this same bundle through its proxy) falls straight through.
+const leavingLegacyOrigin = migrateFromLegacyOrigin()
 
 // Paint the body background + <meta theme-color> to match the active theme at boot,
 // so the page chrome behind the canvas matches the wash (Golden Hour = unchanged).
@@ -185,7 +233,18 @@ pushSafeTop(window.innerWidth)
 // its own precached three.js chunk and stands the renderer up — or resolves inactive, in which case
 // background.ts paints the 2D backdrop exactly as before. Deciding BEFORE boot keeps every scene's
 // create() a simple synchronous branch (no mid-scene "the room just arrived" repaint case).
-void Promise.all([bootstrapCloud(), prepareStage()]).then(() => {
+// Skip the whole boot when a handoff navigation is already in flight: `location.replace()` does not
+// stop script execution, so without this the legacy origin would stand up Phaser, the 3D stage and a
+// cloud bootstrap for a page that is about to be discarded — and `app_open` would file an event for
+// a session the player never had, double-counting the very hop this migration exists to remove.
+// Expressed as a promise that never settles rather than an `if` around the block below: the guard
+// then cannot be defeated by a later edit appending a statement to an unbraced branch, and neither
+// bootstrapCloud() nor prepareStage() is even called on the way out.
+const bootReady = leavingLegacyOrigin
+  ? new Promise<unknown>(() => {}) // this page is being replaced; nothing downstream should run
+  : Promise.all([bootstrapCloud(), prepareStage()])
+
+void bootReady.then(() => {
   // Analytics starts AFTER the cloud bootstrap so app_open already carries the restored session's
   // user id — starting it earlier would file every returning signed-in player's first event as
   // anonymous and understate the signed-in cohort in exactly the funnel it exists to measure.
@@ -355,7 +414,10 @@ function showUpdateToast(onRefresh: () => void): void {
     'background:#c9930a;color:#fff;font:700 15px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif'
   btn.onclick = () => {
     bar.remove()
-    track(EVENTS.UPDATE_APPLIED)
+    // `mode` splits the two ways an update now lands: 'tap' (this button) vs 'auto' (a worker that
+    // was already waiting at boot, applied without asking). Without the split, the silent path
+    // would be indistinguishable from a sudden surge in players tapping Refresh.
+    track(EVENTS.UPDATE_APPLIED, { mode: 'tap' })
     onRefresh()
   }
   bar.append(label, btn)
