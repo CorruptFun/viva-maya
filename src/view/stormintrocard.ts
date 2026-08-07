@@ -1,7 +1,7 @@
 import Phaser from 'phaser'
 import { sfx } from '../audio/sfx'
 import { DESIGN_W, viewportCenterY } from '../config'
-import { MAX_STRIKES, START_QUOTA, START_SECONDS } from '../core/lightning'
+import { ROUND_SECONDS, START_QUOTA, START_SECONDS } from '../core/lightning'
 import { markStormIntroSeen } from '../core/save'
 import { backOut, OVERSHOOT } from './motion'
 import { addFocusScrim, panelPlate } from './platekit'
@@ -103,10 +103,14 @@ export function openStormIntroCard(scene: Phaser.Scene): Promise<StormIntroResul
     )
 
     // Read from core/lightning.ts, never typed in — see the header.
+    //
+    // ⚠️ The middle line is the one that has to land. The mode's whole shape is "the clock is your
+    // life and you can win more of it", and a player who reads only "beat the clock" will play it as
+    // survival rather than as something to feed. It is stated as the reward it is, not as a rule.
     const rules: Array<[string, string]> = [
-      ['⏱️', `Clear ${START_QUOTA} pieces in ${START_SECONDS} seconds. Then it gets faster`],
-      ['⚡', 'Miss it and lightning takes the board — a fresh one, on the spot'],
-      ['💛', `${MAX_STRIKES - 1} strikes to spare, and it pays either way. Your level is waiting`],
+      ['⏱️', `${START_SECONDS} seconds. One clock — it never resets, and when it runs out you're done`],
+      ['⚡', `Clear ${START_QUOTA} pieces to win +${ROUND_SECONDS}s. Big chains pay time too`],
+      ['💛', 'Then it asks for more. See how far you get — it pays either way'],
     ]
     rules.forEach(([icon, text], i) => {
       const y = pyTop + 300 + i * 96

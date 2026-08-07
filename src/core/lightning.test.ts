@@ -1,74 +1,127 @@
 import { describe, expect, it } from 'vitest'
 import {
+  addTime,
   CARRY_FRACTION,
+  chainBonusFor,
   chargeFor,
-  MAX_STRIKES,
+  CHAIN_TIERS,
+  CLOCK_CAP_SECONDS,
+  clockFraction,
+  credit,
+  drain,
+  endRun,
+  nextRound,
+  outOfTime,
+  QUOTA_STEP,
+  quotaFor,
+  quotaMet,
+  ROUND_SECONDS,
+  secondsLeft,
+  START_QUOTA,
+  START_SECONDS,
+  startRun,
   STORM_GOAL,
   STORM_PAY_CAP,
   STORM_PAY_FLOOR,
   stormDue,
   stormPayout,
   stormProgress,
-  MIN_SECONDS,
-  QUOTA_STEP,
-  START_QUOTA,
-  START_SECONDS,
-  chargesLeft,
-  credit,
-  nextRound,
-  quotaFor,
-  quotaMet,
-  secondsFor,
-  startRun,
-  strike,
 } from './lightning'
 
 /**
- * These pin the four design rules from the module header, not a feel. The numbers are tunable and
- * expected to move in playtesting; the RULES are what a retune must not break, so every test here is
- * written against the rule rather than against a recorded value where it possibly can be.
+ * These pin the design rules from the module header, not a feel. The numbers are tunable and expected
+ * to move in playtesting; the RULES are what a retune must not break, so every test here is written
+ * against the rule rather than against a recorded value where it possibly can be.
  */
 
-describe('lightning — the ramp', () => {
-  it('quota grows a fixed step per round and time shrinks toward a floor', () => {
-    expect(quotaFor(1)).toBe(START_QUOTA)
-    expect(quotaFor(2)).toBe(START_QUOTA + QUOTA_STEP)
-    expect(secondsFor(1)).toBe(START_SECONDS)
-    expect(secondsFor(2)).toBeLessThan(secondsFor(1))
+describe('lightning — ONE clock, and it is the one life', () => {
+  it('opens with the whole run on the clock and nothing else to lose', () => {
+    const run = startRun()
+    expect(secondsLeft(run)).toBe(START_SECONDS)
+    expect(run.over).toBe(false)
+    // There is no strike count, no lives, no second chance — if a retune adds one back it has to
+    // delete this assertion, which is the point of it being here.
+    expect(Object.keys(run).sort()).toEqual(['cleared', 'msLeft', 'over', 'round', 'wonMs'])
   })
 
-  it('the clock floors rather than reaching zero, however deep the run goes', () => {
-    // Without a floor a deep run reaches a 0-second round, which is unwinnable by construction — the
-    // run would end on the clock rather than on the player.
-    for (const round of [50, 500, 5000]) expect(secondsFor(round)).toBe(MIN_SECONDS)
-    expect(MIN_SECONDS).toBeGreaterThan(0)
-  })
-
-  it('the quota keeps growing after the clock has floored — the difficulty still moves', () => {
-    expect(quotaFor(500)).toBeGreaterThan(quotaFor(50))
-  })
-})
-
-describe('lightning — rule 1: the quota ramps on SUCCESS only', () => {
-  it('a strike does NOT advance the round', () => {
-    // THE death-spiral guard. A player who just failed a target must never be handed a harder one.
-    const run = { round: 6, cleared: 12, strikes: 0, over: false }
-    expect(strike(run).round).toBe(6)
-    expect(quotaFor(strike(run).round)).toBe(quotaFor(run.round))
-  })
-
-  it('meeting a quota is the only thing that advances the round', () => {
+  it('draining the clock is the ONLY thing that can end a run', () => {
     let run = startRun()
-    expect(run.round).toBe(1)
-    run = strike(run)
-    run = strike(run)
-    expect(run.round).toBe(1) // two failures later, still asking for the opening quota
-    run = nextRound(credit(run, quotaFor(run.round)))
-    expect(run.round).toBe(2)
+    run = drain(run, START_SECONDS * 1000)
+    expect(secondsLeft(run)).toBe(0)
+    expect(outOfTime(run)).toBe(true)
+    expect(endRun(run).over).toBe(true)
+  })
+
+  it('⚠️ draining never ends the run BY ITSELF — the tie goes to the player', () => {
+    // A cascade that empties the clock and completes the quota in the same breath is one the player
+    // earned. The scene checks the quota first and only then spends the timeout, which is only safe
+    // while `drain` leaves `over` alone.
+    const spent = drain(startRun(), START_SECONDS * 1000)
+    expect(spent.over).toBe(false)
+    expect(quotaMet(credit(spent, START_QUOTA))).toBe(true)
+    expect(nextRound(credit(spent, START_QUOTA)).over).toBe(false)
+  })
+
+  it('drains to zero rather than going negative, and reads down honestly', () => {
+    const run = drain(startRun(), START_SECONDS * 1000 * 10)
+    expect(run.msLeft).toBe(0)
+    expect(secondsLeft(run)).toBe(0)
+    // Rounded UP, so a clock with 100ms on it still reads 1 and never lies about being spent.
+    expect(secondsLeft(drain(startRun(), START_SECONDS * 1000 - 100))).toBe(1)
+  })
+
+  it('a finished run is inert — no credit, no time, no rounds', () => {
+    const over = endRun(startRun())
+    expect(credit(over, 999)).toEqual(over)
+    expect(addTime(over, 30)).toEqual(over)
+    expect(nextRound(over)).toEqual(over)
+    expect(drain(over, 9999)).toEqual(over)
+    expect(quotaMet(over)).toBe(false)
+    expect(outOfTime(over)).toBe(false) // already over, not "about to be"
   })
 })
 
-describe('lightning — rule 3: overflow carries, capped', () => {
+describe('lightning — rule 3: time CARRIES, capped', () => {
+  it('meeting a quota tops the clock up instead of resetting it', () => {
+    // THE difference from the three-lives design. Seconds you did not need are seconds you keep, so
+    // playing well visibly buys more of the mode. A reset here would delete the entire reward.
+    const spent = drain(credit(startRun(), START_QUOTA), 5000)
+    const after = nextRound(spent)
+    expect(after.msLeft).toBe(spent.msLeft + ROUND_SECONDS * 1000)
+    expect(after.msLeft).toBeGreaterThan(START_SECONDS * 1000 - 5000)
+  })
+
+  it('never banks past the cap', () => {
+    let run = startRun()
+    for (let i = 0; i < 50; i++) run = addTime(run, ROUND_SECONDS)
+    expect(secondsLeft(run)).toBe(CLOCK_CAP_SECONDS)
+    expect(clockFraction(run)).toBe(1)
+  })
+
+  it('⚠️ the cap is a BACKSTOP, not a budget — it must not bite during ordinary play', () => {
+    // Measured, the cap swallows under 2% of the seconds this mode offers. A cap set near the working
+    // range would delete the reward for exactly the players earning it. Concretely: opening clock plus
+    // a round award plus the best chain bonus has to still fit, or a good first round is already
+    // losing seconds it was promised.
+    const best = Math.max(...CHAIN_TIERS.map(t => t.seconds))
+    expect(START_SECONDS + ROUND_SECONDS + best).toBeLessThanOrEqual(CLOCK_CAP_SECONDS)
+  })
+
+  it('paying time never REDUCES the clock, whatever it is holding', () => {
+    const overfull = { ...startRun(), msLeft: (CLOCK_CAP_SECONDS + 30) * 1000 }
+    expect(addTime(overfull, 10).msLeft).toBe(overfull.msLeft)
+    expect(addTime(overfull, 10).wonMs).toBe(0)
+  })
+
+  it('counts what was BANKED, not what was offered', () => {
+    // A card claiming "+8s" for seconds the cap ate would be lying to the player about their own run.
+    let run = startRun()
+    for (let i = 0; i < 50; i++) run = addTime(run, ROUND_SECONDS)
+    expect(run.wonMs).toBe((CLOCK_CAP_SECONDS - START_SECONDS) * 1000)
+  })
+})
+
+describe('lightning — rule 3: overflow pieces carry, capped', () => {
   it('carries the surplus from a big cascade', () => {
     const run = credit(startRun(), START_QUOTA + 6)
     expect(nextRound(run).cleared).toBe(6)
@@ -77,53 +130,96 @@ describe('lightning — rule 3: overflow carries, capped', () => {
   it('caps the carry so one monster chain cannot skip a whole round', () => {
     const huge = credit(startRun(), START_QUOTA * 10)
     const after = nextRound(huge)
-    const cap = Math.floor(quotaFor(2) * CARRY_FRACTION)
-    expect(after.cleared).toBe(cap)
-    expect(after.cleared).toBeLessThan(quotaFor(2)) // never arrives already-complete
-    expect(quotaMet(after)).toBe(false)
+    expect(after.cleared).toBe(Math.floor(quotaFor(2) * CARRY_FRACTION))
+    expect(quotaMet(after)).toBe(false) // never arrives already-complete
   })
 
   it('never carries a negative when the quota was only just met', () => {
-    const exact = credit(startRun(), START_QUOTA)
-    expect(nextRound(exact).cleared).toBe(0)
+    expect(nextRound(credit(startRun(), START_QUOTA)).cleared).toBe(0)
   })
 })
 
-describe('lightning — rule 4: a strike resets the meter', () => {
-  it('zeroes progress toward the current round', () => {
-    const run = credit(startRun(), START_QUOTA - 1) // agonisingly close
-    expect(strike(run).cleared).toBe(0)
+describe('lightning — rule 1: the quota ramps on SUCCESS only', () => {
+  it('grows a fixed step per round, and only nextRound moves it', () => {
+    expect(quotaFor(1)).toBe(START_QUOTA)
+    expect(quotaFor(2)).toBe(START_QUOTA + QUOTA_STEP)
+    const run = startRun()
+    expect(drain(run, 9999).round).toBe(1)
+    expect(credit(run, 999).round).toBe(1)
+    expect(nextRound(credit(run, START_QUOTA)).round).toBe(2)
+  })
+
+  it('keeps growing without bound — the difficulty never plateaus', () => {
+    expect(quotaFor(500)).toBeGreaterThan(quotaFor(50))
   })
 })
 
-describe('lightning — strikes and the end of a run', () => {
-  it(`survives ${MAX_STRIKES - 1} strikes and ends on the ${MAX_STRIKES}th`, () => {
-    let run = startRun()
-    for (let i = 1; i < MAX_STRIKES; i++) {
-      run = strike(run)
-      expect(run.over, `strike ${i} must be survivable`).toBe(false)
+/**
+ * THE RAMP vs WHAT A HUMAN CAN PHYSICALLY DO — the guard that decides whether a run ends at all.
+ *
+ * Measured 2026-08-07 on 30 seeded hazard-free storm boards: played optimally the board yields 8.7
+ * pieces per move at an average chain of 1.93, and a move costs at minimum `SWAP_MS` + per-wave
+ * (`CLEAR_MS` + `FALL_BASE_MS` + a ~2-cell refill) from config.ts — about 0.77s of animation the
+ * player cannot skip — plus a floor on human reaction. That caps the whole mode at roughly 7.8
+ * pieces/second, forever, no matter how good anyone gets.
+ *
+ * Both directions matter and they fail in opposite ways.
+ */
+describe('lightning — the ramp must outrun the player, but not at the door', () => {
+  /** Pieces/second nobody can beat: 8.7 pieces per move ÷ ~1.12s of unavoidable move cost. */
+  const CEILING_PPS = 7.8
+  /** Pieces/second the opening round asks for — the whole clock, since round 1 is not paid for. */
+  const openingRate = START_QUOTA / START_SECONDS
+  /** Every round after the first is bought with exactly one award. */
+  const rateFor = (round: number): number => quotaFor(round) / ROUND_SECONDS
+
+  it('the opening round is comfortably enterable', () => {
+    // A storm the player is GIVEN (it fires mid-level, unasked) that opens above a jog would read as
+    // a punishment for clearing pieces. Well under half the ceiling.
+    expect(openingRate).toBeLessThan(CEILING_PPS * 0.5)
+  })
+
+  it('⚠️ the ramp crosses the physical ceiling, so a run always ends', () => {
+    // Without this the clock can be banked faster than it drains and the run has no end — which is
+    // exactly what "it drags" felt like in the three-lives build. The quota is the real executioner;
+    // the clock only carries out the sentence.
+    const wall = [...Array(20).keys()].map(i => i + 1).find(r => rateFor(r) > CEILING_PPS)
+    expect(wall).toBeDefined()
+    // And it has to arrive while the run is still a MINI-GAME. A storm interrupts a level and has to
+    // hand it back while the player still wants it.
+    expect(wall).toBeLessThanOrEqual(8)
+  })
+
+  it('leaves real room to be good at it before that wall', () => {
+    // A wall at round 2 would make the mode a coin flip with no skill expression. Chain bonuses and
+    // carried overflow push good runs past this, which is the headroom a personal best lives in.
+    const wall = [...Array(20).keys()].map(i => i + 1).find(r => rateFor(r) > CEILING_PPS) ?? 0
+    expect(wall).toBeGreaterThanOrEqual(4)
+  })
+})
+
+describe('lightning — chain bonuses ride the game’s own tier ladder', () => {
+  it('pays nothing for an ordinary chain and more for each deeper tier', () => {
+    expect(chainBonusFor(1)).toBe(0)
+    expect(chainBonusFor(3)).toBe(0)
+    const tiers = [...CHAIN_TIERS].sort((a, b) => a.cascade - b.cascade)
+    for (let i = 1; i < tiers.length; i++) {
+      expect(tiers[i].seconds).toBeGreaterThan(tiers[i - 1].seconds)
     }
-    run = strike(run)
-    expect(run.over).toBe(true)
   })
 
-  it('counts charges down to zero in step with the strikes', () => {
-    let run = startRun()
-    expect(chargesLeft(run)).toBe(MAX_STRIKES - 1)
-    run = strike(run)
-    expect(chargesLeft(run)).toBe(MAX_STRIKES - 2)
-    while (!run.over) run = strike(run)
-    expect(chargesLeft(run)).toBe(0)
+  it('matches the thresholds the game already shouts about (x4 / x6 / x8)', () => {
+    // GameScene's comboTier: x4 MEGA WIN, x6 SUPER MEGA, x8 UNREAL. The award has to land on a beat
+    // the player has been taught since level 1 rather than inventing a second definition of "big".
+    expect(CHAIN_TIERS.map(t => t.cascade).sort((a, b) => a - b)).toEqual([4, 6, 8])
+    expect(chainBonusFor(4)).toBeGreaterThan(0)
+    expect(chainBonusFor(7)).toBe(chainBonusFor(6))
+    expect(chainBonusFor(99)).toBe(chainBonusFor(8))
   })
 
-  it('a finished run is inert — further credit and strikes change nothing', () => {
-    let run = startRun()
-    while (!run.over) run = strike(run)
-    const frozen = { ...run }
-    expect(credit(run, 999)).toEqual(frozen)
-    expect(strike(run)).toEqual(frozen)
-    expect(nextRound(run)).toEqual(frozen)
-    expect(quotaMet(run)).toBe(false) // an over run is never "one more round" away
+  it('a single chain is worth less than clearing a round', () => {
+    // Otherwise the quota — the thing the whole HUD is built around — stops being the point.
+    for (const tier of CHAIN_TIERS) expect(tier.seconds).toBeLessThan(ROUND_SECONDS)
   })
 })
 
@@ -192,6 +288,12 @@ describe('storm — the payout can only ever leave you better off', () => {
     expect(stormPayout(0)).toBeGreaterThan(0)
   })
 
+  it('⚠️ the floor is not pocket change — one life makes a short run a REAL outcome', () => {
+    // With three strikes almost nobody ended on zero rounds, so the floor was theoretical. It is not
+    // any more, and a storm costs three and a half levels of clearing to earn. Roughly a level win.
+    expect(STORM_PAY_FLOOR).toBeGreaterThanOrEqual(30)
+  })
+
   it('rises with rounds survived and is hard-capped', () => {
     expect(stormPayout(3)).toBeGreaterThan(stormPayout(1))
     expect(stormPayout(999)).toBe(STORM_PAY_CAP)
@@ -222,13 +324,15 @@ describe('lightning — crediting', () => {
     expect(quotaMet(credit(short, 1))).toBe(true)
   })
 
-  it('is pure — crediting never mutates the run it was handed', () => {
+  it('is pure — nothing here ever mutates the run it was handed', () => {
     // The scene holds this state across frames; an in-place mutation would make a mid-cascade credit
-    // visible to a timeout check that had already decided the round was lost.
+    // visible to a timeout check that had already decided the run was lost.
     const run = startRun()
     credit(run, 40)
-    strike(run)
+    drain(run, 5000)
+    addTime(run, 10)
     nextRound(run)
-    expect(run).toEqual({ round: 1, cleared: 0, strikes: 0, over: false })
+    endRun(run)
+    expect(run).toEqual({ round: 1, cleared: 0, msLeft: START_SECONDS * 1000, wonMs: 0, over: false })
   })
 })

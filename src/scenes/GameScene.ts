@@ -94,11 +94,17 @@ import { attachRgbRing, type RgbRing } from '../view/rgbmarquee'
 import { addStormMeter, STORM_LIGHT, strikeBolt, type StormMeter } from '../view/lightning'
 import { openStormIntroCard } from '../view/stormintrocard'
 import {
+  addTime,
+  chainBonusFor,
   chargeFor,
-  chargesLeft,
+  clockFraction,
   credit,
+  drain,
+  endRun,
   LIGHTNING_MOVES,
-  MAX_STRIKES,
+  outOfTime,
+  ROUND_SECONDS,
+  START_SECONDS,
   STORM_GOAL,
   stormDue,
   stormPayout,
@@ -106,9 +112,8 @@ import {
   nextRound,
   quotaFor,
   quotaMet,
-  secondsFor,
+  secondsLeft,
   startRun,
-  strike as takeStrike,
   type LightningRun,
 } from '../core/lightning'
 import { SYMBOL_TINT, TEX_SIZE, ensurePieceTexture } from '../view/textures'
@@ -520,7 +525,7 @@ export class GameScene extends Phaser.Scene {
    * sites test this.
    */
   private lightning = false
-  /** The lightning run — rounds, quota progress, strikes. Pure state; see core/lightning.ts. */
+  /** The lightning run — round, quota progress and THE CLOCK. Pure state; see core/lightning.ts. */
   private run: LightningRun = startRun()
   /** ⚡ Live storm charge, mirrored from the save so the in-level meter can repaint without a reload. */
   private stormCharge = 0
@@ -530,21 +535,20 @@ export class GameScene extends Phaser.Scene {
   private returnLevel = 0
   /** One storm per level. Without it a level finishing far past the line could fire twice in a row. */
   private stormFiredThisLevel = false
-  /** Milliseconds left in the current lightning round. Driven by a PHASER timer, never setTimeout. */
-  private runMs = 0
-  /** The round clock. Paused while the storm owns the board, so a strike never eats the next round. */
+  /** The one clock's ticker. A PHASER timer, never setTimeout — see `tickLightning`. */
   private runTimer?: Phaser.Time.TimerEvent
-  /** The clock hit zero; the strike is owed but must wait for a settled board. See `tickLightning`. */
-  private strikePending = false
-  /** A strike is mid-flight. Guards the idle hook against re-entering while the storm owns the board. */
-  private strikeRunning = false
+  /** The clock hit zero; the run is owed its ending but must wait for a settled board. */
+  private overPending = false
+  /** The ending is mid-flight. Guards the idle hook against re-entering while the storm takes over. */
+  private endingRun = false
   /** True only while `resolveLoop` is actively working the board — see `tickLightning`. */
   private boardBusy = false
   private runTimeText?: Phaser.GameObjects.Text
   private runRoundText?: Phaser.GameObjects.Text
   private runMeter?: Phaser.GameObjects.Graphics
   private runMeterLabel?: Phaser.GameObjects.Text
-  private runCharges: Phaser.GameObjects.Graphics[] = []
+  /** The clock's own gauge — how full the one life is, drawn under the countdown. */
+  private runClockGauge?: Phaser.GameObjects.Graphics
 
   /**
    * Top edge of the board for THIS run. `BOARD_Y` (config) is the numbered-level seat; the endless
@@ -970,16 +974,19 @@ export class GameScene extends Phaser.Scene {
         this.board.plant({ row: 7, col: 1 }, 'diceBomb')
         this.board.plant({ row: 7, col: 2 }, 'jackpot')
       }
-      // ?lightning — LIGHTNING ROUND phase 1: fire a strike on demand so the storm can be judged
-      // before any of the timer, quota or charge machinery exists. Press L to strike again. Guarded
-      // on `state === 'idle'` for the reason swapBoard's own header gives: the sprite teardown
-      // invalidates every id the resolver is holding, so a strike mid-cascade strands the board.
+      // ?lightning — fire the storm's board-swap dress on demand, so the strike can be judged on its
+      // own without playing a run out to its end. Press L to fire it again. Guarded on
+      // `state === 'idle'` for the reason swapBoard's own header gives: the sprite teardown
+      // invalidates every id the resolver is holding, so firing mid-cascade strands the board.
+      //
+      // ⚠️ In a real run this dress is now the ENDING and nothing else — there is one life, so the
+      // storm arrives once. This hook keeps it repeatable purely so it can be looked at.
       if (params.has('lightning')) {
         const strike = (): void => {
           if (this.state !== 'idle') return
           // ⚠️ The `state = 'idle'` after the await is NOT optional — `strikeBoard` deliberately does
           // not hand input back (see its header). Without this the first strike bricks the board.
-          void this.strikeBoard('⚡ STRUCK — 2 CHARGES LEFT').then(() => {
+          void this.strikeBoard('⚡ STRUCK OUT').then(() => {
             this.state = 'idle'
           })
         }
@@ -2829,7 +2836,7 @@ export class GameScene extends Phaser.Scene {
       .setLetterSpacing(3)
     this.movesText = inkShadow(
       this.add
-        .text(BOARD_X + 85, cardY + 12, this.lightning ? String(secondsFor(1)) : String(this.movesLeft), {
+        .text(BOARD_X + 85, cardY + 12, this.lightning ? String(START_SECONDS) : String(this.movesLeft), {
           fontFamily: FONT,
           fontSize: '48px',
           fontStyle: '900',
@@ -3010,7 +3017,7 @@ export class GameScene extends Phaser.Scene {
     // table is laid with any).
     const pointsNight = this.spec.objectives.length === 0 && this.scoreTarget > 0
     const brief = this.lightning
-      ? 'Clear the quota before the clock — or the storm takes the board'
+      ? 'Clear the quota to win more time — one clock, and it never resets'
       : this.endless
         ? "Biggest score wins today's board"
         : pointsNight
@@ -4587,6 +4594,7 @@ export class GameScene extends Phaser.Scene {
       this.megaFinish(cascade) // the "in awe" release — a deep chain erupts once more as it settles
       this.fadeCombo() // E11: the cascade settled — resolve the combo readout (composes with the win peak)
       this.maybeAwardFreeSpins(cascade) // R4: a MEGA-grade chain banks free spins + flies the golden ticket
+      this.payChainBonus(cascade) // ⚡ …and in a storm the same chain buys TIME — the mode's one life
       this.dbgStage = 'end-checks'
       this.log('end-checks', 'objectivesDone', this.objectives.every(o => o.remaining <= 0), 'movesLeft', this.movesLeft)
       // Endless never "wins" on objectives (it has none) — it ends when moves run out.
@@ -4605,7 +4613,7 @@ export class GameScene extends Phaser.Scene {
         return
       }
       if (this.movesLeft <= 0) {
-        // RACE-specific: a lightning run ends on STRIKES, never on moves — its budget is nominal
+        // RACE-specific: a lightning run ends on the CLOCK, never on moves — its budget is nominal
         // (LIGHTNING_MOVES) and `finishEndless` would post a race score this mode does not have.
         if (this.lightning) return
         if (this.endless) this.finishEndless()
@@ -5886,7 +5894,7 @@ export class GameScene extends Phaser.Scene {
    * player left it; a `setTimeout` would keep draining and hand back a run that died in their pocket.
    */
   private tickLightning(): void {
-    if (!this.lightning || this.run.over || !this.runTimer) return
+    if (!this.lightning || this.run.over || !this.runTimer || this.endingRun) return
     // ⚠️ THE CLOCK ONLY RUNS WHILE THE BOARD IS THE THING ON SCREEN.
     //
     // `resolving` covers two opposite situations: a LIVE cascade, which must count (the player is
@@ -5901,10 +5909,19 @@ export class GameScene extends Phaser.Scene {
     const playerFacing =
       this.state === 'idle' || this.state === 'swapping' || (this.state === 'resolving' && this.boardBusy)
     if (!playerFacing) return
-    this.runMs = Math.max(0, this.runMs - LIGHTNING_TICK_MS)
-    // The timeout is only ever RAISED here, never acted on: a strike tears down every sprite the
-    // resolver is holding, so it has to wait for a settled board. `onLightningIdle` spends it.
-    if (this.runMs === 0) this.strikePending = true
+    this.run = drain(this.run, LIGHTNING_TICK_MS)
+    if (outOfTime(this.run)) {
+      // The ending is only ever RAISED here, never run here: the storm tears down every sprite the
+      // resolver is holding, so it has to wait for a settled board. `onLightningIdle` spends it.
+      this.overPending = true
+      // ⚠️ …and if the board is ALREADY settled, nothing else will transition to 'idle' to spend it.
+      // `onLightningIdle` is hung off the state TRANSITION, so a clock that empties while the player
+      // sits looking at a playable board would otherwise leave the run hanging at 0:00 forever,
+      // waiting for a move they have no reason to make. Under the old three-strikes build this was
+      // survivable-looking (the next move took the strike); with one life it is the end of the run,
+      // so it has to land the moment it is true.
+      if (this.state === 'idle') this.onLightningIdle()
+    }
     this.refreshLightningClock()
   }
 
@@ -5916,32 +5933,52 @@ export class GameScene extends Phaser.Scene {
    * advanced from only some of them would stall on whichever path was missed.
    */
   private onLightningIdle(): void {
-    if (!this.lightning || this.run.over || this.strikeRunning) return
+    if (!this.lightning || this.run.over || this.endingRun) return
     if (!this.runTimer) {
       // First playable frame. The clock deliberately does not start during the 64-tween deal-in —
-      // the player cannot move yet, and a round that opens already spent is a round they never had.
-      this.beginLightningRound()
+      // the player cannot move yet, and a storm that opens already spent is time they never had.
+      this.startLightningClock()
       return
     }
     // ⚠️ QUOTA BEFORE TIMEOUT, and the tie goes to the player. A cascade that both completes the
-    // quota and runs the clock out is one the player earned; taking the strike instead would punish
-    // them for the length of their own best move.
-    if (quotaMet(this.run)) this.beginLightningRound(nextRound(this.run))
-    else if (this.strikePending) void this.lightningStrike()
+    // quota and runs the clock out is one the player earned; ending the run instead would kill them
+    // for the length of their own best move. `drain` deliberately never sets `over` itself so that
+    // this ordering is the only thing that decides it.
+    if (quotaMet(this.run)) this.advanceLightningRound()
+    else if (this.overPending) void this.endStorm()
     else this.refreshLightningHud()
   }
 
-  /** Open a round: fresh clock for its number, meter reset to whatever carried in. */
-  private beginLightningRound(run: LightningRun = this.run): void {
-    this.run = run
-    this.strikePending = false
-    this.runMs = secondsFor(run.round) * 1000
+  /** Start the one clock. Called once per run, on the first playable frame. */
+  private startLightningClock(): void {
+    this.overPending = false
     this.runTimer ??= this.time.addEvent({
       delay: LIGHTNING_TICK_MS,
       loop: true,
       callback: () => this.tickLightning(),
     })
     this.refreshLightningHud()
+  }
+
+  /**
+   * A quota was met: bank the time, carry the overflow, raise the target.
+   *
+   * Loops, because one monster cascade can clear two rounds' worth in a single settle — and each
+   * round it completes is one the player earned and must be PAID for. Bounded by the fact that
+   * `nextRound` caps the carry below the next quota, so it can never advance on carry alone.
+   */
+  private advanceLightningRound(): void {
+    let banked = 0
+    while (quotaMet(this.run)) {
+      const before = this.run.msLeft
+      this.run = nextRound(this.run)
+      banked += this.run.msLeft - before
+    }
+    // A round completing is what un-owes a timeout the same settle had raised — the player beat the
+    // clock with the cascade that emptied it.
+    this.overPending = false
+    this.refreshLightningHud()
+    if (banked > 0) this.showTimeWon(banked, true)
   }
 
   /** Credit a wave's clears toward the round. Called from `playWave`, so cascades count in full. */
@@ -5951,28 +5988,47 @@ export class GameScene extends Phaser.Scene {
     this.refreshLightningHud()
   }
 
-  /** Spend a strike: the storm takes the board, and the run may end on it. */
-  private async lightningStrike(): Promise<void> {
-    if (this.strikeRunning) return
-    this.strikeRunning = true
-    this.strikePending = false
-    this.run = takeStrike(this.run)
-    const left = chargesLeft(this.run)
+  /**
+   * ⚡ A big chain pays the clock, on the spot.
+   *
+   * Separate from `creditLightning` because it fires on a different thing: that one counts every
+   * wave's pieces, this one fires once per SETTLED chain, on the same x4/x6/x8 ladder the board is
+   * already shouting about. Called from `resolveLoop` with the settled depth, so a chain is paid for
+   * how deep it actually went rather than per wave on the way down.
+   */
+  private payChainBonus(cascade: number): void {
+    if (!this.lightning || this.run.over) return
+    const secs = chainBonusFor(cascade)
+    if (secs <= 0) return
+    const before = this.run.msLeft
+    this.run = addTime(this.run, secs)
+    const banked = this.run.msLeft - before
+    // A chain that lands on a full clock is worth nothing, and saying "+8s" over a clock that did not
+    // move would be the game lying about its own reward. `addTime` already reports what it banked.
+    if (banked <= 0) return
+    // Beating the clock to zero with the very chain that pays for it counts as beating it.
+    if (this.run.msLeft > 0) this.overPending = false
     this.refreshLightningHud()
-    await this.strikeBoard(
-      this.run.over ? '⚡ STRUCK OUT' : `⚡ STRUCK — ${left} CHARGE${left === 1 ? '' : 'S'} LEFT`
-    )
-    if (this.run.over) {
-      this.strikeRunning = false
-      this.state = 'idle' // ⚠️ swapBoard does not hand input back — see its header.
-      this.finishLightning()
-      return
-    }
-    // Re-open the SAME round (rule 1: the quota never ramps on a failure) with a fresh clock, before
-    // handing input back — so the idle hook below sees a round that has already been reset.
-    this.beginLightningRound()
-    this.strikeRunning = false
-    this.state = 'idle'
+    this.showTimeWon(banked, false)
+  }
+
+  /**
+   * The clock is spent. The storm takes the board — and that is the whole run.
+   *
+   * Wears the same lightning-strike dress the old per-round strike did, because the beat is right and
+   * it now happens exactly once: the storm arriving IS the ending rather than a punctuation mark
+   * between attempts.
+   */
+  private async endStorm(): Promise<void> {
+    if (this.endingRun) return
+    this.endingRun = true
+    this.overPending = false
+    this.run = endRun(this.run)
+    this.refreshLightningHud()
+    await this.strikeBoard('⚡ STRUCK OUT')
+    this.endingRun = false
+    this.state = 'idle' // ⚠️ swapBoard does not hand input back — see its header.
+    this.finishLightning()
   }
 
   /**
@@ -5991,20 +6047,66 @@ export class GameScene extends Phaser.Scene {
     // ONE Graphics for the meter, redrawn on change rather than per frame — a Graphics is
     // re-tessellated every frame it lives, so the cheap thing is to keep exactly one and repaint it.
     this.runMeter = this.add.graphics().setDepth(6)
+    // The label states the DEAL, not just the progress: "18 / 40  →  +10s". The whole loop is that
+    // one line, so a player who never saw the teach card can still read what the bar is for — and it
+    // is why `ROUND_SECONDS` is flat, since a promise that changed every round could not be shown
+    // this plainly.
     this.runMeterLabel = this.add
       .text(x + w / 2, y - 26, '', { fontFamily: FONT, fontSize: '19px', fontStyle: '900', color: T.onBackdropInk })
       .setOrigin(0.5)
       .setLetterSpacing(2)
       .setDepth(7)
-    // Charge pips — one per SURVIVABLE strike, so the track shows the rope left rather than the
-    // strikes taken. Drawn as small discs; a spent one hollows out instead of vanishing, because a
-    // track that shrinks makes it hard to tell three-with-one-gone from two.
-    this.runCharges = []
-    const pips = MAX_STRIKES - 1
-    for (let i = 0; i < pips; i++) {
-      this.runCharges.push(this.add.graphics().setDepth(7))
-    }
+    // Where the strike pips used to be. There are no lives left to count — the clock is the life —
+    // so the same lane now shows how full THAT is: a slim gauge under the countdown, which is the
+    // only thing in the mode that can still run out.
+    this.runClockGauge = this.add.graphics().setDepth(7)
     this.refreshLightningHud()
+  }
+
+  /**
+   * ⚡ "+8s" — the receipt for time won, thrown off the clock card.
+   *
+   * The single most important piece of feedback in the rebuilt mode. Time is now the only currency,
+   * and a number that silently ticks up by 10 while the player is watching the board is a reward
+   * nobody notices they were given. `fromRound` gets the bigger, gold treatment: clearing a quota is
+   * the loop's headline beat, where a chain bonus is a bonus.
+   */
+  private showTimeWon(ms: number, fromRound: boolean): void {
+    const secs = Math.round(ms / 1000)
+    if (secs <= 0 || !this.runTimeText) return
+    const T = getTheme()
+    // Thrown into the gap BETWEEN the two rail cards (the time card ends 85px right of the clock,
+    // the round card starts ~180px further on), so it never sits on top of the number it is
+    // describing and never reaches the round card either.
+    const label = this.add
+      .text(this.runTimeText.x + 95, this.runTimeText.y, `+${secs}s`, {
+        fontFamily: FONT,
+        fontSize: fromRound ? '30px' : '24px',
+        fontStyle: '900',
+        color: fromRound ? T.goldText : T.ink,
+      })
+      .setOrigin(0, 0.5)
+      .setDepth(60)
+    inkShadow(label, 'numeral')
+    // The game already has a voice for "you just got more life back", and in this mode that is
+    // literally what happened. Reusing it means the reward needs no teaching.
+    if (fromRound) sfx.lifeRestored()
+    else sfx.starDing(0)
+    if (this.reducedMotion) {
+      this.time.delayedCall(700, () => label.destroy())
+      return
+    }
+    label.setScale(0.5)
+    this.tweens.add({ targets: label, scale: 1, duration: 260, ease: backOut(OVERSHOOT.pop) })
+    this.tweens.add({
+      targets: label,
+      y: label.y - 42,
+      alpha: 0,
+      delay: 320,
+      duration: 520,
+      ease: 'Quad.easeIn',
+      onComplete: () => label.destroy(),
+    })
   }
 
   /**
@@ -6027,11 +6129,19 @@ export class GameScene extends Phaser.Scene {
     // The record is monotonic, so re-entering this can only ever raise it.
     const { best, isRecord } = recordLightningRun(survived)
     const purse = stormPayout(survived)
+    // Seconds the player EARNED, over and above the opening grubstake — the mode's own story of the
+    // run, and the number that says "you did this" where rounds only says how far you got. Counts
+    // what was banked rather than what was offered (see `addTime`), so it can never overstate.
+    const wonSecs = Math.round(this.run.wonMs / 1000)
     // The HUD pill was built from the pre-storm balance, so it has to be told — otherwise it sits
     // there reading the old number directly beside a card announcing "+55 CHIPS". Same refresh the
     // coronation does after paying its purse.
     this.chipHud?.update(addChips(purse))
-    track(EVENTS.LIGHTNING_END, { rounds: survived, best, record: isRecord, chips: purse })
+    // `won_seconds` rides along as a new PROP rather than a new event: the dashboard's generic counts
+    // pick up props for free, where a new event name would need a migration before anything charted
+    // it. It is the tuning signal for the rebuild — if runs are dying with players having won almost
+    // nothing, the award schedule is wrong, not the clock.
+    track(EVENTS.LIGHTNING_END, { rounds: survived, best, record: isRecord, chips: purse, won_seconds: wonSecs })
 
     const T = getTheme()
     const W = DESIGN_W
@@ -6040,7 +6150,9 @@ export class GameScene extends Phaser.Scene {
     layer.add([scrimKit.hit.setInteractive(), ...scrimKit.art])
 
     const pw = W - 120
-    const ph = 480
+    // Grown from 480 to seat the "+Ns WON" line without crowding the purse — a 34px numeral and an
+    // 18px caption 22px apart were overlapping outright at the old height.
+    const ph = 516
     const py = viewportCenterY() - ph / 2
     const g = this.add.graphics()
     panelPlate(g, 60, py, pw, ph, 28)
@@ -6098,12 +6210,28 @@ export class GameScene extends Phaser.Scene {
         .setOrigin(0.5)
         .setLetterSpacing(isRecord ? 3 : 1)
     )
+    // The second number the run produced. Rounds says how far; this says how much of the storm the
+    // player bought for themselves, which is the thing the rebuild actually put in their hands.
+    // Suppressed at zero rather than printing "+0s" — a run that ended before earning anything does
+    // not need that pointed out on the way to its purse.
+    if (wonSecs > 0) {
+      layer.add(
+        this.add
+          .text(W / 2, py + 334, `+${wonSecs}s WON`, {
+            fontFamily: FONT,
+            fontSize: '18px',
+            color: T.inkMuted,
+          })
+          .setOrigin(0.5)
+          .setLetterSpacing(2)
+      )
+    }
     // The purse. Always paid — a storm is EARNED, so it can only ever leave you better off; there is
     // no branch here where the player walks away with nothing (see stormPayout's floor).
     layer.add(
       inkShadow(
         this.add
-          .text(W / 2, py + 352, `+${purse} CHIPS`, {
+          .text(W / 2, py + 374, `+${purse} CHIPS`, {
             fontFamily: FONT,
             fontSize: '34px',
             fontStyle: '900',
@@ -6132,11 +6260,34 @@ export class GameScene extends Phaser.Scene {
   /** Repaint just the countdown — the hot path, called ten times a second. */
   private refreshLightningClock(): void {
     if (!this.runTimeText) return
-    const secs = Math.ceil(this.runMs / 1000)
+    const secs = secondsLeft(this.run)
     this.runTimeText.setText(String(secs))
     // The last five seconds go warn-coloured, matching what a low move count already does on this
     // exact card — same slot, same signal, so the meaning carries over without being taught.
     this.runTimeText.setColor(secs <= 5 ? getTheme().warn : getTheme().ink)
+
+    // The gauge under it: how full the one life is, against the cap it can bank to. Drawn here
+    // rather than in `refreshLightningHud` because it moves ten times a second with the countdown,
+    // and a gauge that only repainted on a quota would sit visibly stale between rounds.
+    const g = this.runClockGauge
+    if (!g) return
+    const T = getTheme()
+    // Seated inside the 170x104 card (centred on `cardY`, so its floor is cardY + 52) with real
+    // clearance under the 48px numeral above it — at +30 the bar rode the card's own bezel.
+    const gw = 72
+    const gh = 5
+    const gx = this.runTimeText.x - gw / 2
+    const gy = this.runTimeText.y + 26
+    g.clear()
+    g.fillStyle(0x000000, 0.3)
+    g.fillRoundedRect(gx, gy, gw, gh, gh / 2)
+    const frac = clockFraction(this.run)
+    if (frac > 0) {
+      // `T.warn` is the TEXT colour (a CSS string); a Graphics fill needs the numeric channel, and
+      // rose is the theme's own alarm hue there. Same signal, right type.
+      g.fillStyle(secs <= 5 ? T.rose : T.gold, 1)
+      g.fillRoundedRect(gx, gy, Math.max(gh, gw * frac), gh, gh / 2)
+    }
   }
 
   /** Repaint the meter, the round, the charges and the clock. Called on any state change. */
@@ -6166,22 +6317,8 @@ export class GameScene extends Phaser.Scene {
       g.lineStyle(2, T.goldBezel, 0.9)
       g.strokeRoundedRect(x, y - h / 2, w, h, h / 2)
     }
-    this.runMeterLabel?.setText(`${Math.min(this.run.cleared, quota)} / ${quota}`)
-
-    const left = chargesLeft(this.run)
-    const r = 9
-    const gap = 26
-    this.runCharges.forEach((pip, i) => {
-      const px = x + w - 14 - i * gap
-      pip.clear()
-      if (i < left) {
-        pip.fillStyle(T.gold, 1)
-        pip.fillCircle(px, y - h / 2 - 20, r)
-      } else {
-        pip.lineStyle(2, T.gold, 0.5)
-        pip.strokeCircle(px, y - h / 2 - 20, r)
-      }
-    })
+    // States the deal, not just the progress — see `buildLightningHud`.
+    this.runMeterLabel?.setText(`${Math.min(this.run.cleared, quota)} / ${quota}   →   +${ROUND_SECONDS}s`)
   }
 
   /**
