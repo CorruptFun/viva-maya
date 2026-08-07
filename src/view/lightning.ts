@@ -1,5 +1,6 @@
 import Phaser from 'phaser'
 import { prefersReducedMotion, reduceFlashing } from './theme'
+import type { FloorOverlay } from './theme'
 
 /**
  * THE LIGHTNING STRIKE — the bolt that takes the board (LIGHTNING ROUND).
@@ -39,6 +40,65 @@ import { prefersReducedMotion, reduceFlashing } from './theme'
  *    Still full size: the bolt is the feedback that says why the board changed under you.
  *  - `prefersReducedMotion()` — no camera shake, and a shorter beat.
  */
+
+/** Near-white core. The bolt's own colour, deliberately outside every theme palette. */
+const CORE = 0xffffff
+/** The electric halo around it — cold blue-violet, the storm's one hue. */
+const HALO = 0x9ec6ff
+/** The storm scrim — a cold near-black the bolt can be brighter than. See the header. */
+const STORM = 0x0a0a18
+/** How dark the room goes under a strike. Enough for contrast, short of a blackout. */
+const STORM_ALPHA = 0.72
+
+/** Core half-width where the bolt enters, and where it lands. The taper is the sense of scale. */
+const CORE_TOP = 17
+const CORE_BOT = 6
+/** Halo multipliers over the core, widest first. Three layers is what reads as glow rather than outline. */
+const HALO_TIERS: ReadonlyArray<readonly [number, number]> = [
+  [3.6, 0.13],
+  [2.2, 0.22],
+  [1.45, 0.34],
+]
+
+const GLOW_TEX = 'vm-boltglow'
+
+
+/**
+ * ⚡ THE STORM'S LIGHT — the room, changed for the duration of a storm.
+ *
+ * The bolt was only ever the flash; underneath it the cabinet went on looking like a pleasant gold
+ * afternoon, which is why the mode read as an overlay rather than an event ("the ui and art just felt
+ * meh… the lightning is the coolest part, lean into that"). This is that lean.
+ *
+ * ⚠️ IT RIDES `FloorOverlay`, AND THAT IS THE WHOLE DESIGN. Act II already has a "how a room feels"
+ * layer whose stated law is *a mood modulates, it never replaces* — it may tint the light (marquee
+ * arc, rays, bokeh, motes, the audible room) and may never touch `washTop`/`washBottom`, the cards,
+ * the ink, the cushions or the page chrome, because those are the four themes' identity and a player
+ * who chose Maya's Heart did not choose to have it overwritten. A storm is a room, so it gets a room
+ * mood; every existing consumer picks it up with no new plumbing, and it stays correct across all
+ * four themes without combinatorial testing. Widening past that whitelist is how the rule dies.
+ *
+ * The palette is tied to the BOLT rather than invented separately: `moteTint` is `HALO` exactly, so
+ * the motes drifting through the room are the same light the strike is made of.
+ *
+ * ⚠️ NOT `setChill`. That is the Eye's channel and eases over `EYE_EASE_MS` (700ms) through green on
+ * its way from gold to blue — fine for a sustained sweep, useless here, and it would fight this arc
+ * for control of the same ring. The mood arc IS the designed way to colour the marquee per room.
+ */
+export const STORM_LIGHT: FloorOverlay = {
+  // A narrow cold arc, cyan-blue into violet. Narrow on purpose: the ring is the cabinet, and a
+  // rainbow up here would fight the room instead of being it.
+  rgbHueFrom: 200,
+  rgbHueSpan: 62,
+  rgbSat: 0.85,
+  rayTint: 0x4a7fd0,
+  bokehWarm: 0x6f8fd8,
+  moteTint: HALO,
+  // A bigger, darker room that has just been shut in — a fifth below the default bed, the filter
+  // pulled well down, and the longest tail in the game so the thunder has somewhere to roll. Tonal
+  // only: a mood never changes loudness, exactly as a theme never does.
+  audio: { bedRoot: 41.2, waveBias: 'sawtooth', filterWarmth: 480, reverbMix: 0.5 },
+}
 
 /**
  * ⚡ THE STORM CHARGE METER — the in-level strip that shows the storm coming.
@@ -122,27 +182,6 @@ export function addStormMeter(scene: Phaser.Scene, cx: number, cy: number, width
     },
   }
 }
-
-/** Near-white core. The bolt's own colour, deliberately outside every theme palette. */
-const CORE = 0xffffff
-/** The electric halo around it — cold blue-violet, the storm's one hue. */
-const HALO = 0x9ec6ff
-/** The storm scrim — a cold near-black the bolt can be brighter than. See the header. */
-const STORM = 0x0a0a18
-/** How dark the room goes under a strike. Enough for contrast, short of a blackout. */
-const STORM_ALPHA = 0.72
-
-/** Core half-width where the bolt enters, and where it lands. The taper is the sense of scale. */
-const CORE_TOP = 17
-const CORE_BOT = 6
-/** Halo multipliers over the core, widest first. Three layers is what reads as glow rather than outline. */
-const HALO_TIERS: ReadonlyArray<readonly [number, number]> = [
-  [3.6, 0.13],
-  [2.2, 0.22],
-  [1.45, 0.34],
-]
-
-const GLOW_TEX = 'vm-boltglow'
 
 export interface StrikeOpts {
   /** Horizontal centre the bolt falls through. */

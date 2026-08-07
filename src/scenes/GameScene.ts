@@ -91,7 +91,7 @@ import { activeFloorMood, enterFloor } from '../view/floormood'
 import { maybeFloorDoor } from '../view/floordoor'
 import { addEndlessLeaderStrip } from '../view/leaderboardpanel'
 import { attachRgbRing, type RgbRing } from '../view/rgbmarquee'
-import { addStormMeter, strikeBolt, type StormMeter } from '../view/lightning'
+import { addStormMeter, STORM_LIGHT, strikeBolt, type StormMeter } from '../view/lightning'
 import { openStormIntroCard } from '../view/stormintrocard'
 import {
   chargeFor,
@@ -914,8 +914,15 @@ export class GameScene extends Phaser.Scene {
     // one source of truth for "which room is this", and the mood below comes off the same answer.
     enterFloor(this.endless ? null : this.level)
     const mood = activeFloorMood()
+    // ⚡ A STORM IS A ROOM, so it gets a room's light — and it OUTRANKS a floor mood, because for the
+    // ninety seconds it owns the board the storm is where the player is standing. Nothing else here
+    // changes: it goes through the same whitelisted overlay, so it modulates the light and leaves
+    // every theme's own cabinet alone. Cleared on SHUTDOWN by the existing handler below, which is
+    // why the storm scene never has to remember to put the lights back.
     setFloorOverlay(
-      mood
+      this.lightning
+        ? STORM_LIGHT
+        : mood
         ? {
             rgbHueFrom: mood.rgbHueFrom,
             rgbHueSpan: mood.rgbHueSpan,
@@ -1078,6 +1085,25 @@ export class GameScene extends Phaser.Scene {
 
     addCasinoBackdrop(this, 'game')
     this.buildBackdrop()
+    // ⚡ HOUSE LIGHTS DOWN for a storm. Inserted between the backdrop and the cabinet — same depth,
+    // earlier in the display list — so it deepens the ROOM and never touches the board, which stays
+    // fully lit and legible on top of it. The cold ring and the lit cabinet then read as the only
+    // light left in a dark room, which is the whole point of the beat.
+    //
+    // ⚠️ Deliberately NOT part of `STORM_LIGHT`. A `FloorOverlay` may only tint light, never dim the
+    // wash — `washTop`/`washBottom` are the theme's identity and the modulate-never-replace rule
+    // exists to keep them so. This is a SCENE object drawn over the room instead, which leaves every
+    // theme's own tokens exactly as the player chose them.
+    if (this.lightning) {
+      const cam = this.cameras.main
+      // A COLD near-black, not a neutral one. Over warm cream tiles a grey scrim reads as mud; the
+      // blue lean is what turns them into wet slate, which is the difference between "the art got
+      // dirty" and "the lights went out". It falls on the board as well as the room, and that is the
+      // judgement call here: the symbols keep full saturation on top, so contrast goes UP.
+      this.add
+        .rectangle(cam.centerX, cam.centerY, cam.width * 2, cam.height * 2, 0x0d1c3a, 0.46)
+        .setScrollFactor(0)
+    }
     this.buildCabinet()
     this.buildHud()
     // §R3: when the level intro will play (numbered level with objectives, full motion), the deal
