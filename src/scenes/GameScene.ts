@@ -91,6 +91,7 @@ import { activeFloorMood, enterFloor } from '../view/floormood'
 import { maybeFloorDoor } from '../view/floordoor'
 import { addEndlessLeaderStrip } from '../view/leaderboardpanel'
 import { attachRgbRing, type RgbRing } from '../view/rgbmarquee'
+import { strikeBolt } from '../view/lightning'
 import { SYMBOL_TINT, TEX_SIZE, ensurePieceTexture } from '../view/textures'
 import {
   FONT,
@@ -865,6 +866,22 @@ export class GameScene extends Phaser.Scene {
         this.board.plant({ row: 6, col: 1 }, 'wildReelCol')
         this.board.plant({ row: 7, col: 1 }, 'diceBomb')
         this.board.plant({ row: 7, col: 2 }, 'jackpot')
+      }
+      // ?lightning — LIGHTNING ROUND phase 1: fire a strike on demand so the storm can be judged
+      // before any of the timer, quota or charge machinery exists. Press L to strike again. Guarded
+      // on `state === 'idle'` for the reason swapBoard's own header gives: the sprite teardown
+      // invalidates every id the resolver is holding, so a strike mid-cascade strands the board.
+      if (params.has('lightning')) {
+        const strike = (): void => {
+          if (this.state !== 'idle') return
+          // ⚠️ The `state = 'idle'` after the await is NOT optional — `strikeBoard` deliberately does
+          // not hand input back (see its header). Without this the first strike bricks the board.
+          void this.strikeBoard('⚡ STRUCK — 2 CHARGES LEFT').then(() => {
+            this.state = 'idle'
+          })
+        }
+        this.input.keyboard?.on('keydown-L', strike)
+        this.time.delayedCall(1400, strike)
       }
       // ?repro=upgrade (?repro=upgrade-col for the column reel) — the "swallowed special" case,
       // planted so it can be re-checked by hand. Column 3 holds the reel's own symbol at rows 1, 2
@@ -5623,10 +5640,43 @@ export class GameScene extends Phaser.Scene {
   }
 
   private async reshuffle(): Promise<void> {
+    await this.swapBoard('NO MOVES — RESHUFFLING', 'swirl')
+  }
+
+  /**
+   * ⚡ LIGHTNING STRIKE — the same board swap wearing the storm (LIGHTNING ROUND).
+   *
+   * Deliberately a DRESS on `swapBoard` rather than its own routine. Tearing down 64 sprites and
+   * rebuilding them against a regenerated model is the part with teeth — it has to happen inside the
+   * `shuffling` state, after the board has settled, or it races the cascade resolver — and there must
+   * be exactly one copy of it. What a strike changes is the light and the sound, not the surgery.
+   *
+   * ⚠️ LIKE `reshuffle`, THIS DOES NOT HAND INPUT BACK. It leaves `state === 'shuffling'` and the
+   * caller owns the transition to `'idle'` — which is invisible for `reshuffle` only because its one
+   * caller is `resolveLoop`, which always sets idle on its way out. Call this from anywhere else and
+   * the board is bricked: no input, no error, nothing to do but force-quit. (Caught exactly that way
+   * by the `?lightning` dev hook below.) A lightning round must either strike from inside the resolve
+   * flow or restore the state itself.
+   */
+  async strikeBoard(toastText = '⚡ STRUCK'): Promise<void> {
+    await this.swapBoard(toastText, 'lightning')
+  }
+
+  /**
+   * Swap the whole board out for a freshly generated one, wearing `dress`.
+   *
+   * ⚠️ Sets `state = 'shuffling'` FIRST. Every caller must already be on a settled board: the sprite
+   * teardown below invalidates every id the resolver holds, so running this mid-cascade strands the
+   * tween chain `t()` is awaiting.
+   */
+  private async swapBoard(toastText: string, dress: 'swirl' | 'lightning'): Promise<void> {
     this.state = 'shuffling'
-    sfx.reshuffleSwirl()
+    const storm = dress === 'lightning'
+    if (storm) sfx.thunderCrack()
+    else sfx.reshuffleSwirl()
+
     const toast = this.add
-      .text(DESIGN_W / 2, this.boardTop + BOARD_W / 2, 'NO MOVES — RESHUFFLING', {
+      .text(DESIGN_W / 2, this.boardTop + BOARD_W / 2, toastText, {
         fontFamily: FONT,
         fontSize: '36px',
         color: getTheme().ink,
@@ -5637,7 +5687,34 @@ export class GameScene extends Phaser.Scene {
       .setStroke('#ffffff', 8)
       .setShadow(0, 3, 'rgba(0,0,0,0.18)', 6, true, true)
 
-    await this.t({ targets: this.pieceLayer, alpha: 0, duration: 220 })
+    if (storm) {
+      // The bolt is NOT awaited: it flickers over the board while the pieces are already fading out,
+      // which is what makes the strike look like the cause of the swap rather than a title card for
+      // it. It cleans itself up and resolves on scene shutdown, so nothing here has to track it.
+      void strikeBolt(this, {
+        x: DESIGN_W / 2 + (Math.random() * 2 - 1) * BOARD_W * 0.18,
+        // Enters ABOVE the viewport and exits below the board. Clipping it to the board made it start
+        // in the middle of the HUD, which reads as a crack in the screen rather than as something
+        // arriving from the sky — and the storm scrim already dims the HUD, so it has somewhere dark
+        // to travel through on the way in.
+        yTop: -40,
+        yBottom: this.boardTop + BOARD_W + 40,
+        spread: BOARD_W * 0.13,
+        depth: 29, // under the toast (30), over the pieces
+      })
+      // ⚠️ The cabinet ring is deliberately NOT touched here, and this is the second thing that had
+      // to be undone rather than tuned. `setChill` walks the hue FORWARD from the theme's warm centre
+      // to 210°, which from gold passes straight through GREEN, over `EYE_EASE_MS` = 700ms. A strike
+      // is ~350ms end to end, so the ring can only ever show the transit — measured, it sat green for
+      // the whole strike and never reached blue. That is the exact failure `EYE_EASE_MS`'s own
+      // comment records from the Eye's first tuning, one surface over.
+      //
+      // Shortening the ease is not available: 700 is measured against the Eye's 2.6s sweep, and the
+      // ring is ONE clock shared by both. `setChill` is built for a sustained STATE, so if a lightning
+      // round later wants a cold cabinet it should chill for the whole round, not per strike.
+    }
+
+    await this.t({ targets: this.pieceLayer, alpha: 0, duration: storm ? 150 : 220 })
     for (const sprite of this.sprites.values()) sprite.destroy()
     this.sprites.clear()
     this.board.regenerate()
@@ -5647,7 +5724,7 @@ export class GameScene extends Phaser.Scene {
         this.createSprite(this.board.get(at)!, at)
       }
     }
-    await this.t({ targets: this.pieceLayer, alpha: 1, duration: 220 })
+    await this.t({ targets: this.pieceLayer, alpha: 1, duration: storm ? 260 : 220 })
     this.time.delayedCall(500, () => toast.destroy())
   }
 

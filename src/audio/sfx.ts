@@ -887,6 +887,52 @@ class Sfx {
     })
   }
 
+  /**
+   * THUNDER — the lightning strike that swaps the board out (LIGHTNING ROUND). `reshuffleSwirl`'s
+   * opposite number: the swirl is a soft apology for a dead board, this is the storm taking it.
+   *
+   * ⚠️ The long tail is OSCILLATOR, not noise, and that is forced rather than stylistic. Every noise
+   * one-shot reads the one shared buffer from a random offset with only `NOISE_TAIL` (0.55 s) held in
+   * reserve past it — a noise voice longer than that runs off the end and its tail SILENTLY becomes
+   * silence. So the crack is noise (0.34 s, inside the budget) and the roll underneath it is a sub
+   * drop, exactly the split `megaBoom` uses. Raising NOISE_TAIL to buy a 1.2 s noise rumble would
+   * shrink the pool of distinct start offsets that stops nine impact voices sounding identical.
+   *
+   * Two cracks, not one: real thunder arrives as a strike and its slap-back, and a single burst reads
+   * as a door slamming. Mute-gated via voice(); every node self-stops. NOT motion-gated — audio is
+   * never "motion" (§E8).
+   */
+  thunderCrack(): void {
+    this.duckBed(0.34, 1.4) // the room inhales hard and stays down under the roll
+    this.voice((ctx, t, out) => {
+      // The CRACK — wideband noise through a filter falling from bright to chest, sharp attack.
+      const crack = (at: number, peak: number, dur: number): void => {
+        const src = this.noiseSource(ctx)
+        const lp = ctx.createBiquadFilter()
+        lp.type = 'lowpass'
+        lp.frequency.setValueAtTime(7200, at)
+        lp.frequency.exponentialRampToValueAtTime(220, at + dur)
+        const hp = ctx.createBiquadFilter()
+        hp.type = 'highpass'
+        hp.frequency.value = 140
+        const g = ctx.createGain()
+        g.gain.setValueAtTime(peak, at)
+        g.gain.exponentialRampToValueAtTime(0.0001, at + dur)
+        src.connect(hp).connect(lp).connect(g).connect(out)
+        this.noiseStart(src, at)
+        src.stop(at + dur + 0.02)
+      }
+      crack(t, 0.52, 0.34)
+      crack(t + 0.11, 0.3, 0.3) // the slap-back off the far wall
+
+      // The ROLL — a long sub drop under both cracks. Oscillators, so no buffer ceiling applies.
+      this.tone(ctx, out, t, { type: 'sine', freq: 132, endFreq: 26, peak: 0.5, dur: 1.15, attack: 0.004 })
+      this.tone(ctx, out, t, { type: 'triangle', freq: this.snap(96), endFreq: this.snap(38), peak: 0.16, dur: 0.85, attack: 0.01 })
+      // A brief electric fizz on top — the ozone crackle, gone before the roll takes over.
+      this.tone(ctx, out, t, { type: 'sawtooth', freq: 2600, endFreq: 900, peak: 0.05, dur: 0.16, attack: 0.002 })
+    })
+  }
+
   // ------------------------------------------------- per-beat partners (§E3 B14)
   // Subtle one-shot VOICES that give each new visual beat an audible partner. Every one routes
   // through voice() (→ dry bus + shared reverb room), key-locks pitched material via snap(), pans
