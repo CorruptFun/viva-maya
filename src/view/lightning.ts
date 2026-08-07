@@ -40,6 +40,89 @@ import { prefersReducedMotion, reduceFlashing } from './theme'
  *  - `prefersReducedMotion()` — no camera shake, and a shorter beat.
  */
 
+/**
+ * ⚡ THE STORM CHARGE METER — the in-level strip that shows the storm coming.
+ *
+ * ⚠️ THIS WAS MISSING FROM THE FIRST SHIP, and its absence broke the design's own argument. The
+ * storm beats a standalone mode because it COMES TO YOU — but a reward you cannot see coming has no
+ * anticipation, which is most of what makes an earned bonus feel earned rather than random. The
+ * charge accumulated silently and the storm simply ambushed the player. `stormProgress` existed and
+ * was tested, with a docstring calling it "what the in-level charge bar draws"; the bar was never
+ * built. (Reported by the owner within an hour of release: "I'm playing levels right now and I don't
+ * see it anywhere.")
+ *
+ * Seated in the 50px band between the level brief (ends y1000) and the JACKPOT label (starts y1050),
+ * so the two charge meters read as one slot console — which is exactly what they are. It deliberately
+ * mirrors `addJackpotMeter`'s shape (label + recessed track) rather than inventing a second visual
+ * language for the same idea, but carries the storm's cold palette so the two are never confused.
+ *
+ * Read-only display: `SaveData.stormCharge` is the source of truth, and the caller repaints after a
+ * bump. One Graphics, repainted on change — never per frame.
+ */
+export interface StormMeter {
+  container: Phaser.GameObjects.Container
+  /** Fill to `progress` (0..1). Near-full breathes, to telegraph that the board is about to go. */
+  update(progress: number): void
+}
+
+export function addStormMeter(scene: Phaser.Scene, cx: number, cy: number, width = 300): StormMeter {
+  const reduced = prefersReducedMotion()
+  const container = scene.add.container(cx, cy)
+  const h = 16
+  const label = scene.add
+    .text(-width / 2, 0, '⚡ STORM', { fontFamily: 'sans-serif', fontSize: '13px', fontStyle: 'bold', color: '#9ec6ff' })
+    .setOrigin(0, 0.5)
+  // ⚠️ The gutter is MEASURED off the rendered label, not a guessed constant. A hard-coded 58 was
+  // narrower than "⚡ STORM" actually renders (67px), so the track was drawn straight over the final
+  // letter. Emoji and bold weights make text width genuinely hard to predict — ask the object.
+  const trackX = -width / 2 + label.width + 10
+  const trackW = width / 2 - trackX
+  const g = scene.add.graphics()
+  container.add([g, label])
+
+  let breathing: Phaser.Tweens.Tween | null = null
+
+  const paint = (p: number): void => {
+    const frac = Math.max(0, Math.min(1, p))
+    g.clear()
+    // Recessed track — dark, so the fill has something to be brighter than. Same reasoning as the
+    // strike's storm scrim, one surface over.
+    g.fillStyle(0x0a0a18, 0.55)
+    g.fillRoundedRect(trackX, -h / 2, trackW, h, h / 2)
+    if (frac > 0) {
+      const fw = Math.max(h, trackW * frac)
+      g.fillStyle(frac >= 1 ? CORE : HALO, frac >= 1 ? 1 : 0.9)
+      g.fillRoundedRect(trackX, -h / 2, fw, h, h / 2)
+    }
+    g.lineStyle(1.5, HALO, 0.5)
+    g.strokeRoundedRect(trackX, -h / 2, trackW, h, h / 2)
+  }
+
+  return {
+    container,
+    update(progress: number): void {
+      paint(progress)
+      // Past three-quarters the strip breathes — the tell that the next good cascade might take the
+      // board. Started once and left running; a full meter is spent within a move or two anyway.
+      const near = progress >= 0.75
+      if (near && !breathing && !reduced && !reduceFlashing()) {
+        breathing = scene.tweens.add({
+          targets: container,
+          alpha: 0.55,
+          duration: 620,
+          yoyo: true,
+          repeat: -1,
+          ease: 'Sine.easeInOut',
+        })
+      } else if (!near && breathing) {
+        breathing.stop()
+        breathing = null
+        container.setAlpha(1)
+      }
+    },
+  }
+}
+
 /** Near-white core. The bolt's own colour, deliberately outside every theme palette. */
 const CORE = 0xffffff
 /** The electric halo around it — cold blue-violet, the storm's one hue. */

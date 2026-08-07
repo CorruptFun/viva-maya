@@ -91,7 +91,7 @@ import { activeFloorMood, enterFloor } from '../view/floormood'
 import { maybeFloorDoor } from '../view/floordoor'
 import { addEndlessLeaderStrip } from '../view/leaderboardpanel'
 import { attachRgbRing, type RgbRing } from '../view/rgbmarquee'
-import { strikeBolt } from '../view/lightning'
+import { addStormMeter, strikeBolt, type StormMeter } from '../view/lightning'
 import { openStormIntroCard } from '../view/stormintrocard'
 import {
   chargeFor,
@@ -102,6 +102,7 @@ import {
   STORM_GOAL,
   stormDue,
   stormPayout,
+  stormProgress,
   nextRound,
   quotaFor,
   quotaMet,
@@ -523,6 +524,8 @@ export class GameScene extends Phaser.Scene {
   private run: LightningRun = startRun()
   /** ⚡ Live storm charge, mirrored from the save so the in-level meter can repaint without a reload. */
   private stormCharge = 0
+  /** The in-level storm charge strip. Numbered levels only — endless never charges it. */
+  private stormHud?: StormMeter
   /** The numbered level a storm was entered FROM, restored via the level snapshot on the way out. */
   private returnLevel = 0
   /** One storm per level. Without it a level finishing far past the line could fire twice in a row. */
@@ -2748,6 +2751,13 @@ export class GameScene extends Phaser.Scene {
       this.jackpotHud = addJackpotMeter(this, DESIGN_W / 2, 1086, { width: 300 })
       this.jackpotHud.container.setDepth(42)
       this.jackpotHud.update(loadSave().jackpotMeter, false)
+      // ⚡ THE STORM CHARGE, in the 50px band between the level brief (ends 1000) and the JACKPOT
+      // label (starts 1050) — the two charge meters stacked into one slot console, which is what they
+      // are. Measured, not guessed at: a 16px track centred here clears the brief by 11px and the
+      // jackpot label by 17px. Re-derive it if anything in this column moves.
+      this.stormHud = addStormMeter(this, DESIGN_W / 2, 1022)
+      this.stormHud.container.setDepth(42)
+      this.stormHud.update(stormProgress(this.stormCharge))
     }
     // DEV-only: open the wheel on demand so an automated check can spin it repeatedly. Stripped in prod.
     if (import.meta.env.DEV) {
@@ -4738,7 +4748,12 @@ export class GameScene extends Phaser.Scene {
     this.creditLightning(wave.cleared.length)
     // ⚡ …and on a NUMBERED level the same clears charge the storm meter, normalised against this
     // level's own move budget so the cadence is identical at L5 and L250 (see `chargeFor`).
-    if (!this.endless) this.stormCharge = chargeStorm(chargeFor(wave.cleared.length, this.spec.moves))
+    if (!this.endless) {
+      this.stormCharge = chargeStorm(chargeFor(wave.cleared.length, this.spec.moves))
+      // Repaint on the bump, not per frame — the player watches it climb as the cascade lands, which
+      // is the whole anticipation this meter exists to create.
+      this.stormHud?.update(stormProgress(this.stormCharge))
+    }
     if (cascade >= 2) {
       this.showCombo(cascade)
       // Cascade rumble routed through the single trauma authority (crisp + decayed, never muddy).
