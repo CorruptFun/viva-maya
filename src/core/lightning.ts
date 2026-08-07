@@ -44,17 +44,30 @@
 export const START_QUOTA = 25
 /** Added to the quota each time a round is MET. */
 export const QUOTA_STEP = 5
-/** Seconds the first round allows — roughly 4–6 moves at an unhurried pace. */
-export const START_SECONDS = 25
-/** Seconds removed each time a round is MET. */
-export const SECONDS_STEP = 1
-/** The clock never drops below this, however deep the run goes. */
-export const MIN_SECONDS = 12
 /**
- * Strikes that end the run. Three are survivable and the fourth is fatal (owner call, 2026-08-07) —
- * a readable amount of rope, and a bad early strike never reads as fatal.
+ * Seconds the first round allows.
+ *
+ * ⚠️ RETUNED 2026-08-07 off the first real play session. The original 25s opening, −1s step and 12s
+ * floor made a run "go longer than it should" and feel lacklustre: the ramp was so gentle that the
+ * early rounds were never in doubt, so the tension arrived around round 10 or not at all. A shorter
+ * opening with a −2s step puts real pressure on by round 3. Guarded by the ramp tests, which assert
+ * the SHAPE (monotonic down, floors above zero) rather than these numbers.
  */
-export const MAX_STRIKES = 4
+export const START_SECONDS = 20
+/** Seconds removed each time a round is MET. */
+export const SECONDS_STEP = 2
+/** The clock never drops below this, however deep the run goes. */
+export const MIN_SECONDS = 10
+/**
+ * Strikes that end the run — TWO survivable, the third fatal (owner call, 2026-08-07: "less life for
+ * sure maybe 3 tries").
+ *
+ * Was 4, which combined with the gentle clock to make runs sprawl. Three attempts keeps a storm
+ * inside a minute or two, which is what a bonus INTERRUPTING a level should be — it has to hand the
+ * level back while the player still wants it. Still enough rope that one bad opening board is not
+ * the whole run.
+ */
+export const MAX_STRIKES = 3
 /** Overflow carried into the next round, as a fraction of THAT round's quota. See rule 3. */
 export const CARRY_FRACTION = 0.5
 /**
@@ -124,7 +137,13 @@ export function stormProgress(charge: number): number {
  * scale, a level win pays ~30–60 and one jackpot wheel spin averages ~114.
  */
 export const STORM_PAY_FLOOR = 15
-export const STORM_PAY_PER_ROUND = 20
+/**
+ * ⚠️ Raised 20 → 30 alongside the 2026-08-07 ramp retune, and the two must move TOGETHER. A harder
+ * clock and one fewer strike mean fewer rounds survived per storm, so holding the per-round rate flat
+ * would have quietly cut the whole feature's payout at the same moment it got harder — the worst
+ * possible pairing. Round 3 now reaches the cap, which is where a good run should land.
+ */
+export const STORM_PAY_PER_ROUND = 30
 export const STORM_PAY_CAP = 120
 
 export function stormPayout(rounds: number): number {

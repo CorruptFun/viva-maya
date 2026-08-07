@@ -538,6 +538,8 @@ export class GameScene extends Phaser.Scene {
   private strikePending = false
   /** A strike is mid-flight. Guards the idle hook against re-entering while the storm owns the board. */
   private strikeRunning = false
+  /** True only while `resolveLoop` is actively working the board — see `tickLightning`. */
+  private boardBusy = false
   private runTimeText?: Phaser.GameObjects.Text
   private runRoundText?: Phaser.GameObjects.Text
   private runMeter?: Phaser.GameObjects.Graphics
@@ -4521,6 +4523,11 @@ export class GameScene extends Phaser.Scene {
   /** Play waves until the board settles, then check for win/lose. */
   private async resolveLoop(first: ClearWave | null): Promise<void> {
     this.state = 'resolving'
+    // ⚡ Tells a LIVE cascade apart from a board that has been BORROWED — both sit in 'resolving',
+    // and the storm clock must count the first and pause the second. True only while this loop is
+    // actually working the board; every overlay (Plinko, the wheel, the deal) is opened on the way
+    // OUT of here, so by the time one is on screen this has already gone false via the finally.
+    this.boardBusy = true
     try {
       let cascade = 0
       let wave = first
@@ -4618,6 +4625,12 @@ export class GameScene extends Phaser.Scene {
         this.scheduleAutoplay()
         this.armHint()
       }
+    } finally {
+      // ⚡ Must be a `finally`, not a line at the bottom of the try: this loop leaves through half a
+      // dozen early `return`s (win, lose, Plinko, the storm, a booked swap, a teach card), and every
+      // one of them is a point where the board stops being ours. A missed exit would leave the storm
+      // clock draining behind an overlay — which is exactly the bug this flag exists to fix.
+      this.boardBusy = false
     }
   }
 
@@ -5848,9 +5861,20 @@ export class GameScene extends Phaser.Scene {
    */
   private tickLightning(): void {
     if (!this.lightning || this.run.over || !this.runTimer) return
-    // The storm owns the board during a swap, and the player cannot act — charging them for it would
-    // make every strike cost part of the round it hands them.
-    if (this.state === 'shuffling') return
+    // ⚠️ THE CLOCK ONLY RUNS WHILE THE BOARD IS THE THING ON SCREEN.
+    //
+    // `resolving` covers two opposite situations: a LIVE cascade, which must count (the player is
+    // earning, and the tension of watching a chain race the clock is the mode), and a board that has
+    // been BORROWED by an overlay — Plinko, the jackpot wheel, the deal — which must not. `boardBusy`
+    // is what tells them apart: every overlay is opened on resolveLoop's way OUT, so it is already
+    // false by the time one is on screen.
+    //
+    // Reported from real play: a Plinko drop mid-storm returned the player to "only a couple of
+    // seconds" left. Pausing on 'shuffling' alone was never enough — that only ever covered the
+    // storm's own board swap.
+    const playerFacing =
+      this.state === 'idle' || this.state === 'swapping' || (this.state === 'resolving' && this.boardBusy)
+    if (!playerFacing) return
     this.runMs = Math.max(0, this.runMs - LIGHTNING_TICK_MS)
     // The timeout is only ever RAISED here, never acted on: a strike tears down every sprite the
     // resolver is holding, so it has to wait for a settled board. `onLightningIdle` spends it.

@@ -976,22 +976,30 @@ function drawRocket(
   tri([15, -18], [15, 18], [45, 0], P.roseDeep)
   tri([16, -16], [16, 16], [42, 0], P.rose)
   tri([18, -9], [16, 3], [34, -3], 0xffd9d9, 0.55)
-  // Payload window (symbol colour) mid-body.
+  /**
+   * Payload porthole mid-body — a LIT LENS, not a second symbol.
+   *
+   * ⚠️ It used to hold an 18px copy of the symbol emoji, which meant this piece drew its symbol
+   * TWICE: here, and again in `stampSymbolBadge`'s 34px corner disc. At cell size the two read as two
+   * little tiles stacked in one square, i.e. as a RENDERING BUG rather than as a powerful piece —
+   * reported from real play as "it's overlapping symbols again". The badge is the one that stays: it
+   * is nearly twice the size, sits on a dark contrast ring, and exists for the colourblind/low-vision
+   * read, so deleting it to keep the prettier one would trade an a11y feature for decoration.
+   *
+   * The porthole now glows in the symbol's own tint, which keeps the colour cue this position was
+   * carrying without repeating the glyph.
+   */
   const win = pt(-8, 0)
   g.fillStyle(P.navy, 1)
   g.fillCircle(win.x, win.y, 15)
-  g.fillStyle(P.cardFill, 1)
+  g.fillStyle(tint, 0.85)
   g.fillCircle(win.x, win.y, 11)
+  g.fillStyle(0xffffff, 0.5)
+  g.fillCircle(win.x - 3, win.y - 3, 5) // specular glint, so the lens reads as glass
   dt.draw(g)
   g.destroy()
 
-  // Symbol emoji inside the window — the colour accent (÷SS: the symbol texture is supersampled).
-  const base = scene.make.image({ x: 0, y: 0, key: symbol }, false)
-  base.setScale(0.18 / SS)
-  dt.draw(base, win.x, win.y)
-  base.destroy()
-
-  // Top pass: tint ring around the window + bold firing arrows on both ends of the axis.
+  // Top pass: tint ring around the porthole + bold firing arrows on both ends of the axis.
   const g2 = scene.make.graphics({ x: 0, y: 0 }, false)
   g2.lineStyle(3, tint, 1)
   g2.strokeCircle(win.x, win.y, 13)
