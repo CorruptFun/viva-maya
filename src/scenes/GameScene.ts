@@ -92,6 +92,19 @@ import { maybeFloorDoor } from '../view/floordoor'
 import { addEndlessLeaderStrip } from '../view/leaderboardpanel'
 import { attachRgbRing, type RgbRing } from '../view/rgbmarquee'
 import { strikeBolt } from '../view/lightning'
+import {
+  chargesLeft,
+  credit,
+  LIGHTNING_MOVES,
+  MAX_STRIKES,
+  nextRound,
+  quotaFor,
+  quotaMet,
+  secondsFor,
+  startRun,
+  strike as takeStrike,
+  type LightningRun,
+} from '../core/lightning'
 import { SYMBOL_TINT, TEX_SIZE, ensurePieceTexture } from '../view/textures'
 import {
   FONT,
@@ -192,6 +205,12 @@ const DEAL_IN_DEADLINE_MS = 6000
  * shorter and the buffer stops covering the deep chains that made it necessary.
  */
 const BUFFERED_SWAP_MS = 1600
+
+/**
+ * ⚡ Lightning round clock resolution. 100ms rather than 1000 so the quota meter and the countdown
+ * move smoothly and a round can expire on a fraction instead of snapping a whole second early.
+ */
+const LIGHTNING_TICK_MS = 100
 /** C5 · remaining-count at/under which a collect objective rings its one "almost there" tone. */
 const OBJECTIVE_NEAR = 1
 
@@ -325,6 +344,10 @@ export class GameScene extends Phaser.Scene {
     // back, and a resume that silently skipped one of them would look like data loss the next time
     // that particular path was the last thing the player did.
     if (next === 'idle') this.snapshotLevel()
+    // ⚡ The lightning round turns over on the same transition, and for the same reason: it is the one
+    // moment the board is settled, and a strike fired mid-cascade would tear down sprites the
+    // resolver is still holding.
+    if (next === 'idle' && this.lightning) this.onLightningIdle()
   }
   /** §E4 latch — a jackpot chip detonated this round, so the Heartbloom hero win fires even below 3-star. */
   private jackpotOccurred = false
@@ -486,6 +509,28 @@ export class GameScene extends Phaser.Scene {
   private overlaySettle: (() => void) | null = null
 
   /**
+   * ⚡ LIGHTNING ROUND — true for the storm variant. Implies `endless` (see `init`); everything that
+   * asks "is this not a numbered level?" already reads `endless`, and only the genuinely RACE-specific
+   * sites test this.
+   */
+  private lightning = false
+  /** The lightning run — rounds, quota progress, strikes. Pure state; see core/lightning.ts. */
+  private run: LightningRun = startRun()
+  /** Milliseconds left in the current lightning round. Driven by a PHASER timer, never setTimeout. */
+  private runMs = 0
+  /** The round clock. Paused while the storm owns the board, so a strike never eats the next round. */
+  private runTimer?: Phaser.Time.TimerEvent
+  /** The clock hit zero; the strike is owed but must wait for a settled board. See `tickLightning`. */
+  private strikePending = false
+  /** A strike is mid-flight. Guards the idle hook against re-entering while the storm owns the board. */
+  private strikeRunning = false
+  private runTimeText?: Phaser.GameObjects.Text
+  private runRoundText?: Phaser.GameObjects.Text
+  private runMeter?: Phaser.GameObjects.Graphics
+  private runMeterLabel?: Phaser.GameObjects.Text
+  private runCharges: Phaser.GameObjects.Graphics[] = []
+
+  /**
    * Top edge of the board for THIS run. `BOARD_Y` (config) is the numbered-level seat; the endless
    * race sits `ENDLESS_BOARD_DROP` lower so the TODAY'S LEADER strip can live ABOVE the board rather
    * than below it — you race against a number, and it belongs in your eyeline, not past the bottom
@@ -606,10 +651,20 @@ export class GameScene extends Phaser.Scene {
     super('game')
   }
 
-  init(data: { level?: number; endless?: boolean }): void {
+  init(data: { level?: number; endless?: boolean; lightning?: boolean }): void {
+    // ⚡ LIGHTNING ROUND rides the ENDLESS shape deliberately: `this.endless` stays true for it, so
+    // every "is this not a numbered level?" branch — hearts, objectives, boosts, hazard intros, the
+    // level-resume snapshot, the power bar — already answers correctly without touching 40-odd call
+    // sites. What lightning is NOT is the daily RACE, so the handful of genuinely race-specific
+    // sites (the salted board seed, the leader strip, the score post, the cheat zone, ENDLESS_START)
+    // each carry an explicit `&& !this.lightning`. That split is the whole integration.
+    this.lightning =
+      data?.lightning === true ||
+      (import.meta.env.DEV && data?.level == null && new URLSearchParams(location.search).has('lightninground'))
     // The ?endless URL fallback only applies when no explicit level was routed in — otherwise
     // it would stick across scene.start('game', {level}) (the SPA URL never changes in DEV).
     this.endless =
+      this.lightning ||
       data?.endless === true ||
       (import.meta.env.DEV && data?.level == null && new URLSearchParams(location.search).has('endless'))
     this.level = Math.max(1, data?.level ?? 1)
@@ -649,7 +704,19 @@ export class GameScene extends Phaser.Scene {
     // Endless: a fixed-budget score attack on TODAY's shared, seeded board (same for
     // everyone). No objectives, no boosts (planting specials would change the board and
     // break the race's fairness). Otherwise: the numbered level with a fresh random board.
-    if (this.endless) {
+    if (this.lightning) {
+      // ⚡ A RANDOM board, and that is load-bearing rather than incidental. Seeding from the day's
+      // salted race board would put a second mode on the one seed the whole score-defence story rests
+      // on, for no gain — and it would make a free-spin reward from this mode farmable off a
+      // deterministic board, which iron rule 3 exists to forbid. No hazards either: the clock is the
+      // pressure, and stacking hazards under it is two pressures at once.
+      //
+      // The move budget is nominal. Moves are NOT the constraint here, so it is set far past anything
+      // a run can spend and `resolveLoop`'s out-of-moves arm is guarded off for lightning besides.
+      this.spec = { level: 0, moves: LIGHTNING_MOVES, symbolCount: SYMBOLS.length, objectives: [] }
+      this.board = new Board(ROWS, COLS, SYMBOLS.length, mulberry32((Math.random() * 2 ** 31) | 0))
+      this.run = startRun()
+    } else if (this.endless) {
       // Capture the day key ONCE so the run is scored against the board it was seeded from,
       // even if the midnight handover (core/endless.ts RACE_TZ) passes mid-run.
       this.endlessDayKey = dayKey()
@@ -697,7 +764,8 @@ export class GameScene extends Phaser.Scene {
     // attempt either: it is the SAME attempt continuing, and counting it again would inflate every
     // per-level start count by however often that level gets interrupted — which is exactly the
     // levels that take longest, so the distortion would land where the analysis matters most.
-    if (this.endless) track(EVENTS.ENDLESS_START, { day: this.endlessDayKey })
+    // RACE-specific: a lightning run is not a race entry and must not appear in the race funnel.
+    if (this.endless && !this.lightning) track(EVENTS.ENDLESS_START, { day: this.endlessDayKey })
     else if (!this.resumed) track(EVENTS.LEVEL_START, { level: this.level, moves: this.spec.moves })
     else track(EVENTS.LEVEL_RESUME, { level: this.level, moves: this.movesLeft })
     this.score = this.resumed ? this.score : 0
@@ -2608,7 +2676,7 @@ export class GameScene extends Phaser.Scene {
       84,
       TAB_W,
       56,
-      this.endless ? 'ENDLESS' : `LEVEL ${this.level}`,
+      this.lightning ? 'LIGHTNING' : this.endless ? 'ENDLESS' : `LEVEL ${this.level}`,
       this.endless ? ROSE_PILL : GOLD_PILL,
       () => {}
     )
@@ -2686,13 +2754,21 @@ export class GameScene extends Phaser.Scene {
         shadowDist: 5,
       })
     )
+    // ⚡ Lightning takes this card for the CLOCK. It is the same slot for the same reason — this card
+    // has always held "the budget you are spending", and in a lightning round that is seconds rather
+    // than moves. `movesText` is still built either way so every existing writer to it stays valid;
+    // under lightning it simply renders the countdown instead.
     this.add
-      .text(BOARD_X + 85, cardY - 28, 'MOVES', { fontFamily: FONT, fontSize: '18px', color: T.inkMuted })
+      .text(BOARD_X + 85, cardY - 28, this.lightning ? 'TIME' : 'MOVES', {
+        fontFamily: FONT,
+        fontSize: '18px',
+        color: T.inkMuted,
+      })
       .setOrigin(0.5)
       .setLetterSpacing(3)
     this.movesText = inkShadow(
       this.add
-        .text(BOARD_X + 85, cardY + 12, String(this.movesLeft), {
+        .text(BOARD_X + 85, cardY + 12, this.lightning ? String(secondsFor(1)) : String(this.movesLeft), {
           fontFamily: FONT,
           fontSize: '48px',
           fontStyle: '900',
@@ -2701,6 +2777,7 @@ export class GameScene extends Phaser.Scene {
         .setOrigin(0.5),
       'numeral'
     )
+    if (this.lightning) this.runTimeText = this.movesText
 
     if (this.endless) {
       // No objectives in endless — show today's target (BEST to beat) instead.
@@ -2717,20 +2794,25 @@ export class GameScene extends Phaser.Scene {
         })
       )
       this.add
-        .text(bx + cardW / 2, cardY - 28, "TODAY'S BEST", { fontFamily: FONT, fontSize: '18px', color: T.inkMuted })
+        .text(bx + cardW / 2, cardY - 28, this.lightning ? 'ROUND' : "TODAY'S BEST", {
+          fontFamily: FONT,
+          fontSize: '18px',
+          color: T.inkMuted,
+        })
         .setOrigin(0.5)
         .setLetterSpacing(2)
-      inkShadow(
+      const bigText = inkShadow(
         this.add
-          .text(bx + cardW / 2, cardY + 12, this.endlessBest > 0 ? this.endlessBest.toLocaleString() : '—', {
-            fontFamily: FONT,
-            fontSize: '40px',
-            fontStyle: '900',
-            color: T.goldText,
-          })
+          .text(
+            bx + cardW / 2,
+            cardY + 12,
+            this.lightning ? '1' : this.endlessBest > 0 ? this.endlessBest.toLocaleString() : '—',
+            { fontFamily: FONT, fontSize: '40px', fontStyle: '900', color: T.goldText }
+          )
           .setOrigin(0.5),
         'numeral'
       )
+      if (this.lightning) this.runRoundText = bigText
       // Free-spins counter parks in the rail gap between the moves card and this one.
       this.freeSpinSpot = { x: (BOARD_X + 170 + bx) / 2, y: cardY }
     } else {
@@ -2866,9 +2948,11 @@ export class GameScene extends Phaser.Scene {
     // points night there are none to name. The plaque is the whole brief (plus the felt, when the
     // table is laid with any).
     const pointsNight = this.spec.objectives.length === 0 && this.scoreTarget > 0
-    const brief = this.endless
-      ? "Biggest score wins today's board"
-      : pointsNight
+    const brief = this.lightning
+      ? 'Clear the quota before the clock — or the storm takes the board'
+      : this.endless
+        ? "Biggest score wins today's board"
+        : pointsNight
         ? this.coatsTotal > 0
           ? `No goals tonight — sweep the ${coat} and beat the house minimum`
           : 'No goals tonight — just beat the house minimum'
@@ -2926,7 +3010,12 @@ export class GameScene extends Phaser.Scene {
     // and your own SCORE, not past the bottom of the grid where reading it means looking away from
     // the game. The board drops by ENDLESS_BOARD_DROP to open the lane. Endless only: numbered
     // levels spend this space on the jackpot meter and the helper shelf, and have no board to lead.
-    if (this.endless) this.add.existing(addEndlessLeaderStrip(this, DESIGN_W / 2, ENDLESS_STRIP_Y, loadSave()))
+    // RACE-specific: the leader strip is the day's standings. Lightning takes the same lane for its
+    // quota meter and charge track (see `buildLightningHud`), so these two can never both be seated.
+    if (this.endless && !this.lightning) {
+      this.add.existing(addEndlessLeaderStrip(this, DESIGN_W / 2, ENDLESS_STRIP_Y, loadSave()))
+    }
+    if (this.lightning) this.buildLightningHud()
   }
 
   // ------------------------------------------------------- in-level helpers (power bar)
@@ -3918,7 +4007,10 @@ export class GameScene extends Phaser.Scene {
    * while a previous one is still cascading.
    */
   private cheatStripLive(worldY: number): boolean {
-    return this.endless && this.state === 'idle' && !this.introOpen && worldY >= CHEAT_ZONE_TOP
+    // RACE-specific: the cheat is a deliberate feature of the RACE (core/cheat.ts), where its score
+    // is clamped and posts honestly. Lightning posts nothing, so a free "mega win" here would just be
+    // a quota the player never had to clear — it would delete the mode's only mechanic.
+    return this.endless && !this.lightning && this.state === 'idle' && !this.introOpen && worldY >= CHEAT_ZONE_TOP
   }
 
   /**
@@ -4447,6 +4539,9 @@ export class GameScene extends Phaser.Scene {
         return
       }
       if (this.movesLeft <= 0) {
+        // RACE-specific: a lightning run ends on STRIKES, never on moves — its budget is nominal
+        // (LIGHTNING_MOVES) and `finishEndless` would post a race score this mode does not have.
+        if (this.lightning) return
         if (this.endless) this.finishEndless()
         // §G2 — the genre's highest-leverage 30 seconds: offer to keep THIS board alive before the
         // level is called. `offerContinue` returns true when it took the screen (it then owns the
@@ -4609,6 +4704,9 @@ export class GameScene extends Phaser.Scene {
     const wavePoints = wave.cleared.length * POINTS_PER_PIECE * (this.spec.hot ? cascade + 1 : cascade)
     this.chainPoints += wavePoints // the stake a Plinko drop multiplies, if this chain earns one
     this.addScore(wavePoints)
+    // ⚡ The lightning quota counts PIECES, not moves — so a cascade credits every wave it sets off,
+    // which is what makes chasing a big chain the right way to beat the clock rather than a luxury.
+    this.creditLightning(wave.cleared.length)
     if (cascade >= 2) {
       this.showCombo(cascade)
       // Cascade rumble routed through the single trauma authority (crisp + decayed, never muddy).
@@ -5660,6 +5758,265 @@ export class GameScene extends Phaser.Scene {
    */
   async strikeBoard(toastText = '⚡ STRUCK'): Promise<void> {
     await this.swapBoard(toastText, 'lightning')
+  }
+
+  // ------------------------------------------------- ⚡ the lightning round
+
+  /**
+   * The round clock's tick. 100ms rather than 1s so the meter and the countdown can move smoothly and
+   * a round can end on a fraction rather than snapping.
+   *
+   * ⚠️ A PHASER timer drives this, never `window.setTimeout`. `core/apploop.ts` stops the loop while
+   * the page is hidden, so a Phaser timer pauses with it and a backgrounded round resumes where the
+   * player left it; a `setTimeout` would keep draining and hand back a run that died in their pocket.
+   */
+  private tickLightning(): void {
+    if (!this.lightning || this.run.over || !this.runTimer) return
+    // The storm owns the board during a swap, and the player cannot act — charging them for it would
+    // make every strike cost part of the round it hands them.
+    if (this.state === 'shuffling') return
+    this.runMs = Math.max(0, this.runMs - LIGHTNING_TICK_MS)
+    // The timeout is only ever RAISED here, never acted on: a strike tears down every sprite the
+    // resolver is holding, so it has to wait for a settled board. `onLightningIdle` spends it.
+    if (this.runMs === 0) this.strikePending = true
+    this.refreshLightningClock()
+  }
+
+  /**
+   * The board just became playable — the one moment a round may safely turn over.
+   *
+   * Hung off the `state → 'idle'` transition for exactly the reason `snapshotLevel` is: resolveLoop,
+   * its catch, the deal-in and every overlay's handback all pass through there, and a round that
+   * advanced from only some of them would stall on whichever path was missed.
+   */
+  private onLightningIdle(): void {
+    if (!this.lightning || this.run.over || this.strikeRunning) return
+    if (!this.runTimer) {
+      // First playable frame. The clock deliberately does not start during the 64-tween deal-in —
+      // the player cannot move yet, and a round that opens already spent is a round they never had.
+      this.beginLightningRound()
+      return
+    }
+    // ⚠️ QUOTA BEFORE TIMEOUT, and the tie goes to the player. A cascade that both completes the
+    // quota and runs the clock out is one the player earned; taking the strike instead would punish
+    // them for the length of their own best move.
+    if (quotaMet(this.run)) this.beginLightningRound(nextRound(this.run))
+    else if (this.strikePending) void this.lightningStrike()
+    else this.refreshLightningHud()
+  }
+
+  /** Open a round: fresh clock for its number, meter reset to whatever carried in. */
+  private beginLightningRound(run: LightningRun = this.run): void {
+    this.run = run
+    this.strikePending = false
+    this.runMs = secondsFor(run.round) * 1000
+    this.runTimer ??= this.time.addEvent({
+      delay: LIGHTNING_TICK_MS,
+      loop: true,
+      callback: () => this.tickLightning(),
+    })
+    this.refreshLightningHud()
+  }
+
+  /** Credit a wave's clears toward the round. Called from `playWave`, so cascades count in full. */
+  private creditLightning(pieces: number): void {
+    if (!this.lightning || this.run.over) return
+    this.run = credit(this.run, pieces)
+    this.refreshLightningHud()
+  }
+
+  /** Spend a strike: the storm takes the board, and the run may end on it. */
+  private async lightningStrike(): Promise<void> {
+    if (this.strikeRunning) return
+    this.strikeRunning = true
+    this.strikePending = false
+    this.run = takeStrike(this.run)
+    const left = chargesLeft(this.run)
+    this.refreshLightningHud()
+    await this.strikeBoard(
+      this.run.over ? '⚡ STRUCK OUT' : `⚡ STRUCK — ${left} CHARGE${left === 1 ? '' : 'S'} LEFT`
+    )
+    if (this.run.over) {
+      this.strikeRunning = false
+      this.state = 'idle' // ⚠️ swapBoard does not hand input back — see its header.
+      this.finishLightning()
+      return
+    }
+    // Re-open the SAME round (rule 1: the quota never ramps on a failure) with a fresh clock, before
+    // handing input back — so the idle hook below sees a round that has already been reset.
+    this.beginLightningRound()
+    this.strikeRunning = false
+    this.state = 'idle'
+  }
+
+  /**
+   * The quota meter and the charge track, seated in the lane ABOVE the board.
+   *
+   * That lane is the one endless already opens with `ENDLESS_BOARD_DROP` for its TODAY'S LEADER strip
+   * — already budgeted, already at the right height, and already the place this game puts "the thing
+   * you are racing". The two can never collide: the strip is guarded off for lightning at its own
+   * call site, and lightning is the only other thing seated here.
+   */
+  private buildLightningHud(): void {
+    const T = getTheme()
+    const w = BOARD_W
+    const x = BOARD_X
+    const y = ENDLESS_STRIP_Y
+    // ONE Graphics for the meter, redrawn on change rather than per frame — a Graphics is
+    // re-tessellated every frame it lives, so the cheap thing is to keep exactly one and repaint it.
+    this.runMeter = this.add.graphics().setDepth(6)
+    this.runMeterLabel = this.add
+      .text(x + w / 2, y - 26, '', { fontFamily: FONT, fontSize: '19px', fontStyle: '900', color: T.onBackdropInk })
+      .setOrigin(0.5)
+      .setLetterSpacing(2)
+      .setDepth(7)
+    // Charge pips — one per SURVIVABLE strike, so the track shows the rope left rather than the
+    // strikes taken. Drawn as small discs; a spent one hollows out instead of vanishing, because a
+    // track that shrinks makes it hard to tell three-with-one-gone from two.
+    this.runCharges = []
+    const pips = MAX_STRIKES - 1
+    for (let i = 0; i < pips; i++) {
+      this.runCharges.push(this.add.graphics().setDepth(7))
+    }
+    this.refreshLightningHud()
+  }
+
+  /**
+   * The run is over. Stop the clock, say how far they got, offer another go.
+   *
+   * Rounds SURVIVED is `round - 1`: `round` is the one they were on when the storm took them, and
+   * they never finished it. Reporting the round they died on would inflate every run by one and make
+   * "my best is 7" mean something different from what the meter said at the time.
+   *
+   * ⚠️ Nothing is spent here — no heart, no chips, no progress (design rule 2). The mode is free to
+   * enter and infinitely repeatable, which is the whole reason the clock is allowed to be tense.
+   */
+  private finishLightning(): void {
+    this.runTimer?.remove()
+    this.runTimer = undefined
+    const survived = Math.max(0, this.run.round - 1)
+    this.log('finishLightning', 'rounds', survived)
+    track(EVENTS.LIGHTNING_END, { rounds: survived, quota: quotaFor(this.run.round) })
+
+    const T = getTheme()
+    const W = DESIGN_W
+    const layer = this.add.container(0, 0).setDepth(70)
+    const scrimKit = addFocusScrim(this, { alpha: 0.74 })
+    layer.add([scrimKit.hit.setInteractive(), ...scrimKit.art])
+
+    const pw = W - 120
+    const ph = 480
+    const py = viewportCenterY() - ph / 2
+    const g = this.add.graphics()
+    panelPlate(g, 60, py, pw, ph, 28)
+    layer.add(g)
+    layer.add(this.add.rectangle(W / 2, py + ph / 2, pw, ph, 0xffffff, 0.001).setInteractive())
+
+    layer.add(this.add.text(W / 2, py + 76, '⚡', { fontSize: '64px' }).setOrigin(0.5))
+    layer.add(
+      inkShadow(
+        this.add
+          .text(W / 2, py + 152, 'STRUCK OUT', {
+            fontFamily: FONT,
+            fontSize: '44px',
+            fontStyle: '900',
+            color: T.goldText,
+          })
+          .setOrigin(0.5)
+          .setLetterSpacing(2),
+        'title'
+      )
+    )
+    layer.add(
+      inkShadow(
+        this.add
+          .text(W / 2, py + 216, String(survived), {
+            fontFamily: FONT,
+            fontSize: '68px',
+            fontStyle: '900',
+            color: T.ink,
+          })
+          .setOrigin(0.5),
+        'numeral'
+      )
+    )
+    layer.add(
+      this.add
+        .text(W / 2, py + 264, survived === 1 ? 'ROUND SURVIVED' : 'ROUNDS SURVIVED', {
+          fontFamily: FONT,
+          fontSize: '19px',
+          color: T.inkMuted,
+        })
+        .setOrigin(0.5)
+        .setLetterSpacing(3)
+    )
+    layer.add(
+      addPillButton(this, W / 2, py + ph - 108, 300, 64, 'GO AGAIN', GOLD_PILL, () =>
+        this.scene.restart({ lightning: true })
+      )
+    )
+    layer.add(
+      addPillButton(this, W / 2, py + ph - 40, 220, 50, 'HOME', GHOST_PILL, () => startScene(this, 'home'))
+    )
+    if (!this.reducedMotion) {
+      layer.setAlpha(0)
+      this.tweens.add({ targets: layer, alpha: 1, duration: 220, ease: 'Sine.easeOut' })
+    }
+  }
+
+  /** Repaint just the countdown — the hot path, called ten times a second. */
+  private refreshLightningClock(): void {
+    if (!this.runTimeText) return
+    const secs = Math.ceil(this.runMs / 1000)
+    this.runTimeText.setText(String(secs))
+    // The last five seconds go warn-coloured, matching what a low move count already does on this
+    // exact card — same slot, same signal, so the meaning carries over without being taught.
+    this.runTimeText.setColor(secs <= 5 ? getTheme().warn : getTheme().ink)
+  }
+
+  /** Repaint the meter, the round, the charges and the clock. Called on any state change. */
+  private refreshLightningHud(): void {
+    if (!this.lightning) return
+    const T = getTheme()
+    this.refreshLightningClock()
+    this.runRoundText?.setText(String(this.run.round))
+
+    const quota = quotaFor(this.run.round)
+    const frac = Math.max(0, Math.min(1, this.run.cleared / quota))
+    const w = BOARD_W
+    const x = BOARD_X
+    const y = ENDLESS_STRIP_Y
+    const h = 22
+    const g = this.runMeter
+    if (g) {
+      g.clear()
+      g.fillStyle(0x000000, 0.35)
+      g.fillRoundedRect(x, y - h / 2, w, h, h / 2)
+      if (frac > 0) {
+        // Never narrower than its own cap radius, or the first sliver renders as a lopsided blob.
+        const fw = Math.max(h, w * frac)
+        g.fillStyle(frac >= 1 ? T.gold : T.rose, 1)
+        g.fillRoundedRect(x, y - h / 2, fw, h, h / 2)
+      }
+      g.lineStyle(2, T.goldBezel, 0.9)
+      g.strokeRoundedRect(x, y - h / 2, w, h, h / 2)
+    }
+    this.runMeterLabel?.setText(`${Math.min(this.run.cleared, quota)} / ${quota}`)
+
+    const left = chargesLeft(this.run)
+    const r = 9
+    const gap = 26
+    this.runCharges.forEach((pip, i) => {
+      const px = x + w - 14 - i * gap
+      pip.clear()
+      if (i < left) {
+        pip.fillStyle(T.gold, 1)
+        pip.fillCircle(px, y - h / 2 - 20, r)
+      } else {
+        pip.lineStyle(2, T.gold, 0.5)
+        pip.strokeCircle(px, y - h / 2 - 20, r)
+      }
+    })
   }
 
   /**

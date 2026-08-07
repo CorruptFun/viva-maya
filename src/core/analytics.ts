@@ -265,6 +265,13 @@ export const EVENTS = {
    * there* and *everybody looked and declined*, two problems with opposite fixes.
    */
   SLOTS_INTRO: 'slots_intro',
+  /**
+   * ⚡ A LIGHTNING ROUND ended, carrying the rounds survived. The whole tuning signal for the mode:
+   * the ramp in core/lightning.ts is a first guess, and the DISTRIBUTION of this number is what says
+   * whether the opening quota is a warm-up or a wall. A run bunched at 0–1 means round 1 is already
+   * too tight; a long tail means the clock floor arrives too late to end anything.
+   */
+  LIGHTNING_END: 'lightning_end',
 
   /**
    * THE MARKER (Slice 0) — the opt-in side bet on numbered levels 151+. `offered` → `taken` is the
