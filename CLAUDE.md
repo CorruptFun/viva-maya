@@ -284,6 +284,27 @@ Live: <https://corruptfun.github.io/viva-maya/>
   authorises (or a worker that installs but never takes control reload-loops the
   app with no way out) and die with the tab (or the next launch can't update). A
   blocked-storage or unusable-clock read falls back to the toast, never guesses.
+- **`this.sprites` is keyed by piece id and `createSprite` OVERWRITES — so a piece
+  drawn twice is a permanent ghost, and the board hides it.** Two sprites for one
+  id means the first is stranded: still parented to `pieceLayer`, still drawn, and
+  no longer reachable from the map — so the clear path (retires by id),
+  `swapBoard`'s teardown and `resyncSprites` (walks the model) are all blind to it.
+  ⚠️ **It is invisible at rest.** A duplicated board sits perfectly superimposed and
+  looks correct; the corruption only shows as the live set clears and the dead set
+  stays put, so it reads as "symbols stacking up" *after* a big clear — worst with a
+  jackpot chip or a deep cascade, because those expose the most orphans at once —
+  and it cures on restart, which is the signature of a view-only leak over an intact
+  model. Shipped twice now: `fireMegaWin`'s `board.plant` (46ebe47, four ghosts per
+  fire) and then **every resumed level** dealing its board twice, because
+  `buildPieceLayer` defers the deal on `wantsLevelIntro()` while `showGoalCallout`
+  re-derived that condition and missed its `!resumed` term. `createSprite` now
+  retires the outgoing sprite for an id, `showGoalCallout` *asks* `wantsLevelIntro()`
+  rather than re-deriving it, and both reapers work off `pieceLayer` — the thing the
+  player actually sees — instead of the map or the model. The invariant to check
+  after anything that mints pieces: **live piece-sprites in `pieceLayer` == 64 ==
+  `sprites.size`**, with none unmapped. `resyncSprites` reports the orphans it reaps
+  on `resume_stall`'s `orphans` prop, so a recurrence surfaces without a player
+  having to notice it by eye.
 - **`GameScene.t()` must always settle, or the board is bricked.** `resolveLoop`
   awaits a chain of tween promises; one that never resolves pins `state` at
   `resolving` **forever** — no input, no error, no recovery but a force-quit.

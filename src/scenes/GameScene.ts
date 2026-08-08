@@ -1738,11 +1738,30 @@ export class GameScene extends Phaser.Scene {
    */
   /** `onSettled` fires once the intro has finished and the board is playable (§G7 teach-card cue). */
   private showGoalCallout(onSettled: () => void = () => {}): void {
-    if (this.endless || this.objectives.length === 0) {
+    // ⚠️ THE INTRO GATE IS `wantsLevelIntro()`, ASKED — never re-derived here.
+    //
+    // `playLevelIntro` does not just show a card: it OWNS THE BOARD DEAL for the case where
+    // `buildPieceLayer` deferred it, and `buildPieceLayer` defers on exactly `wantsLevelIntro()`.
+    // That made this one predicate living in two places, and it drifted the moment mid-level resume
+    // shipped: `wantsLevelIntro()` grew a `!resumed` term (a resume must not announce goals the
+    // player is already half-way through) and this routine did not. So on every resumed level
+    // `buildPieceLayer` dealt 64 sprites AND the intro dealt 64 more on top.
+    //
+    // `createSprite` keys `sprites` by piece id and overwrites, so the FIRST 64 were stranded —
+    // still drawn, no longer reachable from the map, therefore invisible to the clear path, to
+    // swapBoard's teardown and to resyncSprites alike. At rest the two sets sat superimposed and
+    // looked fine; the corruption only became visible as the live set cleared and the dead set
+    // stayed put. Player-reported as symbols stacking up, worst with a jackpot chip or a lot of
+    // explosions (the biggest clears expose the most orphans at once) and cured by restarting the
+    // app — which is exactly the signature of a view-only leak over an intact model.
+    //
+    // A resume gets no card at all, which is why `resumed` short-circuits rather than falling
+    // through to the reduced-motion card below.
+    if (this.endless || this.objectives.length === 0 || this.resumed) {
       onSettled()
       return
     }
-    if (!this.reducedMotion) {
+    if (this.wantsLevelIntro()) {
       this.playLevelIntro(onSettled)
       return
     }
@@ -3551,6 +3570,26 @@ export class GameScene extends Phaser.Scene {
   }
 
   private createSprite(piece: Piece, at: Coord, dropCells = 0): Phaser.GameObjects.Sprite {
+    // ⚠️ RETIRE any sprite already standing for this id before minting another.
+    //
+    // `sprites` is keyed by piece id and the `set` below OVERWRITES, so a second createSprite for a
+    // piece that already has one strands the first: still parented to `pieceLayer`, still drawn, and
+    // no longer reachable from the map — which means nothing can ever find it again. The clear path
+    // retires by id, swapBoard's teardown walks the map, resyncSprites walks the model; an unmapped
+    // sprite is invisible to all three, so it is a symbol stacked on the board for the rest of the
+    // level. That is precisely how the double-deal on resumed levels (see `showGoalCallout`) turned
+    // one wrong branch into 64 permanent ghosts.
+    //
+    // This is the same rule `fireMegaWin` already applies around `board.plant` and `runWaveEffects`
+    // around `wave.transformed` — hoisted here so it holds for EVERY caller rather than for the two
+    // that remembered. Deleting the id first is also what keeps the armed-halo upkeep in `update()`
+    // honest, since it reaps any entry whose id no longer has a live sprite.
+    const stranded = this.sprites.get(piece.id)
+    if (stranded) {
+      this.log('createSprite REPLACING live sprite', piece.id, this.dbgStage)
+      this.sprites.delete(piece.id)
+      stranded.destroy()
+    }
     const pos = this.cellToXY(at)
     const y = pos.y - dropCells * CELL
     const sprite = this.add.sprite(pos.x, y, ensurePieceTexture(this, piece))
@@ -5816,7 +5855,6 @@ export class GameScene extends Phaser.Scene {
    */
   private resyncSprites(): void {
     this.tweenStranded = false
-    track(EVENTS.RESUME_STALL, { stage: 'tween_stranded', boardState: this.state, level: this.level })
     for (let r = 0; r < ROWS; r++) {
       for (let c = 0; c < COLS; c++) {
         const at = { row: r, col: c }
@@ -5829,6 +5867,25 @@ export class GameScene extends Phaser.Scene {
         sprite.setPosition(to.x, to.y).setScale(PIECE_SCALE).setAlpha(1).setAngle(0)
       }
     }
+    // ⚠️ …and REAP what the model cannot see. The loop above only ever repositions sprites the map
+    // still holds, so on its own this routine could not undo a stacked board however "total" its own
+    // docstring claimed to be. Any Sprite left in `pieceLayer` that the map does not hold is by
+    // definition an orphan: this only runs where no tween promise is outstanding (a stranded resolve,
+    // or the deal-in deadline), so there is no such thing as a legitimately mid-pop sprite here — a
+    // popping sprite is dropped from the map and destroyed inside the same awaited promise.
+    const mapped = new Set(this.sprites.values())
+    let orphans = 0
+    for (const obj of [...this.pieceLayer.list]) {
+      if (obj.type !== 'Sprite' || obj === this.ring) continue
+      if (mapped.has(obj as Phaser.GameObjects.Sprite)) continue
+      ;(obj as Phaser.GameObjects.Sprite).destroy()
+      orphans++
+    }
+    // Carried on the existing event rather than a new name: the dashboard charts these by a
+    // hardcoded list, so a new event would be silently invisible until a migration shipped, where a
+    // new prop rides along for free. If this ever reads above zero in the wild, a board somewhere is
+    // stacking again and nobody has had to notice it by eye first.
+    track(EVENTS.RESUME_STALL, { stage: 'tween_stranded', boardState: this.state, level: this.level, orphans })
   }
 
   private async reshuffle(): Promise<void> {
@@ -6374,7 +6431,16 @@ export class GameScene extends Phaser.Scene {
     }
 
     await this.t({ targets: this.pieceLayer, alpha: 0, duration: storm ? 150 : 220 })
-    for (const sprite of this.sprites.values()) sprite.destroy()
+    // ⚠️ Reap by LAYER, not by the map. A sprite the map has lost track of (see `createSprite`) is
+    // not in `this.sprites.values()`, so a map-only teardown carried it straight across the swap and
+    // onto the fresh board — which made a reshuffle and a storm strike, the two moments that replace
+    // every piece on the table, the one thing that could NOT clear a stacked board. `pieceLayer` is
+    // what the player is actually looking at, so it is the honest source for "destroy all of this".
+    // The selection ring lives here too and must survive; the halos and clamps are Images, reaped by
+    // their own upkeep in `update()`.
+    for (const obj of [...this.pieceLayer.list]) {
+      if (obj.type === 'Sprite' && obj !== this.ring) (obj as Phaser.GameObjects.Sprite).destroy()
+    }
     this.sprites.clear()
     this.board.regenerate()
     for (let r = 0; r < ROWS; r++) {
