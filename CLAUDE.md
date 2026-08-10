@@ -350,6 +350,27 @@ Live: <https://corruptfun.github.io/viva-maya/>
   stores on the spot for the same reason. When a new per-level cost lands, the
   test to apply is "did the player pay for this, and would a reload make them pay
   twice or not at all?"
+  ⚠️ **The same trap catches anything that LEAVES the level mid-resolve, and the
+  storm walked straight into it.** `maybeStorm` fires at the tail of `resolveLoop`
+  with `state` still `'resolving'`, so the scene is torn down before the idle
+  handoff can store the board — and `spendMove` has already dropped the previous
+  snapshot. The player came back to a level rebuilt from scratch: full moves, zero
+  objectives, marker stake silently paid for nothing (player-reported 2026-08-09,
+  "reset my level"). It now calls `snapshotLevel(true)` before leaving; that
+  `settled` flag is **not** a general escape hatch — it asserts the cascade has
+  provably finished, and passing it mid-cascade is exactly the rewind button the
+  idle rule exists to prevent.
+  ⚠️ And the guard is **two-directional**: `snapshotLevel` refuses to WRITE in
+  endless, so `spendMove`'s `clearLevelSnapshot()` needed the same `!endless`
+  test or endless and the storm could only ever DESTROY a numbered level's board,
+  never restore one — which is how the first swap inside a storm (and any daily
+  race played over a level left mid-play) ate it. Write and clear must agree on
+  who owns the slot.
+  ⚠️ Separately, the storm now **defers** rather than taking a board the player is
+  about to finish with (`STORM_MIN_MOVES_LEFT` / `STORM_MIN_COLLECTS_LEFT` in
+  `core/lightning.ts`). Deferring is free — the charge is only spent past the
+  guard and persists in the save — so the storm arrives a board or a level later
+  instead of on the move that would have won the level.
 
 ## Run it
 

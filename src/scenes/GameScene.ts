@@ -106,6 +106,8 @@ import {
   ROUND_SECONDS,
   START_SECONDS,
   STORM_GOAL,
+  STORM_MIN_COLLECTS_LEFT,
+  STORM_MIN_MOVES_LEFT,
   stormDue,
   stormPayout,
   stormProgress,
@@ -1598,11 +1600,22 @@ export class GameScene extends Phaser.Scene {
    * Store the level in progress. Call ONLY on a settled board — see core/levelresume.ts on why that
    * is the property that keeps this from being a rewind button.
    */
-  private snapshotLevel(): void {
+  /**
+   * `settled` asserts "the board is quiet RIGHT NOW even though `state` has not said so yet", for
+   * the one caller that is about to tear the scene down before the idle handoff can run.
+   *
+   * ⚠️ It is not a general escape hatch, and the rule it bends is the one that keeps resume honest:
+   * a snapshot taken MID-CASCADE would be a rewind button, letting a force-quit re-roll a refill or
+   * a Plinko drop. Pass it only where the cascade has provably finished — see `maybeStorm`, which
+   * runs at the tail of `resolveLoop` after the win/lose checks, after any reshuffle and after
+   * Plinko, i.e. at exactly the position the `state = 'idle'` line a few statements later would have
+   * captured anyway.
+   */
+  private snapshotLevel(settled = false): void {
     // Called from the `state` setter, which runs during create() before the board exists and on the
     // lives-gate path where it never will — so every field it reads is checked, not assumed.
     if (this.endless || !this.board || !this.spec) return
-    if (this.state !== 'idle' || this.movesLeft <= 0) return
+    if ((!settled && this.state !== 'idle') || this.movesLeft <= 0) return
     saveLevelSnapshot({
       level: this.level,
       moves: this.movesLeft,
@@ -4575,7 +4588,15 @@ export class GameScene extends Phaser.Scene {
     // The board is re-stored on the idle handoff at the end of resolveLoop. Being inside `spendMove`
     // rather than in `trySwap` is what makes that true of EVERY way a move can be spent, for the
     // same reason this method exists at all.
-    clearLevelSnapshot()
+    //
+    // ⚠️ …BUT ONLY FOR THE MODE THAT OWNS THE SNAPSHOT. `snapshotLevel` refuses to WRITE in endless,
+    // so an unguarded clear here made endless and the storm able only to DESTROY a numbered level's
+    // saved board, never to restore one — and both spend moves through this method. That is how a
+    // storm ate the level it interrupted: it fires mid-resolve, leaves before the idle handoff can
+    // re-store the board, and then the player's first swap inside the storm wiped what was left.
+    // The daily race did the same to any level left mid-play. The snapshot is single-slot and keyed
+    // to a numbered level; endless has no business touching it in either direction.
+    if (!this.endless) clearLevelSnapshot()
     this.movesText.setText(String(this.movesLeft))
     if (this.movesLeft <= 5) this.movesText.setColor(getTheme().warn)
     // Getting tight — start a gentle looping pulse on the moves number (once, no stacking). Gated
@@ -5925,11 +5946,38 @@ export class GameScene extends Phaser.Scene {
   private maybeStorm(): boolean {
     if (this.endless || this.stormFiredThisLevel || this.introOpen) return false
     if (!stormDue(this.stormCharge)) return false
+    // ⚠️ NEVER TAKE A BOARD THE PLAYER IS ABOUT TO FINISH WITH.
+    //
+    // Player-reported: "had one move left to clear the level and went lightning on my last move and
+    // then reset my level". The reset was the bug below; the TIMING is its own problem and survives
+    // the fix — being pulled off the board at the exact moment a level is won or lost is the most
+    // expensive interruption the game has, and it lands on the beat the player has been working
+    // toward. This is the same argument the Plinko slot below already makes for not firing at level
+    // end, applied to the run-up rather than the finish.
+    //
+    // `movesLeft <= 3` is the game's OWN definition of the endgame — it is where the moves counter
+    // starts pulsing (see `spendMove`) — so this borrows a threshold the player has already been
+    // taught to read rather than inventing one. Nothing is lost by waiting: the charge is not spent
+    // here (the guard returns first), `stormFiredThisLevel` stays false, and `stormCharge` persists
+    // in the save, so the storm simply arrives on the next settled board or the next level.
+    if (this.movesLeft <= STORM_MIN_MOVES_LEFT) return false
+    // …and the same for a level that is one collect from done, which is the case actually reported:
+    // "one move left to clear" was about the objective, not the move budget.
+    const collectsLeft = this.objectives.reduce((n, o) => n + Math.max(0, o.remaining), 0)
+    if (collectsLeft > 0 && collectsLeft <= STORM_MIN_COLLECTS_LEFT) return false
     // Spend the charge BEFORE leaving, so a crash between here and the storm cannot leave a meter
     // that re-fires on every settled board forever. Overflow rolls forward rather than evaporating.
     this.stormFiredThisLevel = true
     this.stormCharge = spendStormCharge(STORM_GOAL)
     track(EVENTS.STORM_TRIGGERED, { level: this.level })
+    // ⚠️ SAVE THE BOARD WE ARE ABOUT TO TAKE. This runs inside `resolveLoop`, so `state` is still
+    // 'resolving' and the `state = 'idle'` handoff that normally stores the level NEVER RUNS — the
+    // scene is torn down first. Without this the storm returned the player to a level rebuilt from
+    // scratch: moves back to full, objectives back to zero, and any marker stake or bought moves
+    // silently paid for nothing. `settled` is safe here for the reason its own docstring gives —
+    // the cascade is over, the reshuffle and Plinko checks are behind us, and this is the very
+    // position the idle line would have captured.
+    this.snapshotLevel(true)
     // Teach it once, on the way in, before the board is taken — the pattern hazard and special
     // intros already use. It owns the handoff into the storm.
     if (!loadSave().seenStormIntro) {

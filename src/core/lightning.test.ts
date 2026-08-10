@@ -21,6 +21,8 @@ import {
   START_SECONDS,
   startRun,
   STORM_GOAL,
+  STORM_MIN_COLLECTS_LEFT,
+  STORM_MIN_MOVES_LEFT,
   STORM_PAY_CAP,
   STORM_PAY_FLOOR,
   stormDue,
@@ -277,6 +279,24 @@ describe('storm — the charge is normalised across the whole level curve', () =
     expect(stormProgress(0)).toBe(0)
     expect(stormProgress(STORM_GOAL / 2)).toBeCloseTo(0.5, 5)
     expect(stormProgress(STORM_GOAL * 3)).toBe(1) // clamped, never past full
+  })
+})
+
+describe('storm — it defers rather than taking a board about to be finished', () => {
+  it('both thresholds are live — a zero here silently deletes the guard', () => {
+    // Player-reported: the storm fired on the move that would have cleared the level. The guard only
+    // exists at all if these are positive; a "simplification" to 0 would read as harmless and restore
+    // the exact complaint.
+    expect(STORM_MIN_MOVES_LEFT).toBeGreaterThan(0)
+    expect(STORM_MIN_COLLECTS_LEFT).toBeGreaterThan(0)
+  })
+
+  it('stays narrow enough that the storm is not starved', () => {
+    // Deferring costs the player nothing (the charge is not spent and rolls to the next board), but a
+    // wide window would push every storm to the next level and make an EARNED bonus feel withheld.
+    // A level's budget runs ~30-80 moves, so the endgame window has to stay a sliver of it.
+    expect(STORM_MIN_MOVES_LEFT).toBeLessThanOrEqual(5)
+    expect(STORM_MIN_COLLECTS_LEFT).toBeLessThanOrEqual(5)
   })
 })
 

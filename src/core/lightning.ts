@@ -173,6 +173,27 @@ export function chargeFor(piecesCleared: number, levelMoves: number): number {
   return piecesCleared / (PIECES_PER_MOVE * levelMoves)
 }
 
+/**
+ * The storm defers rather than taking a board the player is about to finish with.
+ *
+ * Player-reported 2026-08-09: "had one move left to clear the level and went lightning on my last
+ * move and then reset my level". Losing the level was a separate bug (the storm left mid-resolve
+ * without storing the board, and then spent moves inside the storm cleared what was left), but the
+ * TIMING is its own complaint and outlives that fix. Being pulled off the table on the beat you have
+ * been working toward is the most expensive interruption this game can perform, and a bonus that
+ * lands there stops reading as a reward.
+ *
+ * ⚠️ Deferring costs nothing, which is what makes this the right shape rather than a compromise: the
+ * charge is not spent when the guard refuses, and it persists in the save — so the storm arrives on
+ * the next settled board, or on the next level. The player loses no storms, only bad moments for one.
+ *
+ * `MOVES` reuses the game's own endgame threshold (the moves counter starts pulsing at 3), so it is
+ * a number the player has already been taught to read. `COLLECTS` covers the case actually reported,
+ * where the budget was fine and it was the OBJECTIVE that was one match from done.
+ */
+export const STORM_MIN_MOVES_LEFT = 3
+export const STORM_MIN_COLLECTS_LEFT = 2
+
 /** Is the storm owed? */
 export function stormDue(charge: number): boolean {
   return charge >= STORM_GOAL
