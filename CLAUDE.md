@@ -52,6 +52,29 @@ Live: <https://corruptfun.github.io/viva-maya/>
   identity. `rgb.test.ts` guards the arcs, the seam-free wrap and the even
   arc-length spacing. Players can switch it off (Settings → RGB Marquee), which
   restores the original gold/rose bulb ring exactly.
+- **Every screen shake slides the scene off its own edge, and `WASH_BLEED` is the
+  only thing behind it.** `Camera.shake` translates the camera MATRIX (and
+  `GameScene.update`'s trauma rattle scrolls the camera outright), so a reel
+  detent, a blast or a thunderclap moves the WHOLE display list sideways for a
+  few frames. The wash (`view/background.ts` `washBase`) is the only opaque layer
+  down there, and it was filled at exactly `0 → DESIGN_W` until 2026-08-11 — so
+  those frames exposed a full-height strip of the game's CLEAR colour. That
+  colour is `#fff9ec` (`main.ts`), which is Golden Hour's `washTop` and a warm
+  cream on **every** theme, so on Rose Midnight / Neon Vegas it read as a **white
+  line tearing off the side of the cabinet on every hit** (owner video; measured
+  at 5–6 device px, alternating sides with the shake). ⚠️ It is invisible on any
+  device running the 3D room, which covers the gap — i.e. it only shows on the
+  hardware taking the 2D fallback, which is the path you are least likely to be
+  testing on. The wash now bleeds `WASH_BLEED` past all four visible edges (the
+  vertical half was always there; **the horizontal half is the fix**), the
+  camera's own background colour is pointed at the theme as a second floor
+  (it fills in SCREEN space, so a shake provably cannot move it), and
+  `addFocusScrim`'s +400 overscan is now on both axes for the same reason. The
+  bleed is **not a free knob** — the wash is a gradient and the rect it fills is
+  what the stops map onto, so growing it re-maps the ramp. Budget a louder effect
+  against the 60 that is there (~4× the loudest excursion in the game) rather
+  than raising it by reflex. Verify by offsetting `cameras.main.scrollX` ±14 and
+  looking at the outermost column, not by eye during a spin.
 - **The daily race board is SALTED and NORMALISED, and both are load-bearing.**
   Until 2026-08-04 the board was `mulberry32(seedForKey(day))` — a plain FNV-1a
   hash of the date string, so any future day's board could be generated and

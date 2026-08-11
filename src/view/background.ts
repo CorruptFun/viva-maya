@@ -25,6 +25,30 @@ import { css, getTheme, getThemeId, prefersReducedMotion } from './theme'
  */
 export type BackdropVariant = 'home' | 'menu' | 'game'
 
+/**
+ * How far the opaque wash is painted BEYOND the visible world, on all four sides.
+ *
+ * ⚠️ THE HORIZONTAL HALF IS LOAD-BEARING, and it was missing until 2026-08-11. `Camera.shake`
+ * translates the camera MATRIX by up to `intensity × camera.width` (Phaser's Shake effect), and
+ * `GameScene.update`'s trauma rattle scrolls the camera outright — so every reel detent, blast and
+ * thunderclap slides the whole scene sideways for a few frames. The wash was filled at exactly
+ * `0 → DESIGN_W`, so those frames exposed a bare strip of the game's CLEAR colour down the FULL
+ * height of the screen. That colour is `#fff9ec` (main.ts) — Golden Hour's `washTop`, and a warm
+ * cream on every theme — so on the two dark themes it read as a white line tearing off the side of
+ * the cabinet on each hit (owner video 2026-08-11, measured at 5–6 device px against a Neon Vegas
+ * wash, alternating sides with the shake's direction). Nothing else could cover for it: the wash is
+ * the only opaque layer down there, and the 3D room — which happens to hide this on the devices that
+ * run it — is exactly the layer that is absent on the hardware taking the 2D path.
+ *
+ * 60 is the geometry the vertical pad has always had, kept deliberately: the wash is a GRADIENT, and
+ * the rect it fills is what the stops are mapped onto, so this is not a free knob — growing it
+ * re-maps the ramp slightly. It is ~4× the loudest horizontal excursion in the game (GameScene's
+ * trauma peaks at ±14 world px; lightning's `shake(300, 0.011)` reaches ±8) and it also covers the
+ * zoom-settle entrance, whose `Back.easeOut` dips the camera below 1× on its way home. Widen the
+ * budget rather than this constant if a future effect needs more.
+ */
+const WASH_BLEED = 60
+
 /** Explicit negative depth ladder (§3b) — the mechanical no-cross-the-board guarantee. */
 const Z = {
   wash: -60,
@@ -215,8 +239,10 @@ function washBase(scene: Phaser.Scene): void {
   wash.fillGradientStyle(T.washTop, T.washTop, T.washBottom, T.washBottom, 1)
   // Fill the full letterbox-free visible world (design box + reclaimed top/bottom margins), so the
   // margins read as warm wash instead of cream void. Height is the WHOLE world (not DESIGN_H + 2·OFF —
-  // the box is anchored, not centred, so the margins are asymmetric). Extra pad absorbs live-resize growth.
-  wash.fillRect(0, -OFF - 60, DESIGN_W, worldH() + 120)
+  // the box is anchored, not centred, so the margins are asymmetric). `WASH_BLEED` then carries the
+  // fill past all FOUR visible edges: it absorbs live-resize growth vertically, and horizontally it is
+  // the reason a screen-shake cannot tear a strip of the clear colour off the side (see the constant).
+  wash.fillRect(-WASH_BLEED, -OFF - WASH_BLEED, DESIGN_W + WASH_BLEED * 2, worldH() + WASH_BLEED * 2)
 }
 
 /**
@@ -910,6 +936,16 @@ export function addProscenium(scene: Phaser.Scene): void {
  */
 export function addCasinoBackdrop(scene: Phaser.Scene, variant: BackdropVariant): void {
   ensureTextures(scene)
+
+  // The floor UNDER the floor, and the one layer a shake provably cannot move: the renderer fills the
+  // camera's background over its viewport rect in SCREEN space, before the display list, untouched by
+  // scroll, shake or zoom. The wash's bleed above is the real fix — it continues the gradient past the
+  // edge, so a nudged camera shows more of the same room. This is what is left if some future layer
+  // slips out from under one anyway, and it costs a fill nothing else was already paying for (the
+  // wash covers the same pixels opaquely). Pointing it at the theme means the colour behind everything
+  // finally agrees with the page chrome and `<meta theme-color>`, which have tracked the theme since
+  // applyPageChrome landed, instead of being pinned to one theme's cream (main.ts `backgroundColor`).
+  scene.cameras.main.setBackgroundColor(getTheme().washTop)
 
   washBase(scene)
   const room3d = setStageMood(scene, variant)

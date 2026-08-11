@@ -35,6 +35,7 @@ import { quality } from '../view/quality'
 import { css, getTheme, hapticsOff, prefersReducedMotion, reduceFlashing, rgbMarquee } from '../view/theme'
 import { attachRgbRing, type RgbRing } from '../view/rgbmarquee'
 import { ensureGlyphTexture } from '../view/textures'
+import { stageFlare, stagePulse } from '../view3d/stage'
 import type { ChipPill } from '../view/ui'
 import { FONT, GHOST_PILL, GOLD_PILL, addChipPill, addGoldWordmark, addPillButton, applyEntrance, inkShadow, startScene } from '../view/ui'
 
@@ -101,6 +102,41 @@ const CHARM_TEX = 'slotcharm'
 const SPIN_MS = 850
 const SPIN_STEP_MS = 260
 
+// ── the detent's impact budget ───────────────────────────────────────────────
+// A five-reel stop is an ANTICIPATION curve, and until 2026-08-11 it wasn't shaped like one: reels
+// 1–4 all hit at a flat 0.003 and the last at 0.005, so the row read as four identical taps and a
+// fifth barely-louder one. Everything below ramps left→right instead, and the final column arrives
+// as the loudest thing that has happened on the screen.
+//
+// ⚠️ The shake is VERTICAL-DOMINANT (`SHAKE_ASPECT`), not omnidirectional, and that is the single
+// biggest reason it now reads as mass: a detent is a DROP — the reel runs out of travel and the
+// cabinet takes the weight — where a square rattle reads as a generic screen wobble. It also keeps
+// the horizontal excursion small, which is the axis with a screen edge a few pixels away (the wash's
+// side bleed in view/background.ts is what stops a shake tearing the clear colour off that edge, and
+// this is the half of the pair that keeps the demand on it modest).
+/** Screen-shake amplitude for reel 1 → reel 4, as a fraction of the camera box. */
+const SHAKE_MIN = 0.0030
+const SHAKE_MAX = 0.0060
+/**
+ * The fifth column: a slam at ~2× what the row before it landed at, and — deliberately — the loudest
+ * single hit in the game. For scale, the ⚡ storm's thunderclap (view/lightning.ts) runs 0.011 for
+ * 300ms and GameScene's trauma rattle peaks around 14 world px; this is 0.0115 for 190ms, so the
+ * machine's climax now sits just past the storm's on a beat a third as long. That ordering is the
+ * intent, not an oversight — a five-reel row resolving IS this screen's biggest moment.
+ */
+const SHAKE_LAST = 0.0115
+/** …and harder still when the crawl actually had a story (see `heat` in runReels). */
+const SHAKE_HEAT = 1.3
+/** x:y ratio of every detent shake — a drop, not a rattle. */
+const SHAKE_ASPECT = 0.42
+/**
+ * The final detent's graded freeze (GameScene's §E6 hitstop, ported): long enough that the slam
+ * registers as an impact rather than a transition, short enough not to read as a hitch. Restored on
+ * a WALL-CLOCK timer for the same reason it is there — a `time.timeScale` of ~0 would freeze the
+ * timer meant to undo it.
+ */
+const LAND_HITSTOP_MS = 60
+
 interface Reel {
   strip: Phaser.GameObjects.Container
   mask: Phaser.GameObjects.Graphics
@@ -133,6 +169,8 @@ export class SlotScene extends Phaser.Scene {
   private bulbTints: number[] = []
   /** Which choreography currently owns the bulb ring — guards delayed mode handoffs (win → idle). */
   private marqueeMode: 'idle' | 'spin' | 'heat' | 'win' = 'idle'
+  /** Does the pull in flight carry a tension story? Set by runReels; the final slam lands harder for it. */
+  private heatSpin = false
   /** The fluid RGB light ring on the cabinet (§RGB), or undefined when the player has it switched off. */
   private rgb?: RgbRing
   /** The LCD attract-loop timer (a periodic shine across the glass) — killed the moment a pull starts. */
@@ -163,10 +201,18 @@ export class SlotScene extends Phaser.Scene {
     this.rgb?.destroy()
     this.rgb = undefined
     this.marqueeMode = 'idle'
+    this.heatSpin = false
     this.attractTimer = undefined
     this.heatFx = []
 
+    // The braces to `hitstop`'s belt. `sys.time` / `sys.tweens` outlive a `scene.start`, so a freeze
+    // stranded by a scene torn down mid-hitstop would follow the machine into its next visit and
+    // leave it with no animation and no timers — a dead cabinet with no way back.
+    this.tweens.timeScale = 1
+    this.time.timeScale = 1
+
     this.cameras.main.setScroll(0, restScrollY())
+    this.cameras.main.setZoom(1)
     this.cameras.main.fadeIn(prefersReducedMotion() ? 90 : 180, 255, 253, 248)
     applyEntrance(this, undefined, { zoomSettle: true })
     addCasinoBackdrop(this, 'home')
@@ -926,6 +972,10 @@ export class SlotScene extends Phaser.Scene {
     // settled line runs 4+ deep (the crawl completes a big run). Pure theatre over a banked result.
     const twoHearts = spin.scatters.some(([, r]) => r === 0) && spin.scatters.some(([, r]) => r === 2)
     const heat = spin.charm || twoHearts || spin.lines.some(l => l.run >= 4)
+    // Latched for landReel, which fires from five different tween callbacks and has no other way to
+    // know whether the crawl it is ending had a story. Re-latched on every pull, so a heat spin can
+    // never leave the next one hitting harder than it earned.
+    this.heatSpin = heat
     let landed = 0
     const finish = (): void => {
       landed++
@@ -985,12 +1035,19 @@ export class SlotScene extends Phaser.Scene {
           onComplete: land,
         })
       } else {
-        this.tweens.add({
+        // Every other reel gets the same shape in miniature: it runs a little PAST its stop and snaps
+        // back into the detent, rather than gliding to a halt on the decel curve. The overshoot grows
+        // left→right with the rest of the impact budget, so the row tightens as it goes. Expressed on
+        // `p` (the same virtual position the last reel overshoots) rather than as a transform on the
+        // strip — `apply` re-derives the seat from `pos` every frame, so the reel is provably on its
+        // rolled stop the instant the chain ends, and `land` re-seats it anyway.
+        const bounce = 0.10 + 0.06 * (i / Math.max(1, SLOT_REELS - 2))
+        this.tweens.chain({
           targets: state,
-          p: target,
-          duration: travel,
-          ease: 'Cubic.easeOut',
-          onUpdate: apply,
+          tweens: [
+            { p: target + bounce, duration: travel, ease: 'Cubic.easeOut', onUpdate: apply },
+            { p: target, duration: 160, ease: backOut(OVERSHOOT.release), onUpdate: apply },
+          ],
           onComplete: land,
         })
       }
@@ -1033,8 +1090,17 @@ export class SlotScene extends Phaser.Scene {
 
   /** Per-reel detent: a panned clunk, a haptic, a settle kick — and the cabinet takes the hit. */
   private landReel(i: number, isLast: boolean, reduced: boolean): void {
-    sfx.reelClunk(((i - (SLOT_REELS - 1) / 2) / SLOT_REELS) * 1.2)
-    if (!hapticsOff()) vibratePattern(isLast ? [12, 36, 16] : 10)
+    // 0 → 1 across the row. Every impact below is graded off it, so "harder as it walks right" is one
+    // decision expressed once rather than five hand-placed numbers that can drift apart.
+    const t = SLOT_REELS > 1 ? i / (SLOT_REELS - 1) : 1
+    const pan = ((i - (SLOT_REELS - 1) / 2) / SLOT_REELS) * 1.2
+    sfx.reelClunk(pan)
+    // A low thud UNDER the clunk, heavier per column: the clunk is the mechanism, this is the weight
+    // behind it — the same voice a falling piece lands on, so the machine borrows the board's physics
+    // rather than inventing a sound. Outside the motion gate on purpose: audio is never motion (§E8),
+    // so the reduced-motion path still gets the whole escalation, just without the screen moving.
+    sfx.land(isLast ? 1 : 0.28 + 0.34 * t, pan)
+    if (!hapticsOff()) vibratePattern(isLast ? [18, 30, 24, 46] : 7 + Math.round(7 * t))
     // The final land retires the HEAT transients — the crawl is over, the answer is on the glass.
     if (isLast) {
       for (const fx of this.heatFx.splice(0)) {
@@ -1043,40 +1109,84 @@ export class SlotScene extends Phaser.Scene {
       }
     }
     if (reduced) return
-    this.cameras.main.shake(isLast ? 80 : 50, isLast ? 0.005 : 0.003)
-    // Mechanical detent: the cabinet frame takes a 3px kick that springs straight back, so every
-    // stop lands in the furniture, not just the strip. Kill-then-zero keeps rapid stops from
-    // compounding the offset.
+    const amp = isLast
+      ? SHAKE_LAST * (this.heatSpin ? SHAKE_HEAT : 1)
+      : SHAKE_MIN + (SHAKE_MAX - SHAKE_MIN) * t
+    // ⚠️ `force` (the 3rd arg) is not optional here. Shake.start REFUSES a new shake while one is
+    // still running, so a detent arriving on the tail of the one before it would be silently dropped
+    // — and now that these run 90/190ms instead of 50/80, the stops genuinely do overlap.
+    this.cameras.main.shake(isLast ? 190 : 90, new Phaser.Math.Vector2(amp * SHAKE_ASPECT, amp), true)
+    // The ROOM feels every stop too — the 3D stage's beams, dust and underglow surge with the impact
+    // and decay (GameScene routes every hit through the same call). No-op on the 2D path, and it
+    // self-gates reduced motion / reduce-flashing, so this needs no gate of its own.
+    stagePulse(isLast ? 0.5 : 0.12 + 0.18 * t)
+    if (isLast) {
+      // The slam gets the two beats a mere stop doesn't: a graded freeze so the hit registers, and one
+      // breath of zoom so the room leans in on the answer.
+      this.hitstop(LAND_HITSTOP_MS)
+      // ⚠️ Zoom IN only, never out. A camera below 1× pulls the scene's own edges inside the viewport,
+      // which is the other way to expose what the wash bleed exists to cover.
+      this.cameras.main.zoomTo(1.014, 90, E.settle, true)
+      this.time.delayedCall(120, () => {
+        if (this.scene.isActive()) this.cameras.main.zoomTo(1, 260, E.settle, true)
+      })
+    }
+    // Mechanical detent: the cabinet frame takes a kick that springs straight back, so every stop
+    // lands in the furniture, not just the strip — 3px on the first column up to 12 on the slam.
+    // Kill-then-zero keeps rapid stops from compounding the offset.
+    const dip = 3 + 5 * t + (isLast ? 4 : 0)
     this.tweens.killTweensOf(this.cabinet)
     this.cabinet.y = 0
     this.tweens.chain({
       targets: this.cabinet,
       tweens: [
-        { y: 3, duration: 45, ease: 'Quad.easeOut' },
-        { y: 0, duration: 110, ease: backOut(OVERSHOOT.gentle) },
+        { y: dip, duration: 45, ease: 'Quad.easeOut' },
+        { y: 0, duration: isLast ? 150 : 110, ease: backOut(isLast ? OVERSHOOT.pop : OVERSHOOT.gentle) },
       ],
     })
     if (quality.tier() !== 'low') {
       const T = getTheme()
-      // Detent shockwave — a gold ring bursts off the column that just locked (bigger on the final).
+      // Detent shockwave — a gold ring bursts off the column that just locked, wider and brighter the
+      // further right it lands (and widest of all on the final).
       const wave = this.add
         .image(this.reelX(i) + REEL_W / 2, REELS_TOP + WINDOW_H / 2, 'shockwave')
         .setDisplaySize(110, 110)
         .setTint(T.goldBright)
         .setBlendMode(Phaser.BlendModes.ADD)
-        .setAlpha(0.7)
+        .setAlpha(0.6 + 0.2 * t)
         .setDepth(7)
       this.tweens.add({
         targets: wave,
-        scale: wave.scale * (isLast ? 2.6 : 2.0),
+        scale: wave.scale * (isLast ? 3.2 : 2.0 + 0.5 * t),
         alpha: 0,
-        duration: 340,
+        duration: isLast ? 420 : 340,
         ease: E.settle,
         onComplete: () => wave.destroy(),
       })
       if (isLast && !reduceFlashing()) {
-        // One soft glass bloom across the window as the machine locks (a bloom, not a strobe — and
-        // skipped entirely for flash-averse players).
+        // The lock gets two beats a mere stop doesn't, both behind the FLASHING gate rather than the
+        // motion one: the echo ring never gets brighter than the per-column ring above it, but it is
+        // far larger, and photosensitivity is a question of area × luminance change, not peak alpha.
+        //
+        // …a second, slower ring chasing the first off the WHOLE window rather than the one column:
+        // the fifth stop is the machine locking, not just a reel seating.
+        const echo = this.add
+          .image(REELS_X + REELS_W / 2, REELS_TOP + WINDOW_H / 2, 'shockwave')
+          .setDisplaySize(REELS_W * 0.6, REELS_W * 0.6)
+          .setTint(T.goldBright)
+          .setBlendMode(Phaser.BlendModes.ADD)
+          .setAlpha(0.3)
+          .setDepth(7)
+        this.tweens.add({
+          targets: echo,
+          scale: echo.scale * 2.1,
+          alpha: 0,
+          duration: 560,
+          delay: 90,
+          ease: E.settle,
+          onComplete: () => echo.destroy(),
+        })
+        // …and one soft glass bloom across the window as the machine locks (a bloom, not a strobe).
         const flash = this.add
           .image(REELS_X + REELS_W / 2, REELS_TOP + WINDOW_H / 2, 'bgglow')
           .setTint(0xffffff)
@@ -1087,6 +1197,27 @@ export class SlotScene extends Phaser.Scene {
         this.tweens.add({ targets: flash, alpha: 0, duration: 170, ease: 'Quad.easeOut', onComplete: () => flash.destroy() })
       }
     }
+  }
+
+  /**
+   * Graded hitstop — briefly freeze tweens + timers as the final reel locks, so the slam registers as
+   * an impact instead of a transition. Ported from GameScene's §E6 hitstop, including the two things
+   * that make it safe:
+   *
+   * ⚠️ The restore runs on a WALL-CLOCK `setTimeout`, never a scene timer — a `time.timeScale` of ~0
+   * would freeze the very timer meant to undo it, and the scene would never take input again.
+   * ⚠️ And it restores UNCONDITIONALLY, even if the player has walked out of the scene meanwhile.
+   * `sys.time` / `sys.tweens` survive a `scene.start`, so a timeScale stranded at 0.0001 would follow
+   * the machine into its next visit and brick it — the belt to `create()`'s braces.
+   */
+  private hitstop(ms: number): void {
+    if (ms <= 0 || prefersReducedMotion()) return
+    this.tweens.timeScale = 0.0001
+    this.time.timeScale = 0.0001
+    setTimeout(() => {
+      this.tweens.timeScale = 1
+      this.time.timeScale = 1
+    }, ms)
   }
 
   // ──────────────────────────────────────────────────────────────── the result
@@ -1189,6 +1320,9 @@ export class SlotScene extends Phaser.Scene {
       if (spin.lines.some(l => l.run >= SLOT_REELS) || paid >= 3) {
         sfx.winFanfare()
         this.confetti()
+        // The room swells with the fanfare, the way it does behind a jackpot on the board. Self-gates
+        // reduced motion and no-ops entirely on the 2D path.
+        stageFlare()
       } else if (spin.lines.length > 0 || paid > 0) {
         sfx.coinCount()
       }

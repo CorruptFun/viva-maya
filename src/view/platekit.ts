@@ -275,8 +275,10 @@ export function addFocusScrim(
   const cy = viewportCenterY()
   const vt = cy - H / 2 // visible top edge (matches the flat scrims' cover geometry)
   // +400 overscan (the stash/charm scrims' convention) so a camera nudged by shake trauma or a
-  // grown world can never expose a bare edge behind a modal.
-  const hit = scene.add.rectangle(W / 2, cy, W, H + 400, ink, a * 0.8)
+  // grown world can never expose a bare edge behind a modal. ⚠️ On BOTH axes — this was `W` wide until
+  // 2026-08-11, which made the sentence above true vertically and false horizontally, and a shake is
+  // mostly a horizontal thing. Same class of bug as the wash's missing side bleed (view/background.ts).
+  const hit = scene.add.rectangle(W / 2, cy, W + 400, H + 400, ink, a * 0.8)
   const band = (x: number, y: number, w: number, h: number, alpha: number, angle: number): Phaser.GameObjects.Image =>
     // displaySize is pre-rotation: the texture's fade axis (its height) spans the band's fade extent.
     scene.add.image(x, y, 'bgband').setDisplaySize(w, h).setAngle(angle).setTint(ink).setAlpha(alpha)
