@@ -266,7 +266,7 @@ cascade ≥2; **MEGA WIN** at ≥4 (siren + big vibrate + cabinet flash). Win ad
 `+60 × unused moves`. `BEST` = highest single score, persisted.
 
 ### Levels — `src/core/levels.ts` + `src/core/difficulty.ts`, `LevelSelectScene`
-`LEVEL_COUNT=400` (40 chapters × `CHAPTER_LEVELS=10`), of which `ACT1_LEVELS=300` is the
+`LEVEL_COUNT=500` (50 chapters × `CHAPTER_LEVELS=10`), of which `ACT1_LEVELS=300` is the
 first act — two constants, not one, because raising the ladder must not re-price the act
 below it (see "Act II"). `levelSpec(n)` is deterministic
 (seed `0xC0FFEE ^ n·2654435761`): same goals every attempt, random board per attempt.
@@ -302,22 +302,23 @@ below it (see "Act II"). `levelSpec(n)` is deterministic
 chapter-closing level (`n % 10 === 0`) plays the chapter trophy CEREMONY instead of the
 old milestone splash: a permanent trophy into THE SHOWROOM (`view/showroom.ts`, doors
 on the LevelSelect chapter ribbons — TWO WINGS since Act II: MAIN FLOOR 1–30 and
-HIGH-ROLLER WING 31–40), a one-time escalating purse (`CHAPTER_PURSES`,
-100→1,000, lifetime `CHAPTER_PURSE_TOTAL` 11,000 — test-pinned), and a boost on every
+HIGH-ROLLER WING 31–60, filled through 50), a one-time escalating purse (`CHAPTER_PURSES`,
+100→1,000, lifetime `CHAPTER_PURSE_TOTAL` 13,800 — test-pinned), and a boost on every
 5th chapter. Award-first; the claim latch is `save.chapterRewards`, the same list the
 showroom renders, unioned on device merge (a one-time Home catch-up card back-pays
 players already past boundaries). **Repeat** clears of a milestone level play the
 full-screen "LEVEL n! · ★ N STARS EARNED" star-tally splash (heart shower + fanfare)
 before the calm result card. L300's first clear plays the one-time ALL CLEAR finale,
-then hands off to chapter 30's car ceremony. Leaderboard tier badges (🥉→🏎️→🎖️) are
+then hands off to chapter 30's car ceremony. Leaderboard tier badges (🥉→🏎️→🎖️→🕴️) are
 DERIVED client-side from `level_progress.cleared` via `chaptersFromCleared` — never
 submitted, no badge column anywhere.
 
 ### Act II — the high-roller floors — `src/core/actII.ts`, `src/view/floormood.ts`
-Levels **301–400**, chapters 31–40, in two themed FLOORS of 50 (F1 THE HIGH-LIMIT ROOM,
-F2 THE SPEAKEASY) out of six designed. `actII.ts` is the spec and `DIFFICULTY.act2` the
-panic switch — per feature, independently revocable, and with the act off those levels
-are ordinary ones on the plain extended curve (`actII.test.ts` asserts it).
+Levels **301–500**, chapters 31–50, in four themed FLOORS of 50 (F1 THE HIGH-LIMIT ROOM,
+F2 THE SPEAKEASY, F3 THE VAULT, F4 THE CARD ROOM) out of six designed. `actII.ts` is the
+spec and `DIFFICULTY.act2` the panic switch — per feature, independently revocable, and
+with the act off those levels are ordinary ones on the plain extended curve
+(`actII.test.ts` asserts it).
 - **THE REEL PULL** (`Board.pullColumn`, from 301): a chrome rail under the board pulls
   one COLUMN down a notch, the bottom piece wrapping to row 0, for one move. It resolves
   through the ordinary wave pipeline. A column holding a BLOCKER refuses; a clamped piece
@@ -335,6 +336,16 @@ are ordinary ones on the plain extended curve (`actII.test.ts` asserts it).
   marquee leans toward the best move's symbol colour by redistributing the ring's length
   across its arc — never by moving the arc, which would break the per-theme hue law. One
   eased scalar on the ring's existing UPDATE hook; no extra tween, no shader.
+- **THE COUNTING SHOE** (`core/shoe.ts`, floor 3 — 401–450, breathers excluded): refills
+  deal from a finite visible shoe via an optional `RefillSource` on `Board.refill`;
+  absent, the refill path is bit-for-bit the pre-shoe game, and endless never receives
+  one. Uniform contents (8 × 6 symbols), per-attempt draw order, self-reshuffling at
+  empty; counts ride the level-resume snapshot. The SHOE pill (arms on `pointerdown` —
+  it abuts the board) opens a live counts panel; `shoe.test.ts` owns the dealer,
+  `actII.test.ts` the band. Measured 7–13pp on plain floor-3 levels, and it thins the
+  score tail without moving the completer mean — so shoe-band plaques price off
+  `SHOE_PLAQUE_RELIEF` (0.92, guarded by `minimum.rate.test.ts`'s counted-table block),
+  and the pair's hazard-cell ramp (`DIFFICULTY.act2.ramp`) ships built-and-off.
 - Endless and the daily/weekly race are untouched — everything keys off a level NUMBER,
   and `boardpick.test.ts`'s goldens pass unmodified.
 

@@ -217,7 +217,7 @@ clears a RANDOM present color. Swap-combos (both consumed, epicenter = drag dest
 
 ## Levels (src/core/levels.ts + src/core/difficulty.ts — those two files are the spec)
 - levelSpec(n) is deterministic per level (seed 0xC0FFEE ^ n·2654435761): same goals every
-  attempt; boards are random per attempt. LEVEL_COUNT = 400, grouped into 40 chapters of
+  attempt; boards are random per attempt. LEVEL_COUNT = 500, grouped into 50 chapters of
   CHAPTER_LEVELS = 10 (see "Chapters, trophies & the showroom"). ACT1_LEVELS = 300 is a SEPARATE
   constant — how far the campaign's first act runs, which is what every shipped curve, plaque and
   ramp is anchored to; LEVEL_COUNT is only how far the ladder currently reaches (see "Act II"
@@ -267,10 +267,11 @@ clears a RANDOM present color. Swap-combos (both consumed, epicenter = drag dest
 
 ## Act II — the high-roller floors (Slice 1, levels 301–400; src/core/actII.ts is the spec)
 - Act I is levels 1–300 (ACT1_LEVELS), ending on the chapter-30 car. Act II is the House playing
-  back: six themed FLOORS of 50 levels, of which two ship — F1 THE HIGH-LIMIT ROOM 301–350
-  (chapters 31–35) and F2 THE SPEAKEASY 351–400 (36–40). `FLOORS` in actII.ts is the table;
-  `DIFFICULTY.act2` is the panic switch (per-feature and independently revocable — with the act
-  off, 301–400 are ordinary levels on the plain extended curve, asserted in actII.test.ts).
+  back: six themed FLOORS of 50 levels, of which four ship — F1 THE HIGH-LIMIT ROOM 301–350
+  (chapters 31–35), F2 THE SPEAKEASY 351–400 (36–40), F3 THE VAULT 401–450 (41–45) and F4 THE
+  CARD ROOM 451–500 (46–50). `FLOORS` in actII.ts is the table; `DIFFICULTY.act2` is the panic
+  switch (per-feature and independently revocable — with the act off, 301+ are ordinary levels on
+  the plain extended curve, asserted in actII.test.ts).
 - THE 300 SEAM. `ACT1_LEVELS` and `LEVEL_COUNT` were one constant and are now two, because raising
   the ladder must not re-price the act below it: `minimumTargetFrac` divides by ACT1_LEVELS, so
   every shipped Act I plaque golden is untouched. Hazard densities FLATLINE above 300 by design
@@ -300,8 +301,21 @@ clears a RANDOM present color. Swap-combos (both consumed, epicenter = drag dest
   leans toward the colour of the best available move. It redistributes the ring's LENGTH across its
   existing arc rather than moving the arc, so no theme's hue band can be violated; one eased scalar
   on the ring's existing UPDATE clock, no extra tween, no shader. Act II levels only.
-- Trophies and purses extend to chapter 40 (lifetime CHAPTER_PURSE_TOTAL 11,000), the tier ladder
-  gains 🎖️ HIGH-ROLLER CASE at 40 chapters, and the showroom grows a second wing (MAIN FLOOR /
+- THE COUNTING SHOE (`core/shoe.ts`, floor 3 only — 401–450, breathers sit out): refills deal from
+  a finite, visible shoe instead of thin air — open information, card counting made legal. The seam
+  is an optional `RefillSource` on `Board.refill` that endless NEVER receives (dormant by absence,
+  the `pullColumn` precedent; boardpick goldens are the tripwire). Contents deterministic (uniform,
+  `SHOE_COPIES` 8 × 6 symbols), draw order random per attempt, empty reshuffles itself; counts ride
+  the level-resume snapshot so a reload is never a free re-deal. The SHOE pill above the board opens
+  a live per-symbol panel; teach card at 401. Measured (banker, 40 seeds): the shoe costs 7–13pp on
+  plain floor-3 levels — a goal-chaser drains its own symbols — and thins the score distribution's
+  right tail without moving its completer mean, which is why the band's plaques post RELIEVED
+  minimums (`SHOE_PLAQUE_RELIEF` 0.92, its own monotone series; enforced full-brass, L406 measured
+  5% — a wall). The floor-pair hazard-cell ramp (`DIFFICULTY.act2.ramp`) ships BUILT AND HELD OFF:
+  its candidates measured inside seed noise, and the shoe is the pair's climb.
+- Trophies and purses extend to chapter 50 (lifetime CHAPTER_PURSE_TOTAL 13,800), the tier ladder
+  gains 🎖️ HIGH-ROLLER CASE at 40 chapters and 🕴️ THE HIGH ROLLER at 50, and the showroom's second
+  wing fills through chapter 50 (MAIN FLOOR /
   HIGH-ROLLER WING). THE PRIVATE ELEVATOR is a one-time reveal card on the raceunlockcard pattern
   (`view/act2card.ts`, latched by `save.seenAct2Reveal`); each floor's first level shows a one-time
   croupier door card (`view/floordoor.ts`, latched by `save.floorIntros`).
@@ -335,28 +349,31 @@ clears a RANDOM present color. Swap-combos (both consumed, epicenter = drag dest
   contract.
 
 ## Chapters, trophies & the showroom (src/core/trophies.ts + view/showroom.ts + view/trophyceremony.ts)
-- 400 levels = 40 chapters of CHAPTER_LEVELS=10 (core/levels.ts — the one constant, FROZEN because
+- 500 levels = 50 chapters of CHAPTER_LEVELS=10 (core/levels.ts — the one constant, FROZEN because
   LevelSelect's `rowIndexAt` is a closed form; the ribbons, the win flow and trophies all read it).
-  Chapters 1–30 are Act I, 31–40 the first two high-roller floors.
+  Chapters 1–30 are Act I, 31–50 the first four high-roller floors.
 - First-ever clear of a chapter's closing level pays, once per chapter: a permanent TROPHY
   (TROPHIES catalogue — chapter 30 is THE CAR on the rotating plinth, 29 its wheels, the
-  showroom's own near-miss tease; 31–40 are the high-roller floors' own furniture, closing on
-  🔦 THE DOORMAN'S TORCH at 39 and 🎭 THE MASKS at 40), a one-time chip PURSE (CHAPTER_PURSES,
-  escalating 100→1,000 with steps on every 5th; lifetime total CHAPTER_PURSE_TOTAL = 11,000,
-  test-pinned in trophies.test.ts), and on milestone chapters a BOOST into pendingBoosts.
+  showroom's own near-miss tease; 31–50 are the high-roller floors' own furniture, each floor
+  closing on its emblem — ⚜️ 35, 🎭 40, 🔐 THE VAULT LOCK 45, ♠️ THE ACE OF SPADES 50), a one-time
+  chip PURSE (CHAPTER_PURSES, escalating 100→1,000 with steps on every 5th; lifetime total
+  CHAPTER_PURSE_TOTAL = 13,800, test-pinned in trophies.test.ts), and on milestone chapters a
+  BOOST into pendingBoosts.
 - AWARD-FIRST via claimChapter; the claim latch is save.chapterRewards — the SAME list the
   showroom renders, so the purse latch and the trophy shelf can never disagree. Unioned on
   device merge; never trimmed. A one-time Home catch-up card (claimChapterCatchUp) back-pays
   players already past chapter boundaries.
-- THE SHOWROOM (view/showroom.ts): 40 plinths behind doors on the LevelSelect chapter ribbons, in
-  TWO WINGS (MAIN FLOOR 1–30 / HIGH-ROLLER WING 31–40) with a per-wing hero and tally — the panel's
-  own height is unchanged, which is what the tab rail was budgeted against. Locked trophies render
-  as flat navy silhouettes, so every glyph must survive that treatment (the catalogue's comments
-  name the failures — no coins, cards, rosettes or pianos).
-- Leaderboard tier badges (🥉→🏎️→🎖️) are DERIVED, never submitted: floor(cleared/10) through
+- THE SHOWROOM (view/showroom.ts): 50 live plinths behind doors on the LevelSelect chapter ribbons,
+  in TWO WINGS (MAIN FLOOR 1–30 / HIGH-ROLLER WING 31–60, chapters past the shipped catalogue
+  rendering as empty sockets) with a per-wing hero and tally — the panel's own height is unchanged,
+  which is what the tab rail was budgeted against. Locked trophies render as flat navy silhouettes,
+  so every glyph must survive that treatment (the catalogue's comments name the failures — no
+  coins, cards, rosettes or pianos).
+- Leaderboard tier badges (🥉→🏎️→🎖️→🕴️) are DERIVED, never submitted: floor(cleared/10) through
   TROPHY_TIERS via chaptersFromCleared — deliberately the only place that coupling lives. Act II
-  added the 🎖️ HIGH-ROLLER CASE rung at 40 chapters, so the whole of Act I now sits under one rung,
-  which is the point. No badge column exists anywhere; see CLAUDE.md's trophy-badge bullet first.
+  added the 🎖️ HIGH-ROLLER CASE rung at 40 chapters (the whole of Act I under one rung, which is
+  the point) and 🕴️ THE HIGH ROLLER at 50 — the top of the shipped tower. No badge column exists
+  anywhere; see CLAUDE.md's trophy-badge bullet first.
 
 ## Endless race — daily boards, weekly season (src/core/endless.ts + GameScene endless mode)
 - Unlocks after ENDLESS_UNLOCK_LEVEL=10 (fixed, independent of LEVEL_COUNT — save.unlocked > 10;
