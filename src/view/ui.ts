@@ -2320,6 +2320,79 @@ function pullArmTexture(scene: Phaser.Scene): string {
 }
 
 /**
+ * THE COUNTING SHOE's teach card (Act II, level 401) — floor 3's rule, and the game's first piece
+ * of OPEN INFORMATION, so like the pull it earns real art: the dealer's shoe with a card leaving
+ * its throat, baked once at the teach-card swatch size.
+ */
+export function openShoeIntro(scene: Phaser.Scene, onClose?: () => void): void {
+  const W = 720
+  const reduced = prefersReducedMotion()
+  const layer = scene.add.container(0, 0).setDepth(65)
+  const scrimKit = addFocusScrim(scene, { alpha: 0.6, ink: 0x2a2417 })
+  const scrim = scrimKit.hit.setInteractive()
+  const close = (): void => {
+    layer.destroy()
+    onClose?.()
+  }
+  scrim.on('pointerup', close)
+  paintTeachCard(scene, layer, close, {
+    cx: W / 2,
+    cy: 560,
+    cardW: 600,
+    cardH: 520,
+    reduced,
+    title: 'THE COUNTING SHOE',
+    texture: shoeTexture(scene),
+    // Three lines max at 25px — a fourth clips behind GOT IT (see openMinimumIntro).
+    blurb:
+      'On this floor every refill is dealt from a counted shoe. Tap the SHOE pill to see what is left — when it empties, the dealer reshuffles.',
+    scrim,
+    scrimArt: scrimKit.art,
+  })
+}
+
+/** The dealer's shoe mid-deal, baked once. Authored on the 132 grid paintTeachCard swatches use. */
+function shoeTexture(scene: Phaser.Scene): string {
+  const T = getTheme()
+  const key = `teach:shoe:${T.id}`
+  if (scene.textures.exists(key)) return key
+  const S = 132
+  const g = scene.add.graphics()
+  // The card leaving the throat first, so the shoe's face plate overlaps it and the card reads as
+  // COMING OUT rather than lying beside the box.
+  g.fillStyle(0x1c1712, 0.4)
+  g.fillRoundedRect(12, 88, 58, 36, 6)
+  g.fillStyle(0xf6efe0, 1)
+  g.fillRoundedRect(8, 84, 58, 36, 6)
+  g.fillStyle(T.rose, 0.85)
+  g.fillRoundedRect(14, 90, 46, 24, 4)
+  g.fillStyle(0xf6efe0, 1)
+  g.fillRoundedRect(22, 96, 30, 12, 3)
+  // The shoe itself: a walnut wedge, tall at the back, its face plate cut away at the throat.
+  g.fillStyle(0x1c1712, 0.45)
+  g.fillTriangle(34, 96, 124, 96, 124, 22)
+  g.fillRect(34, 96, 90, 22)
+  g.fillStyle(0x59381a, 1)
+  g.fillTriangle(30, 92, 120, 92, 120, 18)
+  g.fillRect(30, 92, 90, 22)
+  // The stacked deck showing along the wedge's slope — the count, drawn as edges.
+  g.fillStyle(0xf6efe0, 1)
+  for (let i = 0; i < 4; i++) {
+    const inset = 10 + i * 7
+    g.fillRect(38 + i * 16, 92 - inset - i * 9, 62 - i * 12, 5)
+  }
+  // Brass rail down the slope, and the face plate's roller at the throat.
+  g.fillStyle(0xc79a4a, 1)
+  g.fillRect(28, 88, 96, 6)
+  g.fillCircle(36, 100, 9)
+  g.fillStyle(0xe8c27a, 0.9)
+  g.fillCircle(33, 97, 3.5)
+  g.generateTexture(key, S, S)
+  g.destroy()
+  return key
+}
+
+/**
  * §G11 · the teach-once card for a SPECIAL PIECE, fired the first time the player actually makes one.
  *
  * The specials — Wild Reel, Dice Bomb, Jackpot Chip — are the best thing about this board and the

@@ -61,6 +61,7 @@ import { EVENTS, track } from '../core/analytics'
 import { devSetLives, formatCountdown, grantLife, refreshLives, spendLifeFor } from '../core/lives'
 import { levelProgress, maya, pendingOccasion, warmLoseLine, warmWinSubtitle, wasNearMiss } from '../core/maya'
 import { mulberry32 } from '../core/rng'
+import { Shoe, buildShoe } from '../core/shoe'
 import { addChips, addFreeSpins, bumpJackpotMeter, consumeBoost, bumpWinStreak, freeSpinRoom, loadSave, markFinaleSeen, markOccasionSeen, persistSave, chargeStorm, spendStormCharge, recordLightningRun, recordResult, recordScore, resetWinStreak, spendChips, spendJackpotCharge, takePendingBoosts } from '../core/save'
 import { freeSourceFor, freeStockFor } from '../core/inventory'
 import { LIFE_REFILL_PRICE, POWER_ITEMS } from '../core/store'
@@ -138,6 +139,7 @@ import {
   openMinimumIntro,
   openPointsNightIntro,
   openPullIntro,
+  openShoeIntro,
   openOnboarding,
   startScene,
   openSpecialIntro,
@@ -607,6 +609,19 @@ export class GameScene extends Phaser.Scene {
   private pullArmX = 0
   private pullArmY = 0
 
+  // ── THE COUNTING SHOE (Act II, floor 3) ────────────────────────────────────────────────────
+  /** The dealer this level's refills come from, or null everywhere off the band (core/shoe.ts). */
+  private shoe: Shoe | null = null
+  /** The count pill above the board — tap to open the per-symbol panel. */
+  private shoeChip?: Phaser.GameObjects.Container
+  private shoeChipText?: Phaser.GameObjects.Text
+  /** The per-symbol counts panel, or undefined while closed. */
+  private shoePanel?: Phaser.GameObjects.Container
+  private shoePanelRows: { symbol: SymbolType; text: Phaser.GameObjects.Text }[] = []
+  /** Set by the shoe's reshuffle callback MID-REFILL; consumed at the resolve settle, where the
+   *  board is watchable again — the same seat the rail re-dress sits in, for the same reason. */
+  private shoeReshuffled = false
+
   private autoplay = false
   private autoplayDelay = 450
   private activeBoosts: BoostType[] = []
@@ -735,6 +750,13 @@ export class GameScene extends Phaser.Scene {
       return
     }
 
+    // THE COUNTING SHOE — reset BEFORE the mode fork, because the numbered arm below is its only
+    // assigner and a stale dealer from a previous level must never survive a restart into endless
+    // or the storm. (Their boards are built fresh and unsourced regardless — the race's refills
+    // are the seeded stream and nothing else — this keeps the SCENE's fields telling the truth.)
+    this.shoe = null
+    this.shoeReshuffled = false
+
     // Endless: a fixed-budget score attack on TODAY's shared, seeded board (same for
     // everyone). No objectives, no boosts (planting specials would change the board and
     // break the race's fairness). Otherwise: the numbered level with a fresh random board.
@@ -780,6 +802,19 @@ export class GameScene extends Phaser.Scene {
       // `act2Plan` re-seats the lockboxes on the roped run (311–315) and is a no-op everywhere else;
       // `sim.buildLevelBoard` folds in the SAME call, so the feasibility gates measure this board.
       this.board.seedHazards(act2Plan(this.level, hazardPlan(this.level, ROWS, COLS), COLS))
+      // THE COUNTING SHOE (floor 3): a fresh dealer per attempt — contents fixed, draw order
+      // random, exactly the hazard plan's learnability contract. Attached before input exists, so
+      // no refill can ever run unsourced on a shoe level; its rng is its own, and the board's
+      // stream is simply not consulted while a source is attached (see Board.refill).
+      // `sim.buildLevelBoard` attaches the SAME dealer, so the feasibility gates measure this deal.
+      if (this.spec.shoe === true) {
+        this.shoe = buildShoe(this.spec.symbolCount, mulberry32((Math.random() * 2 ** 31) | 0))
+        this.board.setRefillSource(this.shoe)
+        this.shoe.setOnReshuffle(() => {
+          // Mid-refill is no time for theatre — flag it, and the resolve settle plays the beat.
+          this.shoeReshuffled = true
+        })
+      }
     }
     this.coatsTotal = this.board.coatsRemaining()
     this.movesLeft = this.spec.moves
@@ -906,6 +941,14 @@ export class GameScene extends Phaser.Scene {
     this.pullHandles = []
     this.pullArmed = -1
     this.canPullLevel = !this.endless && this.spec.pull === true
+    // THE COUNTING SHOE's view furniture — stale GameObject refs only (the previous scene's died
+    // with it). The DEALER itself (`this.shoe`) is deliberately NOT reset here: it was assigned in
+    // the mode fork above, which is exactly the stomp the scoreTarget note at the top of this
+    // block warns about.
+    this.shoeChip = undefined
+    this.shoeChipText = undefined
+    this.shoePanel = undefined
+    this.shoePanelRows = []
     /**
      * THE FLOOR MOOD. Set BEFORE the backdrop, the cabinet and the marquee are built, because every
      * one of them reads `getTheme()` once at construction — the same apply-at-create model themes
@@ -1323,12 +1366,16 @@ export class GameScene extends Phaser.Scene {
     if (this.endless || this.introOpen) return false
     // 'minimum' rides the hazard-intro latch machinery (save.hazardIntros, teach-once, one card
     // per level) but is a WIN TERM, not a hazard — it gets its own card body below.
-    const present: (HazardKind | 'minimum' | 'pull' | 'points' | 'hot' | 'eye')[] = []
+    const present: (HazardKind | 'minimum' | 'pull' | 'shoe' | 'points' | 'hot' | 'eye')[] = []
     // THE REEL PULL leads. It is the only NEW VERB on the board — everything else in this list is a
     // rule about pieces the player can already move — and level 301 carries a plaque as well as the
     // rail (every act opens on a …01, and the plaque cadence is …01/…06). Teaching the plaque first
     // on the level that introduces a new way to play would bury the thing that is actually new.
     if (this.canPullLevel) present.push('pull')
+    // THE COUNTING SHOE right behind it: by 401 the rail has been the player's for a hundred levels
+    // (its card was spent at 301), so in practice the shoe's card is what a floor-3 arrival sees —
+    // and 401 is also a plaque level, the same …01 collision the pull note above describes.
+    if (this.shoe) present.push('shoe')
     /**
      * AFTER DARK's three, ahead of 'minimum' and gated on what this board actually IS — the same
      * rule the hazard scan below follows, so a player who jumps the ladder is never taught a rule
@@ -1362,6 +1409,7 @@ export class GameScene extends Phaser.Scene {
       then() // §G7 — see maybeOnboarding
     }
     if (unseen === 'pull') openPullIntro(this, done)
+    else if (unseen === 'shoe') openShoeIntro(this, done)
     else if (unseen === 'points') openPointsNightIntro(this, this.scoreTarget, done)
     else if (unseen === 'hot') openHotTableIntro(this, done)
     else if (unseen === 'eye') openEyeIntro(this, done)
@@ -1568,6 +1616,11 @@ export class GameScene extends Phaser.Scene {
         objective.remaining = Phaser.Math.Clamp(stored.remaining, 0, objective.total)
       }
     }
+    // THE COUNTING SHOE rides the snapshot so a reload cannot be a free re-deal: mid-shoe, a goal
+    // symbol can be legitimately exhausted, and a resume that reset the deck would hand back
+    // exactly the cards the player was waiting out. `restoreCounts` validates and refuses garbage
+    // (this came out of localStorage); a refusal costs one reshuffle, which is the honest floor.
+    if (this.shoe) this.shoe.restoreCounts(snap.shoe)
     this.log('resumed level', this.level, 'moves', this.movesLeft, 'score', this.score)
     return true
   }
@@ -1629,6 +1682,9 @@ export class GameScene extends Phaser.Scene {
       markerStake: this.markerStake,
       minPlaqueMet: this.minPlaqueMet,
       board: this.board.toSnapshot(),
+      // Absent everywhere off the shoe band — an optional field, so every stored level that
+      // predates the shoe reads back exactly as it did.
+      ...(this.shoe ? { shoe: this.shoe.toCounts() } : {}),
     })
   }
 
@@ -2752,6 +2808,180 @@ export class GameScene extends Phaser.Scene {
     this.refreshCoatLabel()
   }
 
+  // ─────────────────────────────────────────────────────────────────────────────
+  // THE COUNTING SHOE's furniture — a count pill above the board and the per-symbol panel behind
+  // a tap on it. The pill shares the coat counter's 52px band: the counter holds the CENTRE, so
+  // the pill takes the board's left edge, and neither is built on a level that lacks its mechanic
+  // — the band stays empty furniture-free everywhere else, exactly as it always was.
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  private buildShoeChip(): void {
+    if (!this.shoe) return
+    const T = getTheme()
+    const w = 128
+    const h = 42
+    // Seated in the 52px band between the rail cards (bottom 248) and the board mask (top 296),
+    // with the pill's REAL extent — art and hit area both — inside it: at cy 270 the art spans
+    // 249–291 and the hit rect 245–295, clearing the moves card above by a pixel and the mask
+    // below by one. The first seat (boardTop − 38) read fine in a screenshot and was 7px inside
+    // the moves card by arithmetic, with a hit area grazing board row 0 — the stash-door lesson:
+    // a control's bounding box is its reach, not its ink.
+    const chip = this.add.container(BOARD_X + w / 2, this.boardTop - 30).setDepth(3)
+    chip.add(
+      this.add.image(
+        0,
+        0,
+        bakePanel(this, `hud:shoe:${T.id}:${w}x${h}`, w, h, 12, {
+          fill: 0xffffff,
+          bezel: T.goldBezel,
+          bezelWidth: 2,
+          shadowAlpha: 0.1,
+          shadowDist: 3,
+        })
+      )
+    )
+    chip.add(
+      this.add
+        .text(-w / 2 + 12, 0, 'SHOE', { fontFamily: FONT, fontSize: '15px', fontStyle: '900', color: T.goldText })
+        .setOrigin(0, 0.5)
+        .setLetterSpacing(1)
+    )
+    this.shoeChipText = inkShadow(
+      this.add
+        .text(w / 2 - 12, 0, '', { fontFamily: FONT, fontSize: '22px', fontStyle: '900', color: T.ink })
+        .setOrigin(1, 0.5),
+      'numeral'
+    )
+    chip.add(this.shoeChipText)
+    // ⚠️ Fires on pointerDOWN, and that is the race strip's lesson applied in the safe direction:
+    // this pill abuts the board (a swipe off row 0 RELEASES here), so a bare pointerup would open
+    // the panel at the end of a swap gesture. A down that starts here cannot have been a board
+    // gesture at all — the board's own input starts on cells. Explicit hit area, because a
+    // Container.setInteractive without one is silently untappable.
+    chip.setInteractive(
+      new Phaser.Geom.Rectangle(-w / 2 - 6, -h / 2 - 4, w + 12, h + 8),
+      Phaser.Geom.Rectangle.Contains
+    )
+    chip.on('pointerdown', () => this.toggleShoePanel())
+    this.shoeChip = chip
+    this.refreshShoeHud()
+  }
+
+  /** The chip's count, the panel's rows if it is open, and the reshuffle beat when one is owed. */
+  private refreshShoeHud(): void {
+    if (!this.shoe) return
+    this.shoeChipText?.setText(String(this.shoe.cardsLeft()))
+    for (const row of this.shoePanelRows) row.text.setText(`× ${this.shoe.countOf(row.symbol)}`)
+    if (this.shoeReshuffled) {
+      this.shoeReshuffled = false
+      sfx.whoosh()
+      if (this.shoeChip && !this.reducedMotion) {
+        this.tweens.add({
+          targets: this.shoeChip,
+          scale: 1.12,
+          duration: 130,
+          yoyo: true,
+          ease: 'Quad.easeOut',
+        })
+      }
+      // One floating word over the pill — the count snapping back to full is the real signal, this
+      // just names it. Reduced motion keeps the word, holds it still, and lets it fade.
+      if (this.shoeChip) {
+        // Starts ON the pill and rises a few pixels — it fades before it can reach the moves card
+        // above, so the transient never sits over the numeral a player is actually reading.
+        const note = this.add
+          .text(this.shoeChip.x, this.shoeChip.y - 2, 'RESHUFFLED', {
+            fontFamily: FONT,
+            fontSize: '17px',
+            fontStyle: '900',
+            color: getTheme().goldText,
+          })
+          .setOrigin(0.5)
+          .setDepth(40)
+          .setLetterSpacing(2)
+        this.tweens.add({
+          targets: note,
+          y: this.reducedMotion ? note.y : note.y - 26,
+          alpha: 0,
+          delay: this.reducedMotion ? 700 : 350,
+          duration: this.reducedMotion ? 250 : 600,
+          ease: 'Sine.easeIn',
+          onComplete: () => note.destroy(),
+        })
+      }
+    }
+  }
+
+  /** The per-symbol counts, on a small plate under the rail. Closes on any tap, and on a move. */
+  private toggleShoePanel(): void {
+    if (this.shoePanel) {
+      this.closeShoePanel()
+      return
+    }
+    if (!this.shoe || this.introOpen) return
+    const T = getTheme()
+    const pw = 380
+    const rows = Math.ceil(this.shoe.symbols.length / 2)
+    const ph = 108 + rows * 64
+    const px = (DESIGN_W - pw) / 2
+    const py = this.boardTop + 24
+    const layer = this.add.container(0, 0).setDepth(60)
+    // A tap anywhere off the plate closes it — closing is harmless, so plain pointerup is fine
+    // here; it is OPENING that had to respect the swipe surface (see buildShoeChip).
+    const scrim = this.add
+      .rectangle(DESIGN_W / 2, worldH() / 2, DESIGN_W, worldH(), 0x000000, 0.001)
+      .setInteractive()
+    scrim.on('pointerup', () => this.closeShoePanel())
+    layer.add(scrim)
+    const g = this.add.graphics()
+    panelPlate(g, px, py, pw, ph, 20)
+    layer.add(g)
+    layer.add(
+      this.add
+        .text(DESIGN_W / 2, py + 34, 'LEFT IN THE SHOE', {
+          fontFamily: FONT,
+          fontSize: '19px',
+          fontStyle: '900',
+          color: T.goldText,
+        })
+        .setOrigin(0.5)
+        .setLetterSpacing(2)
+    )
+    this.shoePanelRows = []
+    this.shoe.symbols.forEach((symbol, i) => {
+      const col = i % 2
+      const row = Math.floor(i / 2)
+      const cx = px + pw / 4 + col * (pw / 2)
+      const cy = py + 92 + row * 64
+      layer.add(this.add.image(cx - 34, cy, symbol).setDisplaySize(46, 46))
+      const text = inkShadow(
+        this.add
+          .text(cx + 4, cy, '', { fontFamily: FONT, fontSize: '26px', fontStyle: '900', color: T.ink })
+          .setOrigin(0, 0.5),
+        'numeral'
+      )
+      layer.add(text)
+      this.shoePanelRows.push({ symbol, text })
+    })
+    layer.add(
+      this.add
+        .text(DESIGN_W / 2, py + ph - 26, 'empty reshuffles — every card comes back', {
+          fontFamily: FONT,
+          fontSize: '16px',
+          color: T.inkMuted,
+        })
+        .setOrigin(0.5)
+    )
+    this.shoePanel = layer
+    this.refreshShoeHud()
+  }
+
+  private closeShoePanel(): void {
+    this.shoePanel?.destroy()
+    this.shoePanel = undefined
+    this.shoePanelRows = []
+  }
+
   private buildHud(): void {
     const T = getTheme()
     // Top row: back · LEVEL N (or ENDLESS) · score.
@@ -3453,6 +3683,7 @@ export class GameScene extends Phaser.Scene {
     this.time.delayedCall(0, () => {
       this.buildCoatLayer()
       this.buildCoatCounter()
+      this.buildShoeChip()
     })
     const maskShape = this.make.graphics({ x: 0, y: 0 }, false)
     maskShape.fillStyle(0xffffff)
@@ -4578,6 +4809,9 @@ export class GameScene extends Phaser.Scene {
   private spendMove(): void {
     this.movesLeft--
     this.moveMade = true
+    // A move is being spent, so the counts panel is about to be stale — and the board under it is
+    // about to be worth watching. Closing is free; the chip stays.
+    this.closeShoePanel()
     // First committed move: the marker offer (if still open) leaves the table, and a placed
     // marker locks in — no backout once the hand is played.
     if (this.markerRow) this.dismissMarkerRow()
@@ -4651,6 +4885,9 @@ export class GameScene extends Phaser.Scene {
       // rail a moment ago may now accept it. Re-dressed HERE rather than per wave, because a handle
       // flickering mid-cascade would be telling the player about a board they cannot touch yet.
       if (this.pullRail) this.refreshPullRail()
+      // ...and the shoe's count catches up in the same breath, playing the reshuffle beat if the
+      // cascade above emptied it — the one settle, everything the board's furniture has to say.
+      if (this.shoe) this.refreshShoeHud()
       this.megaFinish(cascade) // the "in awe" release — a deep chain erupts once more as it settles
       this.fadeCombo() // E11: the cascade settled — resolve the combo readout (composes with the win peak)
       this.maybeAwardFreeSpins(cascade) // R4: a MEGA-grade chain banks free spins + flies the golden ticket

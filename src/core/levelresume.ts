@@ -77,6 +77,14 @@ export interface LevelSnapshot {
   markerStake: number
   /** HOUSE MINIMUM's one-shot "MET ✓" flip, so a resumed level doesn't re-announce a plaque it passed. */
   minPlaqueMet: boolean
+  /**
+   * THE COUNTING SHOE's live counts (Act II floor 3), absent everywhere else. Optional so every
+   * snapshot from before the shoe existed reads back unchanged. Without it, a reload would be a
+   * free re-deal: mid-shoe a goal symbol can be legitimately run out, and quitting to reset the
+   * deck is exactly the class of re-roll the snapshot-only-on-idle rule exists to close.
+   * Validated by `Shoe.restoreCounts`, never here — the shoe knows its own capacity.
+   */
+  shoe?: number[]
   board: BoardSnapshot
   /** Wall clock at write, for the TTL above. */
   at: number
