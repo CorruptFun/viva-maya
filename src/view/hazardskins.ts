@@ -552,6 +552,358 @@ const speakeasy: HazardSkin = {
 }
 
 /**
+ * FLOOR 3 · THE VAULT — steel, dust sheets and the two-key ritual. The room where the money sleeps:
+ * the cloth is the sheet thrown over what nobody moves, the box is a safe-deposit door with two
+ * keyholes, and the clamp is a TIME LOCK — a clock face bolted over the piece, because down here
+ * nothing opens just because you want it to.
+ *
+ * Same discipline as both floors below: rule copy word-for-word the default's with the nouns
+ * swapped, and silhouettes deliberately unlike the neighbours' — the rack is square walnut, the
+ * barrel is round, and this door is COLD steel with its furniture drawn in circles (keyholes,
+ * dial), so the three rooms survive being remembered minutes apart.
+ */
+const vault: HazardSkin = {
+  id: 'vault',
+  label: { coat: 'DUST SHEET', blocker: 'DEPOSIT BOX', lock: 'TIME LOCK' },
+  coatNoun: 'dust sheets',
+  blurb: {
+    coat: 'Some squares are under a dust sheet. Make a match on top of one to pull it clear — clear every last square to win the level.',
+    blocker: "Deposit boxes don't match and can't be moved. Break one by clearing a square right next to it.",
+    lock: 'A time-locked piece still matches, but it will not move. Clear a square beside it to spring the lock.',
+  },
+  burstTint: { coat: 0xc7d0da, blocker: 0x9aa3ad, lock: 0xb9c6d4 },
+
+  /**
+   * A steel deposit door, twin keyholes and a numbered plate. At 2 hp it is sealed square; at 1 the
+   * door hangs ajar off its hinge line and a bar of GOLD shows in the gap — the one warm note in
+   * this room is the money itself (the mood's bokeh says the same thing), and "one more hit" reads
+   * as what's inside almost being out.
+   */
+  drawBlocker: (g, size, hp, maxHp) => {
+    const m = size * 0.1
+    const w = size - m * 2
+    const r = size * 0.07
+    const sprung = hp < maxHp
+
+    g.fillStyle(0x10141a, 0.5)
+    g.fillRoundedRect(m + size * 0.02, m + size * 0.045, w, w, r)
+    // The frame, then the door face set into it.
+    g.fillStyle(0x39424e, 1)
+    g.fillRoundedRect(m, m, w, w, r)
+    g.lineStyle(Math.max(2, size * 0.02), 0x8a97a5, 1)
+    g.strokeRoundedRect(m, m, w, w, r)
+
+    if (sprung) {
+      // The gap first, so the door overlaps it: dark slot down the latch side with the bullion
+      // glinting in it.
+      g.fillStyle(0x10141a, 1)
+      g.fillRect(size * 0.62, m + size * 0.06, size * 0.26, w - size * 0.12)
+      g.fillStyle(0xe8c27a, 0.95)
+      g.fillRoundedRect(size * 0.66, size * 0.34, size * 0.16, size * 0.1, size * 0.02)
+      g.fillRoundedRect(size * 0.64, size * 0.48, size * 0.16, size * 0.1, size * 0.02)
+      // The door, swung narrow (drawn foreshortened at two-thirds width, hinge left).
+      g.fillStyle(0x4a5563, 1)
+      g.fillRoundedRect(m + size * 0.02, m + size * 0.03, w * 0.6, w - size * 0.06, r)
+      g.lineStyle(Math.max(2, size * 0.016), 0x9aa3ad, 0.9)
+      g.strokeRoundedRect(m + size * 0.02, m + size * 0.03, w * 0.6, w - size * 0.06, r)
+    } else {
+      g.fillStyle(0x4a5563, 1)
+      g.fillRoundedRect(m + size * 0.045, m + size * 0.045, w - size * 0.09, w - size * 0.09, r)
+    }
+
+    // Door furniture rides the door's own width so it follows the swing.
+    const faceW = sprung ? w * 0.6 : w
+    const cx = m + faceW / 2
+    // Twin keyholes: ring + slot, the two-key ritual.
+    for (const kx of [cx - faceW * 0.18, cx + faceW * 0.18]) {
+      g.lineStyle(Math.max(2, size * 0.02), 0xd6dde4, sprung ? 0.55 : 0.85)
+      g.strokeCircle(kx, size * 0.36, size * 0.06)
+      g.fillStyle(0x10141a, 1)
+      g.fillCircle(kx, size * 0.36, size * 0.026)
+      g.fillRect(kx - size * 0.012, size * 0.36, size * 0.024, size * 0.06)
+    }
+    // The numbered plate low on the door.
+    g.fillStyle(0x8a97a5, sprung ? 0.5 : 0.9)
+    g.fillRoundedRect(cx - faceW * 0.2, size * 0.62, faceW * 0.4, size * 0.12, size * 0.02)
+    g.fillStyle(0x2a323c, 1)
+    for (let k = 0; k < 3; k++) {
+      g.fillRect(cx - faceW * 0.13 + k * faceW * 0.11, size * 0.655, faceW * 0.07, size * 0.05)
+    }
+    // Corner rivets, cold.
+    g.fillStyle(0xd6dde4, sprung ? 0.4 : 0.7)
+    for (const [dx, dy] of [
+      [0.19, 0.19],
+      [0.81, 0.19],
+      [0.19, 0.81],
+      [0.81, 0.81],
+    ]) {
+      if (sprung && dx > 0.5) continue // the latch-side rivets went with the door
+      g.fillCircle(size * dx, size * dy, size * 0.02)
+    }
+  },
+
+  /**
+   * THE TIME LOCK: two thin steel bands crossed in an X with a clock dial where they meet. The X is
+   * this floor's own geometry — the main floor's strap runs one diagonal, the high-limit room's the
+   * other, the speakeasy's chain runs vertical — and the bands stay narrow so the symbol beneath
+   * reads, which matters more here than anywhere: a time-locked piece still matches.
+   */
+  drawLock: (g, size) => {
+    const cx = size / 2
+    const bandH = size * 0.085
+
+    for (const angle of [-Math.PI / 4, Math.PI / 4]) {
+      g.save()
+      g.translateCanvas(cx, cx)
+      g.rotateCanvas(angle)
+      g.fillStyle(0x10141a, 0.32)
+      g.fillRoundedRect(-size * 0.46, -bandH / 2 + size * 0.02, size * 0.92, bandH, bandH / 2)
+      g.fillStyle(0x5c6772, 1)
+      g.fillRoundedRect(-size * 0.46, -bandH / 2, size * 0.92, bandH, bandH / 2)
+      g.fillStyle(0x9aa3ad, 0.9)
+      g.fillRect(-size * 0.42, -bandH * 0.3, size * 0.84, bandH * 0.22)
+      g.restore()
+    }
+
+    // The dial: steel ring, pale face, four ticks, two hands short of midnight.
+    g.fillStyle(0x10141a, 0.36)
+    g.fillCircle(cx, cx + size * 0.026, size * 0.15)
+    g.fillStyle(0x5c6772, 1)
+    g.fillCircle(cx, cx, size * 0.15)
+    g.fillStyle(0xd6dde4, 1)
+    g.fillCircle(cx, cx, size * 0.115)
+    g.fillStyle(0x39424e, 1)
+    for (const a of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
+      g.fillCircle(cx + Math.cos(a) * size * 0.088, cx + Math.sin(a) * size * 0.088, size * 0.012)
+    }
+    g.lineStyle(Math.max(2, size * 0.02), 0x39424e, 1)
+    g.beginPath()
+    g.moveTo(cx, cx)
+    g.lineTo(cx, cx - size * 0.085)
+    g.moveTo(cx, cx)
+    g.lineTo(cx + size * 0.055, cx - size * 0.032)
+    g.strokePath()
+    g.fillStyle(0x39424e, 1)
+    g.fillCircle(cx, cx, size * 0.02)
+  },
+
+  /**
+   * A dust sheet pooled over the square: one opaque pale shape with a lumpy hem (the wax lesson —
+   * opaque pieces union seamlessly, translucent ones compound at every overlap), over a steel floor
+   * dark enough that COVERED reads against the cream tiles either side. Two fold lines give the
+   * cloth a fall; the second layer is a heavier sheet, greyer, with its tie-cord still on.
+   */
+  drawCoat: (g, size, layers) => {
+    const deep = layers >= 2
+    const pad = size * 0.02
+    const w = size - pad * 2
+    const r = size * 0.13
+
+    // The vault floor under the sheet — cold steel, the room's own ground.
+    g.fillStyle(deep ? 0x2a323c : 0x39424e, 1)
+    g.fillRoundedRect(pad, pad, w, w, r)
+    // Recessed read — same idiom as every coat, so "covered" means one thing on every floor.
+    g.fillStyle(0x000000, 0.24)
+    g.fillRoundedRect(pad, pad, w, size * 0.16, { tl: r, tr: r, bl: 0, br: 0 })
+    g.fillStyle(0x9aa3ad, 0.14)
+    g.fillRoundedRect(pad, size - pad - size * 0.13, w, size * 0.13, { tl: 0, tr: 0, bl: r, br: r })
+
+    // The sheet: a slab with shoulder and hem discs, all one opaque colour.
+    const sheet = deep ? 0xaeb8c4 : 0xc7d0da
+    const top = deep ? 0.14 : 0.2
+    const hem = deep ? 0.74 : 0.68
+    g.fillStyle(sheet, 1)
+    g.fillRect(size * 0.12, size * top, size * 0.76, size * (hem - top))
+    for (const [bx, br] of deep
+      ? ([[0.22, 0.12], [0.43, 0.15], [0.64, 0.13], [0.83, 0.1]] as [number, number][])
+      : ([[0.28, 0.11], [0.5, 0.14], [0.73, 0.11]] as [number, number][])) {
+      g.fillCircle(size * bx, size * hem, size * br)
+    }
+    g.fillCircle(size * 0.14, size * (top + 0.05), size * 0.07)
+    g.fillCircle(size * 0.86, size * (top + 0.07), size * 0.06)
+
+    // Folds: two soft strokes falling with the cloth, and the shadow under the hem.
+    g.lineStyle(Math.max(1, size * 0.014), 0x8a97a5, 0.55)
+    g.beginPath()
+    g.moveTo(size * 0.34, size * (top + 0.06))
+    g.lineTo(size * 0.28, size * (hem - 0.05))
+    g.moveTo(size * 0.62, size * (top + 0.04))
+    g.lineTo(size * 0.68, size * (hem - 0.07))
+    g.strokePath()
+    g.fillStyle(0xffffff, deep ? 0.16 : 0.24)
+    g.fillRoundedRect(size * 0.18, size * (top + 0.04), size * 0.24, size * 0.045, size * 0.022)
+
+    if (deep) {
+      // The tie-cord across the heavier sheet — the knot that says this one is staying on.
+      g.lineStyle(Math.max(2, size * 0.018), 0x59626e, 0.85)
+      g.beginPath()
+      g.moveTo(size * 0.12, size * 0.47)
+      g.lineTo(size * 0.88, size * 0.44)
+      g.strokePath()
+      g.fillStyle(0x59626e, 0.9)
+      g.fillCircle(size * 0.5, size * 0.455, size * 0.035)
+    }
+  },
+}
+
+/**
+ * FLOOR 4 · THE CARD ROOM — walnut, oxblood and the tools of the trade. The cloth is the spread of
+ * face-down cards the table was left under, the box is the dealer's SHOE CADDY (a wedge — the one
+ * shape no other floor's obstacle has), and the clamp is the DEALER'S CUT: the ivory cut card slid
+ * over a piece to say this one stays where the dealer put it.
+ */
+const cardRoom: HazardSkin = {
+  id: 'cardRoom',
+  label: { coat: 'CARD SPREAD', blocker: 'SHOE CADDY', lock: "DEALER'S CUT" },
+  coatNoun: 'cards',
+  blurb: {
+    coat: 'Some squares are dealt over with cards. Make a match on top of one to sweep them up — clear every last square to win the level.',
+    blocker: "Shoe caddies don't match and can't be moved. Break one by clearing a square right next to it.",
+    lock: 'A cut piece still matches, but it will not move. Clear a square beside it to lift the cut.',
+  },
+  burstTint: { coat: 0xe8dcc0, blocker: 0xc79a4a, lock: 0xf6efe0 },
+
+  /**
+   * The dealer's shoe: a walnut wedge, tall at the back, brass rail down the slope, the next card
+   * showing at the throat. At 2 hp it deals in order; at 1 the faceplate has popped and the deck
+   * has spilled — cards flat on the tray where the stack used to be.
+   */
+  drawBlocker: (g, size, hp, maxHp) => {
+    const sprung = hp < maxHp
+
+    // Tray shadow + tray.
+    g.fillStyle(0x140d06, 0.5)
+    g.fillRoundedRect(size * 0.1, size * 0.14, size * 0.8, size * 0.76, size * 0.07)
+    g.fillStyle(sprung ? 0x63482c : 0x513921, 1)
+    g.fillRoundedRect(size * 0.08, size * 0.11, size * 0.8, size * 0.76, size * 0.07)
+    g.lineStyle(Math.max(2, size * 0.02), sprung ? 0x7d5a22 : 0xc79a4a, 1)
+    g.strokeRoundedRect(size * 0.08, size * 0.11, size * 0.8, size * 0.76, size * 0.07)
+
+    if (sprung) {
+      // The spill: three cards flat in the tray, fanned loose, one oxblood back showing.
+      const card = (x: number, y: number, a: number, back: boolean): void => {
+        g.save()
+        g.translateCanvas(x, y)
+        g.rotateCanvas(a)
+        g.fillStyle(0x140d06, 0.35)
+        g.fillRoundedRect(-size * 0.13, -size * 0.09, size * 0.26, size * 0.18, size * 0.03)
+        g.fillStyle(0xf6efe0, 1)
+        g.fillRoundedRect(-size * 0.14, -size * 0.1, size * 0.26, size * 0.18, size * 0.03)
+        if (back) {
+          g.fillStyle(0x7a1e2b, 0.9)
+          g.fillRoundedRect(-size * 0.11, -size * 0.07, size * 0.2, size * 0.12, size * 0.02)
+        }
+        g.restore()
+      }
+      card(size * 0.36, size * 0.42, -0.35, false)
+      card(size * 0.58, size * 0.52, 0.25, true)
+      card(size * 0.44, size * 0.68, 0.05, false)
+      // The wedge survives, small and empty, pushed to the back corner.
+      g.fillStyle(0x3f2a12, 1)
+      g.fillTriangle(size * 0.56, size * 0.34, size * 0.84, size * 0.34, size * 0.84, size * 0.16)
+      g.fillRect(size * 0.56, size * 0.34, size * 0.28, size * 0.06)
+    } else {
+      // The wedge, seen from its dealing side: slope from the tall back-right down to the throat.
+      g.fillStyle(0x140d06, 0.4)
+      g.fillTriangle(size * 0.2, size * 0.66, size * 0.84, size * 0.66, size * 0.84, size * 0.2)
+      g.fillRect(size * 0.2, size * 0.66, size * 0.64, size * 0.14)
+      g.fillStyle(0x59381a, 1)
+      g.fillTriangle(size * 0.17, size * 0.63, size * 0.81, size * 0.63, size * 0.81, size * 0.17)
+      g.fillRect(size * 0.17, size * 0.63, size * 0.64, size * 0.14)
+      // The deck's edges up the slope.
+      g.fillStyle(0xf6efe0, 1)
+      for (let i = 0; i < 3; i++) {
+        g.fillRect(size * (0.24 + i * 0.13), size * (0.585 - i * 0.115), size * (0.4 - i * 0.09), size * 0.04)
+      }
+      // Brass rail + the roller at the throat, and the next card leaving it.
+      g.fillStyle(0xc79a4a, 1)
+      g.fillRect(size * 0.15, size * 0.6, size * 0.68, size * 0.05)
+      g.fillStyle(0xf6efe0, 1)
+      g.fillRoundedRect(size * 0.13, size * 0.68, size * 0.3, size * 0.14, size * 0.025)
+      g.fillStyle(0x7a1e2b, 0.85)
+      g.fillRoundedRect(size * 0.16, size * 0.71, size * 0.24, size * 0.08, size * 0.02)
+      g.fillStyle(0xc79a4a, 1)
+      g.fillCircle(size * 0.2, size * 0.66, size * 0.055)
+      g.fillStyle(0xe8c27a, 0.9)
+      g.fillCircle(size * 0.185, size * 0.645, size * 0.02)
+    }
+  },
+
+  /**
+   * THE DEALER'S CUT: the ivory cut card lying across the piece on the main floor's diagonal, wide
+   * enough to read as a CARD (rounded corners, an oxblood pinstripe) and nothing else — material is
+   * what tells it apart from the gold strap that shares its angle two floors down, the same way the
+   * chip rack and the lockbox share a footprint and never a face.
+   */
+  drawLock: (g, size) => {
+    const cx = size / 2
+    const cardW = size * 0.96
+    const cardH = size * 0.2
+
+    g.save()
+    g.translateCanvas(cx, cx)
+    g.rotateCanvas(-Math.PI / 4)
+    g.fillStyle(0x140d06, 0.34)
+    g.fillRoundedRect(-cardW / 2, -cardH / 2 + size * 0.022, cardW, cardH, size * 0.045)
+    g.fillStyle(0xf6efe0, 1)
+    g.fillRoundedRect(-cardW / 2, -cardH / 2, cardW, cardH, size * 0.045)
+    // The pinstripe border, oxblood — the room's colour on the room's tool.
+    g.lineStyle(Math.max(1, size * 0.012), 0x7a1e2b, 0.85)
+    g.strokeRoundedRect(-cardW / 2 + size * 0.028, -cardH / 2 + size * 0.028, cardW - size * 0.056, cardH - size * 0.056, size * 0.03)
+    // A long ivory sheen along the top edge.
+    g.fillStyle(0xffffff, 0.5)
+    g.fillRoundedRect(-cardW * 0.38, -cardH * 0.32, cardW * 0.5, cardH * 0.18, size * 0.02)
+    g.restore()
+  },
+
+  /**
+   * Cards dealt face-down over the square: two overlapping backs, oxblood in cream borders, on the
+   * walnut of the table. The second layer crosses a third card over them and pins the pile with the
+   * brass marker — a spread someone means to come back to.
+   */
+  drawCoat: (g, size, layers) => {
+    const deep = layers >= 2
+    const pad = size * 0.02
+    const w = size - pad * 2
+    const r = size * 0.13
+
+    // The walnut under the deal.
+    g.fillStyle(deep ? 0x3a2410 : 0x4a2e15, 1)
+    g.fillRoundedRect(pad, pad, w, w, r)
+    g.fillStyle(0x000000, 0.24)
+    g.fillRoundedRect(pad, pad, w, size * 0.16, { tl: r, tr: r, bl: 0, br: 0 })
+    g.fillStyle(0xc79a4a, 0.12)
+    g.fillRoundedRect(pad, size - pad - size * 0.13, w, size * 0.13, { tl: 0, tr: 0, bl: r, br: r })
+
+    // The spread: face-down cards, each a cream card with an oxblood back panel.
+    const card = (x: number, y: number, a: number): void => {
+      g.save()
+      g.translateCanvas(x, y)
+      g.rotateCanvas(a)
+      g.fillStyle(0x140d06, 0.3)
+      g.fillRoundedRect(-size * 0.17, -size * 0.12, size * 0.34, size * 0.24, size * 0.035)
+      g.fillStyle(0xe8dcc0, 1)
+      g.fillRoundedRect(-size * 0.18, -size * 0.13, size * 0.34, size * 0.24, size * 0.035)
+      g.fillStyle(deep ? 0x5f1721 : 0x7a1e2b, 1)
+      g.fillRoundedRect(-size * 0.14, -size * 0.09, size * 0.26, size * 0.16, size * 0.025)
+      g.fillStyle(0xe8dcc0, 0.35)
+      g.fillCircle(0, 0, size * 0.045)
+      g.restore()
+    }
+    card(size * 0.34, size * 0.4, -0.18)
+    card(size * 0.64, size * 0.56, 0.22)
+    if (deep) {
+      card(size * 0.44, size * 0.7, 0.05)
+      // The brass marker pinning the pile — this spread is spoken for.
+      g.fillStyle(0xc79a4a, 1)
+      g.fillCircle(size * 0.62, size * 0.32, size * 0.06)
+      g.fillStyle(0xe8c27a, 0.9)
+      g.fillCircle(size * 0.605, size * 0.305, size * 0.022)
+    }
+  },
+}
+
+/**
  * Skin per theme. Every current theme uses the default; a theme may override later without any
  * change here beyond one entry. `default` is required and is the fallback for unknown ids.
  */
@@ -567,6 +919,8 @@ export const HAZARD_SKINS: Partial<Record<ThemeId, HazardSkin>> & { default: Haz
 export const FLOOR_HAZARD_SKINS: Readonly<Record<number, HazardSkin>> = {
   1: highLimitRoom,
   2: speakeasy,
+  3: vault,
+  4: cardRoom,
 }
 
 /**
