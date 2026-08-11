@@ -10,6 +10,7 @@ import {
   starThresholds,
   starsFor,
 } from './levels'
+import { shoeLevel } from './actII'
 import { DIFFICULTY, isTeachingLevel } from './difficulty'
 import type { SymbolType } from './types'
 
@@ -300,12 +301,15 @@ describe('HOUSE MINIMUM — the plaque cadence', () => {
   })
 
   it('the brass ladder only ever rises — with GOLDEN anchors from the shipped calibration', () => {
-    // TWO series, walked separately. From 216 the `…6` half of the cadence is POINTS NIGHT, priced
-    // off MOVES against its own constant while the `…1` half stays priced off COLLECTS — different
-    // currencies of demand, so interleaving them compares numbers that were never comparable.
-    // Each must climb on its own; neither may drift.
+    // THREE series, walked separately. From 216 the `…6` half of the cadence is POINTS NIGHT,
+    // priced off MOVES against its own constant while the `…1` half stays priced off COLLECTS —
+    // different currencies of demand, so interleaving them compares numbers that were never
+    // comparable. And from 401 the COUNTED TABLE (the shoe band, floor 3) posts relieved minimums
+    // against its own measured, thinner-tailed score distribution (SHOE_PLAQUE_RELIEF) — a third
+    // series for the same reason as the second. Each must climb on its own; none may drift.
     let prev = 0
     let prevPoints = 0
+    let prevShoe = 0
     for (let L = 201; L <= LEVEL_COUNT; L++) {
       if (!isMinimumLevel(L)) continue
       if (isPointsNight(L)) {
@@ -320,10 +324,23 @@ describe('HOUSE MINIMUM — the plaque cadence', () => {
       // dip is where a new verb is being introduced, and it is carved out here for exactly the
       // reason the move-budget monotonicity test above carves teaching levels out.
       if (isTeachingLevel(L)) continue
+      if (shoeLevel(L)) {
+        const s = levelSpec(L).scoreTarget as number
+        expect({ L, rises: s >= prevShoe }).toEqual({ L, rises: true })
+        prevShoe = s
+        continue
+      }
       const t = levelSpec(L).scoreTarget as number
       expect({ L, rises: t >= prev }).toEqual({ L, rises: true })
       prev = t
     }
+    // The counted table's two doors, pinned. Stepping DOWN into the band is the design — the House
+    // shows you the shoe on floor 3 and prices its minimums against the thinner tail that world
+    // actually pays (the full measurement is on SHOE_PLAQUE_RELIEF) — and the ladder must resume
+    // ABOVE the speakeasy's top the moment the card room opens, or the relief quietly repriced a
+    // floor it was never about.
+    expect(levelSpec(406).scoreTarget as number).toBeLessThan(levelSpec(396).scoreTarget as number)
+    expect(levelSpec(451).scoreTarget as number).toBeGreaterThan(levelSpec(396).scoreTarget as number)
     // GOLDEN: the plaque numbers as calibrated 2026-08-04 (banker completer distribution — see
     // minimum.rate.test.ts). A failure here means SHIPPED LEVELS MOVED — retune deliberately and
     // re-record, never let a target drift as a side effect of touching the curve or the scoring.
@@ -338,6 +355,12 @@ describe('HOUSE MINIMUM — the plaque cadence', () => {
     // Act II's, added Slice 1. 301 is the act-opening teaching dip; 306 resumes ABOVE 296, and the
     // ladder climbs to a `perObjective`-clamped ceiling by the high 370s.
     expect([301, 306, 351, 396].map(L => levelSpec(L).scoreTarget)).toEqual([16100, 18900, 20000, 20700])
+    // Floors 3–4. 401 is the shoe's teaching dip (relieved twice — the floor door and the counted
+    // table); the vault band runs 19,100 → 19,300 on its own relieved series; and the card room
+    // opens at 451 with the ordinary ladder resumed above the speakeasy's 20,700.
+    expect([401, 406, 446, 451, 496].map(L => levelSpec(L).scoreTarget)).toEqual([
+      16200, 19100, 19300, 21000, 21100,
+    ])
     // AFTER DARK's POINTS NIGHT ladder (Slice 3, 2026-08-05) — its OWN goldens, calibrated against
     // the full-budget banker distribution in minimum.rate.test.ts. 216 is the teaching level and
     // sits deliberately under the proxy's p10.

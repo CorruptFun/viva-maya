@@ -6,6 +6,7 @@ import {
   PULL_FROM,
   ROPE_FROM,
   ROPE_TO,
+  SHOE_FROM,
   act2Plan,
   act2Spec,
   floorFor,
@@ -14,11 +15,13 @@ import {
   isFloorOpening,
   pullLevel,
   ropedLevel,
+  shoeLevel,
 } from './actII'
-import { coatsToClear, hazardPlan } from './hazards'
+import { coatsToClear, densityFor, hazardPlan } from './hazards'
 import type { HazardPlan } from './hazards'
-import { ACT1_LEVELS, CHAPTER_COUNT, CHAPTER_LEVELS, LEVEL_COUNT, levelSpec } from './levels'
+import { ACT1_LEVELS, CHAPTER_COUNT, CHAPTER_LEVELS, LEVEL_COUNT, levelSpec, minimumTargetFrac } from './levels'
 import { DIFFICULTY, isTeachingLevel } from './difficulty'
+import { buildLevelBoard } from './sim'
 import { CHAPTER_PURSES, TROPHIES } from './trophies'
 import type { SymbolType } from './types'
 import { activeFloor, activeFloorMood, chapterMood, enterFloor, moodedFloors } from '../view/floormood'
@@ -223,6 +226,186 @@ describe('floor 1 as authored — GOLDEN', () => {
 })
 
 /**
+ * GOLDEN — floor 3's opening as authored, the same discipline one floor up. `perObjective` sits on
+ * its 110 clamp through this whole band (it clamps near L378), so the numbers are flatter than
+ * floor 1's — which is precisely why the floor brings a RULE (the shoe) instead of bigger numbers,
+ * and why the plaques below carry the counted-table pricing (16,200 teaching · 19,100–19,200 band).
+ *
+ * A failure here means SHIPPED LEVELS MOVED. Re-record only as a deliberate content change.
+ */
+const F3_GOLDEN: [number, number, [SymbolType, number][], number?][] = [
+  [401, 95, [['bell', 110], ['diamond', 110]], 16200],
+  [402, 92, [['seven', 110], ['clover', 110], ['bell', 110]]],
+  [403, 92, [['bar', 110], ['bell', 110], ['clover', 110]]],
+  [404, 92, [['clover', 110], ['bell', 110], ['bar', 110]]],
+  [405, 92, [['bell', 110], ['seven', 110], ['bar', 110]]],
+  [406, 92, [['bar', 110], ['diamond', 110]], 19100],
+  [407, 92, [['diamond', 110], ['bell', 110], ['seven', 110]]],
+  [408, 92, [['cherry', 110], ['seven', 110], ['bell', 110]]],
+  [409, 92, [['bell', 110], ['bar', 110], ['seven', 110]]],
+  [410, 92, [['seven', 110], ['bell', 110], ['cherry', 110]]],
+  [411, 92, [['cherry', 110], ['bar', 110]], 19100],
+  [412, 92, [['clover', 110], ['cherry', 110], ['bell', 110]]],
+  [413, 92, [['diamond', 110], ['bell', 110], ['seven', 110]]],
+  [414, 92, [['seven', 110], ['bar', 110], ['bell', 110]]],
+  [415, 92, [['cherry', 110], ['diamond', 110], ['bell', 110]]],
+  [416, 92, [['seven', 110], ['cherry', 110]], 19200],
+  [417, 92, [['seven', 110], ['diamond', 110], ['cherry', 110]]],
+  [418, 92, [['bar', 110], ['bell', 110], ['cherry', 110]]],
+  [419, 92, [['clover', 110], ['diamond', 110], ['bar', 110]]],
+  [420, 92, [['cherry', 110], ['bell', 110], ['clover', 110]]],
+  [421, 92, [['clover', 110], ['bar', 110]], 19200],
+  [422, 92, [['bar', 110], ['clover', 110], ['seven', 110]]],
+  [423, 92, [['seven', 110], ['bar', 110], ['diamond', 110]]],
+  [424, 92, [['seven', 110], ['bar', 110], ['clover', 110]]],
+  [425, 92, [['clover', 110], ['cherry', 110], ['seven', 110]]],
+  [426, 92, [['bar', 110], ['bell', 110]], 19200],
+  [427, 92, [['bar', 110], ['diamond', 110], ['bell', 110]]],
+  [428, 92, [['bar', 110], ['cherry', 110], ['bell', 110]]],
+  [429, 92, [['diamond', 110], ['bell', 110], ['clover', 110]]],
+  [430, 92, [['cherry', 110], ['seven', 110], ['bar', 110]]],
+]
+
+describe('floor 3 as authored — GOLDEN', () => {
+  it('pins moves, goal symbols, counts and plaques for 401–430', () => {
+    for (const [level, moves, objectives, scoreTarget] of F3_GOLDEN) {
+      const s = levelSpec(level)
+      expect({ level, moves: s.moves, target: s.scoreTarget }).toEqual({ level, moves, target: scoreTarget })
+      expect({ level, o: s.objectives.map(o => [o.symbol, o.count]) }).toEqual({ level, o: objectives })
+      // The whole floor carries the rail, and every non-breather deals from the shoe.
+      expect({ level, pull: s.pull, shoe: s.shoe }).toEqual({ level, pull: true, shoe: level % 5 !== 0 ? true : undefined })
+    }
+  })
+})
+
+/**
+ * THE COUNTING SHOE — floor 3's band. The shoe ITSELF is asserted in shoe.test.ts; what is pinned
+ * here is which levels deal from one, that its teaching level gets the standard courtesy, and that
+ * both the flag and the act take it out cleanly. The endless doctrine's half of the story is
+ * structural — endless builds its board directly and never passes a refill source — and the
+ * boardpick goldens are the tripwire that would catch anyone changing that.
+ */
+describe('THE COUNTING SHOE — the band', () => {
+  it('deals on floor 3 only, skipping breathers, and nowhere else on the tower', () => {
+    expect(SHOE_FROM).toBe(401)
+    for (const L of [1, 201, 300, ACT2_FROM, 355, 399, 400]) expect({ L, shoe: shoeLevel(L) }).toEqual({ L, shoe: false })
+    for (const L of [451, 468, LEVEL_COUNT]) expect({ L, shoe: shoeLevel(L) }).toEqual({ L, shoe: false })
+    for (let L = 401; L <= 450; L++) {
+      // Breathers sit the shoe out — the dealer's empty-chair seat, one floor up.
+      expect({ L, shoe: shoeLevel(L) }).toEqual({ L, shoe: L % 5 !== 0 })
+    }
+  })
+
+  it('marks the spec on shoe levels, and only there', () => {
+    expect(levelSpec(401).shoe).toBe(true)
+    expect(levelSpec(423).shoe).toBe(true)
+    expect(levelSpec(445).shoe).toBe(undefined) // breather
+    expect(levelSpec(400).shoe).toBe(undefined)
+    expect(levelSpec(451).shoe).toBe(undefined) // the card room's own rule arrives with its own slice
+    // The rail rides through the whole band — pull × shoe is floor 3's daily texture.
+    expect(levelSpec(423).pull).toBe(true)
+  })
+
+  it('teaches at 401 with the standard +3, and a relieved plaque — a floor opening is always a …01', () => {
+    expect(isTeachingLevel(SHOE_FROM)).toBe(true)
+    const a2 = DIFFICULTY.act2 as { shoe: boolean }
+    const on = levelSpec(SHOE_FROM)
+    try {
+      a2.shoe = false
+      const off = levelSpec(SHOE_FROM)
+      expect(on.moves).toBe(off.moves + DIFFICULTY.teachingLevelBonusMoves)
+      expect(off.shoe).toBeUndefined()
+      // Flag off, 401 is an ordinary plaque level: same goals, same symbols, full brass.
+      expect(on.objectives).toEqual(off.objectives)
+      expect(off.scoreTarget).toBeGreaterThan(on.scoreTarget as number)
+    } finally {
+      a2.shoe = true
+    }
+    // The teaching relief generalised (TEACHING_PLAQUE_RELIEF): the floor's first plaque steps
+    // back even from the band's own relieved rate, and the next plaque resumes the climb INSIDE
+    // the band. It does NOT resume above 396 — the whole band is priced against the counted
+    // table's thinner tail (SHOE_PLAQUE_RELIEF), and the cross-band step-down and its resume at
+    // 451 are pinned where the ladder itself is, in levels.test.ts.
+    expect(minimumTargetFrac(401)).toBeLessThan(minimumTargetFrac(406))
+    expect(levelSpec(406).scoreTarget as number).toBeGreaterThan(levelSpec(401).scoreTarget as number)
+  })
+
+  it('attaches the dealer exactly where the spec says — and nowhere the flag is off', () => {
+    const source = (b: unknown): unknown => (b as { refillSource: unknown }).refillSource
+    expect(source(buildLevelBoard(423, 0xabc))).not.toBeNull()
+    expect(source(buildLevelBoard(400, 0xabc))).toBeNull()
+    expect(source(buildLevelBoard(445, 0xabc))).toBeNull()
+    const a2 = DIFFICULTY.act2 as { shoe: boolean }
+    try {
+      a2.shoe = false
+      expect(source(buildLevelBoard(423, 0xabc))).toBeNull()
+    } finally {
+      a2.shoe = true
+    }
+  })
+})
+
+/**
+ * THE FLOOR-PAIR RAMP — the seam for floors 3–4's own hazard climb (DIFFICULTY.act2.ramp). SHIPS
+ * OFF: measured, the candidates' signal was smaller than 40-seed noise and the shoe already
+ * carries the pair's climb — the table lives on the flag. The logic assertions force it ON, the
+ * hazards.test.ts idiom, so staging can never quietly make them test nothing; the shipped state is
+ * pinned separately in the rollout describe below.
+ */
+describe('the floor-pair ramp', () => {
+  const withRamp = <T,>(on: boolean, fn: () => T): T => {
+    const a2 = DIFFICULTY.act2 as { ramp: { enabled: boolean } }
+    const was = a2.ramp.enabled
+    a2.ramp.enabled = on
+    try {
+      return fn()
+    } finally {
+      a2.ramp.enabled = was
+    }
+  }
+
+  it('leaves floors 1–2 bit-identical, flag on or off', () => {
+    for (const L of [ACT2_FROM, 313, 350, 355, 400]) {
+      const on = withRamp(true, () => hazardPlan(L, 8, 8))
+      const off = withRamp(false, () => hazardPlan(L, 8, 8))
+      expect({ L, plan: off }).toEqual({ L, plan: on })
+    }
+  })
+
+  it('lit, it starts from the flatline at the floor door and reaches exactly +extra at the pair top', () =>
+    withRamp(true, () => {
+      const { extra } = DIFFICULTY.act2.ramp
+      // 401 adds nothing — the ramp is a climb OUT of the pair's own door, not a step at it.
+      expect(densityFor('lock', 401)).toBe(densityFor('lock', 399))
+      expect(densityFor('coat', 402)).toBe(densityFor('coat', 399))
+      // 499 (the last non-breather) carries the full climb; 500 is a breather and halves as ever.
+      expect(densityFor('lock', 499)).toBe(densityFor('lock', 399) + extra.lock)
+      expect(densityFor('coat', 499)).toBe(densityFor('coat', 399) + extra.coat)
+      expect(densityFor('blocker', 499)).toBe(densityFor('blocker', 399) + extra.blocker)
+    }))
+
+  it('lit, it only ever climbs across the pair — no level hands back cells its predecessor charged', () =>
+    withRamp(true, () => {
+      for (const kind of ['lock', 'coat', 'blocker'] as const) {
+        let prev = densityFor(kind, 401)
+        for (let L = 402; L <= LEVEL_COUNT; L++) {
+          if (L % 5 === 0) continue // breathers are the one deliberate dip, as everywhere on the ladder
+          const n = densityFor(kind, L)
+          expect({ kind, L, rises: n >= prev }).toEqual({ kind, L, rises: true })
+          prev = n
+        }
+      }
+    }))
+
+  it('off — the shipped state — the pair sits on the L300 flatline exactly', () =>
+    withRamp(false, () => {
+      for (const kind of ['lock', 'coat', 'blocker'] as const) {
+        expect(densityFor(kind, 499)).toBe(densityFor(kind, 399))
+      }
+    }))
+})
+
+/**
  * THE ACTIVE FLOOR — the scene-scoped "which room is the player in" that the hazard skins and the
  * margin flourish read (neither is a theme token, so neither can travel on the theme overlay).
  *
@@ -243,7 +426,11 @@ describe('the active floor', () => {
         [325, 1],
         [350, 1],
         [351, 2],
-        [LEVEL_COUNT, 2],
+        [400, 2],
+        [401, 3],
+        [437, 3],
+        [451, 4],
+        [LEVEL_COUNT, 4],
       ] as const) {
         enterFloor(L)
         expect({ L, floor: activeFloor() }).toEqual({ L, floor })
@@ -443,20 +630,36 @@ describe('the floor overlay', () => {
  * changing this assertion, on purpose, in the same commit.
  */
 describe('the shipped rollout', () => {
-  it('ships Slice 1: the act, the rail, the moods, the elevator and the tell', () => {
+  it('ships the act: the rail, the moods, the elevator, the tell — and floor 3 deals from the shoe', () => {
     expect({
       enabled: DIFFICULTY.act2.enabled,
       pull: DIFFICULTY.act2.pull,
       pullStart: DIFFICULTY.act2.pullStart,
       rope: DIFFICULTY.act2.rope,
+      shoe: DIFFICULTY.act2.shoe,
+      shoeStart: DIFFICULTY.act2.shoeStart,
+      // The pair ramp is BUILT AND HELD OFF — a measured decision, not a staging accident; the
+      // table is on the flag. Changing this is a decision written down in the same commit.
+      ramp: DIFFICULTY.act2.ramp.enabled,
       mood: DIFFICULTY.act2.mood,
       reveal: DIFFICULTY.act2.reveal,
       tell: DIFFICULTY.act2.tell,
-    }).toEqual({ enabled: true, pull: true, pullStart: 301, rope: true, mood: true, reveal: true, tell: true })
+    }).toEqual({
+      enabled: true,
+      pull: true,
+      pullStart: 301,
+      rope: true,
+      shoe: true,
+      shoeStart: 401,
+      ramp: false,
+      mood: true,
+      reveal: true,
+      tell: true,
+    })
   })
 
-  it('ships two floors — the high-limit room and the speakeasy', () => {
-    expect(FLOORS.map(f => f.name)).toEqual(['THE HIGH-LIMIT ROOM', 'THE SPEAKEASY'])
+  it('ships four floors — the high-limit room, the speakeasy, the vault and the card room', () => {
+    expect(FLOORS.map(f => f.name)).toEqual(['THE HIGH-LIMIT ROOM', 'THE SPEAKEASY', 'THE VAULT', 'THE CARD ROOM'])
   })
 
   it('every shipped floor is DRESSED — no floor arrives without an identity', () => {

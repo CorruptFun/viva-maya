@@ -757,6 +757,91 @@ function floorFlourish(scene: Phaser.Scene, kind: FloorFlourish): void {
     })
   }
 
+  if (kind === 'securityBeam') {
+    // FLOOR 3 — the vault's one moving light: a cold beam sweeping the bottom margin, the way a
+    // camera-mounted floodlight rakes a wall. ONE pool translating on a slow sine — no rotation,
+    // because a rotating shaft long enough to read would have to cross the board, and this layer's
+    // law is margins only.
+    //
+    // Brightest at the ENDS of its travel, dimmest mid-sweep — deliberately backwards from a naive
+    // spotlight. The vignette darkens the corners, so the corners are where a legal alpha still
+    // reads (the tableLamp lesson, one floor up); and a beam that flares as it rakes into the
+    // corner then slides off reads as SWEEPING PAST rather than as a blob commuting.
+    const y = 1126
+    const midX = 360
+    const ampX = 230
+    const pool = scene.add
+      .image(midX, y, 'bgglow')
+      .setDisplaySize(250, 120)
+      .setTint(0x8fb4dc)
+      .setAlpha(0.06)
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setDepth(Z.flourish)
+    const proxy = { p: 0 }
+    scene.tweens.add({
+      targets: proxy,
+      p: 1,
+      duration: T_DRIFT * 1.6,
+      repeat: -1,
+      ease: 'Linear',
+      onUpdate: () => {
+        const t = proxy.p * Math.PI * 2
+        pool.setX(midX + ampX * Math.sin(t))
+        // cos(2t) peaks exactly at the sweep's two ends (t = π/2, 3π/2), bottoms mid-travel.
+        const k = 0.5 - 0.5 * Math.cos(2 * t)
+        pool.setAlpha(0.045 + 0.085 * k)
+      },
+    })
+  }
+
+  if (kind === 'lampPools') {
+    // FLOOR 4 — two green-shaded lamps just out of frame, pooling on the bottom margin: amber where
+    // the light lands, a sliver of green where the shade glows through. The green is confined to
+    // that sliver on purpose — the mood's whole colour story is warm light from green fixtures, and
+    // a green POOL would read as felt, which is a hazard's word on this board.
+    //
+    // One proxy tween breathes both lamps out of phase (a card room's lamps share a supply, not a
+    // filament) — the tableLamp's two-sine settle, twice, offset.
+    const lamps = [
+      { x: 92, y: 1146 },
+      { x: 628, y: 1146 },
+    ].map(({ x, y }) => {
+      const pool = scene.add
+        .image(x, y, 'bgglow')
+        .setDisplaySize(250, 175)
+        .setTint(0xffb648)
+        .setAlpha(0.1)
+        .setBlendMode(Phaser.BlendModes.ADD)
+        .setDepth(Z.flourish)
+      // The shade's rim: a squashed glow, green, sitting where the pool's ceiling would be.
+      const rim = scene.add
+        .image(x, y - 82, 'bgglow')
+        .setDisplaySize(96, 30)
+        .setTint(0x2f9b78)
+        .setAlpha(0.1)
+        .setBlendMode(Phaser.BlendModes.ADD)
+        .setDepth(Z.flourish)
+      return { pool, rim }
+    })
+    const proxy = { p: 0 }
+    scene.tweens.add({
+      targets: proxy,
+      p: 1,
+      duration: T_DRIFT * 1.7,
+      repeat: -1,
+      ease: 'Linear',
+      onUpdate: () => {
+        const t = proxy.p * Math.PI * 2
+        lamps.forEach(({ pool, rim }, i) => {
+          const w = 0.5 + 0.36 * Math.sin(t + i * 2.6) + 0.14 * Math.sin(t * 2.3 + i)
+          const k = Phaser.Math.Clamp(w, 0, 1)
+          pool.setAlpha(0.07 + 0.06 * k)
+          rim.setAlpha(0.07 + 0.05 * k)
+        })
+      },
+    })
+  }
+
   if (kind === 'filamentBulb') {
     // FLOOR 2 — a bare bulb on a cord in the top margin, swinging just enough to notice. The cord is
     // a baked rectangle ROTATED about its top end, so the whole pendulum is transform-only and this

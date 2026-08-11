@@ -140,6 +140,42 @@ export const DIFFICULTY = {
      *  rearranges what `hazardPlan` already produced, so switching it off restores those five
      *  levels' ordinary boards exactly. */
     rope: true,
+    /** THE COUNTING SHOE — floor 3's rule: refills draw from a finite, visible shoe instead of thin
+     *  air (core/shoe.ts). Open information, not a hazard — the board seam is an optional refill
+     *  source that endless never receives. Off, floor 3 deals exactly as floor 2 does. */
+    shoe: true,
+    /** First level carrying the shoe — floor 3's opening. Earns a teaching level like every band
+     *  start; the band's top is the floor's own last level (core/actII.ts shoeLevel). */
+    shoeStart: 401,
+    /**
+     * THE FLOOR-PAIR HAZARD RAMP — the seam for floors 3–4 to bring their own climb, as the debt
+     * register said each new pair should. Every ramp in `hazards.ts` flatlines at its L300 value,
+     * deliberately, so floors 1–2 (the teaching floors for a new verb) carry exactly a L300 board.
+     * `extra` is the cells ADDED at the top of the pair (level `to`) over the L300 flatline,
+     * ramping linearly from zero at `from` — so 301–400 cannot move by construction, and switching
+     * `enabled` off restores the pair to the flatline exactly.
+     *
+     * ⚠️ BUILT, MEASURED — AND HELD OFF. The coats/blockers precedent, for a measured reason
+     * rather than a staging one. Banker win rates, 40 seeds, shoe live (2026-08-11):
+     *
+     *     config                          409   423   444   451   468   489
+     *     flat (no ramp)                   30    28    20    33    43    23
+     *     lock+2 coat+2                    30    28    25    43    35    18
+     *     lock+2 coat+2 blocker+1          30    28    25    38    48    33
+     *     lock+3 coat+3 blocker+1          30    20    25    25    55    23
+     *
+     * Two findings, and each kills the flip on its own. The candidates' signal is SMALLER than
+     * 40-seed noise — the middle column moves ±10pp with no coherent direction (a +1 blocker
+     * config measured five points EASIER than flat at 468), so no variant can honestly be called
+     * "the measured ramp" at a certifiable sample size. And the pair does not need it: THE
+     * COUNTING SHOE is already the pair's measured climb — it costs 7–13pp across floor 3
+     * (flat|noshoe 38/35/33 → 30/28/20 at 409/423/444) on a baseline that had drifted ABOVE late
+     * Act I, and floor 4's own rule (FIVE-CARD FELT) arrives with its own slice and its own
+     * measurement. Flip this only with a bigger sample AND a floor that has run out of mechanics —
+     * and leave the 2-layer/2-hp FRACTIONS at their L300 values regardless: a count ramp and a
+     * depth ramp compound.
+     */
+    ramp: { enabled: false, from: 401, to: 500, extra: { lock: 2, coat: 2, blocker: 0 } },
     /** Floor moods — per-floor ambiance (view/floormood.ts). Modulates light; never the theme's wash. */
     mood: true,
     /** THE PRIVATE ELEVATOR reveal + the LevelSelect dressing that advertises the act. */
@@ -279,11 +315,15 @@ export function isTeachingLevel(level: number): boolean {
   // hazard band does — gated on its own flag, not on `hazards.enabled` (it is not a hazard).
   // THE REEL PULL teaches a new VERB at `act2.pullStart`, and gets the same courtesy on its own
   // flags: with the act switched off, L301 must be an ordinary level with an ordinary budget.
+  // THE COUNTING SHOE teaches a new INFORMATION SOURCE at `act2.shoeStart` — floor 3's opening,
+  // which (like every act and floor opening on the …01 cadence) is also a plaque level, so the
+  // teaching relief matters twice there.
   return (
     hazardTeach ||
     afterDarkTeach ||
     (goals.minimum && level === goals.minimumStart) ||
-    (act2.enabled && act2.pull && level === act2.pullStart)
+    (act2.enabled && act2.pull && level === act2.pullStart) ||
+    (act2.enabled && act2.shoe && level === act2.shoeStart)
   )
 }
 

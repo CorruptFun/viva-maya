@@ -68,6 +68,8 @@ describe('the tables — economy data, pinned', () => {
     // Act II's shape: five chapters per floor, the fifth is the floor's crest/door.
     expect(trophyFor(35)?.label).toBe('THE CLUB CREST')
     expect(trophyFor(40)?.label).toBe('THE MASKS')
+    expect(trophyFor(45)?.label).toBe('THE VAULT LOCK')
+    expect(trophyFor(50)?.label).toBe('THE ACE OF SPADES')
   })
 
   it('a wing knows its own chapters and its own podium piece', () => {
@@ -100,11 +102,13 @@ describe('the tables — economy data, pinned', () => {
       // Act II — flat with crowns on the floor closes. See the design note in trophies.ts.
       250, 250, 250, 250, 400,
       250, 250, 250, 250, 400,
+      250, 250, 250, 250, 400,
+      250, 250, 250, 250, 400,
     ])
-    expect(CHAPTER_PURSE_TOTAL).toBe(11000)
+    expect(CHAPTER_PURSE_TOTAL).toBe(13800)
     // The act's own contribution, stated separately so a future act can be added without anyone
     // having to subtract two totals in their head to see what it cost.
-    expect(CHAPTER_PURSES.slice(30).reduce((s, n) => s + n, 0)).toBe(2800)
+    expect(CHAPTER_PURSES.slice(30).reduce((s, n) => s + n, 0)).toBe(5600)
   })
 
   it('the ladder never steps DOWN across a band boundary WITHIN an act', () => {
@@ -117,7 +121,7 @@ describe('the tables — economy data, pinned', () => {
     // inside one is the bug this test has always been about.
     const bands = [
       [0, 5, 10, 15, 20, 25], // Act I
-      [30, 35], // Act II
+      [30, 35, 40, 45], // Act II
     ]
     for (const act of bands) {
       const base = act.map(i => CHAPTER_PURSES[i])
@@ -148,6 +152,8 @@ describe('the tables — economy data, pinned', () => {
     expect(trophyTier(30)?.emoji).toBe('🏎️')
     expect(trophyTier(39)?.emoji).toBe('🏎️')
     expect(trophyTier(40)?.emoji).toBe('🎖️')
+    expect(trophyTier(49)?.emoji).toBe('🎖️')
+    expect(trophyTier(50)?.emoji).toBe('🕴️')
     expect(trophyTier(Number.NaN)).toBeNull()
     // Descending order is load-bearing — `trophyTier` returns the FIRST match.
     for (let i = 1; i < TROPHY_TIERS.length; i++) {
@@ -311,7 +317,7 @@ describe('coercion + merge — trophies survive old saves and second devices', (
   it('trophyFor maps chapters to the catalogue and null off it', () => {
     expect(trophyFor(1)?.emoji).toBe('🪅')
     expect(trophyFor(30)?.label).toBe('THE CAR')
-    expect(trophyFor(CHAPTER_COUNT)?.label).toBe('THE MASKS')
+    expect(trophyFor(CHAPTER_COUNT)?.label).toBe('THE ACE OF SPADES')
     expect(trophyFor(CHAPTER_COUNT + 1)).toBeNull()
     expect(trophyFor(0)).toBeNull()
   })

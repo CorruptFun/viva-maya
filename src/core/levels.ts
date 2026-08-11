@@ -2,7 +2,7 @@ import { SYMBOLS } from './types'
 import type { BoostType, LevelSpec, SymbolType } from './types'
 import { mulberry32, randInt } from './rng'
 import { DIFFICULTY, isTeachingLevel } from './difficulty'
-import { act2Spec } from './actII'
+import { act2Spec, shoeLevel } from './actII'
 
 /**
  * The last level of ACT I — THE MAIN FLOOR. Not the same thing as `LEVEL_COUNT`, and the difference
@@ -28,7 +28,7 @@ export const ACT1_LEVELS = 300
  * whose LEVEL_COUNT outran its catalogue would claim a trophy that does not exist.
  * `trophies.test.ts` pins `TROPHIES.length === CHAPTER_COUNT` precisely so a lone bump goes red.
  */
-export const LEVEL_COUNT = 400
+export const LEVEL_COUNT = 500
 
 /**
  * Levels per CHAPTER — the decade grouping the level map draws (ribbons every ten) and the win flow
@@ -39,7 +39,7 @@ export const LEVEL_COUNT = 400
  * ribbon math changes with it.
  */
 export const CHAPTER_LEVELS = 10
-/** How many chapters the ladder makes — 40 today. The showroom has exactly this many plinths, split
+/** How many chapters the ladder makes — 50 today. The showroom has exactly this many plinths, split
  *  across its wings (Act I's thirty, then a floor's five per Act II chapter band). Derived, so a
  *  `LEVEL_COUNT` bump moves it automatically — which is exactly why the catalogues have to move with
  *  it in the same commit (see the LEVEL_COUNT note above). */
@@ -319,6 +319,18 @@ export function minimumTargetFrac(level: number): number {
   // the clamp this term is the only thing still moving, which is precisely why it must keep moving.
   const t2 = Math.max(0, Math.min(1, (level - ACT1_LEVELS) / ACT2_SPAN))
   const f = act1 + 0.06 * t2
+  // THE COUNTED-TABLE RELIEF — the shoe band posts gentler minimums, and the reason is a MEASURED
+  // distribution shape, not a mood. The shoe (core/shoe.ts) deals refills without replacement, and
+  // that thins the RIGHT TAIL of the score distribution without moving its middle: the banker's
+  // completer mean is 86–89 points per goal on shoe plaques against the no-shoe 89 (48 seeds,
+  // 2026-08-11 — the constant did not move), but the plaque's Act II fractions ask for ~106–109% of
+  // that mean, a number only the fat no-shoe tail ever reached. Enforced at full brass, L406
+  // measured FIVE percent against its no-shoe sibling's 25% — a wall, by the plaque guard's own
+  // definition. So the counted table asks for less-above-mean, and the fiction writes itself: the
+  // House shows you the shoe down here, and a House that shows its hand posts an honest minimum.
+  // The band's own guard lives in minimum.rate.test.ts; the step down at the band's door and the
+  // resume above it at 451 are pinned in levels.test.ts.
+  const g = shoeLevel(level) ? f * SHOE_PLAQUE_RELIEF : f
   // A level that TEACHES something new posts a gentler minimum — the same courtesy L201 gets from
   // the early return above, generalised.
   //
@@ -329,12 +341,28 @@ export function minimumTargetFrac(level: number): number {
   // that also hands out +3 moves and an intro card — visible, explained, and immediately resumed
   // (306 clears 296). `levels.test.ts` carves teaching levels out of the monotone check for the
   // same reason it already carves them out of the move-budget one.
-  return isTeachingLevel(level) ? f * TEACHING_PLAQUE_RELIEF : f
+  return isTeachingLevel(level) ? g * TEACHING_PLAQUE_RELIEF : g
 }
 
 /** How far a teaching level's plaque steps back from its band rate. 0.85 ≈ L201's own 0.75/0.88 —
  *  the shipped teaching discount, re-expressed as a ratio so it travels up the ladder unchanged. */
 const TEACHING_PLAQUE_RELIEF = 0.85
+
+/**
+ * How far a COUNTED TABLE's plaque steps back — the shoe band's tail-thinning, priced. MEASURED
+ * (banker, 40 seeds, plaque enforced, shoe live, 2026-08-11):
+ *
+ *     relief      401(teach)   406   411   426   446
+ *     1.00 (none)     33         5     —     —     —      ← the wall the relief exists to remove
+ *     0.95            33        20    18    15    15      ← still under the band its siblings hold
+ *     0.92 (ships)    33        23    25    20    20      ← the pocket: tight, honest, winnable
+ *
+ * For scale: the same levels' no-shoe siblings measure ~25%, late Act I's tightest is 18%, and the
+ * relieved targets sit almost exactly ON the shoe-world completer mean (86–89 pts/goal × 220 owed ≈
+ * 19,100 — the mean itself did not move, only the tail; see minimumTargetFrac's note). Re-derive
+ * against minimum.rate.test.ts's shoe-band guard, never eyeball it.
+ */
+const SHOE_PLAQUE_RELIEF = 0.92
 
 /** Act II's designed span (301–600), the denominator its gentle ramps are measured against — the
  *  act ships a floor pair at a time, so this is deliberately NOT `LEVEL_COUNT - ACT1_LEVELS`: the

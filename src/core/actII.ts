@@ -54,7 +54,7 @@ export interface Floor {
 }
 
 /**
- * The floors that EXIST. Two of six: the act is designed to 600 but ships a floor pair per slice,
+ * The floors that EXIST. Four of six: the act is designed to 600 but ships a floor pair per slice,
  * because a floor is only real once its levels, trophies and showroom plinths land in the same
  * tree — a `claimChapter` that outruns the catalogue is the one failure mode a staged rollout must
  * never have. Adding a floor means bumping `LEVEL_COUNT`, extending `TROPHIES`/`CHAPTER_PURSES`
@@ -63,6 +63,8 @@ export interface Floor {
 export const FLOORS: readonly Floor[] = [
   { floor: 1, name: 'THE HIGH-LIMIT ROOM', from: 301, to: 350, chapterFrom: 31, chapterTo: 35 },
   { floor: 2, name: 'THE SPEAKEASY', from: 351, to: 400, chapterFrom: 36, chapterTo: 40 },
+  { floor: 3, name: 'THE VAULT', from: 401, to: 450, chapterFrom: 41, chapterTo: 45 },
+  { floor: 4, name: 'THE CARD ROOM', from: 451, to: 500, chapterFrom: 46, chapterTo: 50 },
 ]
 
 /** Is the act live at all? The master switch; every helper below answers `false`/`null` when it is off. */
@@ -122,21 +124,61 @@ export function pullLevel(level: number): boolean {
   return act2.enabled && act2.pull && Number.isFinite(level) && level >= act2.pullStart
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// THE COUNTING SHOE — floor 3's rule. The mechanic itself lives in `core/shoe.ts`; what lives HERE
+// is only the band: which numbered levels deal from one.
+//
+// Floor-scoped, not act-scoped like the pull. The pull is a VERB, and taking a verb away from a
+// player who has climbed past its floor would be a downgrade — so it runs 301 to the top forever.
+// The shoe is a RULE about the room: floor 3 is the counting floor the way floor 1 is the rail's
+// teaching floor, and floor 4's own rule arrives with its own slice. Scoping it to the floor also
+// keeps the curated F5 pairings honest when they come — "pull × shoe" is only a pairing if the shoe
+// is not already everywhere.
+//
+// Breathers sit the shoe out (`% 5`), the same seat the dealer's empty chair reserves: a breather
+// is the band's one visibly calmer beat, and an every-5th table with nothing to count is how the
+// calm stays legible. Plaque levels keep their shoe — a second win term and an information source
+// compose without arguing.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** First level dealing from the shoe — floor 3's opening, and its teaching level. */
+export const SHOE_FROM = DIFFICULTY.act2.shoeStart
+
+/** True when this numbered level's refills deal from THE COUNTING SHOE. */
+export function shoeLevel(level: number): boolean {
+  const { act2 } = DIFFICULTY
+  const floor3 = FLOORS.find(f => f.floor === 3)
+  return (
+    act2.enabled &&
+    act2.shoe &&
+    Number.isFinite(level) &&
+    floor3 !== undefined &&
+    level >= act2.shoeStart &&
+    level <= floor3.to &&
+    level % 5 !== 0
+  )
+}
+
 /**
  * Fold Act II's additions into a finished Act I spec. Returns `base` UNTOUCHED for every Act I
  * level and whenever the act is switched off — which is what keeps `levels.test.ts`'s panic-switch
- * transcription honest over the whole 1..LEVEL_COUNT range: with the act off, levels 301–400 are
+ * transcription honest over the whole 1..LEVEL_COUNT range: with the act off, levels 301+ are
  * the plain extended formula and nothing else.
  *
  * Deliberately additive-only. It never rewrites `moves`, `objectives` or `scoreTarget`: the move
  * budget for an Act II level is the same curve Act I ends on (plus the ordinary teaching bonus at
- * `PULL_FROM`, granted by `isTeachingLevel` inside `levelSpec` like every other band start), and
- * the plaque ladder continues through `minimumTargetFrac`. Everything Act II asks EXTRA for comes
- * from the new verb and the floors, not from a tighter number.
+ * `PULL_FROM` and `SHOE_FROM`, granted by `isTeachingLevel` inside `levelSpec` like every other
+ * band start), and the plaque ladder continues through `minimumTargetFrac`. Everything Act II asks
+ * EXTRA for comes from the new verbs and the floors, not from a tighter number.
  */
 export function act2Spec(level: number, base: LevelSpec): LevelSpec {
-  if (!pullLevel(level)) return base
-  return { ...base, pull: true }
+  const pull = pullLevel(level)
+  const shoe = shoeLevel(level)
+  if (!pull && !shoe) return base
+  const out = { ...base }
+  if (pull) out.pull = true
+  if (shoe) out.shoe = true
+  return out
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

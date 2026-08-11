@@ -67,16 +67,27 @@ function ramp(level: number, from: number, to: number, lo: number, hi: number): 
  * replacement for the old invisible "+2 moves" breather.
  */
 export function densityFor(kind: HazardKind, level: number): number {
-  const { hazards, bands, density, breatherHazardScale } = DIFFICULTY
+  const { hazards, bands, density, breatherHazardScale, act2 } = DIFFICULTY
   if (!hazards.enabled || !hazards[kind]) return 0
 
   const d = density[kind]
   if (level < d.from) return 0
 
-  const raw =
+  const base =
     level <= bands.lateStart
       ? ramp(level, d.from, d.to, d.count[0], d.count[1])
       : ramp(level, bands.lateStart, 300, d.lateCount[0], d.lateCount[1])
+
+  // THE FLOOR-PAIR RAMP (Act II, floors 3–4). The 300 flatline above is deliberate for floors 1–2
+  // — the teaching floors for a new verb — and this is the pair above them bringing its own climb,
+  // exactly as the plan said each new pair should. Zero at `from` by construction (the ramp's low
+  // end is 0 extra cells), so every level through 400 is bit-identical with the flag on or off;
+  // the numbers in DIFFICULTY.act2.ramp are measured, not drawn.
+  const extra =
+    act2.enabled && act2.ramp.enabled && level > act2.ramp.from
+      ? ramp(level, act2.ramp.from, act2.ramp.to, 0, act2.ramp.extra[kind])
+      : 0
+  const raw = base + extra
 
   // A teaching level always gets that band's FLOOR, never a breather-shrunk version of it.
   if (isTeachingLevel(level) && level === d.from) return d.count[0]

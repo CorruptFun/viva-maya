@@ -122,6 +122,42 @@ export const TROPHIES: readonly ChapterTrophy[] = [
   // under `?showroom=34`, which is what that fixture is for. The hidden door survives as the FLOOR's
   // name, where it never has to be drawn.
   { chapter: 40, emoji: '🎭', label: 'THE MASKS' },
+
+  // ── ACT II · FLOOR 3 — THE VAULT (chapters 41–45) ──────────────────────────────────────────
+  // The shelf story turns here: floors 1 and 2 furnished the rooms you were let into, and this
+  // floor's five are the tools and spoils of getting into the one room nobody is let into. Every
+  // glyph is an outline shape (gear teeth, an open shackle, a handled case, an amphora) because the
+  // locked treatment is flat navy — the chapter-1 coin rule, still in force.
+  { chapter: 41, emoji: '⚙️', label: 'THE VAULT GEARS' },
+  { chapter: 42, emoji: '🔓', label: 'THE SPRUNG LOCK' },
+  { chapter: 43, emoji: '🧰', label: "THE CRACKSMAN'S KIT" },
+  // The spoils one chapter before the prize that guards them — the wheels-before-the-car tease,
+  // told in bullion.
+  { chapter: 44, emoji: '🏺', label: 'THE URN OF COINS' },
+  // FLOOR CLOSE — the floor's emblem, per the crest/masks precedent. The vault's honest emblem is
+  // its LOCK: the door itself is a slab (the exact 🚪 failure written down at chapter 40), and the
+  // closed padlock-and-key keeps a readable shackle-and-key outline at 52px. ⚠️ Not 🗝️ or 🔑 —
+  // the skeleton key is a charm and the gold key collides with it at a glance (the ch60 note's own
+  // reasoning, applied one floor early).
+  { chapter: 45, emoji: '🔐', label: 'THE VAULT LOCK' },
+
+  // ── ACT II · FLOOR 4 — THE CARD ROOM (chapters 46–50) ──────────────────────────────────────
+  // Oxblood, walnut and green-shaded lamps: the private game that runs all night. ⚠️ Three of the
+  // design's draft picks died in review here, all for shipped reasons: 🎴 THE HOUSE DECK is a card,
+  // and every card emoji silhouettes to a blank rectangle (the chapter-5 rule); 👑 TABLE STAKES
+  // CROWN is the race champion's glyph, pinned as a forbidden collision by trophies.test.ts; and
+  // 🖼️ THE FOUNDER'S PORTRAIT is a framed slab — the chapter-40 door failure in a gilt frame.
+  { chapter: 46, emoji: '🥃', label: 'THE HOUSE POUR' },
+  { chapter: 47, emoji: '🕰️', label: 'THE SMALL HOURS' },
+  { chapter: 48, emoji: '⚖️', label: 'THE HOUSE EDGE' },
+  // The near-miss tease: the bird that has watched every hand all night sees the last one coming,
+  // one chapter before it is dealt.
+  { chapter: 49, emoji: '🦉', label: 'THE NIGHT OWL' },
+  // FLOOR CLOSE — the emblem again, and the one card that is not a rectangle: the suit PIP itself,
+  // which silhouettes to the spade shape. No board symbol is a spade (cherry / seven / diamond /
+  // bell / clover / bar), so the one card-room glyph that survives the navy treatment is also the
+  // one that collides with nothing.
+  { chapter: 50, emoji: '♠️', label: 'THE ACE OF SPADES' },
 ]
 
 /** The trophy for a 1-based chapter, or null off the map (a merge from a newer build, garbage). */
@@ -136,8 +172,8 @@ export function trophyFor(chapter: number): ChapterTrophy | null {
  * or two of play) pay a few wins' worth; the late-game grinds pay 300–400; chapter 30 pays a
  * champion purse exactly once per lifetime, so the weekly crown stays the biggest REPEATABLE prize.
  *
- * The lifetime total (CHAPTER_PURSE_TOTAL, 11,000 — 8,200 through Act I, plus 2,800 across the
- * first two high-roller floors) is what the economy actually grants a player who
+ * The lifetime total (CHAPTER_PURSE_TOTAL, 13,800 — 8,200 through Act I, plus 5,600 across the
+ * first four high-roller floors) is what the economy actually grants a player who
  * finishes the game — fixed, one-time, identical for everyone, and therefore inflation-safe
  * regardless of player count. trophies.test.ts pins every value and the sum; retune them there.
  */
@@ -164,6 +200,8 @@ export const CHAPTER_PURSES: readonly number[] = [
   // and the test says so. A step down BETWEEN acts is the design; a step down inside one is a bug.
   250, 250, 250, 250, 400, // ch 31–35  (F1 · THE HIGH-LIMIT ROOM, crown on the floor close)
   250, 250, 250, 250, 400, // ch 36–40  (F2 · THE SPEAKEASY, crown on the floor close)
+  250, 250, 250, 250, 400, // ch 41–45  (F3 · THE VAULT, crown on the floor close)
+  250, 250, 250, 250, 400, // ch 46–50  (F4 · THE CARD ROOM, crown on the floor close)
 ]
 
 /** Sum of the ladder — the whole feature's lifetime chip injection per player. Pinned by test. */
@@ -187,6 +225,8 @@ export const CHAPTER_BOOSTS: Readonly<Partial<Record<number, BoostType>>> = {
   // in-level HELPER shelf is not a boost — see the BOOST_META note in core/inventory.ts.)
   35: 'jackpot',
   40: 'jackpot',
+  45: 'jackpot',
+  50: 'jackpot',
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -215,6 +255,10 @@ export interface TrophyTier {
  * needs no server work at all — which is the entire argument against a writable "flair" column.
  */
 export const TROPHY_TIERS: readonly TrophyTier[] = [
+  // Fifty chapters is the top of the shipped tower — the player the whole board is chasing. 🕴️ is
+  // nobody's trophy, charm or boost (the collision sweep pins that), and it reads as a PERSON where
+  // every rung below reads as a prize: from here the player is the fixture, not the winnings.
+  { min: 50, emoji: '🕴️', label: 'THE HIGH ROLLER' },
   // ACT II opens the case up. The whole of Act I now fits under one rung, which is the point: at
   // forty chapters you are not a player who finished the game, you are a player who went upstairs.
   { min: 40, emoji: '🎖️', label: 'HIGH-ROLLER CASE' },

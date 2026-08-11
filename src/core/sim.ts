@@ -7,6 +7,7 @@ import type { LevelSpec } from './types'
 import { hazardPlan } from './hazards'
 import type { HazardPlan } from './hazards'
 import { plinkoSlots, rollSlotIndex, shouldOfferPlinko } from './plinko'
+import { buildShoe } from './shoe'
 import { mulberry32 } from './rng'
 import type { Rng } from './rng'
 import { SYMBOLS } from './types'
@@ -244,11 +245,15 @@ function resolvePullTracking(
  *
  * ⚠️ `act2Plan` belongs HERE and not only in GameScene. The roped run (311–315) re-seats the
  * lockboxes, and a feasibility gate that measured the unroped board would be measuring a level
- * nobody plays — which is the one way a gate can be green and wrong at the same time.
+ * nobody plays — which is the one way a gate can be green and wrong at the same time. THE COUNTING
+ * SHOE is attached here for exactly the same reason: a floor-3 gate that measured unlimited
+ * refills would be certifying a deal the player never gets. Its rng derives from the attempt seed
+ * on its own offset, so a run is reproducible and the board's own stream is never touched.
  */
 export function buildLevelBoard(level: number, seed: number): Board {
   const spec = levelSpec(level)
   const b = new Board(8, 8, spec.symbolCount, mulberry32(seed))
+  if (spec.shoe) b.setRefillSource(buildShoe(spec.symbolCount, mulberry32((seed ^ 0xdea1e2) >>> 0)))
   b.seedHazards(act2Plan(level, hazardPlan(level, 8, 8), 8))
   return b
 }

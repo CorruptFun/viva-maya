@@ -38,6 +38,19 @@ export interface BoardSnapshot {
   coats: number[][] | null
 }
 
+/**
+ * An optional refill dealer — THE COUNTING SHOE's seam (Act II, core/shoe.ts).
+ *
+ * With a source attached, `refill()` asks IT for every new symbol; absent, the uniform path below
+ * runs bit-for-bit as it always has. Dormant by absence, exactly like `pullColumn`: nothing on the
+ * endless path ever attaches one, so the race boards' seeded futures — the whole security model —
+ * cannot move by a single draw, and `boardpick.test.ts`'s goldens are the tripwire that proves it.
+ * The source draws from its own rng, never this board's.
+ */
+export interface RefillSource {
+  draw(): SymbolType
+}
+
 export class Board {
   private grid: (Piece | null)[][] = []
   private nextId = 1
@@ -47,6 +60,8 @@ export class Board {
    * structure, let alone pay for it.
    */
   private coats: number[][] | null = null
+  /** THE COUNTING SHOE, when this level deals from one. Null everywhere else — see `RefillSource`. */
+  private refillSource: RefillSource | null = null
 
   constructor(
     readonly rows: number,
@@ -96,6 +111,11 @@ export class Board {
   }
 
   // ------------------------------------------------------------- hazards
+
+  /** Attach (or detach) the level's refill dealer. Numbered shoe levels only — never endless. */
+  setRefillSource(src: RefillSource | null): void {
+    this.refillSource = src
+  }
 
   /**
    * Lay a level's hazard plan onto a freshly generated board. Call once, right after construction;
@@ -753,7 +773,10 @@ export class Board {
         for (let r = segTop; r <= segBottom; r++) if (!this.grid[r][c]) holes++
         for (let r = segTop; r <= segBottom; r++) {
           if (this.grid[r][c]) continue
-          const p = this.newPiece(pal[randInt(this.rng, pal.length)])
+          // The shoe deals refills when one is attached; otherwise the uniform path, untouched.
+          // Two distinct streams by design — the shoe never advances this board's rng, so absence
+          // is bit-for-bit the pre-shoe game and the endless goldens cannot feel the feature.
+          const p = this.newPiece(this.refillSource ? this.refillSource.draw() : pal[randInt(this.rng, pal.length)])
           this.grid[r][c] = p
           spawns.push({ piece: p, at: { row: r, col: c }, dropCells: holes })
         }

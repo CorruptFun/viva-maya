@@ -55,10 +55,18 @@ const SEEDS = FULL ? 40 : 10
  * collect goals at all, so the win rides the score and the felt), 233 is the first level whose
  * scoring rule differs from every other level in the game, and 281 is the check that THE EYE really
  * is presentational — a purely visual beat must leave its level's numbers exactly where they were.
+ *
+ * FLOORS 3–4 join at 401 / 423 / 444 / 451 / 489 (banker at 40 seeds when the pair shipped,
+ * 2026-08-11: 33 / 28 / 20 / 33 / 23 percent — L300's 18% for scale). 401 is the shoe's teaching
+ * level AND a counted-table plaque; 423 and 444 are the shoe's plain texture, 444 the tightest
+ * level on the pair; 451 opens the card room, where the shoe ends and the ordinary plaque ladder
+ * resumes. All five live in the DENSE sweep only — every one sits low enough that `everWon` over
+ * 10 seeds would red-light on the dice (the 355 rule) — so the QUICK set takes 468 instead, floor
+ * 4's mid-floor plain table at 43%, exactly the flake profile 390 already holds.
  */
 const CHECK_LEVELS = FULL
-  ? [31, 45, 56, 65, 86, 100, 150, 216, 220, 233, 281, 300, 310, 313, 355, 390]
-  : [65, 150, 300, 390]
+  ? [31, 45, 56, 65, 86, 100, 150, 216, 220, 233, 281, 300, 310, 313, 355, 390, 401, 423, 444, 451, 489]
+  : [65, 150, 300, 390, 468]
 /** Playing the real board headlessly is not cheap, and the dense sweep is ~30s per gate. Vitest's
  *  5s default would fail these on wall clock rather than on merit — which is exactly the kind of
  *  false red that teaches people to ignore a suite. */

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { MINIMUM_POINTS_PER_GOAL, POINTS_NIGHT_POINTS_PER_MOVE, isMinimumLevel, isPointsNight, levelSpec } from './levels'
+import { shoeLevel } from './actII'
 import { sampleLevel } from './sim'
 
 /**
@@ -125,6 +126,54 @@ describe('house minimum — plaque calibration on the real board', () => {
  * truth (8,300 against 14,600 at L216, the first attempt at this). The target is therefore pushed
  * out of reach instead, which is what forces the full budget out.
  */
+/**
+ * THE COUNTED TABLE — the shoe band's plaques (floor 3, 401–446). Same discipline again, and again
+ * a separate block because the DISTRIBUTION is different: the shoe deals refills without
+ * replacement, which thins the score distribution's right tail without moving its middle (the
+ * completer mean measured 86–89 pts/goal against the open-refill 89). The full-brass fraction
+ * priced that missing tail — L406 enforced measured FIVE percent, a wall — so the band posts
+ * `SHOE_PLAQUE_RELIEF`-relieved minimums, and this block is what keeps that relief honest in both
+ * directions: still winnable, still binding, and anchored to a mean that must not drift.
+ */
+describe('the counted table — shoe-band plaques', () => {
+  it('every sampled shoe plaque is winnable with the number enforced', T, () => {
+    for (const L of [401, 406, 426, 446]) {
+      expect(shoeLevel(L)).toBe(true)
+      const s = sampleLevel(L, SEEDS, 'banker')
+      expect({ L, everWon: s.runs.some(r => r.won) }).toEqual({ L, everWon: true })
+    }
+  })
+
+  it('the relieved number still BINDS, and is not a wall — both directions, like every plaque', T, () => {
+    // Aggregated over the band the way the Act I top is, and for the same reason: single late
+    // levels yield a handful of completers, and a rate guard needs a denominator worth dividing
+    // by. The relieved targets sit almost exactly ON the completer mean, so binding roughly half
+    // of natural completers is the DESIGN — sleepy play misses the number, cascade play clears it.
+    const rows = [406, 426, 446].map(naturalBind)
+    const agg = {
+      bound: rows.reduce((n, r) => n + r.bound, 0),
+      completers: rows.reduce((n, r) => n + r.completers, 0),
+    }
+    expect(agg.bound).toBeGreaterThanOrEqual(2)
+    expect(agg.bound / Math.max(1, agg.completers)).toBeLessThanOrEqual(0.8)
+  })
+
+  it('the completer mean per goal did not move — the relief prices the TAIL, not the middle', T, () => {
+    // If this drifts, the relief's whole justification drifts with it: a shoe that started paying
+    // meaningfully less per goal would need the CONSTANT repriced (a new anchor, the points-night
+    // precedent), not a deeper relief on the old one.
+    const L = 426
+    const completers = naturalRuns(L).runs.filter(r => r.needed - r.collected <= 0 && r.coatsLeft === 0)
+    expect(completers.length).toBeGreaterThan(0)
+    const owed = levelSpec(L).objectives.reduce((n, o) => n + o.count, 0)
+    const measured = completers.reduce((t, r) => t + r.score, 0) / completers.length / owed
+    expect({
+      measured: Math.round(measured),
+      within20pct: Math.abs(measured - MINIMUM_POINTS_PER_GOAL) / measured < 0.2,
+    }).toEqual({ measured: Math.round(measured), within20pct: true })
+  })
+})
+
 describe('points night — the pure plaque, priced off moves', () => {
   /** Full-budget runs: an unreachable target, so the proxy never stops early. See above. */
   const fullBudget = (L: number): ReturnType<typeof sampleLevel> =>

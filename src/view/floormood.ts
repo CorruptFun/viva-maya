@@ -45,7 +45,7 @@ import type { AudioPalette } from './theme'
  * the floor is active. Same law as everything else here: it is LIGHT in the margins, so it can never
  * cross the board, and the a11y/tier gates the theme flourishes already sit behind apply unchanged.
  */
-export type FloorFlourish = 'tableLamp' | 'filamentBulb'
+export type FloorFlourish = 'tableLamp' | 'filamentBulb' | 'securityBeam' | 'lampPools'
 
 /** A floor's dressing. Every field OPTIONAL and every one a modulation — see the rule above. */
 export interface FloorMood {
@@ -121,6 +121,55 @@ const FLOOR_MOODS: Readonly<Record<number, FloorMood>> = {
     // this one would rather nobody was. The House gets less comfortable the higher you climb.
     croupier: 'Sit where you like. I never saw you come in, and neither did the House.',
     blurb: 'The room behind the room. Same game, quieter, and nobody is watching the clock.',
+  },
+  3: {
+    // Steel and bullion. The tower's first COLD room: the arc runs 200–260° — slate through steel
+    // blue — at the lowest saturation on the tower, because a vault is lit to be inspected, not to
+    // be enjoyed. The warmth that survives is deliberate and singular: the bokeh stays GOLD
+    // (bullion glinting in a grey room), so the one warm note left is the money itself.
+    accent: 0x46586c,
+    rgbHueFrom: 200,
+    rgbHueSpan: 60,
+    rgbSat: 0.5,
+    rayTint: 0x7e97b0,
+    bokehWarm: 0xd9b96a,
+    moteTint: 0x6d87a3,
+    // G#1 — a half-step above the speakeasy's F1, on a triangle through the darkest filter yet, and
+    // the DRIEST reverb in the game. The tower's rooms have been drying out floor by floor (wet
+    // carpet → low ceiling), and a vault is the terminus: steel walls, no soft surface anywhere, a
+    // hum you feel more than hear.
+    audio: { bedRoot: 51.91, waveBias: 'triangle', filterWarmth: 400, reverbMix: 0.12 },
+    // A security beam sweeping the bottom margin — the one light in the room that moves.
+    flourish: 'securityBeam',
+    // The WARDEN. Floor 2's barkeep pretended not to see you; this one has been told to watch, and
+    // says so. Terse because a vault does not make conversation.
+    croupier: 'Vault floor. The House counts everything down here — including you.',
+    blurb: 'Steel doors, time locks, cold light. The money sleeps here, and it sleeps lightly.',
+  },
+  4: {
+    // Oxblood and lamplight. The arc crosses the wheel's wrap on purpose — 355° through 40° is
+    // dried-blood red up into brandy amber, the light a green-shaded lamp actually throws across a
+    // walnut table. Saturation is the tower's HIGHEST: a small room, late, where every colour has
+    // been soaking in since the game started. The green of the lampshades lives in the accent and
+    // the margin flourish, never in the ring — a green marquee would read as the clover's, and the
+    // room's whole joke is that the light is warm while the table talk is cold.
+    accent: 0x14523c,
+    rgbHueFrom: 355,
+    rgbHueSpan: 45,
+    rgbSat: 0.78,
+    rayTint: 0xcf9a45,
+    bokehWarm: 0xdfa958,
+    moteTint: 0xb08a45,
+    // A1 — back to a sine, warmer filter than the vault but still close, with just enough reverb to
+    // say the ceiling came back. Between the vault's silence and the rooftop to come, this is the
+    // hush of a room where the only sound anybody wants is cards.
+    audio: { bedRoot: 55.0, waveBias: 'sine', filterWarmth: 850, reverbMix: 0.22 },
+    // Green-shaded lamps pooling on the bottom margin — the light every card room in history is lit by.
+    flourish: 'lampPools',
+    // The DEALER. One rung warier than the warden: the warden watched you, this one plays you. Says
+    // exactly as much as the job requires.
+    croupier: "Seat's open. Cards talk on this floor — the less you say back, the longer you last.",
+    blurb: 'The long game, played after hours. Green lamps, old money, and always one more hand.',
   },
 }
 

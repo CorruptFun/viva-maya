@@ -103,6 +103,13 @@ export interface LevelSpec {
    */
   hot?: boolean
   /**
+   * THE COUNTING SHOE (Act II, floor 3): this level's refills draw from a finite, visible shoe
+   * (core/shoe.ts) instead of an unlimited uniform stream. Present only on shoe-band levels with
+   * the flag live (core/actII.ts shoeLevel); absent everywhere else, so every other spec is
+   * byte-identical — and endless, which never calls `levelSpec`, structurally cannot see it.
+   */
+  shoe?: boolean
+  /**
    * The COLLECT DEMAND the move budget was derived from, when `objectives` no longer represents it.
    *
    * Set only on POINTS NIGHT, where `objectives` is empty and the level's whole demand is asked for
