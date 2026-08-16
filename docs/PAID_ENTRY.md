@@ -62,6 +62,55 @@ walk past it, exactly as anyone willing to edit a POST body can fake a score.
 What is not bypassable is the money: a forged client can grant itself a free
 game and can never grant itself a cent.
 
+## Pay first, identify second
+
+There is **no sign-in step in front of the price**. A new player opens the game,
+sees the price, taps once, and pays. The identity that carries the entitlement
+is minted silently:
+
+1. **UNLOCK is tapped** → `ensureAnonymousSession()` mints a real `auth.users`
+   row with a real JWT. No UI, no redirect, no interaction.
+   *At the tap, not at boot* — every anonymous row is a monthly active user on
+   the Supabase bill, so minting per visitor would price the game's traffic
+   instead of its sales.
+2. **Stripe Checkout** collects the card **and the email**, as it always does.
+3. **The webhook** writes the entitlement and binds that email onto the
+   anonymous row (`email_confirm: true`), turning a device-local account into a
+   recoverable one. The raw address is also stored on
+   `entitlements.contact_email`.
+4. **Access.**
+
+The player types an email exactly once, inside a payment form they were filling
+in anyway, and never sees a sign-up screen.
+
+### What that costs, and what pays for it
+
+An account nobody consciously created is an account nobody knows they have. So
+**RESTORE PURCHASE** on the paywall is not a nicety — it is the only way a paid
+player on a new phone gets their game back, and its absence is a second charge
+or a chargeback. It sends a one-time code to the address on file
+(`view/restoremodal.ts`).
+
+Two consequences worth knowing:
+
+- **The email is marked confirmed without a round trip.** Nobody clicked a link;
+  what we have is that they typed it into a card form and Stripe is sending the
+  receipt there. Requiring a separate confirmation would rebuild the identity
+  wall this flow exists to remove, and would not even fix the failure it looks
+  like it fixes — a *mistyped* address is unrecoverable either way.
+  `contact_email` on the entitlement exists precisely so support can find a
+  purchase whose owner fat-fingered their own email.
+- **Binding is best-effort and never fatal.** The common failure is a collision:
+  that address already belongs to another account, which in practice means the
+  same person paying again from a second device without restoring first. The
+  webhook logs and moves on — throwing would make Stripe retry a delivery whose
+  real work (entitlement, commission) has already landed, forever.
+
+`my_access()` returns `recoverable` for a player whose purchase is still sitting
+on an unbound anonymous row. **It drives a nudge, never a gate.** Having taken
+someone's money, refusing to let them play until they finish an identity step
+would be the same wall again.
+
 ## The switch
 
 `PAYWALL_ACTIVE_FROM` (`core/entitlement.ts`) and `public.paywall_active_from()`
@@ -85,10 +134,20 @@ for a game they already own, and the forgery buys only a free game, never a cash
 commission. The paywall's signed-out state pushes those players toward sign-in,
 which converts them to the durable server-side path.
 
-A **server verdict for the current account beats the local clause, in both
-directions.** That ordering is load-bearing: a refunded account's save is by then
-genuinely old enough to look grandfathered, and the forgeable clause must not
-overrule a refusal. `entitlement.test.ts` pins it.
+A server verdict beats the local clause in **one direction only**, and the split
+is between the two ways the server can refuse:
+
+- **`refunded` overrides it.** An account that paid, played for a month and then
+  charged back has a save that is by then genuinely old enough to look
+  grandfathered. The forgeable clause must not hand free access back to the
+  person who took their money back.
+- **`unpaid` falls through to it.** Since anonymous sign-in landed, `unpaid` no
+  longer means "this person hasn't paid" — it means "this freshly-minted row
+  hasn't", which is equally true of every long-standing player who has never made
+  an account. Treating it as a refusal would lock out exactly the cohort
+  grandfathering exists for.
+
+`entitlement.test.ts` pins both halves.
 
 ## The gate is read once, at boot
 
@@ -187,6 +246,23 @@ Point the Stripe webhook at
 `checkout.session.completed`, `charge.refunded`, `charge.dispute.created`,
 `account.updated`, `transfer.reversed`.
 
+### Two project settings that are NOT in any migration
+
+Both are dead ends for real players if missed, and neither shows up in
+`db push`:
+
+1. **Anonymous sign-ins must be ON** (Authentication → Sign In / Providers →
+   Anonymous sign-ins). `supabase/config.toml` only sets it for the local stack.
+   With it off, `signInAnonymously()` fails, `beginCheckout` refuses, and *every
+   new player* hits a dead end at UNLOCK. **Verify this on the project before
+   moving the switch date.**
+2. **Real SMTP must be configured.** Supabase's built-in sender is throttled to a
+   testing-grade ~2/hour — the very limit that made this project choose Google
+   OAuth over email codes in the first place
+   (`docs/CLOUD_SAVE_GOOGLE_SIGNIN.md`). RESTORE PURCHASE sends a one-time code,
+   so without a provider it works for the first player each hour and silently
+   fails for everyone behind them.
+
 On the Stripe side you also need **Connect (Express) enabled** — that is what
 collects referrers' identity and bank details, and what files 1099s at the US
 $600/yr threshold if you turn tax reporting on. **We never see any of it**: the
@@ -242,7 +318,9 @@ anybody at all.
 | `src/core/referralcash.ts` | the cash tier model + the read/payout surface |
 | `src/scenes/PaywallScene.ts` | the door — four states, one plate |
 | `src/view/cashout.ts` | YOUR EARNINGS panel (opened from the Store's balance row) |
+| `src/view/restoremodal.ts` | RESTORE PURCHASE — email + one-time code, DOM so the player gets a real keyboard |
 | `supabase/migrations/0025_paid_entry_and_referral_cash.sql` | the four tables, their RLS, the depth + rate functions |
+| `supabase/migrations/0026_entry_before_signin.sql` | `contact_email`, and `my_access()` reporting recoverability |
 | `supabase/functions/create-checkout` | opens Checkout — sets the price, resolves the referrer |
 | `supabase/functions/stripe-webhook` | the only writer of entitlements and commissions |
 | `supabase/functions/connect-onboard` | Stripe Connect onboarding link |

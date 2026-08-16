@@ -94,6 +94,35 @@ async function writeCommission(
   }
 }
 
+/**
+ * Attach the Checkout email to the (usually anonymous) account that just paid, so the purchase can
+ * be recovered on another device.
+ *
+ * ⚠️ MARKED CONFIRMED WITHOUT A ROUND TRIP, deliberately. Nobody has clicked a link to prove they
+ * control this address — what we have is that they typed it into a card form they were completing
+ * and that Stripe is sending the receipt there. Requiring a separate confirmation before restore
+ * works would put back exactly the identity step this flow exists to remove, and it would not even
+ * close the failure it appears to: a MISTYPED address is unrecoverable whether or not we mark it
+ * confirmed. `entitlements.contact_email` keeps the raw string precisely so support can find a
+ * purchase whose owner fat-fingered their own email.
+ *
+ * ⚠️ BEST-EFFORT, AND NEVER FATAL. The common failure is a collision: that address already belongs
+ * to another account, which in practice means the same person paying again from a second device
+ * without restoring first. Throwing here would make Stripe retry a webhook whose real work — the
+ * entitlement and the commission — has already landed, and would keep retrying forever. The
+ * entitlement stays on the paying row, the email stays on the entitlement, and support can reunite
+ * the two. A failed binding must never cost somebody the game they just bought.
+ */
+async function bindEmail(db: SupabaseClient, userId: string, email: string | null): Promise<void> {
+  if (!email) return
+  try {
+    const { error } = await db.auth.admin.updateUserById(userId, { email, email_confirm: true })
+    if (error) console.warn(`email binding skipped for ${userId}: ${error.message}`)
+  } catch (e) {
+    console.warn('email binding threw', e)
+  }
+}
+
 /** Grant access + write the commission for a completed Checkout session. */
 async function fulfil(
   db: SupabaseClient,
@@ -123,6 +152,11 @@ async function fulfil(
     // leave null
   }
 
+  // The address the payer typed into Checkout. This is the identity half of "pay first, identify
+  // second": the player never fills in a sign-up form, so this is the only thing that can turn the
+  // anonymous row carrying their purchase into an account they can get back on another phone.
+  const email = session.customer_details?.email ?? session.customer_email ?? null
+
   const ins = await db.from('entitlements').insert({
     user_id: userId,
     status: 'paid',
@@ -131,10 +165,13 @@ async function fulfil(
     currency: session.currency ?? CURRENCY,
     stripe_payment_intent: paymentIntentId,
     payment_fingerprint: fingerprint,
+    contact_email: email,
   })
   if (ins.error && !isDuplicate(ins.error)) {
     throw new Error(`entitlement insert failed: ${ins.error.message}`)
   }
+
+  await bindEmail(db, userId, email)
 
   // ⚠️ Runs whether or not the entitlement was fresh. See the idempotency note in the header.
   await writeCommission(db, userId, paymentIntentId)

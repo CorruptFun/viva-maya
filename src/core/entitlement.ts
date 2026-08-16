@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { cloudSession, isCloudConfigured, sbClient } from './cloud'
+import { cloudSession, ensureAnonymousSession, isCloudConfigured, sbClient } from './cloud'
 import { loadSave } from './save'
 import { stashedRefCode } from './referrals'
 
@@ -61,6 +61,15 @@ export interface CachedAccess {
   entitled: boolean
   /** The server's own word: 'paid' | 'granted' | 'grandfathered' | 'prelaunch' | 'unpaid' | 'refunded'. */
   reason: string
+  /**
+   * Whether this account can be pulled onto another device — i.e. it has a CONFIRMED email, not
+   * merely one typed into a payment form. False for a player whose purchase is sitting on an
+   * anonymous row, who is one cleared browser away from losing something they paid for.
+   *
+   * Used for a nudge, never for a gate: having taken someone's money, refusing to let them play
+   * until they finish an identity step would rebuild the wall this whole flow exists to remove.
+   */
+  recoverable: boolean
   /** Epoch ms the verdict was cached. Diagnostics only — a positive verdict never expires. */
   at: number
 }
@@ -99,14 +108,23 @@ export interface GateInput {
 /**
  * The whole gate, as one pure function so every branch is testable without a network or a DOM.
  *
- * ⚠️ THE ORDER IS THE DESIGN, and one step in it is load-bearing in a way that is easy to undo:
- * a SERVER verdict for the current account beats the local grandfather clause, in BOTH directions.
- * The local clause reads `save.firstPlayDate`, which is forgeable, and the case it must not
- * override is a REFUNDED account — someone who paid, played, charged back, and whose save
- * therefore genuinely does predate nothing at all... except that after a month of play their
- * firstPlayDate is old enough to look grandfathered on any later cutover. Letting the forgeable
- * local clause answer after the server has already said no would hand free access back to exactly
- * the person who took their money back.
+ * ⚠️ THE ORDER IS THE DESIGN, and the middle step is load-bearing in a way that is easy to undo.
+ * A server verdict outranks the local grandfather clause in one direction only, and the split is
+ * between the two ways the server can say no:
+ *
+ *   · 'refunded' — OVERRIDES the local clause. This is someone who paid, played for a month and
+ *     then charged back, so their save genuinely IS old enough to look grandfathered by the time
+ *     they come back. The local clause reads `save.firstPlayDate`, which any player can edit;
+ *     letting a forgeable field answer after the server has recorded a chargeback would hand free
+ *     access straight back to the person who took their money back.
+ *   · 'unpaid'   — FALLS THROUGH to the local clause. This is the case anonymous sign-in created:
+ *     a player who has been here since June, has never made an account, and whose freshly-minted
+ *     anonymous row has a `created_at` of today. The server is not saying "this person has not
+ *     paid", it is saying "this ROW has not paid" — which is a different and much weaker claim,
+ *     and treating it as a refusal would lock out the exact cohort grandfathering exists for.
+ *
+ * If the local clause does not apply either, the server's 'unpaid' stands and the player sees the
+ * door.
  */
 export function gateVerdict(input: GateInput): Verdict {
   // A build with no cloud can neither take payment nor check an entitlement. Charging into a
@@ -117,19 +135,25 @@ export function gateVerdict(input: GateInput): Verdict {
     return { allow: true, reason: 'prelaunch' }
   }
 
-  // The server's word about THIS account, when we have it. Authoritative both ways — see above.
-  const cached = input.cached
-  if (cached && input.userId && cached.userId === input.userId) {
-    return { allow: cached.entitled, reason: 'server', serverReason: cached.reason }
-  }
+  // The server's word about THIS account, when we have one for it. A cached verdict belonging to
+  // some other user id is nobody's business here — that is a shared device, and the next player
+  // must not inherit the last one's purchase.
+  const mine =
+    input.cached && input.userId && input.cached.userId === input.userId ? input.cached : null
 
-  // Signed out, or signed in as someone we have never had an answer for: fall back to this
-  // device's own history. Grandfathering is generous on purpose — sign-in is optional in this game,
-  // so a large share of existing players have no account for the server to recognise them by, and
-  // billing a loyal player for a game they already own is the worst outcome available here.
+  if (mine?.entitled) return { allow: true, reason: 'server', serverReason: mine.reason }
+  if (mine?.reason === 'refunded') return { allow: false, reason: 'server', serverReason: mine.reason }
+
+  // This device's own history. Grandfathering is generous on purpose — sign-in was optional for
+  // this game's whole life before the paywall, so a large share of existing players have no account
+  // for the server to recognise them by, and billing a loyal player for a game they already own is
+  // the worst outcome available here.
   if (grandfatheredLocally(input.firstPlayDate)) {
     return { allow: true, reason: 'grandfathered_local' }
   }
+
+  // No local history either, so the server's refusal is the answer after all.
+  if (mine) return { allow: false, reason: 'server', serverReason: mine.reason }
 
   return { allow: false, reason: 'unpaid' }
 }
@@ -158,6 +182,7 @@ export function readCachedAccess(): CachedAccess | null {
       userId: v.userId,
       entitled: v.entitled,
       reason: typeof v.reason === 'string' ? v.reason : 'unknown',
+      recoverable: v.recoverable === true,
       at: typeof v.at === 'number' ? v.at : 0,
     }
   } catch {
@@ -238,6 +263,7 @@ export async function refreshAccess(): Promise<CachedAccess | null> {
       userId: s.userId,
       entitled: row.entitled,
       reason: typeof row.reason === 'string' ? row.reason : 'unknown',
+      recoverable: row.recoverable === true,
       at: Date.now(),
     }
     writeCachedAccess(v)
@@ -289,8 +315,23 @@ export type CheckoutResult = { ok: true } | { ok: false; error: string }
  */
 export async function beginCheckout(): Promise<CheckoutResult> {
   try {
+    // ⚠️ THE IDENTITY IS MINTED HERE, at the tap, and this is the whole "pay first" design in one
+    // line. An entitlement has to attach to something durable, but making the player CREATE that
+    // something first is a second wall in front of someone who has not yet seen a board — so a
+    // silent anonymous account appears instead, and the email that makes it recoverable is taken
+    // from the payment form they are about to fill in anyway (the webhook binds it).
+    //
+    // At the tap rather than at boot because every anonymous row is a monthly active user on the
+    // bill: minting per visitor would price the game's traffic instead of its sales.
+    //
+    // Refusing when this fails is correct, however unhelpful it looks: taking money for an
+    // entitlement with nothing to attach it to produces a charge we cannot honour and a player we
+    // cannot identify, which is a refund at best and a chargeback at worst.
+    if (!(await ensureAnonymousSession())) {
+      return { ok: false, error: 'We couldn’t start checkout just now — please try again.' }
+    }
     const c = await client()
-    if (!c) return { ok: false, error: 'Sign in first so we can keep your purchase safe.' }
+    if (!c) return { ok: false, error: 'We couldn’t start checkout just now — please try again.' }
     const { data, error } = await c.functions.invoke('create-checkout', {
       body: {
         // Return to THIS origin. The game answers on two of them and storage does not cross

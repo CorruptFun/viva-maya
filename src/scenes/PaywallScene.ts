@@ -12,7 +12,7 @@ import {
 import { ENTRY_PRICE_CENTS, formatUsd } from '../core/referralcash'
 import { addCasinoBackdrop } from '../view/background'
 import { addScreenGloss } from '../view/fx'
-import { openCloudModal } from '../view/cloudmodal'
+import { openRestoreModal } from '../view/restoremodal'
 import { D, E, OVERSHOOT, backOut, fadeRise, popIn } from '../view/motion'
 import { getTheme, prefersReducedMotion } from '../view/theme'
 import { FONT, GHOST_PILL, GOLD_PILL, addGoldWordmark, addPillButton, applyEntrance, inkShadow, startScene } from '../view/ui'
@@ -23,12 +23,26 @@ import { FONT, GHOST_PILL, GOLD_PILL, addGoldWordmark, addPillButton, applyEntra
  * The gate itself is core/entitlement.ts; this scene is its face. BootScene routes here instead of
  * Home when `accessNow()` refuses, and nothing but a granted entitlement gets out of it.
  *
+ * ---------------------------------------------------------------------------- PAY FIRST
+ * ⚠️ THERE IS NO SIGN-IN STATE, and its absence is the design rather than an omission.
+ *
+ * This screen used to open with "sign in to continue", because an entitlement has to attach to
+ * something durable. That put two walls in front of somebody who has not yet seen a single board —
+ * make an account, THEN pay — and the account wall is the expensive one: it asks for commitment
+ * before any value has been delivered, and this game's own funnel says most players never take it.
+ *
+ * So the player meets the price and nothing else. `beginCheckout` mints a silent anonymous account
+ * at the moment UNLOCK is tapped, and the webhook binds the email STRIPE ALREADY COLLECTS during
+ * checkout onto that account. The player types an address exactly once, inside a payment form they
+ * were filling in anyway, and never sees a sign-up screen at all.
+ *
+ * What that costs, and what pays for it: an account nobody consciously created is an account
+ * nobody knows they have, so RESTORE PURCHASE below is not a nicety — it is the only way a paid
+ * player on a new phone gets their game back, and its absence would be a refund or a chargeback.
+ *
  * ---------------------------------------------------------------------------- the four states
  *   'checking'   — asking the server. The FIRST paint, always, because a player who bought the game
  *                  on another device must never be shown a price before we have asked.
- *   'signedout'  — no account yet. Sign-in is a step INSIDE the door, not a way around it: the
- *                  purchase has to attach to a durable identity or a cleared browser costs the
- *                  player $3.99 and costs us a support ticket and probably a chargeback.
  *   'offer'      — the price, and what it buys.
  *   'confirming' — back from Stripe with `?paid=1`, waiting on the webhook. See below.
  *   'failed'     — the wait ran out. NOT a refusal — a retry.
@@ -42,7 +56,7 @@ import { FONT, GHOST_PILL, GOLD_PILL, addGoldWordmark, addPillButton, applyEntra
  * ⚠️ And 'failed' must never say "payment failed", because it isn't one: the card HAS been charged
  * by the time we get here. It says the receipt is slow and offers to look again.
  */
-type State = 'checking' | 'signedout' | 'offer' | 'confirming' | 'failed'
+type State = 'checking' | 'offer' | 'confirming' | 'failed'
 
 const CARD_X = 60
 const CARD_W = DESIGN_W - CARD_X * 2
@@ -87,12 +101,16 @@ export class PaywallScene extends Phaser.Scene {
       this.offCloud = undefined
     })
 
-    // Sign-in can complete without a page reload (a session restored from another tab, a token
-    // refresh landing late). Re-deciding on that signal is what stops the scene sitting on
-    // 'signedout' behind a player who is, by then, signed in.
+    // A session can land without this scene asking for one — another tab restoring it, a token
+    // refresh arriving late, a redirect settling. Re-deciding on that signal is what stops a player
+    // who already owns the game sitting in front of a price tag.
+    //
+    // Anonymous sessions are skipped: `beginCheckout` mints one on the way to Stripe, and reacting
+    // to our own mint would re-enter decide() mid-purchase.
     this.offCloud = onCloudChange(() => {
       if (this.gone || this.busy) return
-      if (this.state === 'signedout' && cloudSession()) void this.decide()
+      const s = cloudSession()
+      if (this.state === 'offer' && s && !s.anonymous) void this.decide()
     })
 
     this.setState('checking')
@@ -120,11 +138,9 @@ export class PaywallScene extends Phaser.Scene {
       return
     }
 
-    if (!cloudSession()) {
-      this.setState('signedout')
-      return
-    }
-
+    // No session is NOT a reason to ask for one. `refreshAccess` no-ops and returns null when
+    // signed out, which falls straight through to the offer — a brand-new player's whole first
+    // interaction with this game is now a price and a button.
     const verdict = await refreshAccess()
     if (this.gone) return
     if (verdict?.entitled) {
@@ -166,11 +182,23 @@ export class PaywallScene extends Phaser.Scene {
     }
   }
 
-  private onSignIn(): void {
+  /**
+   * "I already paid." Opens the email + one-time-code flow (view/restoremodal.ts).
+   *
+   * The single most important secondary action on this screen: without it, a player who bought the
+   * game and then changed phones is looking at a fresh bill, and will either pay twice and resent
+   * it or charge back. On success the modal has established the session, so re-running decide()
+   * finds the entitlement and lets them in.
+   */
+  private onRestore(): void {
     if (this.busy) return
-    // Google OAuth redirects the whole page and comes back as a fresh load, so there is nothing to
-    // await here — BootScene runs again and lands the player back on this scene, signed in.
-    openCloudModal()
+    openRestoreModal({
+      onRestored: () => {
+        if (this.gone) return
+        this.setState('checking')
+        void this.decide()
+      },
+    })
   }
 
   private onRetry(): void {
@@ -200,7 +228,6 @@ export class PaywallScene extends Phaser.Scene {
 
     if (this.state === 'checking' || this.state === 'confirming') this.renderWaiting(top, h)
     else if (this.state === 'failed') this.renderFailed(top)
-    else if (this.state === 'signedout') this.renderSignedOut(top)
     else this.renderOffer(top)
 
     if (!reduced) {
@@ -245,55 +272,6 @@ export class PaywallScene extends Phaser.Scene {
     if (!prefersReducedMotion()) {
       this.tweens.add({ targets: dots, alpha: 0.3, duration: 620, yoyo: true, repeat: -1, ease: E.hero })
     }
-  }
-
-  private renderSignedOut(top: number): void {
-    const T = getTheme()
-    this.layer.add(
-      inkShadow(
-        this.add
-          .text(DESIGN_W / 2, top + 56, 'SIGN IN TO PLAY', {
-            fontFamily: FONT,
-            fontSize: '34px',
-            fontStyle: '900',
-            color: T.ink,
-          })
-          .setOrigin(0.5)
-      )
-    )
-    this.layer.add(
-      this.add
-        .text(
-          DESIGN_W / 2,
-          top + 128,
-          'Viva Maya is a one-time purchase.\nSigning in keeps it yours on every device —\nand brings it back if you clear your browser.',
-          {
-            fontFamily: 'Arial, sans-serif',
-            fontSize: '19px',
-            color: T.inkSoft,
-            align: 'center',
-            lineSpacing: 8,
-          }
-        )
-        .setOrigin(0.5)
-    )
-    this.layer.add(
-      addPillButton(this, DESIGN_W / 2, top + 268, 384, 78, 'SIGN IN', GOLD_PILL, () => this.onSignIn(), {
-        juice: true,
-      })
-    )
-    // The line that saves the returning player. Someone who bought the game and then cleared their
-    // browser lands here looking at what reads as a fresh bill; without this they have no way to
-    // know that signing in is the thing that gives it back rather than the thing that charges them.
-    this.layer.add(
-      this.add
-        .text(DESIGN_W / 2, top + 356, 'Already bought it? Sign in to restore your purchase.', {
-          fontFamily: 'Arial, sans-serif',
-          fontSize: '16px',
-          color: T.inkFaint,
-        })
-        .setOrigin(0.5)
-    )
   }
 
   private renderOffer(top: number): void {
@@ -354,13 +332,35 @@ export class PaywallScene extends Phaser.Scene {
       )
     )
 
-    this.add
-      .text(DESIGN_W / 2, DESIGN_H - 92, 'Secure checkout by Stripe. We never see your card.', {
-        fontFamily: 'Arial, sans-serif',
-        fontSize: '16px',
-        color: T.onBackdropMuted,
-      })
-      .setOrigin(0.5)
+    // RESTORE — seated on the backdrop BELOW the plate rather than inside it, so it never competes
+    // with the buy button for the eye. Its own control with a real bounding box, not a text link:
+    // the player reaching for this has already paid once and is the last person who should have to
+    // hunt for a tap target.
+    this.layer.add(
+      addPillButton(this, DESIGN_W / 2, 902, 344, 62, 'RESTORE PURCHASE', GHOST_PILL, () => this.onRestore())
+    )
+    this.layer.add(
+      this.add
+        .text(DESIGN_W / 2, 952, 'Already bought it? Bring it back with your email.', {
+          fontFamily: 'Arial, sans-serif',
+          fontSize: '16px',
+          color: T.onBackdropMuted,
+        })
+        .setOrigin(0.5)
+    )
+
+    // ⚠️ Held in `this.layer`, like everything else here. renderOffer runs again on every busy
+    // toggle, so a stray `this.add` at scene level would stack a fresh copy of this line under the
+    // last one on each repaint.
+    this.layer.add(
+      this.add
+        .text(DESIGN_W / 2, DESIGN_H - 92, 'Secure checkout by Stripe. We never see your card.', {
+          fontFamily: 'Arial, sans-serif',
+          fontSize: '16px',
+          color: T.onBackdropMuted,
+        })
+        .setOrigin(0.5)
+    )
   }
 
   private renderFailed(top: number): void {

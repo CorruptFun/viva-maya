@@ -18,11 +18,15 @@ import {
  *     an entitlement nor verify one. Charging into a paywall that cannot possibly resolve would
  *     brick every dev checkout and any build shipped without cloud config, with no way out from
  *     inside the game.
- *   · `a server refusal beats the local grandfather clause` — the grandfather clause reads
- *     `save.firstPlayDate`, which any player can edit. It exists so that the large cohort who never
- *     signed in aren't billed for a game they already own. But it must never answer AFTER the
- *     server has already refused, or a refunded account — whose save is by then genuinely old —
- *     walks straight back in for free, having taken its money back.
+ *   · the pair `a REFUND beats the local grandfather clause` / `an UNPAID verdict falls through to
+ *     it` — the two halves of one rule, and the reason they differ is worth keeping straight.
+ *     The grandfather clause reads `save.firstPlayDate`, which any player can edit, and it exists
+ *     so the large cohort who never signed in aren't billed for a game they already own.
+ *     A 'refunded' verdict must override it, or an account that paid, played for a month and then
+ *     charged back walks straight back in for free on a save that is by then genuinely old.
+ *     An 'unpaid' verdict must NOT, because since anonymous sign-in landed it no longer means
+ *     "this person hasn't paid" — it means "this freshly-minted row hasn't", which is also true of
+ *     every long-standing player who has never made an account.
  */
 
 const BEFORE = new Date(Date.parse(PAYWALL_ACTIVE_FROM) - 86_400_000)
@@ -41,7 +45,7 @@ function input(over: Partial<GateInput> = {}): GateInput {
 }
 
 function cached(over: Partial<CachedAccess> = {}): CachedAccess {
-  return { userId: 'user-a', entitled: true, reason: 'paid', at: 0, ...over }
+  return { userId: 'user-a', entitled: true, reason: 'paid', recoverable: false, at: 0, ...over }
 }
 
 describe('the switch', () => {
@@ -99,7 +103,7 @@ describe('gateVerdict', () => {
     expect(v.allow).toBe(true)
   })
 
-  it('a server refusal beats the local grandfather clause', () => {
+  it('a REFUND beats the local grandfather clause', () => {
     // The case this exists for: an account that paid, played for a month (so firstPlayDate is now
     // genuinely old), then charged back. The server says refunded; the forgeable local clause must
     // not overrule it.
@@ -112,6 +116,31 @@ describe('gateVerdict', () => {
     expect(v.allow).toBe(false)
     expect(v.reason).toBe('server')
     expect(v.serverReason).toBe('refunded')
+  })
+
+  it('an UNPAID verdict falls through to the local grandfather clause', () => {
+    // The case anonymous sign-in created, and the reason the two refusals are no longer treated
+    // alike. A player who has been here since June, never made an account, and taps something that
+    // mints them an anonymous row today: the server reports 'unpaid' because that ROW has not paid,
+    // which says nothing at all about the player. Treating it as a refusal would lock out precisely
+    // the cohort grandfathering exists to protect.
+    const v = gateVerdict(
+      input({
+        cached: cached({ entitled: false, reason: 'unpaid' }),
+        firstPlayDate: '2026-06-01',
+      })
+    )
+    expect(v.allow).toBe(true)
+    expect(v.reason).toBe('grandfathered_local')
+  })
+
+  it('…but an UNPAID verdict still stands when there is no local history to fall through to', () => {
+    // The fall-through above must not become a blanket pardon: a genuinely new player has no
+    // pre-cutover save, so the server's refusal is the final answer.
+    const v = gateVerdict(input({ cached: cached({ entitled: false, reason: 'unpaid' }) }))
+    expect(v.allow).toBe(false)
+    expect(v.reason).toBe('server')
+    expect(v.serverReason).toBe('unpaid')
   })
 
   it('does not apply another account’s verdict on a shared device', () => {

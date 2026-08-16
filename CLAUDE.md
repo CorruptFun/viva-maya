@@ -49,12 +49,29 @@ Live: <https://corruptfun.github.io/viva-maya/>
     back unfavourably is far worse than a few minutes of free play — and from
     inside the client a slow webhook, a token refresh and an actual refund are
     indistinguishable.
-  - **A server verdict beats the local grandfather clause, in BOTH directions.**
-    Sign-in is optional in this game, so a large share of existing players have no
-    account to be recognised by and the client also honours a pre-cutover
-    `save.firstPlayDate`. That clause is **forgeable**, and the case it must never
-    override is a REFUNDED account: after a month of play its save genuinely looks
-    old enough to be grandfathered. `entitlement.test.ts` pins the ordering.
+  - **PAY FIRST, IDENTIFY SECOND — there is no sign-in step in front of the
+    price.** It shipped with one and that was two walls before a player had seen a
+    board. `beginCheckout` mints a silent anonymous account **at the UNLOCK tap**
+    (never at boot — every anonymous row is a billable monthly active, so minting
+    per visitor prices the traffic instead of the sales), and the webhook binds the
+    email **Stripe already collects** onto it. Two project settings are NOT in any
+    migration and are dead ends if missed: **anonymous sign-ins must be ON** in the
+    dashboard (`config.toml` is local-only) or every new player dead-ends at
+    UNLOCK, and **real SMTP must be configured** or RESTORE PURCHASE works for the
+    first player each hour and silently fails for the rest. ⚠️ RESTORE
+    (`view/restoremodal.ts`) is not a nicety — an account nobody knowingly created
+    is one nobody knows they have, so without it a paid player on a new phone is
+    looking at a fresh bill, and that is a second charge or a chargeback.
+  - **A server verdict beats the local grandfather clause in ONE direction, and
+    which one depends on how the server refused.** Sign-in was optional for this
+    game's whole life, so the client also honours a pre-cutover
+    `save.firstPlayDate`. That clause is **forgeable**. A **`refunded`** verdict
+    must override it — after a month of play a charged-back account's save
+    genuinely looks old enough to be grandfathered. An **`unpaid`** verdict must
+    NOT: since anonymous sign-in landed it no longer means "this person hasn't
+    paid" but "this row minted seconds ago hasn't", which is equally true of every
+    long-standing player who never made an account. `entitlement.test.ts` pins both
+    halves.
   - **One entry fee pays at most one person.** $1.69 + Stripe's $0.42 of a $3.99
     charge leaves the house solvent on EVERY individual transaction, not on
     average — no mix of depths and no growth rate can put it underwater. A second

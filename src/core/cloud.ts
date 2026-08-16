@@ -55,6 +55,16 @@ export function sbClient(): Promise<SupabaseClient | null> {
 export interface CloudSession {
   userId: string
   email: string | null
+  /**
+   * True for a silently-minted anonymous account (core/entitlement.ts mints one at the moment a
+   * player taps UNLOCK, so a purchase has something durable to attach to before they have ever
+   * given us an address).
+   *
+   * ⚠️ Consumers must not read this as "signed out". An anonymous session is a real `auth.users`
+   * row with a real JWT: it owns saves, entitlements and referral rows exactly like any other. What
+   * it lacks is a way to get it BACK on another device, which is what `email` being non-null buys.
+   */
+  anonymous: boolean
 }
 let session: CloudSession | null = null
 /**
@@ -233,6 +243,80 @@ export async function signInWithGoogle(): Promise<{ ok: boolean; error?: string 
   return error ? { ok: false, error: error.message } : { ok: true }
 }
 
+/**
+ * Mint a silent anonymous account, or return the session already in hand.
+ *
+ * The identity that carries a paid entitlement, for a player who has not signed in and is not
+ * going to be asked to. No UI, no redirect, no interaction — a real `auth.users` row with a real
+ * JWT appears and the player never knows it happened.
+ *
+ * ⚠️ CALL THIS AT THE POINT OF PURCHASE INTENT, NOT AT BOOT. Every anonymous row is a monthly
+ * active user on the project's bill, so minting one per visitor would price the game's traffic
+ * instead of its sales. `beginCheckout` is the only caller for that reason.
+ *
+ * ⚠️ Requires anonymous sign-ins to be ENABLED on the hosted project (Authentication → Sign In /
+ * Providers). `supabase/config.toml` only sets it for the local stack. With it off this returns
+ * null and checkout refuses — which is the correct failure (a purchase with nothing to attach to
+ * is a purchase we cannot honour), but it is a dead end for every new player, so verify it on the
+ * project before the paywall's switch date.
+ */
+export async function ensureAnonymousSession(): Promise<CloudSession | null> {
+  if (session) return session
+  const c = await sb()
+  if (!c) return null
+  try {
+    const { data, error } = await c.auth.signInAnonymously()
+    if (error || !data.session) return null
+    applySession(data.session)
+    notify()
+    return session
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Send a one-time code to `email` so a returning player can pull their purchase onto a new device.
+ *
+ * `shouldCreateUser: false` is load-bearing: without it a typo'd address would mint a brand-new,
+ * empty account and hand it to somebody expecting their game back — a "restore" that silently
+ * creates rather than restores is worse than a clean "we don't recognise that address".
+ *
+ * ⚠️ NEEDS REAL SMTP. Supabase's built-in sender is throttled to a testing-grade ~2/hour — the
+ * same limit that made this project pick Google OAuth over email codes in the first place (see
+ * docs/CLOUD_SAVE_GOOGLE_SIGNIN.md). Unconfigured, this path works for the first player each hour
+ * and silently fails for everyone behind them.
+ */
+export async function sendRestoreCode(email: string): Promise<{ ok: boolean; error?: string }> {
+  const c = await sb()
+  if (!c) return { ok: false, error: 'Restoring isn’t set up on this build.' }
+  try {
+    const { error } = await c.auth.signInWithOtp({ email, options: { shouldCreateUser: false } })
+    if (!error) return { ok: true }
+    return { ok: false, error: 'We couldn’t send a code to that address.' }
+  } catch {
+    return { ok: false, error: 'We couldn’t send a code to that address.' }
+  }
+}
+
+/** Exchange a emailed one-time code for a session. On success the entitlement follows the account. */
+export async function verifyRestoreCode(
+  email: string,
+  token: string
+): Promise<{ ok: boolean; error?: string }> {
+  const c = await sb()
+  if (!c) return { ok: false, error: 'Restoring isn’t set up on this build.' }
+  try {
+    const { data, error } = await c.auth.verifyOtp({ email, token, type: 'email' })
+    if (error || !data.session) return { ok: false, error: 'That code didn’t work — check and try again.' }
+    applySession(data.session)
+    notify()
+    return { ok: true }
+  } catch {
+    return { ok: false, error: 'That code didn’t work — check and try again.' }
+  }
+}
+
 export async function signOutCloud(): Promise<void> {
   const c = await sb()
   if (!c) return
@@ -250,9 +334,14 @@ export async function signOutCloud(): Promise<void> {
 
 // ---------------------------------------------------------------------------- boot
 function applySession(
-  s: { access_token?: string | null; user?: { id: string; email?: string | null } | null } | null
+  s: {
+    access_token?: string | null
+    user?: { id: string; email?: string | null; is_anonymous?: boolean } | null
+  } | null
 ): void {
-  session = s?.user ? { userId: s.user.id, email: s.user.email ?? null } : null
+  session = s?.user
+    ? { userId: s.user.id, email: s.user.email ?? null, anonymous: s.user.is_anonymous === true }
+    : null
   // Mirrored for analytics' raw-fetch path. Refreshed on every auth event, so a rotated token
   // (autoRefreshToken is on) can't leave analytics posting with a stale one.
   accessToken = s?.user ? (s.access_token ?? null) : null
@@ -285,7 +374,13 @@ export async function initCloud(): Promise<void> {
       // caught. Only a genuinely new sign-in (the OAuth return included) arrives as SIGNED_IN.
       // Lazy import so the auth path never waits on analytics and cloud.ts keeps no static
       // dependency on it.
-      if (event === 'SIGNED_IN') {
+      //
+      // ⚠️ ANONYMOUS SESSIONS ARE EXCLUDED, and that exclusion is the same lesson as the one
+      // above rather than a new rule. `signInAnonymously()` (paid entry — see ensureIdentity in
+      // core/entitlement.ts) arrives as a SIGNED_IN event too, and it fires for every player who
+      // so much as taps UNLOCK. Counting those would re-create the exact 242-against-13 distortion
+      // this branch was narrowed to fix, in a funnel that is now measuring a paid conversion.
+      if (event === 'SIGNED_IN' && !session.anonymous) {
         void import('./analytics').then(a => a.track(a.EVENTS.SIGNIN_COMPLETED))
       }
       void syncNow()
