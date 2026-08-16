@@ -14,10 +14,12 @@ import { captureRefFromUrl } from './core/referrals'
 import { adoptHandoffFromUrl, migrateFromLegacyOrigin } from './core/originmigrate'
 import { setPersistListener } from './core/save'
 import { AUTO_UPDATE_FALLBACK_MS, claimAutoUpdate } from './core/swupdate'
+import { refreshAccess } from './core/entitlement'
 import { BootScene } from './scenes/BootScene'
 import { GameScene } from './scenes/GameScene'
 import { HomeScene } from './scenes/HomeScene'
 import { LevelSelectScene } from './scenes/LevelSelectScene'
+import { PaywallScene } from './scenes/PaywallScene'
 import { SlotScene } from './scenes/SlotScene'
 import { StoreScene } from './scenes/StoreScene'
 import { installQualityGovernor } from './view/quality'
@@ -250,6 +252,12 @@ void bootReady.then(() => {
   // anonymous and understate the signed-in cohort in exactly the funnel it exists to measure.
   // Dormant (no-op) when VITE_SUPABASE_* isn't configured, like every other network path here.
   initAnalytics(cloudUserId, cloudAccessToken)
+  // PAID ENTRY: re-ask the server what this account is owed and cache the answer. Fire-and-forget,
+  // and deliberately AFTER the game has been told to start — the gate BootScene reads is the
+  // previously cached verdict, so this refresh is for the NEXT boot and must never delay this one.
+  // (Why the next boot and not this one: see the gate note in BootScene. Nothing may eject a player
+  // from a level in progress.) No-ops when dormant / signed out.
+  void refreshAccess()
   warmRaceBoard()
   // ⚠️ AND AGAIN ON EVERY RESUME — the boot call alone is not enough.
   //
@@ -310,7 +318,7 @@ function startGame(): void {
       mode: Phaser.Scale.FIT,
       autoCenter: Phaser.Scale.CENTER_BOTH,
     },
-    scene: [BootScene, HomeScene, LevelSelectScene, StoreScene, SlotScene, GameScene],
+    scene: [BootScene, PaywallScene, HomeScene, LevelSelectScene, StoreScene, SlotScene, GameScene],
   })
 
   // Stand the 3D room up on Phaser's OWN canvas + WebGL context (view3d/stage.ts): its sim ticks off

@@ -23,6 +23,59 @@ Live: <https://corruptfun.github.io/viva-maya/>
   reward-related, and don't move a guard to the client for convenience.
   Server-side deterministic replay (submit the move list, server replays the
   seeded board) is the known hardening path and is **not** built.
+- **Paid entry inverts the trust model above, and that inversion is the whole
+  design.** Since 2026-08-16 a new account pays $3.99 once before its first board,
+  and the first two rungs of the invite chain earn CASH per paid referral ($1.69
+  organic → $0.69 referred → nothing deeper; `docs/PAID_ENTRY.md` is the runbook).
+  Everything the game wrote before this is self-reported — the client claims, RLS
+  confines, a trigger keeps it monotonic — and that is fine for a leaderboard,
+  where the worst case is a fake score. It is **wrong for money**, where the worst
+  case is a client minting its own entitlement. So `entitlements`,
+  `referral_earnings`, `payout_accounts` and `payouts` (migration 0025) have
+  SELECT policies for their owner and **no INSERT/UPDATE/DELETE policy for any
+  role** — under RLS that is a denial, and the only writer is `service_role`, held
+  by the four Edge Functions. ⚠️ **If you are adding a write policy to one of those
+  tables to make a client feature work, the feature is wrong, not the policy.**
+  Five things are load-bearing and easy to undo:
+  - **The switch is two-sided.** `PAYWALL_ACTIVE_FROM` (`core/entitlement.ts`) and
+    `public.paywall_active_from()` (0025) are one switch on two sides of the wire,
+    exactly like `SALT_ACTIVE_FROM`/`v_salt_from` — **change one, change both.**
+    The server half decides who is grandfathered (`auth.users.created_at`, which a
+    client cannot forge); the client half decides who is SHOWN a price. Rolling
+    back is moving the date forward; a paid entitlement outranks it either way.
+  - **The gate is read ONCE, in `BootScene`, and nowhere else.** `refreshAccess()`
+    writes the cache and nothing else, so a revocation lands on the NEXT launch.
+    Ejecting a player from a level they are winning because a background call came
+    back unfavourably is far worse than a few minutes of free play — and from
+    inside the client a slow webhook, a token refresh and an actual refund are
+    indistinguishable.
+  - **A server verdict beats the local grandfather clause, in BOTH directions.**
+    Sign-in is optional in this game, so a large share of existing players have no
+    account to be recognised by and the client also honours a pre-cutover
+    `save.firstPlayDate`. That clause is **forgeable**, and the case it must never
+    override is a REFUNDED account: after a month of play its save genuinely looks
+    old enough to be grandfathered. `entitlement.test.ts` pins the ordering.
+  - **One entry fee pays at most one person.** $1.69 + Stripe's $0.42 of a $3.99
+    charge leaves the house solvent on EVERY individual transaction, not on
+    average — no mix of depths and no growth rate can put it underwater. A second
+    payout rung stacked on one sale breaks that. `referralcash.test.ts` is an
+    economy guard like `slots.rate`/`endless.pace`: **re-derive its margins, never
+    edit them to make green.** The `referee_user_id UNIQUE` constraint is the hard
+    half — a replayed webhook physically cannot pay twice.
+  - **Fulfilment is NOT synchronous with the Stripe redirect.** The player comes
+    back the instant the card clears; the entitlement is written by the webhook,
+    seconds later. `PaywallScene`'s `confirming` state covers that window — showing
+    a price there is showing a bill to someone who just paid it. And its `failed`
+    state must **never say the payment failed**: it didn't, the card is charged.
+    Telling a charged player otherwise sends them to their bank, and the bank's
+    answer is a chargeback.
+
+  The client-side gate is a **funnel, not a lock** — the game is a static bundle
+  the player's browser runs, so localStorage will always defeat it, exactly as a
+  forged POST defeats the leaderboard. That is accepted. A forged client can grant
+  itself a free game and can never grant itself a cent, which is the line that
+  actually matters. **Ships dark**: the code is live behind the date and does
+  nothing until Stripe keys exist and the switch moves.
 - **`base: './'`** in `vite.config.ts` — relative asset paths, required for
   GitHub Pages. Don't "fix" it to `/`.
 - **The RGB cabinet marquee is a light TUBE, not bulbs — and it is one clock.**
@@ -440,7 +493,12 @@ edit to make green.
 | `src/view/platekit.ts` | the material + lighting law (E7): plates, spotlight scrims, `goldFace` — `ui.ts` re-exports the legacy names |
 | `src/view/rgbmarquee.ts` | the RGB cabinet chase — see the note above before touching it |
 | `src/view3d/stage.ts` | the only three.js usage |
-| `supabase/migrations/` | `0001_saves` → `0024_race_board_salt_enforced` |
+| `src/core/entitlement.ts` | the PAID ENTRY gate — the date switch, the cached verdict, grandfathering, checkout |
+| `src/core/referralcash.ts` | cash referral commissions — the rate-by-depth table + the payout surface |
+| `src/scenes/PaywallScene.ts` | the door: checking / signed-out / offer / confirming / failed |
+| `src/view/cashout.ts` | YOUR EARNINGS panel — opened from the Store's balance row |
+| `supabase/migrations/` | `0001_saves` → `0025_paid_entry_and_referral_cash` |
+| `supabase/functions/` | the ONLY writers of entitlements, commissions and payouts — see the paid-entry note |
 | `scripts/verify-rls.sh` | RLS audit — run after any migration |
 | `scripts/send-push.mjs` | push sender |
 | `scripts/gen-icons.mjs` | `npm run icons` |
@@ -486,7 +544,10 @@ commit or paste key material.** Publishable client config belongs in
 
 In this repo, all under `docs/`: `GAME_DESIGN.md`, `BUILD_OVERVIEW.md`,
 `UI_COOKBOOK.md`, `ANALYTICS_AND_PUSH.md`, `CLOUD_SAVE_SETUP.md`,
-`CLOUD_SAVE_GOOGLE_SIGNIN.md`, `GIFT_STORE.md`, `GO_LIVE_CHECKLIST.md`. For
+`CLOUD_SAVE_GOOGLE_SIGNIN.md`, `GIFT_STORE.md`, `PAID_ENTRY.md`,
+`GO_LIVE_CHECKLIST.md`. `PAID_ENTRY.md` is deliberately **mechanism + runbook
+only** — pricing strategy, margin modelling and the risk register are vault
+material, per the visibility note at the end of this section. For
 schema and score security the authority is the migration header comments, not a
 design doc — see the score-defence bullet at the top.
 
@@ -502,9 +563,12 @@ live game and revert most of it — and never delete it either; it is the fork's
 history. (It reads as merge-worthy because this repo rebase-merges, so `git
 cherry` marks it `+`. That signal is meaningless here.)
 Nothing about Viva Ton belongs in this repo (owner's call, 2026-08-03).
-The architecture doc described a backend that has never existed here:
-there is no `supabase/functions/` directory, and its schema shares **zero**
-tables with the twelve real ones. This file used to cite both — including a bullet
+The architecture doc described a backend that has never existed here: its schema
+shares **zero** tables with the real ones. (It also claimed a
+`supabase/functions/` directory, and until 2026-08-16 this file said flatly that
+there was none. There is one now — four Edge Functions for paid entry, see the
+bullet above — but it is **not** the one that doc described, and nothing in it
+touches scores, wallets or a treasury.) This file used to cite both — including a bullet
 sending you to the architecture doc "before touching anything score-,
 leaderboard-, or reward-related" — which is how an agent following these
 instructions ended up reading a different product's crypto design. Moved to the

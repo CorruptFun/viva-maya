@@ -12,6 +12,7 @@ import {
   isWelcomePending,
   mintMyCode,
 } from '../core/referrals'
+import { fetchCashSummary, formatUsd } from '../core/referralcash'
 import { loadSave } from '../core/save'
 import { D, E, OVERSHOOT, breathe, popIn } from './motion'
 import { quality } from './quality'
@@ -296,15 +297,21 @@ export function addInviteCard(
       })
       .setOrigin(0, 0)
   )
-  card.add(
-    scene.add
-      .text(128, y0 + 52, `friend gets ${REFEREE_CHIPS} · you get ${REFERRER_CHIPS} + full hearts`, {
-        fontFamily: 'Arial, sans-serif',
-        fontSize: '16px',
-        color: T.inkSoft,
-      })
-      .setOrigin(0, 0)
-  )
+  // The reward line. Starts on the CHIPS promise, which is true for every player at every depth,
+  // and upgrades to the cash headline only once the server confirms this particular player is on
+  // the cash ladder (view/cashout.ts explains the depths).
+  //
+  // ⚠️ Deliberately not the other way round. Leading with "$1.69 cash" and downgrading it would
+  // advertise money to the players who earn none — everyone deeper than the second rung — and a
+  // promise of cash that is withdrawn on the next repaint is worse than never making it.
+  const rewardLine = scene.add
+    .text(128, y0 + 52, `friend gets ${REFEREE_CHIPS} · you get ${REFERRER_CHIPS} + full hearts`, {
+      fontFamily: 'Arial, sans-serif',
+      fontSize: '16px',
+      color: T.inkSoft,
+    })
+    .setOrigin(0, 0)
+  card.add(rewardLine)
 
   // Code ticket — the code displayed BIG in an embossed raffle ticket (rose well + punched perforation
   // notches, drawCodeTicket). Holds the shimmer while minting, or the signed-out invitation.
@@ -367,6 +374,14 @@ export function addInviteCard(
       })
       void fetchMyReferralStats().then(s => {
         if (s && stats.active) stats.setText(`${s.invited} of ${s.cap} friends joined`)
+      })
+      // Cash rate, when this player has one. Separate from the stats fetch above because they
+      // count different things: `invited` is rows registered under the code, `referralCount` in the
+      // summary is commissions actually written — i.e. friends who paid. Neither is a substitute
+      // for the other, and quietly swapping one in for the other would misreport the funnel.
+      void fetchCashSummary().then(c => {
+        if (!c || !rewardLine.active || c.rateCents <= 0) return
+        rewardLine.setText(`${formatUsd(c.rateCents)} cash + ${REFERRER_CHIPS} chips per friend`)
       })
     }
   }

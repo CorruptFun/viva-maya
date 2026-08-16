@@ -9,6 +9,7 @@ import type { BoostStoreItem } from '../core/store'
 import { SYMBOLS } from '../core/types'
 import type { Piece, PieceKind } from '../core/types'
 import { addCasinoBackdrop } from '../view/background'
+import { openEarningsPanel } from '../view/cashout'
 import { addScreenGloss } from '../view/fx'
 import { INVITE_CARD_H, addInviteCard, maybeShowWelcome } from '../view/invite'
 import { isCloudConfigured } from '../core/cloud'
@@ -70,6 +71,14 @@ export class StoreScene extends Phaser.Scene {
       // with the wide "GIFT STORE" title. The systemic top-band rework this used to defer to has
       // since shipped (safe-area anchoring, c375633) — the balance row is simply the clean home.
       addPillButton(this, 600, this.balanceY, 176, 52, 'ENTER CODE', GHOST_PILL, () => this.openCodeEntry())
+      // YOUR EARNINGS — the referral program's cash side (view/cashout.ts).
+      //
+      // On the BALANCE row, mirroring ENTER CODE on the far side of the chip pill, rather than as a
+      // sixth card on the shelf: the shelf's vertical band is full (invite card + five boost rows +
+      // the slots card inside 1280, with ~18px of slack), so another card there would push the last
+      // boost row straight through the slots card. This row is also where it belongs by meaning —
+      // it answers "what do I have", which is the question the chip pill beside it already answers.
+      addPillButton(this, 120, this.balanceY, 176, 52, 'EARNINGS', GHOST_PILL, () => openEarningsPanel(this))
     }
     if (codeFixture) this.time.delayedCall(400, () => this.openCodeEntry())
 

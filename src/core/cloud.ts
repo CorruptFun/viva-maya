@@ -241,6 +241,11 @@ export async function signOutCloud(): Promise<void> {
   } catch {
     // best-effort
   }
+  // Drop the cached PAID-ENTRY verdict with the session. It is keyed by user id, so a stale one
+  // could never be applied to the next account anyway (core/entitlement.ts gateVerdict checks the
+  // id) — this just stops a signed-out device carrying around a record of who last played on it.
+  // Lazy import: entitlement.ts imports THIS module, and a static import would close the cycle.
+  void import('./entitlement').then(m => m.clearCachedAccess())
 }
 
 // ---------------------------------------------------------------------------- boot

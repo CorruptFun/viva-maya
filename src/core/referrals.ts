@@ -79,6 +79,23 @@ function clearStash(): void {
 }
 
 /**
+ * The invite code this device is holding, if any — read-only, never clears it.
+ *
+ * Exported for the paid-entry checkout (core/entitlement.ts beginCheckout), which passes it to the
+ * server as a HINT for resolving the payer's referrer. It is a hint and not an instruction: the
+ * checkout function prefers the `referrals` row this player's own client may already have written,
+ * and only falls back to resolving this code when the row isn't there yet — because registration
+ * piggybacks a save push and a keen player can reach the PAY button before one has happened.
+ *
+ * ⚠️ Reading it here must NOT consume it. `maybeRegisterReferral` owns the stash's lifecycle and
+ * clears it only on a definitive resolution; a checkout that clears it would lose the referral for
+ * any player who abandons the Stripe page.
+ */
+export function stashedRefCode(): string | null {
+  return readStash()
+}
+
+/**
  * Boot hook (one line in main.ts): capture a `?ref=CODE` invite parameter into the
  * localStorage stash so it survives until the player signs in — even if that's days later.
  * NEVER overwrites an existing stash (first inviter wins; a second link can't hijack it).

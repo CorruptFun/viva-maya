@@ -265,5 +265,65 @@ fi
 
 
 echo
+echo "── paid entry (0025): MONEY IS NOT SELF-REPORTED ────────────────"
+# ⚠️ THE MOST IMPORTANT SECTION IN THIS FILE, and the reason is that it asserts the OPPOSITE of
+# everything above it. `events` must be anon-writable or analytics is dead; `push_subscriptions`
+# must be anon-writable or push is dead. These four tables must be anon-UNwritable or the game is
+# free and the referral program pays out to whoever asks — an entitlement a client can insert is a
+# $3.99 product given away, and a `referral_earnings` row a client can insert is real money wired
+# to a stranger's bank account.
+#
+# They carry SELECT policies for their owner and deliberately NO insert/update/delete policy for
+# any role, so every write below must come back 42501. A 201 here is not a failing test, it is an
+# incident: someone has added a write policy to make a client feature work, and the feature was
+# wrong. The reads must come back [] — meaningful because the control probe at the top of this
+# script proves a missing table reports PGRST205 instead.
+FORGED="44444444-4444-4444-4444-444444444444"
+
+for t in entitlements referral_earnings payout_accounts payouts; do
+  c=$(anon "$URL/rest/v1/$t?select=*")
+  [ "$c" = "[]" ] && ok "anon CANNOT read $t" || bad "$t IS READABLE BY ANON — payment history is exposed" "$c"
+done
+
+c=$(anon -X POST "$URL/rest/v1/entitlements" -d "{\"user_id\":\"$FORGED\",\"status\":\"paid\",\"source\":\"forged\"}")
+case "$c" in *42501*) ok "anon CANNOT mint an entitlement (the paywall holds)" ;;
+             *) bad "ENTITLEMENTS ARE WRITABLE — anyone can grant themselves the game" "$c" ;; esac
+
+c=$(anon -X POST "$URL/rest/v1/referral_earnings" \
+     -d "{\"referrer_user_id\":\"$FORGED\",\"referee_user_id\":\"$DEV\",\"tier\":0,\"amount_cents\":169,\"stripe_payment_intent\":\"pi_forged\",\"available_at\":\"2020-01-01T00:00:00Z\"}")
+case "$c" in *42501*) ok "anon CANNOT mint a commission (the ledger holds)" ;;
+             *) bad "THE COMMISSION LEDGER IS WRITABLE — anyone can pay themselves real money" "$c" ;; esac
+
+c=$(anon -X POST "$URL/rest/v1/payouts" -d "{\"user_id\":\"$FORGED\",\"amount_cents\":999999,\"idempotency_key\":\"forged\"}")
+case "$c" in *42501*) ok "anon CANNOT request a payout row" ;;
+             *) bad "PAYOUTS ARE WRITABLE — anyone can queue a transfer to themselves" "$c" ;; esac
+
+c=$(anon -X POST "$URL/rest/v1/payout_accounts" -d "{\"user_id\":\"$FORGED\",\"stripe_account_id\":\"acct_forged\",\"payouts_enabled\":true}")
+case "$c" in *42501*) ok "anon CANNOT attach a payout destination" ;;
+             *) bad "PAYOUT ACCOUNTS ARE WRITABLE — anyone can redirect someone else's earnings" "$c" ;; esac
+
+# The hold is the chargeback defence, so the column that carries it must be unreachable too — an
+# UPDATE that could pull `available_at` back to the past would let a commission be withdrawn the
+# moment it is written, which is the whole attack the hold exists to stop.
+c=$(anon -X PATCH "$URL/rest/v1/referral_earnings?tier=eq.0" -d '{"available_at":"2020-01-01T00:00:00Z","status":"available"}')
+case "$c" in *42501*) ok "anon CANNOT shorten the hold on a commission" ;;
+             *) bad "THE HOLD IS CLIENT-WRITABLE — chargeback protection is defeated" "$c" ;; esac
+
+# Both verdict RPCs are granted to `authenticated` only. They are SECURITY DEFINER and answer for
+# auth.uid(), so an anon caller would be asking about a null user — but the grant is what makes
+# that unreachable rather than merely uninteresting.
+for f in my_access my_cash_summary; do
+  c=$(anon -X POST "$URL/rest/v1/rpc/$f" -d '{}')
+  case "$c" in *42501*) ok "anon CANNOT call $f" ;;
+               *) bad "$f ANSWERS ANON — is 0025 applied with its grants?" "$c" ;; esac
+done
+
+# …and the one function that IS public, so a failure above can be told apart from "0025 was never
+# applied at all". If this reports PGRST202 the migration is missing, not misconfigured.
+c=$(anon -X POST "$URL/rest/v1/rpc/paywall_active_from" -d '{}')
+case "$c" in *PGRST202*) bad "0025 IS NOT APPLIED — every check in this section is meaningless" "$c" ;;
+             *) ok "0025 is applied (paywall_active_from answers: $c)" ;; esac
+
+echo
 printf '%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1

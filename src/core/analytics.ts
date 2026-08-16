@@ -203,6 +203,39 @@ export const EVENTS = {
   REFERRAL_REGISTERED: 'referral_registered',
 
   /**
+   * PAID ENTRY funnel. Five steps, and the gaps between them are the only way to see what a cold
+   * paywall actually costs — a number nobody can guess and everybody has an opinion about:
+   *
+   *   paywall_shown → signin_completed → checkout_started → entry_paid
+   *
+   * `signin_completed` is deliberately REUSED rather than given a paywall-specific twin: it is the
+   * same act, and the dashboard's funnel SQL hardcodes the names it charts (`name in (...)` across
+   * migrations 0014/0015/0021/0022), so a new name is invisible until a new migration ships and
+   * fails silently. A `surface` prop rides along for free — the same reasoning as the push opt-in's
+   * two doors.
+   *
+   * {state} on paywall_shown splits the reasons a player is looking at a price: 'offer' (a new
+   * player), 'signedout' (we cannot tell yet who they are), 'confirming' (back from Stripe),
+   * 'failed' (the webhook never landed). Without it, "the paywall converts at 4%" pools people who
+   * were asked to pay with people who had already paid and were waiting on a receipt.
+   */
+  PAYWALL_SHOWN: 'paywall_shown',
+  CHECKOUT_STARTED: 'checkout_started',
+  /** {reason} — 'paid' | 'grandfathered' | 'granted'. The bottom of the funnel. */
+  ENTRY_PAID: 'entry_paid',
+
+  /**
+   * CASH-OUT funnel. {depth, rate} on shown → {outcome} on requested, where outcome is
+   * 'paid' | 'onboarding' | 'below_minimum' | 'nothing_available' | 'unavailable'.
+   *
+   * `onboarding` is the step worth watching: it is a full identity + bank-details verification
+   * standing between a referrer and money they have already earned, and it is the most likely place
+   * for the cash program to quietly fail to pay anybody at all.
+   */
+  CASHOUT_SHOWN: 'cashout_shown',
+  CASHOUT_REQUESTED: 'cashout_requested',
+
+  /**
    * {cascade, endless, stake} on offer → {slot, mult, payout, spins, endless} on claim.
    *
    * `plinko_played` is the only field check on the slot table, and the 2026-07-31 ×10 retune (edges
