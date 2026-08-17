@@ -6,6 +6,7 @@ import type { PlinkoPrize } from '../core/plinko'
 import { PLINKO_ROWS, PLINKO_SLOTS, dropPath, plinkoSlots, rollSlotIndex } from '../core/plinko'
 import { mulberry32 } from '../core/rng'
 import { addFreeSpins } from '../core/save'
+import { coinBurst, rakeRays } from './megafx'
 import { backOut, E, OVERSHOOT } from './motion'
 import { quality } from './quality'
 import type { Theme } from './theme'
@@ -1069,6 +1070,11 @@ export function openPlinko(scene: Phaser.Scene, opts: PlinkoOpenOpts): void {
             .setDepth(63)
         )
         confetti.explode(quality.count(40))
+        // §X1 — the top slot / golden ticket is this machine's jackpot: god-rays rake the whole
+        // phone and the kit's tumbling gold fountain erupts off the landing on top of the confetti.
+        // Above the plinko chrome (60s), below its result copy; both kit-gated.
+        rakeRays(scene, { blades: 4, ms: 640, depth: 63, dim: true })
+        coinBurst(scene, landX, BOARD_CY + FLOOR_Y - 20, { count: 14, power: 1.1, depth: 63 })
       }
       // One camera breath, exactly as the wheel's detent takes — reset in teardown.
       cam.setZoom(1)

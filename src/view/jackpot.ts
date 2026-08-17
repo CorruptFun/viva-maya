@@ -5,6 +5,7 @@ import { JACKPOT_GOAL, WHEEL_PRIZES, rollWheelIndex } from '../core/jackpot'
 import { mulberry32 } from '../core/rng'
 import { addChips, addPendingBoost, loadSave } from '../core/save'
 import type { BoostType } from '../core/types'
+import { coinBurst, rakeRays } from './megafx'
 import { backOut, E, heartbeat, OVERSHOOT } from './motion'
 import { quality } from './quality'
 import { css, getTheme, hapticsOff, prefersReducedMotion, reduceFlashing } from './theme'
@@ -992,6 +993,10 @@ export function openJackpotWheel(scene: Phaser.Scene, opts: WheelOpenOpts): void
           scene.add.image(cx, cy, 'heartglow').setTint(T.bloom).setBlendMode(Phaser.BlendModes.ADD).setDepth(61).setDisplaySize(200, 200).setAlpha(0)
         )
         scene.tweens.add({ targets: bloom, alpha: 0.5, displayWidth: 520, displayHeight: 520, duration: 520, ease: 'Back.easeOut', yoyo: true, hold: 200 })
+        // §X1 — the wheel's JACKPOT is the game's biggest single hit, so it hits the whole phone:
+        // god-rays rake the screen and the kit's tumbling gold rains on top of the confetti.
+        rakeRays(scene, { blades: 5, ms: 700, depth: 63, dim: true })
+        coinBurst(scene, cx, cy, { count: 18, power: 1.25, depth: 62 })
       }
     }
 

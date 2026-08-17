@@ -27,6 +27,7 @@ import type { FreeSlotKind, FreeSlotSpinResult, SlotPurchase } from '../core/sto
 import { addCasinoBackdrop } from '../view/background'
 import { addScreenGloss } from '../view/fx'
 import { vibratePattern } from '../view/haptics'
+import { coinBurst, igniteVignette, rakeRays } from '../view/megafx'
 import { addJackpotMeter } from '../view/jackpot'
 import type { JackpotMeter } from '../view/jackpot'
 import { D, E, OVERSHOOT, backOut, fadeRise, popIn } from '../view/motion'
@@ -1323,6 +1324,12 @@ export class SlotScene extends Phaser.Scene {
         // The room swells with the fanfare, the way it does behind a jackpot on the board. Self-gates
         // reduced motion and no-ops entirely on the 2D path.
         stageFlare()
+        // §X1 — a full-line / triple-payout pull owns the whole phone for the beat: god-rays rake
+        // the screen, the frame catches for a breath (self-timed out — nothing here to own it), and
+        // the kit's chunkier coin fountain erupts off the window on top of the chip spray below.
+        rakeRays(this, { blades: 4, ms: 680, depth: 44, dim: true })
+        igniteVignette(this, { heat: 2, depth: 42, maxMs: 2400 })
+        coinBurst(this, REELS_X + REELS_W / 2, REELS_TOP + WINDOW_H / 2, { count: 14, power: 1.15, depth: 43 })
       } else if (spin.lines.length > 0 || paid > 0) {
         sfx.coinCount()
       }

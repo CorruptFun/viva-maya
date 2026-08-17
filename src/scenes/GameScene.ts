@@ -76,6 +76,8 @@ import { openPlinko } from '../view/plinko'
 import { openDeal } from '../view/deal'
 import type { JackpotMeter } from '../view/jackpot'
 import { D, E, OVERSHOOT, backOut, heartbeat } from '../view/motion'
+import { coinBurst, emberField, eruptPieces, flashBloom, igniteVignette, rakeRays } from '../view/megafx'
+import type { EruptionSeed, VignetteHandle } from '../view/megafx'
 import { quality } from '../view/quality'
 import { vibratePattern } from '../view/haptics'
 import {
@@ -487,6 +489,14 @@ export class GameScene extends Phaser.Scene {
   /** Deepest MEGA tier (1 MEGA / 2 SUPER / 3 UNREAL) reached this resolve — so the strike PUNCTUATES
    *  each new tier instead of firing every wave. Reset per resolve (resolveLoop) + on restart. */
   private comboPeakTier = 0
+  /** §X1 GOLD RUSH — the burning screen frame while a chain holds MEGA grade. Ignited a notch hotter
+   *  on each new tier (igniteGoldRush), extinguished as the chain settles (megaFinish); the handle
+   *  also self-times-out inside the kit, so a lost owner can never leave the frame burning. */
+  private goldRush: VignetteHandle | null = null
+  /** §X1 — a few of the chain's winning symbols (position + baked texture key), captured mid-wave
+   *  while their sprites still exist, to ERUPT past the screen edges when a MEGA-grade chain
+   *  settles. Reset per resolve (resolveLoop) + on restart; capped at capture time. */
+  private eruptionSeeds: EruptionSeed[] = []
   /** Points the CURRENT chain has scored (summed across its waves) — the stake a Plinko drop
    *  multiplies. Reset per resolve (resolveLoop) + on restart. */
   private chainPoints = 0
@@ -734,6 +744,8 @@ export class GameScene extends Phaser.Scene {
     this.heartbloomFired = false
     this.newBestThisWin = false
     this.chaseOvertake = null
+    this.goldRush = null // §X1 — the old round's frame died with its scene; never carry a live handle
+    this.eruptionSeeds = []
     // Endless is excluded by having no level number to test — `isEyeLevel` is Act I band logic, and
     // the race is a same-board-for-everyone contract that no cosmetic of this game's may key off.
     this.eyeActive = !this.endless && isEyeLevel(this.level)
@@ -2787,6 +2799,14 @@ export class GameScene extends Phaser.Scene {
   private celebrateBoard(): void {
     this.flashCabinet()
     this.burstTokens()
+    // §X1 — the win owns the whole phone for the beat the result card takes to build: god-rays rake
+    // the screen, gold fountains off the board and embers hang in the air. All kit-gated (reduced
+    // motion / LOW tier shed the layer; reduce-flashing swaps pops for swells).
+    const cx = BOARD_X + BOARD_W / 2
+    const cy = this.boardTop + BOARD_W / 2
+    rakeRays(this, { blades: 4, ms: 700, dim: true })
+    coinBurst(this, cx, cy, { count: 18, power: 1.2 })
+    emberField(this, { ms: 2400 })
   }
 
   /**
@@ -4458,6 +4478,10 @@ export class GameScene extends Phaser.Scene {
     this.vibrate([50, 40, 110])
     const pos = this.cellToXY(centre)
     this.punch({ trauma: 0.45, flash: { x: pos.x, y: pos.y, size: CELL * 2.4 } })
+    // §X1 — the mega win opens the way the reference does: the frame ignites and light rakes the
+    // phone BEFORE the first detonation lands. The resolve below re-strikes it hotter per tier and
+    // megaFinish puts it out on the settle.
+    this.igniteGoldRush(2)
 
     const base = this.scoreMult
     this.scoreMult = base * MEGA_WIN_MULT
@@ -4859,6 +4883,7 @@ export class GameScene extends Phaser.Scene {
       let cascade = 0
       let wave = first
       this.comboPeakTier = 0 // fresh chain — the MEGA strike re-punctuates each new tier this resolve
+      this.eruptionSeeds.length = 0 // §X1 — fresh chain, fresh trophies for the settle eruption
       this.chainPoints = 0 // ...and a fresh stake for a possible Plinko drop
       while (wave) {
         cascade++
@@ -5132,6 +5157,13 @@ export class GameScene extends Phaser.Scene {
       // Cleared cells pop AFTER the charge wind-up (chargeMs) so the detonation reads charge→release.
       const delay = chargeMs + (epicenter ? (Math.abs(at.row - epicenter.row) + Math.abs(at.col - epicenter.col)) * 16 : 0)
       const pos = this.cellToXY(at)
+      // §X1 — remember a few of this chain's winning symbols (position + baked art) while their
+      // sprites still exist: if the chain settles MEGA-grade, megaFinish blasts ghost copies of
+      // exactly these out past the screen edges. From wave 3 up, so the finale stars the symbols
+      // that made the chain big, not the opening match.
+      if (cascade >= 3 && piece.kind !== 'blocker' && this.eruptionSeeds.length < 12) {
+        this.eruptionSeeds.push({ x: pos.x, y: pos.y, key: sprite.texture.key })
+      }
       const tink = tinks < 10
       if (tink) tinks++
       const sparkle = glintBudget > 0
@@ -5791,6 +5823,15 @@ export class GameScene extends Phaser.Scene {
     this.punch({ trauma: 0.95 })
     this.boardSlam(1.3) // the board-wipe strike hits hardest — the deepest slam of the three
     stageFlare() // and the whole ROOM ignites — the slow warm swell behind the strike
+    // §X1 — the jackpot is THE casino payoff, so it pays on screen like one: god-rays rake the
+    // whole phone, gold fountains out of the strike and embers hang in the room while the cascade
+    // rolls on. The coin ring follows the strike by a beat so it reads as payout, not impact.
+    const cx = BOARD_X + BOARD_W / 2
+    const cy = this.boardTop + BOARD_W / 2
+    rakeRays(this, { blades: 4, ms: 680, dim: true })
+    coinBurst(this, cx, cy, { count: 14, power: 1.15 })
+    emberField(this, { ms: 2000 })
+    this.time.delayedCall(140, () => sfx.coinCount())
   }
 
   /**
@@ -7695,6 +7736,12 @@ export class GameScene extends Phaser.Scene {
       days: week.days,
       cheats: this.cheatFires,
     })
+    // §X1 — a run that set TODAY'S BEST earns the full payoff on the board it happened on: god-rays
+    // + a gold fountain in the beat before the standings card takes the screen. Kit-gated.
+    if (isRecord) {
+      rakeRays(this, { blades: 4, ms: 640, dim: true })
+      coinBurst(this, BOARD_X + BOARD_W / 2, this.boardTop + BOARD_W / 2, { count: 14, power: 1.1 })
+    }
     this.time.delayedCall(450, () => this.showEndlessOverlay(this.score, best, isRecord, week, paced ? posted : null))
   }
 
@@ -8991,6 +9038,7 @@ export class GameScene extends Phaser.Scene {
       sfx.jackpotStrike()
       this.vibrate(tier.t >= 3 ? [70, 40, 90, 40, 160] : tier.t >= 2 ? [60, 40, 140] : [60, 40, 120])
       this.flashCabinet(tier.t) // pop the marquee harder the deeper the tier
+      this.igniteGoldRush(tier.t) // §X1 — and the whole screen catches: burning frame + light rake
     }
     // §E3/E11/B14: a low bass bed ratchets UP a step per cascade wave and resolves into winFanfare —
     // the audio arc mirrors the visual combo arc. ONE voice, retriggered per wave (never accumulates).
@@ -9086,16 +9134,41 @@ export class GameScene extends Phaser.Scene {
   }
 
   /**
+   * §X1 GOLD RUSH — the screen-owning escalation for a chain that has gone MEGA-grade, cut from the
+   * reference footage: the screen frame catches fire and STAYS alight while the tier holds, a rake
+   * of god-rays sweeps the whole phone, and from SUPER MEGA up embers drift through the room, with
+   * one full-screen gold bloom crowning UNREAL. Re-ignited a notch hotter on each new tier (the old
+   * frame hands off by fading); megaFinish extinguishes it as the chain settles. Every piece
+   * self-gates inside the kit (reduced motion / reduce-flashing / LOW tier / governor counts), so
+   * this call site stays one unconditional beat.
+   */
+  private igniteGoldRush(tier: number): void {
+    const heat = Math.min(3, Math.max(1, Math.round(tier))) as 1 | 2 | 3
+    this.goldRush?.extinguish()
+    this.goldRush = igniteVignette(this, { heat })
+    // Alternate the rake direction per tier so a deepening chain reads as light crossing the room,
+    // not the same wipe replayed; the UNREAL rake goes rose with the rest of that tier's heat.
+    rakeRays(this, { blades: 2 + heat, tint: heat >= 3 ? getTheme().roseLight : undefined, mirror: heat % 2 === 0 })
+    if (heat >= 2) emberField(this, { ms: 2600 })
+    if (heat >= 3) flashBloom(this, { alpha: 0.34 })
+  }
+
+  /**
    * MEGA FINISH — the "leave you in awe" release. Where the per-wave combo beats BUILD, this one beat
    * fires once as a deep chain SETTLES (called from resolveLoop): the screen erupts a final time —
    * a low boom, a gold shockwave ring blowing out from board centre, a punchy zoom-kiss, a trauma
    * thump, and the biggest marquee re-strike — all sized by the settled depth (tier 1..3). Below x4
-   * it no-ops. Fully a11y-gated: reduced motion keeps only the boom + a single static gold bloom
+   * it no-ops. §X1 layers the reference's payoff on top: a rake of light across the whole phone, the
+   * chain's own winning symbols erupting past the screen edges, and (SUPER MEGA up) a gold coin
+   * fountain. Fully a11y-gated: reduced motion keeps only the boom + a single static gold bloom
    * (a transient's resting state is nothing); reduce-flashing softens the bright pop into a swell;
    * LOW tier drops the fill-rate shockwave. Every object is transient and self-destroys.
    */
   private megaFinish(cascade: number): void {
     const tier = this.megaTier(cascade).t
+    // §X1 — however deep the chain got, the settle is where the burning frame hands the screen back.
+    this.goldRush?.extinguish()
+    this.goldRush = null
     if (tier <= 0) return
     const T = getTheme()
     const cx = BOARD_X + BOARD_W / 2
@@ -9119,7 +9192,9 @@ export class GameScene extends Phaser.Scene {
     // Trauma thump routed through the single authority (composes with the last wave's decay, never
     // a second shake system) + a punchier zoom-kiss than a per-wave breath.
     this.addTrauma(Math.min(0.75, 0.34 + tier * 0.13))
-    this.megaZoom(0.02 + tier * 0.012)
+    // §X1 raised the settle's inhale (was 0.02 + t*0.012): the eruption below reads as flying PAST
+    // the camera only if the camera also leans in. Still zoom-IN only — never below 1 (WASH_BLEED).
+    this.megaZoom(0.026 + tier * 0.016)
     if (quality.tier() === 'low') return // the ring/bloom are an optional fill-rate layer
     const soft = this.reduceFlashing
     // A gold shockwave ring blowing outward from board centre — the awe layer.
@@ -9159,6 +9234,16 @@ export class GameScene extends Phaser.Scene {
     })
     // A gold spark bloom from the centre (budgeted per device; skipped when flashing is reduced).
     if (!soft && quality.count(1) > 0) this.sparkEmitter.explode(quality.count(10 + tier * 6), cx, cy)
+    // §X1 — the reference's payoff, in its order: light rakes the whole phone, the chain's own
+    // winning symbols ERUPT past the screen edges (ghost copies — the board's sprite map is never
+    // touched), and from SUPER MEGA up the gold rains. All transient, all kit-gated.
+    rakeRays(this, { blades: 3 + tier, ms: 560, dim: true })
+    eruptPieces(this, this.eruptionSeeds, { cx, cy, ms: 620 + tier * 60 })
+    this.eruptionSeeds = []
+    if (tier >= 2) {
+      coinBurst(this, cx, cy, { count: 8 + tier * 6, power: 0.9 + tier * 0.15 })
+      sfx.coinCount()
+    }
   }
 
   /**
