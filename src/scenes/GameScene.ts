@@ -282,6 +282,14 @@ const CHEAT_ZONE_TOP = 1104
 const MEGA_WIN_MULT = 12
 
 /**
+ * §X1 — where the celebration ray-rake lives in THIS scene: behind the cabinet and every piece
+ * (gameplay sits at depth ≥ 0), above the whole backdrop ladder (≤ -28), so a big win's light
+ * sweeps the ROOM around the machine instead of crossing the playfield (owner feedback
+ * 2026-08-17: blades over the board read as out of place). The rake's stage-dim rides one below.
+ */
+const ROOM_RAY_DEPTH = -20
+
+/**
  * THE EYE IN THE SKY's tuning (AFTER DARK, Slice 3). Presentational only — no number here can reach
  * the board, the spec or the score.
  *
@@ -2804,7 +2812,7 @@ export class GameScene extends Phaser.Scene {
     // motion / LOW tier shed the layer; reduce-flashing swaps pops for swells).
     const cx = BOARD_X + BOARD_W / 2
     const cy = this.boardTop + BOARD_W / 2
-    rakeRays(this, { blades: 4, ms: 700, dim: true })
+    rakeRays(this, { blades: 4, ms: 700, dim: true, depth: ROOM_RAY_DEPTH })
     coinBurst(this, cx, cy, { count: 18, power: 1.2 })
     emberField(this, { ms: 2400 })
   }
@@ -5828,7 +5836,7 @@ export class GameScene extends Phaser.Scene {
     // rolls on. The coin ring follows the strike by a beat so it reads as payout, not impact.
     const cx = BOARD_X + BOARD_W / 2
     const cy = this.boardTop + BOARD_W / 2
-    rakeRays(this, { blades: 4, ms: 680, dim: true })
+    rakeRays(this, { blades: 4, ms: 680, dim: true, depth: ROOM_RAY_DEPTH })
     coinBurst(this, cx, cy, { count: 14, power: 1.15 })
     emberField(this, { ms: 2000 })
     this.time.delayedCall(140, () => sfx.coinCount())
@@ -7739,7 +7747,7 @@ export class GameScene extends Phaser.Scene {
     // §X1 — a run that set TODAY'S BEST earns the full payoff on the board it happened on: god-rays
     // + a gold fountain in the beat before the standings card takes the screen. Kit-gated.
     if (isRecord) {
-      rakeRays(this, { blades: 4, ms: 640, dim: true })
+      rakeRays(this, { blades: 4, ms: 640, dim: true, depth: ROOM_RAY_DEPTH })
       coinBurst(this, BOARD_X + BOARD_W / 2, this.boardTop + BOARD_W / 2, { count: 14, power: 1.1 })
     }
     this.time.delayedCall(450, () => this.showEndlessOverlay(this.score, best, isRecord, week, paced ? posted : null))
@@ -9148,7 +9156,7 @@ export class GameScene extends Phaser.Scene {
     this.goldRush = igniteVignette(this, { heat })
     // Alternate the rake direction per tier so a deepening chain reads as light crossing the room,
     // not the same wipe replayed; the UNREAL rake goes rose with the rest of that tier's heat.
-    rakeRays(this, { blades: 2 + heat, tint: heat >= 3 ? getTheme().roseLight : undefined, mirror: heat % 2 === 0 })
+    rakeRays(this, { blades: 2 + heat, tint: heat >= 3 ? getTheme().roseLight : undefined, mirror: heat % 2 === 0, depth: ROOM_RAY_DEPTH })
     if (heat >= 2) emberField(this, { ms: 2600 })
     if (heat >= 3) flashBloom(this, { alpha: 0.34 })
   }
@@ -9237,7 +9245,7 @@ export class GameScene extends Phaser.Scene {
     // §X1 — the reference's payoff, in its order: light rakes the whole phone, the chain's own
     // winning symbols ERUPT past the screen edges (ghost copies — the board's sprite map is never
     // touched), and from SUPER MEGA up the gold rains. All transient, all kit-gated.
-    rakeRays(this, { blades: 3 + tier, ms: 560, dim: true })
+    rakeRays(this, { blades: 3 + tier, ms: 560, dim: true, depth: ROOM_RAY_DEPTH })
     eruptPieces(this, this.eruptionSeeds, { cx, cy, ms: 620 + tier * 60 })
     this.eruptionSeeds = []
     if (tier >= 2) {

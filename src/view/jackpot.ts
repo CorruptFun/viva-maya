@@ -995,7 +995,7 @@ export function openJackpotWheel(scene: Phaser.Scene, opts: WheelOpenOpts): void
         scene.tweens.add({ targets: bloom, alpha: 0.5, displayWidth: 520, displayHeight: 520, duration: 520, ease: 'Back.easeOut', yoyo: true, hold: 200 })
         // §X1 — the wheel's JACKPOT is the game's biggest single hit, so it hits the whole phone:
         // god-rays rake the screen and the kit's tumbling gold rains on top of the confetti.
-        rakeRays(scene, { blades: 5, ms: 700, depth: 63, dim: true })
+        rakeRays(scene, { blades: 5, ms: 700, depth: 60 })
         coinBurst(scene, cx, cy, { count: 18, power: 1.25, depth: 62 })
       }
     }

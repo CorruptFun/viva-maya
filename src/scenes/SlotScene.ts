@@ -1327,7 +1327,7 @@ export class SlotScene extends Phaser.Scene {
         // §X1 — a full-line / triple-payout pull owns the whole phone for the beat: god-rays rake
         // the screen, the frame catches for a breath (self-timed out — nothing here to own it), and
         // the kit's chunkier coin fountain erupts off the window on top of the chip spray below.
-        rakeRays(this, { blades: 4, ms: 680, depth: 44, dim: true })
+        rakeRays(this, { blades: 4, ms: 680, depth: 2, dim: true })
         igniteVignette(this, { heat: 2, depth: 42, maxMs: 2400 })
         coinBurst(this, REELS_X + REELS_W / 2, REELS_TOP + WINDOW_H / 2, { count: 14, power: 1.15, depth: 43 })
       } else if (spin.lines.length > 0 || paid > 0) {

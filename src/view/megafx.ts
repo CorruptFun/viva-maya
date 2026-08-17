@@ -107,8 +107,15 @@ export interface RakeRaysOpts {
   tint?: number
   /** One blade's travel time in ms (default 620); the rake staggers blades ~90ms apart. */
   ms?: number
-  /** Peak alpha per blade (default 0.62). */
+  /** Peak alpha per blade (default 0.3 — ambient light, not a foreground streak). */
   alpha?: number
+  /**
+   * Where the rake sits. Prefer a depth BEHIND the scene's playfield (owner feedback 2026-08-17:
+   * blades crossing OVER the pieces read as out of place) — GameScene passes a negative depth so
+   * the light sweeps the room between the backdrop ladder and the cabinet, and the overlays seat
+   * it between their scrim and their board. The default is the over-scene band for callers with
+   * nothing behind their content to sweep.
+   */
   depth?: number
   /** Rake angle in degrees (default -32 — the reference's down-right diagonal). */
   angle?: number
@@ -119,8 +126,10 @@ export interface RakeRaysOpts {
 }
 
 /**
- * Diagonal blades of light sweeping across the WHOLE screen — the reference's constant "god-ray
- * rake" over a big win. Each blade is one stretched `sweep` texture (ADD) travelling along its own
+ * Diagonal blades of light sweeping across the WHOLE screen — the reference's "god-ray rake" over
+ * a big win, tuned as AMBIENT ROOM LIGHT rather than a foreground effect: thin, quiet blades that
+ * read as light moving through the lounge, seated behind the playfield wherever the scene has one
+ * (see `depth` above). Each blade is one stretched `sweep` texture (ADD) travelling along its own
  * normal, so the light crosses the screen rather than pivoting in place. Transient; screen-space.
  * Gates: reduced motion → none; LOW tier → none; reduce-flashing → dimmer, slower (a glide of
  * light, never a strobe); blade count runs through `quality.count`.
@@ -143,14 +152,14 @@ export function rakeRays(scene: Phaser.Scene, opts: RakeRaysOpts = {}): void {
   const dir = opts.mirror ? -1 : 1
   const span = diag * 0.62 // travel distance either side of centre — enters and exits fully
   const ms = (opts.ms ?? 620) * (soft ? 1.6 : 1)
-  const peak = (opts.alpha ?? 0.62) * (soft ? 0.5 : 1) * quality.scale()
+  const peak = (opts.alpha ?? 0.3) * (soft ? 0.5 : 1) * quality.scale()
   if (opts.dim) stageDim(scene, { ms: ms + blades * 90, depth: (opts.depth ?? FX_DEPTH) - 1 })
   const cx = W / 2
   const cy = H / 2
   for (let i = 0; i < blades; i++) {
     // Blades are individuals, not a picket fence: jittered thickness, slide (along the blade) and
     // start offset, so the rake reads as living light instead of a screen wipe.
-    const thick = Phaser.Math.Between(84, 190)
+    const thick = Phaser.Math.Between(60, 130)
     const slide = Phaser.Math.Between(-160, 160)
     const startOff = -dir * span + Phaser.Math.Between(-80, 80)
     const blade = scene.add

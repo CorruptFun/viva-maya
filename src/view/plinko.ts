@@ -1073,7 +1073,7 @@ export function openPlinko(scene: Phaser.Scene, opts: PlinkoOpenOpts): void {
         // §X1 — the top slot / golden ticket is this machine's jackpot: god-rays rake the whole
         // phone and the kit's tumbling gold fountain erupts off the landing on top of the confetti.
         // Above the plinko chrome (60s), below its result copy; both kit-gated.
-        rakeRays(scene, { blades: 4, ms: 640, depth: 63, dim: true })
+        rakeRays(scene, { blades: 4, ms: 640, depth: 60 })
         coinBurst(scene, landX, BOARD_CY + FLOOR_Y - 20, { count: 14, power: 1.1, depth: 63 })
       }
       // One camera breath, exactly as the wheel's detent takes — reset in teardown.
