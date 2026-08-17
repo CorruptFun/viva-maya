@@ -100,10 +100,48 @@ export function stageDim(scene: Phaser.Scene, opts: StageDimOpts = {}): void {
 // rakeRays — the god-ray sweep
 // ---------------------------------------------------------------------------
 
+/**
+ * The anamorphic light-streak texture (§X1), baked on first use. A blade needs a PERFECTLY smooth
+ * profile in both axes or the stretch tells on it: the `sweep` texture's three nested fills read
+ * as stripes at 15× (owner feedback 2026-08-17 — the gold lines "need to be cleaned up"), and
+ * `bgglow`'s ten concentric steps ring at streak lengths. So this is a CanvasTexture with two real
+ * canvas gradients — a length falloff masked by a cross falloff (`destination-in`), i.e. a
+ * separable soft streak that fades to nothing at both ends and both edges. Pure white so a tint
+ * carries the colour; a baked texture, so both renderers draw it identically.
+ */
+const STREAK_KEY = 'lightstreak'
+function ensureStreakTexture(scene: Phaser.Scene): boolean {
+  if (scene.textures.exists(STREAK_KEY)) return true
+  const W = 512
+  const H = 128
+  const tex = scene.textures.createCanvas(STREAK_KEY, W, H)
+  if (!tex) return false
+  const ctx = tex.getContext()
+  const stops = (g: CanvasGradient): void => {
+    g.addColorStop(0, 'rgba(255,255,255,0)')
+    g.addColorStop(0.2, 'rgba(255,255,255,0.4)')
+    g.addColorStop(0.5, 'rgba(255,255,255,1)')
+    g.addColorStop(0.8, 'rgba(255,255,255,0.4)')
+    g.addColorStop(1, 'rgba(255,255,255,0)')
+  }
+  const along = ctx.createLinearGradient(0, 0, W, 0)
+  stops(along)
+  ctx.fillStyle = along
+  ctx.fillRect(0, 0, W, H)
+  const across = ctx.createLinearGradient(0, 0, 0, H)
+  stops(across)
+  ctx.globalCompositeOperation = 'destination-in'
+  ctx.fillStyle = across
+  ctx.fillRect(0, 0, W, H)
+  ctx.globalCompositeOperation = 'source-over'
+  tex.refresh()
+  return true
+}
+
 export interface RakeRaysOpts {
   /** Blade count before governor scaling (default 4). */
   blades?: number
-  /** Tint multiplied onto the gold `sweep` texture (default warm white = keep its gold). */
+  /** The streak halo's colour (default: the theme's bright gold; the core stays warm white). */
   tint?: number
   /** One blade's travel time in ms (default 620); the rake staggers blades ~90ms apart. */
   ms?: number
@@ -136,7 +174,8 @@ export interface RakeRaysOpts {
  */
 export function rakeRays(scene: Phaser.Scene, opts: RakeRaysOpts = {}): void {
   if (reduced() || quality.tier() === 'low') return
-  if (!scene.textures.exists('sweep')) return
+  if (!ensureStreakTexture(scene)) return
+  const T = getTheme()
   const soft = reduceFlashing()
   const blades = quality.count(opts.blades ?? 4)
   if (blades <= 0) return
@@ -162,15 +201,27 @@ export function rakeRays(scene: Phaser.Scene, opts: RakeRaysOpts = {}): void {
     const thick = Phaser.Math.Between(60, 130)
     const slide = Phaser.Math.Between(-160, 160)
     const startOff = -dir * span + Phaser.Math.Between(-80, 80)
-    const blade = scene.add
-      .image(cx + nx * startOff + ux * slide, cy + ny * startOff + uy * slide, 'sweep')
+    // The anamorphic pair: a wide coloured halo with a thin warm-white core riding its centreline —
+    // overlapping ADD passes, so the core region is automatically the hottest part of the streak.
+    // One container carries both, so a single travel tween and a single alpha envelope drive the blade.
+    const len = diag * 1.5
+    const halo = scene.add
+      .image(0, 0, STREAK_KEY)
       .setBlendMode(Phaser.BlendModes.ADD)
+      .setDisplaySize(len, thick)
+      .setTint(opts.tint ?? T.goldBright)
+    const core = scene.add
+      .image(0, 0, STREAK_KEY)
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setDisplaySize(len * 0.8, Math.max(12, thick * 0.3))
+      .setTint(0xfff6dd)
+      .setAlpha(0.9)
+    const blade = scene.add
+      .container(cx + nx * startOff + ux * slide, cy + ny * startOff + uy * slide, [halo, core])
       .setDepth(opts.depth ?? FX_DEPTH)
       .setScrollFactor(0)
       .setAngle(angle)
-      .setDisplaySize(diag * 1.3, thick)
       .setAlpha(0)
-    if (opts.tint !== undefined) blade.setTint(opts.tint)
     const delay = i * 90
     // Travel: one straight glide across the screen along the normal.
     scene.tweens.add({
