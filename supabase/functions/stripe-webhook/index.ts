@@ -95,27 +95,32 @@ async function writeCommission(
 }
 
 /**
- * Attach the Checkout email to the (usually anonymous) account that just paid, so the purchase can
- * be recovered on another device.
+ * Attach the Checkout email to the paying account, but ONLY when that account has none.
  *
- * ⚠️ MARKED CONFIRMED WITHOUT A ROUND TRIP, deliberately. Nobody has clicked a link to prove they
- * control this address — what we have is that they typed it into a card form they were completing
- * and that Stripe is sending the receipt there. Requiring a separate confirmation before restore
- * works would put back exactly the identity step this flow exists to remove, and it would not even
- * close the failure it appears to: a MISTYPED address is unrecoverable whether or not we mark it
- * confirmed. `entitlements.contact_email` keeps the raw string precisely so support can find a
- * purchase whose owner fat-fingered their own email.
+ * ⚠️ THE "ONLY WHEN EMPTY" TEST IS THE WHOLE FUNCTION, and getting it wrong is destructive rather
+ * than merely untidy. Paid entry requires a real sign-in before the price, so by the time a payment
+ * lands the account almost always HAS a verified address — the one they signed in with. Stripe's
+ * email is frequently a different one (a card receipt goes to a work address, a partner's address,
+ * an old address autofilled by the browser). Writing it over the auth email would silently change
+ * the address the player signs in with, and the first they would know of it is being unable to get
+ * back into a game they had paid for.
  *
- * ⚠️ BEST-EFFORT, AND NEVER FATAL. The common failure is a collision: that address already belongs
- * to another account, which in practice means the same person paying again from a second device
- * without restoring first. Throwing here would make Stripe retry a webhook whose real work — the
- * entitlement and the commission — has already landed, and would keep retrying forever. The
- * entitlement stays on the paying row, the email stays on the entitlement, and support can reunite
- * the two. A failed binding must never cost somebody the game they just bought.
+ * So this only ever fills a GAP. `entitlements.contact_email` records what Stripe collected in
+ * every case, which is the support breadcrumb when the two differ and somebody writes in about a
+ * receipt from an address we have never seen.
+ *
+ * ⚠️ BEST-EFFORT, AND NEVER FATAL. Throwing here would make Stripe retry a delivery whose real
+ * work — the entitlement and the commission — has already landed, forever. A failed binding must
+ * never cost somebody the game they just bought.
  */
 async function bindEmail(db: SupabaseClient, userId: string, email: string | null): Promise<void> {
   if (!email) return
   try {
+    const { data, error: readErr } = await db.auth.admin.getUserById(userId)
+    // A read failure is a reason to do NOTHING, not a reason to guess. Proceeding blind here is
+    // exactly how an existing sign-in address gets overwritten.
+    if (readErr || !data.user) return
+    if (data.user.email) return // already identified — never overwrite
     const { error } = await db.auth.admin.updateUserById(userId, { email, email_confirm: true })
     if (error) console.warn(`email binding skipped for ${userId}: ${error.message}`)
   } catch (e) {

@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { cloudSession, ensureAnonymousSession, isCloudConfigured, sbClient } from './cloud'
+import { cloudSession, isCloudConfigured, sbClient } from './cloud'
 import { loadSave } from './save'
 import { stashedRefCode } from './referrals'
 
@@ -315,20 +315,13 @@ export type CheckoutResult = { ok: true } | { ok: false; error: string }
  */
 export async function beginCheckout(): Promise<CheckoutResult> {
   try {
-    // ⚠️ THE IDENTITY IS MINTED HERE, at the tap, and this is the whole "pay first" design in one
-    // line. An entitlement has to attach to something durable, but making the player CREATE that
-    // something first is a second wall in front of someone who has not yet seen a board — so a
-    // silent anonymous account appears instead, and the email that makes it recoverable is taken
-    // from the payment form they are about to fill in anyway (the webhook binds it).
-    //
-    // At the tap rather than at boot because every anonymous row is a monthly active user on the
-    // bill: minting per visitor would price the game's traffic instead of its sales.
-    //
-    // Refusing when this fails is correct, however unhelpful it looks: taking money for an
-    // entitlement with nothing to attach it to produces a charge we cannot honour and a player we
-    // cannot identify, which is a refund at best and a chargeback at worst.
-    if (!(await ensureAnonymousSession())) {
-      return { ok: false, error: 'We couldn’t start checkout just now — please try again.' }
+    // ⚠️ A SESSION IS A HARD PRECONDITION, not a nicety, and this refusal is the last line holding
+    // it. PaywallScene will not show a price to a signed-out player, but a scene is presentation —
+    // this is the function that actually opens a charge, and taking money for an entitlement with
+    // nothing to attach it to produces a payment we cannot honour and a payer we cannot identify.
+    // That is a refund at best and a chargeback at worst, so the guard lives here too.
+    if (!cloudSession()) {
+      return { ok: false, error: 'Sign in first so your game stays yours.' }
     }
     const c = await client()
     if (!c) return { ok: false, error: 'We couldn’t start checkout just now — please try again.' }

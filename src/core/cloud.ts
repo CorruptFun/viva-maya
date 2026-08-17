@@ -56,13 +56,14 @@ export interface CloudSession {
   userId: string
   email: string | null
   /**
-   * True for a silently-minted anonymous account (core/entitlement.ts mints one at the moment a
-   * player taps UNLOCK, so a purchase has something durable to attach to before they have ever
-   * given us an address).
+   * True for an anonymous account — one with no identity provider and no address behind it.
    *
-   * ⚠️ Consumers must not read this as "signed out". An anonymous session is a real `auth.users`
-   * row with a real JWT: it owns saves, entitlements and referral rows exactly like any other. What
-   * it lacks is a way to get it BACK on another device, which is what `email` being non-null buys.
+   * ⚠️ NOTHING IN THE GAME MINTS ONE. Paid entry requires a real sign-in before the price (see
+   * view/signinmodal.ts), and anonymous sign-ins are disabled on the project, so in practice this
+   * is always false. It is kept, and read by the sign-in analytics guard below, because the cost
+   * is three lines and the failure it prevents is silent: if anonymous sign-ins were ever switched
+   * on, every mint would arrive as a `SIGNED_IN` event and re-create the 242-completions-against-13-
+   * starts distortion documented in initCloud — this time in a funnel measuring paid conversion.
    */
   anonymous: boolean
 }
@@ -232,7 +233,13 @@ export async function syncNow(): Promise<void> {
  * email codes because Supabase's built-in email sender is throttled to ~2/hour (testing-only) and
  * Google is one tap for a non-technical player. See docs/CLOUD_SAVE_GOOGLE_SIGNIN.md.
  */
-export async function signInWithGoogle(): Promise<{ ok: boolean; error?: string }> {
+/** The shape every sign-in entry point answers with. `error` is player-facing copy, never a code. */
+export interface SignInResult {
+  ok: boolean
+  error?: string
+}
+
+export async function signInWithGoogle(): Promise<SignInResult> {
   const c = await sb()
   if (!c) return { ok: false, error: 'Cloud save isn’t set up on this build.' }
   const { error } = await c.auth.signInWithOAuth({
@@ -244,54 +251,26 @@ export async function signInWithGoogle(): Promise<{ ok: boolean; error?: string 
 }
 
 /**
- * Mint a silent anonymous account, or return the session already in hand.
+ * Send a one-time sign-in code to `email` — the second door on the paid-entry sign-in step, for
+ * the players who have no Google account or will not use one.
  *
- * The identity that carries a paid entitlement, for a player who has not signed in and is not
- * going to be asked to. No UI, no redirect, no interaction — a real `auth.users` row with a real
- * JWT appears and the player never knows it happened.
- *
- * ⚠️ CALL THIS AT THE POINT OF PURCHASE INTENT, NOT AT BOOT. Every anonymous row is a monthly
- * active user on the project's bill, so minting one per visitor would price the game's traffic
- * instead of its sales. `beginCheckout` is the only caller for that reason.
- *
- * ⚠️ Requires anonymous sign-ins to be ENABLED on the hosted project (Authentication → Sign In /
- * Providers). `supabase/config.toml` only sets it for the local stack. With it off this returns
- * null and checkout refuses — which is the correct failure (a purchase with nothing to attach to
- * is a purchase we cannot honour), but it is a dead end for every new player, so verify it on the
- * project before the paywall's switch date.
- */
-export async function ensureAnonymousSession(): Promise<CloudSession | null> {
-  if (session) return session
-  const c = await sb()
-  if (!c) return null
-  try {
-    const { data, error } = await c.auth.signInAnonymously()
-    if (error || !data.session) return null
-    applySession(data.session)
-    notify()
-    return session
-  } catch {
-    return null
-  }
-}
-
-/**
- * Send a one-time code to `email` so a returning player can pull their purchase onto a new device.
- *
- * `shouldCreateUser: false` is load-bearing: without it a typo'd address would mint a brand-new,
- * empty account and hand it to somebody expecting their game back — a "restore" that silently
- * creates rather than restores is worse than a clean "we don't recognise that address".
+ * `shouldCreateUser: true`, because this is sign-IN and sign-UP at once: paid entry establishes
+ * the account BEFORE the price, so a brand-new player arriving here has nothing to sign in to yet.
+ * A returning player who mistypes their address gets a fresh empty account instead of their game —
+ * unwelcome, but self-limiting: the code goes to the address they typed, so they simply never
+ * receive one and retry. They cannot be charged twice by it, because the charge is on the far side
+ * of a code they never got. (This is also why Google is the primary door: it cannot be mistyped.)
  *
  * ⚠️ NEEDS REAL SMTP. Supabase's built-in sender is throttled to a testing-grade ~2/hour — the
  * same limit that made this project pick Google OAuth over email codes in the first place (see
- * docs/CLOUD_SAVE_GOOGLE_SIGNIN.md). Unconfigured, this path works for the first player each hour
- * and silently fails for everyone behind them.
+ * docs/CLOUD_SAVE_GOOGLE_SIGNIN.md). Unconfigured, this door works for the first player or two
+ * each hour and silently fails for everyone behind them, while Google keeps working.
  */
-export async function sendRestoreCode(email: string): Promise<{ ok: boolean; error?: string }> {
+export async function sendEmailCode(email: string): Promise<SignInResult> {
   const c = await sb()
-  if (!c) return { ok: false, error: 'Restoring isn’t set up on this build.' }
+  if (!c) return { ok: false, error: 'Email sign-in isn’t set up on this build.' }
   try {
-    const { error } = await c.auth.signInWithOtp({ email, options: { shouldCreateUser: false } })
+    const { error } = await c.auth.signInWithOtp({ email, options: { shouldCreateUser: true } })
     if (!error) return { ok: true }
     return { ok: false, error: 'We couldn’t send a code to that address.' }
   } catch {
@@ -299,13 +278,13 @@ export async function sendRestoreCode(email: string): Promise<{ ok: boolean; err
   }
 }
 
-/** Exchange a emailed one-time code for a session. On success the entitlement follows the account. */
-export async function verifyRestoreCode(
-  email: string,
-  token: string
-): Promise<{ ok: boolean; error?: string }> {
+/**
+ * Exchange an emailed one-time code for a session. Any entitlement on that account follows it, so
+ * this doubles as the restore path for a player returning on a new device.
+ */
+export async function verifyEmailCode(email: string, token: string): Promise<SignInResult> {
   const c = await sb()
-  if (!c) return { ok: false, error: 'Restoring isn’t set up on this build.' }
+  if (!c) return { ok: false, error: 'Email sign-in isn’t set up on this build.' }
   try {
     const { data, error } = await c.auth.verifyOtp({ email, token, type: 'email' })
     if (error || !data.session) return { ok: false, error: 'That code didn’t work — check and try again.' }
@@ -375,11 +354,8 @@ export async function initCloud(): Promise<void> {
       // Lazy import so the auth path never waits on analytics and cloud.ts keeps no static
       // dependency on it.
       //
-      // ⚠️ ANONYMOUS SESSIONS ARE EXCLUDED, and that exclusion is the same lesson as the one
-      // above rather than a new rule. `signInAnonymously()` (paid entry — see ensureIdentity in
-      // core/entitlement.ts) arrives as a SIGNED_IN event too, and it fires for every player who
-      // so much as taps UNLOCK. Counting those would re-create the exact 242-against-13 distortion
-      // this branch was narrowed to fix, in a funnel that is now measuring a paid conversion.
+      // Anonymous sessions are excluded for the same reason, defensively — see the `anonymous`
+      // field's note on CloudSession. Nothing currently mints one.
       if (event === 'SIGNED_IN' && !session.anonymous) {
         void import('./analytics').then(a => a.track(a.EVENTS.SIGNIN_COMPLETED))
       }

@@ -49,19 +49,33 @@ Live: <https://corruptfun.github.io/viva-maya/>
     back unfavourably is far worse than a few minutes of free play — and from
     inside the client a slow webhook, a token refresh and an actual refund are
     indistinguishable.
-  - **PAY FIRST, IDENTIFY SECOND — there is no sign-in step in front of the
-    price.** It shipped with one and that was two walls before a player had seen a
-    board. `beginCheckout` mints a silent anonymous account **at the UNLOCK tap**
-    (never at boot — every anonymous row is a billable monthly active, so minting
-    per visitor prices the traffic instead of the sales), and the webhook binds the
-    email **Stripe already collects** onto it. Two project settings are NOT in any
-    migration and are dead ends if missed: **anonymous sign-ins must be ON** in the
-    dashboard (`config.toml` is local-only) or every new player dead-ends at
-    UNLOCK, and **real SMTP must be configured** or RESTORE PURCHASE works for the
-    first player each hour and silently fails for the rest. ⚠️ RESTORE
-    (`view/restoremodal.ts`) is not a nicety — an account nobody knowingly created
-    is one nobody knows they have, so without it a paid player on a new phone is
-    looking at a fresh bill, and that is a second charge or a chargeback.
+  - **ACCOUNT FIRST, THEN THE PRICE — sign-in gates the paywall, and that order is
+    the owner's call (2026-08-17).** An entitlement must belong to something that
+    survives a cleared browser, and the honest moment to establish that is before
+    money changes hands. It costs a step at the top of the funnel; it buys a
+    verified address behind every payment and makes **restore and sign-in the same
+    act** — the entitlement is on the account, so signing back in simply brings it.
+    Don't add a separate "restore" door; it would be the same button twice.
+    `view/signinmodal.ts` has two: **Google** (primary — one tap, and typo-proof,
+    which matters most here because a mistyped address at this step is an account
+    nobody can get into) and an **emailed code** (`shouldCreateUser: true`, since
+    this is sign-in and sign-up at once). ⚠️ The email door needs **real SMTP** or
+    it works for the first player each hour and silently fails for the rest —
+    Google keeps working, so it degrades rather than breaks. **Anonymous sign-ins
+    must stay OFF**: nothing mints one, so leaving it on only offers strangers
+    unlimited billable `auth.users` rows.
+  - **Two addresses exist and neither may overwrite the other.** Stripe's checkout
+    email is frequently NOT the sign-in email (a receipt goes to a work address, a
+    partner's, an old autofill). The webhook's `bindEmail` only ever fills a GAP —
+    an account with no email at all — and does nothing if it cannot read the
+    account first. Writing the billing address onto `auth.users` would silently
+    change what the player signs in with, and the first they'd know is being locked
+    out of a game they paid for. The billing address lives on
+    `entitlements.contact_email` (indexed) as the support breadcrumb instead.
+    ⚠️ The offer screen names the account it is about to charge, with a USE ANOTHER
+    ACCOUNT escape: on a shared device the browser picks a Google account for you,
+    and buying the game for an account the player never uses again is a double
+    charge caused entirely by not saying who we thought they were.
   - **A server verdict beats the local grandfather clause in ONE direction, and
     which one depends on how the server refused.** Sign-in was optional for this
     game's whole life, so the client also honours a pre-cutover
