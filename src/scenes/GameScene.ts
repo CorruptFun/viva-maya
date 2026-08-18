@@ -7744,12 +7744,12 @@ export class GameScene extends Phaser.Scene {
       days: week.days,
       cheats: this.cheatFires,
     })
-    // §X1 — a run that set TODAY'S BEST earns the full payoff on the board it happened on: god-rays
-    // + a gold fountain in the beat before the standings card takes the screen. Kit-gated.
-    if (isRecord) {
-      rakeRays(this, { blades: 4, ms: 640, dim: true, depth: ROOM_RAY_DEPTH })
-      coinBurst(this, BOARD_X + BOARD_W / 2, this.boardTop + BOARD_W / 2, { count: 14, power: 1.1 })
-    }
+    // §X1 — every run goes out with the FULL board celebration (owner call 2026-08-17: the race is
+    // where these land hardest), in the beat before the standings card takes the screen. Purely
+    // visual here — showEndlessOverlay owns the fanfare/haptics, so nothing doubles. A run that set
+    // TODAY'S BEST still reads a notch bigger: the golden bloom crowns taking the lead.
+    this.celebrateBoard()
+    if (isRecord) flashBloom(this)
     this.time.delayedCall(450, () => this.showEndlessOverlay(this.score, best, isRecord, week, paced ? posted : null))
   }
 
