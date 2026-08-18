@@ -7744,12 +7744,16 @@ export class GameScene extends Phaser.Scene {
       days: week.days,
       cheats: this.cheatFires,
     })
-    // §X1 — every run goes out with the FULL board celebration (owner call 2026-08-17: the race is
-    // where these land hardest), in the beat before the standings card takes the screen. Purely
-    // visual here — showEndlessOverlay owns the fanfare/haptics, so nothing doubles. A run that set
-    // TODAY'S BEST still reads a notch bigger: the golden bloom crowns taking the lead.
-    this.celebrateBoard()
-    if (isRecord) flashBloom(this)
+    // §X1 — the FULL board celebration (marquee flash, token burst, ray rake, gold fountain,
+    // embers, crowned by the golden bloom), reserved for a run that beat the player's OWN best on
+    // today's board — `isRecord` is that exact comparison, so it fires on the day's first run and
+    // every improvement, never on an ordinary run-out. Owner calls, same day, 2026-08-17: every
+    // finish → records only — a send-off that plays on every run stops meaning anything. Purely
+    // visual here; showEndlessOverlay owns the record fanfare/haptics, so nothing doubles.
+    if (isRecord) {
+      this.celebrateBoard()
+      flashBloom(this)
+    }
     this.time.delayedCall(450, () => this.showEndlessOverlay(this.score, best, isRecord, week, paced ? posted : null))
   }
 
