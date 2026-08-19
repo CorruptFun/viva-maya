@@ -39,7 +39,7 @@
  * and its HUD at ≤34, so board fire wants 24–29 (over the pieces, under the readouts).
  */
 import Phaser from 'phaser'
-import { blazeTongues, burnFront, burnHeat, ringPetals } from '../core/fire'
+import { blazeTongues, burnFront, burnHeat, flameColor, ringPetals } from '../core/fire'
 import { roundedRectPath } from '../core/rgb'
 import { E, reduced } from './motion'
 import { quality } from './quality'
@@ -183,7 +183,11 @@ export interface FireRingOpts {
   petals?: number
   /** Heat 1..3 (default 2). */
   heat?: Heat
-  /** Explicit tint, overriding the heat ladder (for a caller that wants the theme's rose accent). */
+  /**
+   * The colour this fire takes its HUE from — a piece's `SYMBOL_TINT`, so a blast wears the colour
+   * of whatever caused it. Only the hue is used: chroma and brightness are the kit's, so a dull or
+   * dark token still burns (see `flameColor`). Omit for the theme's own gold→amber heat ladder.
+   */
   tint?: number
   /** Total flight time in ms (default 420). */
   ms?: number
@@ -221,7 +225,7 @@ export function fireRing(scene: Phaser.Scene, x: number, y: number, opts: FireRi
   const flame = opts.flame ?? radius * 0.45
   const ms = opts.ms ?? 420
   const spin = opts.spin ?? 0.5
-  const tint = opts.tint ?? heatTint(heat)
+  const tint = opts.tint === undefined ? heatTint(heat) : flameColor(opts.tint, heat)
   const wide = flame * 0.72 // one petal's body width
   // Enough petals that their bodies overlap on the ring they end up sitting on — derived, never
   // guessed (see RING_OVERLAP). `quality.count` then thins the ring on a weaker device, which
@@ -374,7 +378,7 @@ const DEAD_BLAZE: BlazeHandle = { extinguish() {}, live: false }
 export interface BlazeFieldOpts {
   /** Heat 1..3 (default 2) — drives tint, height and how bright the wall burns. */
   heat?: Heat
-  /** Explicit tint, overriding the heat ladder. */
+  /** The colour this fire takes its HUE from — see `FireRingOpts.tint`. */
   tint?: number
   /** Tongue count before governor scaling (default 11). */
   count?: number
@@ -411,7 +415,7 @@ export function blazeField(scene: Phaser.Scene, rect: FireRect, opts: BlazeField
   const soft = reduceFlashing()
   const heat = opts.heat ?? 2
   const depth = opts.depth ?? FIRE_DEPTH
-  const tint = opts.tint ?? heatTint(heat)
+  const tint = opts.tint === undefined ? heatTint(heat) : flameColor(opts.tint, heat)
   const count = Math.max(4, quality.count(opts.count ?? 13))
   // A VEIL, not a curtain: even at full heat the wall stays around half opacity so the board reads
   // through it. Raising this is the one change that would quietly make the game unplayable while a
@@ -553,7 +557,7 @@ export function blazeField(scene: Phaser.Scene, rect: FireRect, opts: BlazeField
 export interface BurnAwayOpts {
   /** Heat 1..3 (default 3 — this is a payoff beat). */
   heat?: Heat
-  /** Explicit tint, overriding the heat ladder. */
+  /** The colour this fire takes its HUE from — see `FireRingOpts.tint`. */
   tint?: number
   /** Time for the front to cross the region, in ms (default 620). */
   ms?: number
@@ -597,7 +601,7 @@ export function burnAway(scene: Phaser.Scene, rect: FireRect, opts: BurnAwayOpts
   const soft = reduceFlashing()
   const heat = opts.heat ?? 3
   const depth = opts.depth ?? FIRE_DEPTH
-  const tint = opts.tint ?? heatTint(heat)
+  const tint = opts.tint === undefined ? heatTint(heat) : flameColor(opts.tint, heat)
   const ms = (opts.ms ?? 620) * (soft ? 1.4 : 1)
   const nodeSpacing = opts.spacing ?? 26
 

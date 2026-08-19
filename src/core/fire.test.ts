@@ -10,7 +10,29 @@
  *   · the wall's STROBE — neighbouring tongues that breathe in phase flash as one rectangle.
  */
 import { describe, expect, it } from 'vitest'
-import { blazeTongues, burnFront, burnHeat, fireJitter, MIN_PHASE_GAP, phaseGap, ringPetals, TONGUE_OVERLAP } from './fire'
+import {
+  blazeTongues,
+  burnFront,
+  burnHeat,
+  fireJitter,
+  flameColor,
+  MIN_PHASE_GAP,
+  phaseGap,
+  ringPetals,
+  TONGUE_OVERLAP,
+} from './fire'
+import { hueOf } from './rgb'
+// The real piece tints — a fire that claims to wear the symbol's colour has to be tested against
+// the actual six, not against invented ones. `view/textures.ts` pulls in Phaser, so the table is
+// re-stated here from the same source of truth it is defined from (`THEMES.golden` + the literals).
+const SYMBOL_TINTS: Record<string, number> = {
+  cherry: 0xe61f4d,
+  seven: 0xe0312e,
+  diamond: 0x49c6ee,
+  bell: 0xffb01c,
+  clover: 0x3fae5a,
+  bar: 0x4a5a8f, // the dark one — the case this whole function exists for
+}
 
 describe('fireJitter', () => {
   it('stays inside [0,1)', () => {
@@ -228,5 +250,66 @@ describe('burnHeat', () => {
         expect(v).toBeLessThanOrEqual(1)
       }
     }
+  })
+})
+
+describe('flameColor', () => {
+  const heats: Array<1 | 2 | 3> = [1, 2, 3]
+  const chan = (c: number): [number, number, number] => [((c >> 16) & 0xff) / 255, ((c >> 8) & 0xff) / 255, (c & 0xff) / 255]
+  const val = (c: number): number => Math.max(...chan(c))
+  const sat = (c: number): number => {
+    const [r, g, b] = chan(c)
+    const max = Math.max(r, g, b)
+    return max === 0 ? 0 : (max - Math.min(r, g, b)) / max
+  }
+
+  it("keeps the SYMBOL's hue — a diamond blast is blue, a clover blast is green", () => {
+    for (const [name, tint] of Object.entries(SYMBOL_TINTS)) {
+      for (const h of heats) {
+        const d = Math.abs(hueOf(flameColor(tint, h)) - hueOf(tint))
+        expect(Math.min(d, 360 - d), `${name} @ heat ${h}`).toBeLessThan(4)
+      }
+    }
+  })
+
+  it('takes every symbol to full VALUE, however dull the token it started from', () => {
+    // `bar` is the case this exists for: a navy #4a5a8f, under half saturated and barely half
+    // bright, which added to a dark board is very nearly nothing.
+    expect(sat(SYMBOL_TINTS.bar)).toBeLessThan(0.55) // the source really is dull…
+    for (const [name, tint] of Object.entries(SYMBOL_TINTS)) {
+      for (const h of heats) {
+        expect(val(flameColor(tint, h)), `${name} @ heat ${h}`).toBeCloseTo(1, 2)
+        expect(sat(flameColor(tint, h)), `${name} @ heat ${h}`).toBeGreaterThan(0.8)
+      }
+    }
+    expect(sat(flameColor(SYMBOL_TINTS.bar, 2))).toBeGreaterThan(sat(SYMBOL_TINTS.bar) + 0.3)
+  })
+
+  it('spends heat on SATURATION, never on paling toward white', () => {
+    for (const [name, tint] of Object.entries(SYMBOL_TINTS)) {
+      const s = heats.map(h => sat(flameColor(tint, h)))
+      expect(s[1], name).toBeGreaterThan(s[0])
+      expect(s[2], name).toBeGreaterThan(s[1])
+    }
+  })
+
+  it('keeps the RED symbols RED — the luminance-equalising trap, pinned', () => {
+    // ⚠️ This is the regression guard for a fix that was tried and reverted. Equalising PERCEIVED
+    // luminance across symbols looks like the right correction (a saturated blue really does carry
+    // a quarter of a saturated gold's luma) — but pure red is one of the darkest hues there is, so
+    // any rule that lifts the blue lifts the reds harder. The implementation that did it turned
+    // cherry into #ff678a (salmon) and the 7 into #ff6a68 (coral), both at saturation ~0.6. If
+    // these drop again, someone has re-derived that fix; the brightness belongs to the geometry.
+    for (const name of ['cherry', 'seven'] as const) {
+      for (const h of heats) {
+        expect(sat(flameColor(SYMBOL_TINTS[name], h)), `${name} @ heat ${h}`).toBeGreaterThan(0.85)
+      }
+    }
+  })
+
+  it('clamps heat rather than extrapolating off the ladder', () => {
+    const t = SYMBOL_TINTS.cherry
+    expect(flameColor(t, 0 as 1)).toBe(flameColor(t, 1))
+    expect(flameColor(t, 9 as 3)).toBe(flameColor(t, 3))
   })
 })

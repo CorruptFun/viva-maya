@@ -20,6 +20,42 @@
  * pass a `seed` to make two fires that overlap in time look different without either one looking
  * random from frame to frame — an atom that re-rolls its size every rebuild flickers as noise.
  */
+// The colour half borrows the marquee's own HSV pair rather than growing a second copy — the two
+// modules already answer the same question ("what does this hue look like as light?").
+import { hsvToInt, hueOf } from './rgb'
+
+/**
+ * The fire's colour for a source `tint` at `heat` 1..3 — the SYMBOL's hue, the FIRE's chroma.
+ *
+ * A blast in Viva Maya belongs to the piece that caused it: a cherry or a red 7 blows up red, a
+ * diamond blue, a bell gold, a clover green (owner's call). Only the HUE survives from the source,
+ * because a piece tint is picked to read as a small object sitting on a lit board and a fire is
+ * additive light on a dark ground — two different jobs:
+ *
+ *   · **Piece tints can be dark AND dull.** `bar` is a navy `#4a5a8f` — barely half-saturated and
+ *     barely half-bright. Added to a dark board that is very nearly nothing, so one symbol out of
+ *     six would blast invisibly, which reads as a bug rather than as a colour choice. Taken to full
+ *     chroma at full value the same hue is a vivid blue that carries perfectly well.
+ *   · **Hotter must not mean paler.** Escalating a coloured flame by washing it toward white is the
+ *     desaturation trap that made the first cut of the ring look like flying paper shards (see
+ *     `heatTint`). Value is pinned at the top and the heat step is spent on SATURATION — deeper
+ *     into the hue, never toward white.
+ *
+ * ⚠️ **Do not "fix" this by equalising perceived luminance across the symbols.** It is a tempting
+ * correction — value is famously not brightness, and a saturated blue really does carry a quarter
+ * of a saturated gold's luma — but it was tried here and it is wrong for this job. Pure RED is one
+ * of the *darkest* hues there is (luma 0.21, below even the navy's 0.26), so any rule that lifts the
+ * blue lifts the reds harder: targeting equal luma turned the cherry blast salmon pink and the red
+ * 7's coral, which loses the exact thing the per-symbol colour was asked for. Brightness is supplied
+ * instead by GEOMETRY — the kit's atoms overlap, and where they pile up the additive sum clips to
+ * white on its own. Colour is this function's job; heat is the geometry's.
+ *
+ * `fire.test.ts` pins all of it against the real `SYMBOL_TINT` table.
+ */
+export function flameColor(tint: number, heat: 1 | 2 | 3): number {
+  const h = Math.max(1, Math.min(3, Math.round(heat)))
+  return hsvToInt(hueOf(tint), 0.82 + h * 0.055, 1)
+}
 
 /**
  * Deterministic 0..1 jitter for atom `i` under `salt`. A cheap integer avalanche (the same family as

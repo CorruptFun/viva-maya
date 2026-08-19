@@ -2465,7 +2465,7 @@ export class GameScene extends Phaser.Scene {
    * 3e: a quick gold `ring` implosion + spark when a piece is born into a special (wild reel / dice
    * bomb / jackpot). ADD, transient, depth 22 (above the pieces, below the HUD). Reduced motion: no-op.
    */
-  private specialBirth(at: Coord, heroKey?: string, heroFrame?: string | number): void {
+  private specialBirth(at: Coord, heroKey?: string, heroFrame?: string | number, symbol?: SymbolType): void {
     const pos = this.cellToXY(at)
     if (!this.reducedMotion && quality.count(1) > 0) {
       this.sparkEmitter.explode(quality.count(6), pos.x, pos.y)
@@ -2504,7 +2504,15 @@ export class GameScene extends Phaser.Scene {
       // A tight ring of BIG flames rather than a wide ring of small ones: `flame` is the lever, and
       // the petal count follows from it (firekit derives density from the overlap law), so a small
       // burst stays cheap without anyone hand-picking a count that the next radius change breaks.
-      fireRing(this, pos.x, pos.y, { radius: CELL * 1.3, flame: CELL * 1.05, heat: 2, ms: 340, seed: at.row * 8 + at.col + 5, depth: 24 })
+      fireRing(this, pos.x, pos.y, {
+        radius: CELL * 1.3,
+        flame: CELL * 1.05,
+        tint: symbol ? SYMBOL_TINT[symbol] : undefined,
+        heat: 2,
+        ms: 340,
+        seed: at.row * 8 + at.col + 5,
+        depth: 24,
+      })
     }
     const ring = this.add
       .image(pos.x, pos.y, 'ring')
@@ -5093,9 +5101,14 @@ export class GameScene extends Phaser.Scene {
             this.activationFlash(e.at)
             flashes++
           }
+          // The colour a blast burns in is the colour of the piece that fired it. `BlastEvent`
+          // carries no symbol (only the jackpot names one, and that is the colour it CLEARS, not
+          // its own), so it is read off the wave's own cleared list — the special is always in
+          // there, since firing is what consumed it. Falls back to the house gold if it is not.
+          const evSymbol = wave.cleared.find(c => key(c.at) === key(e.at))?.piece.symbol
           if (e.type === 'reel') this.detonateReel(e.at, e.horizontal, cascade)
-          else if (e.type === 'bomb') this.detonateBomb(e.at, e.radius, cascade)
-          else this.detonateJackpot()
+          else if (e.type === 'bomb') this.detonateBomb(e.at, e.radius, cascade, evSymbol)
+          else this.detonateJackpot(e.symbol)
         }
         // The board reacts: surviving neighbors of the primary blast flinch outward + settle — a heavy
         // bomb/jackpot shoves them harder and DOWNWARD, rippling with the board slam (depth).
@@ -5288,7 +5301,7 @@ export class GameScene extends Phaser.Scene {
       // onto its cell. The key comes off the sprite that was just minted, so it can never disagree
       // with what the board is actually about to show.
       if (births < 2) {
-        this.specialBirth(t.at, sprite.texture.key, sprite.frame.name)
+        this.specialBirth(t.at, sprite.texture.key, sprite.frame.name, t.to.symbol)
         births++
       }
     }
@@ -5869,7 +5882,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   /** Jackpot-chip strike (extracted so it composes with the charge→freeze→release orchestration). */
-  private detonateJackpot(): void {
+  private detonateJackpot(symbol?: SymbolType | null): void {
     this.jackpotOccurred = true // §E4 — a jackpot this round qualifies the win for the Heartbloom hero beat
     sfx.jackpotStrike()
     // The jackpot's signature is a full-screen cream flash (its own "impact frame") — gate it via the
@@ -5895,8 +5908,15 @@ export class GameScene extends Phaser.Scene {
     // Fire-and-forget: `burnAway`'s promise is the cue to land a TOTAL, and this beat already has
     // one — the score popup the wave mints at the epicentre. Nothing awaits it, and it settles on
     // its own deadline regardless (the kit carries the backstop), so no path here can hang.
-    fireRing(this, cx, cy, { radius: CELL * 3.2, heat: 3, ms: 480, seed: 101, depth: 27 })
-    void burnAway(this, { x: BOARD_X, y: this.boardTop, width: BOARD_W, height: BOARD_W }, { heat: 3, ms: 560, depth: 25 })
+    // A jackpot chip that names a colour burns in THAT colour — it is clearing the board of it. A
+    // chip that takes every colour has no one symbol to speak for, so it keeps the house gold.
+    const jackTint = symbol ? SYMBOL_TINT[symbol] : undefined
+    fireRing(this, cx, cy, { radius: CELL * 3.2, tint: jackTint, heat: 3, ms: 480, seed: 101, depth: 27 })
+    void burnAway(
+      this,
+      { x: BOARD_X, y: this.boardTop, width: BOARD_W, height: BOARD_W },
+      { tint: jackTint, heat: 3, ms: 560, depth: 25 }
+    )
     this.time.delayedCall(140, () => sfx.coinCount())
   }
 
@@ -6027,7 +6047,7 @@ export class GameScene extends Phaser.Scene {
    * shockwave ring and a capped fire/debris burst — all scaled by the blast radius + cascade, with
    * a camera punch that hits harder on bigger combos. Particle budget ≤30 (spark ≤20 + fire ≤10).
    */
-  private detonateBomb(atCoord: Coord, radius: number, cascade: number): void {
+  private detonateBomb(atCoord: Coord, radius: number, cascade: number, symbol?: SymbolType): void {
     sfx.bombBoom()
     this.vibrate(30 + Math.min(radius, 3) * 12)
     const at = this.cellToXY(atCoord)
@@ -6084,6 +6104,10 @@ export class GameScene extends Phaser.Scene {
     // cell so two bombs going off in one wave never wear the same turbulence.
     fireRing(this, at.x, at.y, {
       radius: CELL * (1.5 + power * 0.42),
+      // The blast wears the colour of the piece that made it — a red 7 blows up red, a diamond
+      // blue. `SYMBOL_TINT` is the one place that mapping lives (the pieces are drawn from it), so
+      // the fire reads it rather than keeping a second table that could drift.
+      tint: symbol ? SYMBOL_TINT[symbol] : undefined,
       heat: power >= 3.5 ? 3 : 2,
       ms: 380 + boost * 24,
       seed: atCoord.row * 8 + atCoord.col,

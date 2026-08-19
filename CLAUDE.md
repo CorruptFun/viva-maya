@@ -69,6 +69,17 @@ Live: <https://corruptfun.github.io/viva-maya/>
     over a warm board renders as PALE GREY, and the first cut of the ring came
     out looking like flying paper shards. White heat is the GEOMETRY's job: it
     appears where atoms overlap and the additive sum clips. Colour is the tint's.
+  - **A blast wears the colour of the piece that fired it** (`flameColor`, owner's
+    call): a red 7 blows up red, a diamond blue, a bell gold. It reads
+    `SYMBOL_TINT` — the same table the pieces are drawn from, never a second copy
+    — and keeps only the HUE, because a piece tint is picked to read as a small
+    object on a lit board and a fire is additive light on a dark ground. `bar` is
+    the proof: a half-saturated navy, invisible additively until it is taken to
+    full chroma. ⚠️ **Do not "fix" that by equalising perceived LUMINANCE across
+    the six.** It looks like the right correction and it was tried: pure red is
+    one of the darkest hues there is (luma 0.21, below the navy's 0.26), so any
+    rule that lifts the blue lifts the reds harder — cherry came out salmon and
+    the 7 coral. `fire.test.ts` pins the reds against exactly that regression.
   - **Every fire lays a dark ground under itself first** (`soot`/`sootSlab`).
     Golden Hour seats the board on a cream wash with near-white cushions, so
     adding orange clips every channel and the fire disappears. This is the
