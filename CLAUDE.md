@@ -52,6 +52,51 @@ Live: <https://corruptfun.github.io/viva-maya/>
   identity. `rgb.test.ts` guards the arcs, the seam-free wrap and the even
   arc-length spacing. Players can switch it off (Settings → RGB Marquee), which
   restores the original gold/rose bulb ring exactly.
+- **The board's FIRE is saturated colour on a dark ground, laid down in
+  overlapping atoms — and each clause there is a bug that shipped in the first
+  cut.** `view/firekit.ts` is the board's fire
+  vocabulary — a ring of fire out of a blast (`fireRing`), a wall of flame
+  standing in the play area while a MEGA chain runs (`blazeField`), and the
+  tally burn that traces a region's perimeter white-hot and consumes it
+  (`burnAway`). `megafx.ts` still owns the SCREEN; this owns the BOARD, so its
+  layers are world-space (they must rattle with the board, the exact opposite of
+  megafx's `scrollFactor(0)` rule) and the pure geometry lives Phaser-free in
+  `core/fire.ts`, pinned by `fire.test.ts` — the same split as `core/rgb.ts` /
+  `view/rgbmarquee.ts`, for the same reason.
+  - **Hotter steps go MORE SATURATED, not paler** (`heatTint`). The obvious
+    ladder — gold → bright gold → near-white, because hot fire is white — is the
+    marquee's desaturation trap wearing a different hat: additive near-white
+    over a warm board renders as PALE GREY, and the first cut of the ring came
+    out looking like flying paper shards. White heat is the GEOMETRY's job: it
+    appears where atoms overlap and the additive sum clips. Colour is the tint's.
+  - **Every fire lays a dark ground under itself first** (`soot`/`sootSlab`).
+    Golden Hour seats the board on a cream wash with near-white cushions, so
+    adding orange clips every channel and the fire disappears. This is the
+    marquee's baked groove and megafx's `stageDim`, a third time. `burnAway`'s
+    ash is a flat SLAB, not the radial `bgglow` the others use — a radial is
+    thinnest at the rim, which is precisely where its burning frame lives.
+  - **Atoms overlap or they scallop.** Ring petals are laid at exactly `2πi/n`
+    (a nearly-even ring parks its one odd gap on screen forever) and their count
+    is DERIVED from `RING_OVERLAP`, never hand-picked — tune `flame` to change
+    the density, not `petals`. Wall tongues overlap by `TONGUE_OVERLAP` and are
+    forbidden from sharing a flicker phase with a neighbour (`MIN_PHASE_GAP`,
+    measured the short way round the cycle — a linear test waves through exactly
+    the 0.02/0.98 pairing it exists to catch): a wall whose atoms breathe
+    together is a strobing rectangle, not fire.
+  - **A ring blooms, it does not fly apart.** Travel and growth are budgeted
+    against each other (~2.6× out, ~2.7× bigger). An atom count is fixed but a
+    circumference is not, so a ring that launches from 0.1R to 1.0R arrives ten
+    times sparser than it left and ends as a starburst.
+  - `blazeField` is a **veil, never a curtain** — the board stays playable and
+    every symbol readable through it, which is what caps its alpha; and its
+    floor bed is held mostly inside the region, because GameScene seats the
+    standing brief, the JACKPOT deck and the charge bar directly underneath.
+  Wired to the beats that earn it: bomb + jackpot detonations, the MEGA finish,
+  the gold rush from SUPER MEGA up (handle extinguished by `megaFinish`, exactly
+  like `goldRush`), and a special's HERO BIRTH — an oversized ghost of the face
+  being born, collapsing onto its cell. ⚠️ That ghost is a throwaway
+  `add.image`, never a second `createSprite`: see the duplicate-sprite note
+  below, which this would otherwise re-break for the third time.
 - **Every screen shake slides the scene off its own edge, and `WASH_BLEED` is the
   only thing behind it.** `Camera.shake` translates the camera MATRIX (and
   `GameScene.update`'s trauma rattle scrolls the camera outright), so a reel
@@ -405,8 +450,8 @@ npm run build    # tsc && vite build
 ```
 
 Tests are colocated: `src/core/*.test.ts` (board, merge, hazards, endless,
-plinko rate, slots rate, cheat, endless pace, rgb, apploop, level resume). Run
-them — the game logic has real coverage.
+plinko rate, slots rate, cheat, endless pace, rgb, fire, apploop, level resume).
+Run them — the game logic has real coverage.
 
 `slots.rate.test.ts`, `plinko.rate.test.ts` and `endless.pace.test.ts` are
 **economy guards**, not unit tests: they measure what a machine actually pays
@@ -439,6 +484,9 @@ edit to make green.
 | `src/view/trophyceremony.ts` | the chapter-complete ceremony + the one-time catch-up card |
 | `src/view/platekit.ts` | the material + lighting law (E7): plates, spotlight scrims, `goldFace` — `ui.ts` re-exports the legacy names |
 | `src/view/rgbmarquee.ts` | the RGB cabinet chase — see the note above before touching it |
+| `src/core/fire.ts` | the fire's pure geometry — ring petals, wall tongues, the burn front (`fire.test.ts` pins the seam, the overlap and the anti-strobe rule) |
+| `src/view/megafx.ts` | the SCREEN's celebration kit — rays, burning frame, embers, coins, erupting symbols |
+| `src/view/firekit.ts` | the BOARD's fire — ring of fire, wall of flame, tally burn — see the note above before touching it |
 | `src/view3d/stage.ts` | the only three.js usage |
 | `supabase/migrations/` | `0001_saves` → `0024_race_board_salt_enforced` |
 | `scripts/verify-rls.sh` | RLS audit — run after any migration |

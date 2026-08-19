@@ -690,6 +690,86 @@ function makeFireball(scene: Phaser.Scene): void {
 }
 
 /**
+ * FLAME TONGUE (§X2) — the atom every fire in the game is built from: one lick of flame, drawn
+ * TIP-UP with its root at the bottom edge of the frame, so a caller sets origin (0.5, 1) and the
+ * flame grows out of whatever it is standing on.
+ *
+ * Three things about how it is baked are load-bearing, and each one is a way the effect fails if
+ * you draw it the obvious way instead:
+ *
+ *  · **It is white, and its COLOUR is luminance.** Like `bulb` and `rgbnode`, the art is pure white
+ *    and only the alpha varies — a hot near-opaque core at the root, a half-lit body, a faint tip.
+ *    Under ADD blend a warm tint then reproduces fire's actual physics for free: where the alpha
+ *    stacks the sum clips to white-hot, and where it thins the tint survives as deep orange. Baking
+ *    the gradient in COLOUR instead would freeze one theme's fire into every theme.
+ *  · **The silhouette is a chain of circles, not a triangle or a teardrop.** Radii taper up the
+ *    axis while the centre WANDERS (a small sine lean), which is what gives the edge its lobed,
+ *    licking profile. A smooth taper reads as a cone — a party hat, not a flame.
+ *  · **The tip is drawn past the top of the alpha it can reach**, so the flame dissolves rather
+ *    than ending. A flame with a defined top edge reads as a sprite the moment it stops moving.
+ *
+ * One texture, drawn a few hundred times across the game's biggest moments; it is scaled, rotated
+ * and tinted at every use site and never re-baked.
+ */
+function makeFlameTongue(scene: Phaser.Scene): void {
+  if (scene.textures.exists('flametongue')) return
+  const W = 72
+  const H = 128
+  const cx = W / 2
+  const root = H - 3
+  const g = scene.make.graphics({ x: 0, y: 0 }, false)
+  /**
+   * One chain of discs from the root up the axis. `r0` is the radius at the root, `reach` how far up
+   * the frame the chain survives, `sway` how hard its tip whips sideways, `lean` a fixed lateral
+   * offset. Three chains per pass — a centre body plus two shorter licks either side — is what gives
+   * the silhouette its lobes; a single chain, however tapered, only ever draws a cone.
+   */
+  const chain = (r0: number, reach: number, sway: number, lean: number): void => {
+    const steps = 56 // dense enough that consecutive discs OVERLAP right to the tip: too few and the
+    for (let i = 0; i <= steps; i++) {
+      // thin top breaks into a dotted line, which reads as a rendering bug rather than as a flame.
+      const t = i / steps // 0 at the root, 1 at the frame's top
+      if (t > reach) break
+      const u = t / reach // 0..1 within this chain's own run
+      // Taper to a point, with a quick flare off the very base so the tongue has a waist and reads
+      // as flame standing on a surface rather than as a lollipop on a stick.
+      const r = r0 * (1 - u) ** 1.2 * (0.62 + 0.38 * Math.min(1, t * 9))
+      if (r <= 0.5) break
+      // The whip: a lean that grows with the SQUARE of height — the root stays anchored and the tip
+      // curls away. It is also the atom's only asymmetry, and that has a job beyond looking right:
+      // a mirror-symmetric flame laid in a ring reads as a mandala, not as a blast.
+      g.fillCircle(cx + lean * (1 - t) + Math.sin(t * 2.4) * t * t * sway, root - t * (H - 8), r)
+    }
+  }
+  /**
+   * Passes run wide+faint (the halo) to narrow+bright (the heart), and their alphas ACCUMULATE into
+   * the hot-root / warm-body / cool-tip profile the header describes. `reach` shortens as they
+   * brighten, which is what puts the white heat down at the root where fire actually keeps it.
+   *
+   * ⚠️ There are a DOZEN of them, at alphas starting near nothing, and that is not padding — it is
+   * the whole difference between a flame and a paper wedge. The first cut used five passes opening
+   * at 0.14, and 0.14 is an entirely visible hard edge once the sprite is drawn additively over a
+   * dark board: the silhouette came out as a crisp triangle with a cut edge. A long tail of very
+   * faint passes feathers the outline instead — the same partition-of-unity trick `rgbnode` is baked
+   * with, and for the same reason. The cost is paid once, at boot.
+   */
+  const passes: Array<{ r0: number; alpha: number; reach: number }> = []
+  const N = 12
+  for (let i = 0; i < N; i++) {
+    const u = i / (N - 1) // 0 = widest+faintest halo, 1 = tightest+brightest heart
+    passes.push({ r0: 34 - 31 * u, alpha: 0.028 + 0.5 * u ** 2.4, reach: 1 - 0.72 * u ** 1.5 })
+  }
+  for (const { r0, alpha, reach } of passes) {
+    g.fillStyle(0xffffff, alpha)
+    chain(r0, reach, 15, 0) // the body
+    chain(r0 * 0.52, reach * 0.66, -19, -r0 * 0.42) // a lick up the left
+    chain(r0 * 0.44, reach * 0.82, 9, r0 * 0.46) // …and a taller, thinner one up the right
+  }
+  g.generateTexture('flametongue', W, H)
+  g.destroy()
+}
+
+/**
  * Score MEDALLION (§R3 reward layer) — ONE chunky star-burst coin baked for every "+N" match
  * medallion. Same tint-stability trick as the board tile: the body is PURE WHITE (a single
  * `setTint()` colours the whole medallion warm gold → bright gold → rose across the cascade) and
@@ -1138,6 +1218,7 @@ export function createAllTextures(scene: Phaser.Scene): void {
   makeJackpot(scene)
   makeSweep(scene)
   makeFireball(scene)
+  makeFlameTongue(scene) // §X2 — the atom every fire in the game is built from
   makeShockwave(scene)
   makeConfetti(scene)
   makeChip(scene)
@@ -1199,6 +1280,7 @@ export function warmPieceTextures(scene: Phaser.Scene): void {
   if (!scene.textures.exists('ring')) makeRing(scene)
   if (!scene.textures.exists('confetti')) makeConfetti(scene)
   if (!scene.textures.exists('fireball')) makeFireball(scene)
+  if (!scene.textures.exists('flametongue')) makeFlameTongue(scene)
   if (!scene.textures.exists('shockwave')) makeShockwave(scene)
   if (!scene.textures.exists('medallion')) makeMedallion(scene)
   if (!scene.textures.exists('glint')) makeGlint(scene)

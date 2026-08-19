@@ -78,6 +78,8 @@ import type { JackpotMeter } from '../view/jackpot'
 import { D, E, OVERSHOOT, backOut, heartbeat } from '../view/motion'
 import { coinBurst, emberField, eruptPieces, flashBloom, igniteVignette, rakeRays } from '../view/megafx'
 import type { EruptionSeed, VignetteHandle } from '../view/megafx'
+import { blazeField, burnAway, fireRing } from '../view/firekit'
+import type { BlazeHandle, Heat } from '../view/firekit'
 import { quality } from '../view/quality'
 import { vibratePattern } from '../view/haptics'
 import {
@@ -501,6 +503,12 @@ export class GameScene extends Phaser.Scene {
    *  on each new tier (igniteGoldRush), extinguished as the chain settles (megaFinish); the handle
    *  also self-times-out inside the kit, so a lost owner can never leave the frame burning. */
   private goldRush: VignetteHandle | null = null
+  /** §X2 — the BOARD's own fire while a chain holds SUPER-MEGA grade. Where `goldRush` sets the
+   *  screen's frame alight, this stands a wall of flame in the play area itself, licking up THROUGH
+   *  the pieces (ADD, veil-alpha, so every symbol stays readable — see `blazeField`). Owned exactly
+   *  like `goldRush`: re-lit hotter per tier, extinguished as the chain settles, self-timing-out
+   *  inside the kit so a lost handle can never leave the board burning. */
+  private boardBlaze: BlazeHandle | null = null
   /** §X1 — a few of the chain's winning symbols (position + baked texture key), captured mid-wave
    *  while their sprites still exist, to ERUPT past the screen edges when a MEGA-grade chain
    *  settles. Reset per resolve (resolveLoop) + on restart; capped at capture time. */
@@ -753,6 +761,7 @@ export class GameScene extends Phaser.Scene {
     this.newBestThisWin = false
     this.chaseOvertake = null
     this.goldRush = null // §X1 — the old round's frame died with its scene; never carry a live handle
+    this.boardBlaze = null // §X2 — same rule for the board's own fire
     this.eruptionSeeds = []
     // Endless is excluded by having no level number to test — `isEyeLevel` is Act I band logic, and
     // the race is a same-board-for-everyone contract that no cosmetic of this game's may key off.
@@ -2456,12 +2465,47 @@ export class GameScene extends Phaser.Scene {
    * 3e: a quick gold `ring` implosion + spark when a piece is born into a special (wild reel / dice
    * bomb / jackpot). ADD, transient, depth 22 (above the pieces, below the HUD). Reduced motion: no-op.
    */
-  private specialBirth(at: Coord): void {
+  private specialBirth(at: Coord, heroKey?: string, heroFrame?: string | number): void {
     const pos = this.cellToXY(at)
     if (!this.reducedMotion && quality.count(1) > 0) {
       this.sparkEmitter.explode(quality.count(6), pos.x, pos.y)
     }
     if (this.reducedMotion) return
+    // §X2 HERO BIRTH — when the caller can name the face being born, the special arrives the way the
+    // reference footage awards its big symbol: it MATERIALISES OVERSIZED inside the blast and
+    // collapses onto its cell, rather than popping up out of nothing at final size.
+    //
+    // The oversized copy is a THROWAWAY `add.image`, deliberately not a second `createSprite`:
+    // `this.sprites` is keyed by piece id and `createSprite` overwrites, so minting a second sprite
+    // for a piece that already has one is how you strand a permanent invisible ghost on the board
+    // (CLAUDE.md; shipped twice). A plain image on the scene root is in neither the map nor
+    // `pieceLayer`, so no reaper needs to know about it — it self-destroys, like the sweep flyers.
+    //
+    // It also sits ABOVE `pieceLayer` rather than inside it: the layer carries a geometry mask
+    // clipped to the board, and a 2.4x symbol born on an edge cell would be sliced by it.
+    if (heroKey) {
+      const ghost = this.add
+        .image(pos.x, pos.y, heroKey, heroFrame)
+        .setDepth(23) // over the pieces and over the ring below, under the HUD
+        .setScale(PIECE_SCALE * 2.4)
+        .setAlpha(0)
+      this.tweens.add({ targets: ghost, scale: PIECE_SCALE, duration: 300, ease: 'Cubic.easeOut' })
+      this.tweens.add({
+        // Swell in and hand off: by the time the real sprite has finished its own pop-in the ghost
+        // is gone, so the two are never both readable at full strength on the same cell.
+        targets: ghost,
+        alpha: 0.9,
+        duration: 110,
+        hold: 40,
+        yoyo: true,
+        ease: 'Quad.easeOut',
+        onComplete: () => ghost.destroy(),
+      })
+      // A tight ring of BIG flames rather than a wide ring of small ones: `flame` is the lever, and
+      // the petal count follows from it (firekit derives density from the overlap law), so a small
+      // burst stays cheap without anyone hand-picking a count that the next radius change breaks.
+      fireRing(this, pos.x, pos.y, { radius: CELL * 1.3, flame: CELL * 1.05, heat: 2, ms: 340, seed: at.row * 8 + at.col + 5, depth: 24 })
+    }
     const ring = this.add
       .image(pos.x, pos.y, 'ring')
       .setBlendMode(Phaser.BlendModes.ADD)
@@ -5239,9 +5283,12 @@ export class GameScene extends Phaser.Scene {
       promises.push(
         this.t({ targets: sprite, scale: PIECE_SCALE, delay: 80, duration: 200, ease: backOut(OVERSHOOT.pop) })
       )
-      // 3e: a quick gold ring implosion + spark celebrates the birth (cap ≤2/wave).
+      // 3e: a quick gold ring implosion + spark celebrates the birth (cap ≤2/wave) — and §X2 hands
+      // it the face being born, so the special materialises oversized out of the blast and settles
+      // onto its cell. The key comes off the sprite that was just minted, so it can never disagree
+      // with what the board is actually about to show.
       if (births < 2) {
-        this.specialBirth(t.at)
+        this.specialBirth(t.at, sprite.texture.key, sprite.frame.name)
         births++
       }
     }
@@ -5839,6 +5886,17 @@ export class GameScene extends Phaser.Scene {
     rakeRays(this, { blades: 4, ms: 680, dim: true, depth: ROOM_RAY_DEPTH })
     coinBurst(this, cx, cy, { count: 14, power: 1.15 })
     emberField(this, { ms: 2000 })
+    // §X2 THE BOARD TAKEOVER — the jackpot chip clears a whole colour off the board, and this is
+    // what that looks like: a ring of fire out of the centre, and then the board's own perimeter
+    // traces white-hot while a burning front crosses it and takes the pieces with it. The reference
+    // footage's finale beat, and it lands here because this is the one moment in the game where a
+    // screenful of value really does resolve into a single number.
+    //
+    // Fire-and-forget: `burnAway`'s promise is the cue to land a TOTAL, and this beat already has
+    // one — the score popup the wave mints at the epicentre. Nothing awaits it, and it settles on
+    // its own deadline regardless (the kit carries the backstop), so no path here can hang.
+    fireRing(this, cx, cy, { radius: CELL * 3.2, heat: 3, ms: 480, seed: 101, depth: 27 })
+    void burnAway(this, { x: BOARD_X, y: this.boardTop, width: BOARD_W, height: BOARD_W }, { heat: 3, ms: 560, depth: 25 })
     this.time.delayedCall(140, () => sfx.coinCount())
   }
 
@@ -6018,6 +6076,19 @@ export class GameScene extends Phaser.Scene {
       duration: 380,
       ease: 'Quad.easeOut',
       onComplete: () => ball.destroy(),
+    })
+
+    // §X2 — and the bloom tears open into a RING OF FIRE. The three layers above are all smooth
+    // radial light, which reads as a flash; the ring is the first thing in the blast with structure
+    // — flame tongues aimed outward, each on its own reach, so the front is ragged. Seeded off the
+    // cell so two bombs going off in one wave never wear the same turbulence.
+    fireRing(this, at.x, at.y, {
+      radius: CELL * (1.5 + power * 0.42),
+      heat: power >= 3.5 ? 3 : 2,
+      ms: 380 + boost * 24,
+      seed: atCoord.row * 8 + atCoord.col,
+      quiet: true, // the white-hot core above is already sitting on this exact pixel
+      depth: 27,
     })
 
     // Expanding shockwave ring.
@@ -9163,6 +9234,20 @@ export class GameScene extends Phaser.Scene {
     rakeRays(this, { blades: 2 + heat, tint: heat >= 3 ? getTheme().roseLight : undefined, mirror: heat % 2 === 0, depth: ROOM_RAY_DEPTH })
     if (heat >= 2) emberField(this, { ms: 2600 })
     if (heat >= 3) flashBloom(this, { alpha: 0.34 })
+    // §X2 — and from SUPER MEGA up the BOARD catches too: a wall of flame standing in the play area,
+    // licking up through the pieces while the chain keeps going. Held one tier later than the screen
+    // frame on purpose — the frame says "the room is hot", the board fire says "the thing you are
+    // playing is on fire", and spending the second at x4 would leave nothing for x6 to escalate to.
+    // Seeded off the tier so a re-light at a deeper tier wears different turbulence to the one it
+    // replaces, rather than re-running the same wall a shade brighter.
+    if (heat >= 2) {
+      this.boardBlaze?.extinguish()
+      this.boardBlaze = blazeField(
+        this,
+        { x: BOARD_X, y: this.boardTop, width: BOARD_W, height: BOARD_W },
+        { heat, seed: heat * 31, depth: 24 }
+      )
+    }
   }
 
   /**
@@ -9178,9 +9263,15 @@ export class GameScene extends Phaser.Scene {
    */
   private megaFinish(cascade: number): void {
     const tier = this.megaTier(cascade).t
-    // §X1 — however deep the chain got, the settle is where the burning frame hands the screen back.
+    // §X1/§X2 — however deep the chain got, the settle is where the burning frame hands the screen
+    // back, and the board fire goes out with it. Both before the `tier <= 0` bail: a chain can be
+    // demoted to nothing by the time it settles (the tier is read from the FINAL cascade depth), and
+    // a return that skipped the extinguish would leave the board alight until the kit's own backstop
+    // noticed — six seconds of fire over a board the player is already swapping on.
     this.goldRush?.extinguish()
     this.goldRush = null
+    this.boardBlaze?.extinguish()
+    this.boardBlaze = null
     if (tier <= 0) return
     const T = getTheme()
     const cx = BOARD_X + BOARD_W / 2
@@ -9250,6 +9341,18 @@ export class GameScene extends Phaser.Scene {
     // winning symbols ERUPT past the screen edges (ghost copies — the board's sprite map is never
     // touched), and from SUPER MEGA up the gold rains. All transient, all kit-gated.
     rakeRays(this, { blades: 3 + tier, ms: 560, dim: true, depth: ROOM_RAY_DEPTH })
+    // §X2 — the release: a ring of fire tears out of board centre a beat AHEAD of the erupting
+    // symbols, so the ghosts fly out through their own blast rather than alongside it. `quiet`
+    // because megaFinish already fired its own white core (the bloom above) on this exact spot —
+    // two hot cores on one pixel is one flash the reduce-flashing gate never got to see.
+    fireRing(this, cx, cy, {
+      radius: CELL * (3.4 + tier * 0.9),
+      heat: Math.min(3, tier) as Heat,
+      ms: 460 + tier * 60,
+      seed: tier * 7 + 3,
+      quiet: true,
+      depth: 27,
+    })
     eruptPieces(this, this.eruptionSeeds, { cx, cy, ms: 620 + tier * 60 })
     this.eruptionSeeds = []
     if (tier >= 2) {
