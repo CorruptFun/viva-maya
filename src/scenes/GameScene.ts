@@ -2555,8 +2555,8 @@ export class GameScene extends Phaser.Scene {
     // §R3 PLAY-FOCUS SCRIM: one translucent theme-ink sheet over the ENTIRE atmospheric backdrop
     // (all negative depths) but under every gameplay object (≥ 0). It pushes the lounge wash a
     // touch darker and duller while playing, so the elevated cabinet + HUD rail pop forward.
-    // Warm ink from the theme's own `scrim` token (never black) at whisper alpha — all four themes
-    // stay warm, not muddy. Static, zero motion → no reduced-motion path needed.
+    // Warm ink from the theme's own `scrim` token (never black) at whisper alpha — every theme
+    // stays warm, not muddy. Static, zero motion → no reduced-motion path needed.
     this.add.rectangle(DESIGN_W / 2, viewportCenterY(), DESIGN_W, worldH(), getTheme().scrim, 0.07).setDepth(-24)
 
     // Reddish "screen is on" glow behind the board — the opaque card covers its center, so only
@@ -2584,7 +2584,7 @@ export class GameScene extends Phaser.Scene {
     // tight, darker CONTACT shadow hugging the silhouette plus a wide, faint AMBIENT falloff —
     // replace the old flat gold-tint offset fills. Both are plain Images of one baked texture
     // (zero per-frame cost, one key light from above per E7 → offsets straight DOWN). Neutral
-    // black at low alpha reads as depth on all four theme washes.
+    // black at low alpha reads as depth on every theme wash.
     this.add.image(x + size / 2, y + size / 2 + 26, 'softshadow').setDisplaySize(size + 96, size + 96).setAlpha(0.32)
     // The tight contact shadow is kept so a board SLAM can briefly deepen + tighten it (the slab
     // pressing toward its housing — a real depth cue synced to the dip). Base scale captured for a

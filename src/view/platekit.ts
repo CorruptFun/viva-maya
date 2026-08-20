@@ -62,7 +62,7 @@ function luma(color: number): number {
   return 0.2126 * r + 0.7152 * g + 0.0722 * b
 }
 
-/** Dark themes (Rose Midnight / Neon Vegas) have a near-black wash; the cream themes don't. */
+/** The dark themes (Rose Midnight / Neon Vegas / Rune Realm) have a near-black wash; the cream ones don't. */
 export function isDarkTheme(T: Theme = getTheme()): boolean {
   return luma(T.washBottom) < 0.4
 }

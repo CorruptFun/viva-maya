@@ -684,7 +684,7 @@ export interface PillStyle {
 
 // The three brand pills. Deliberately FLAT LITERALS, not `getTheme()` reads: these are module-level
 // constants baked into cached button textures, and (per theme.ts §2.4) the buttons are the one thing
-// that stays constant across all four themes — the same way the cards stay light everywhere. They
+// that stays constant across every theme — the same way the cards stay light everywhere. They
 // mirror the golden-theme accent tokens by hand; keep them in sync when those move.
 //
 // §V1 vibrancy pass: fills lifted onto the saturated brand accents (every bevel, pedestal, well and
@@ -1743,7 +1743,20 @@ export function openThemePanel(scene: Phaser.Scene, openingThemeId: ThemeId = ge
 
   const px = 40
   const pw = W - 80
-  const ph = 792
+  // ⚠️ The card is BUDGETED against the row count, never seated on a literal. It was `ph = 792`,
+  // which is exactly the four themes this picker shipped with: a fifth row centres at `pyTop + 706`
+  // and reaches 764 at its bottom edge — through the DONE button (centre 726) and 28px past the
+  // card's own floor. Nothing in the old code could have noticed, because the rows were laid out
+  // from `THEME_ORDER` while the card they sit in was not. These five terms reproduce 792 exactly at
+  // four rows (194 + 3×128 + 58 + 90 + 66) and keep the same air under the last row at any count.
+  // Ceiling: eight themes want 1304px of card against a 1280 design height, at which point the row
+  // region needs a scroller (LevelSelect's masked grid is the pattern) rather than a taller card.
+  const ROW_H = 116
+  const ROW_STEP = 128
+  const HEAD_H = 194 // card top → the FIRST row's centre (title + subtitle + air)
+  const FOOT_GAP = 90 // last row's BOTTOM edge → the DONE button's centre
+  const FOOT_H = 66 // DONE's centre → the card's bottom edge
+  const ph = HEAD_H + (THEME_ORDER.length - 1) * ROW_STEP + ROW_H / 2 + FOOT_GAP + FOOT_H
   const pyTop = (H - ph) / 2
 
   const scrimKit = addFocusScrim(scene, { alpha: 0.6, ink: 0x2a2417 })
@@ -1784,21 +1797,20 @@ export function openThemePanel(scene: Phaser.Scene, openingThemeId: ThemeId = ge
   layer.add([scrim, ...scrimKit.art, g, block, title, subtitle])
 
   const rowW = pw - 80
-  const rowH = 116
-  let y = pyTop + 194
+  let y = pyTop + HEAD_H
   for (const id of THEME_ORDER) {
     layer.add(
-      buildThemeRow(scene, W / 2, y, rowW, rowH, id, save, reduced, () => {
+      buildThemeRow(scene, W / 2, y, rowW, ROW_H, id, save, reduced, () => {
         setTheme(id) // persist + repaint page chrome now; art repaints on close-if-changed
         // Rebuild so the gold highlight + chip swatch follow the pick (openingThemeId preserved).
         layer.destroy()
         openThemePanel(scene, openingThemeId)
       })
     )
-    y += 128
+    y += ROW_STEP
   }
 
-  layer.add(addPillButton(scene, W / 2, pyTop + ph - 66, 240, 68, 'DONE', GOLD_PILL, close))
+  layer.add(addPillButton(scene, W / 2, pyTop + ph - FOOT_H, 240, 68, 'DONE', GOLD_PILL, close))
 }
 
 /** Round "⚙" settings chip styled like GHOST_PILL — opens the accessibility settings panel. */

@@ -178,6 +178,7 @@ A fixed 9:16 (720×1280) game letterboxes hard on a ~19.5:9 phone. To make it fe
 - **Themes = base + overrides.** Define the default theme as the complete base, then `{...base, ...overrides}` for each variant (guarantees no missing key at compile time).
 - **Keep cards light on every theme.** Only the backdrop wash, glows, accents, and a dedicated pair of **`onBackdrop*` text roles** diverge. Text drawn directly on the wash (not on a card) must route through `onBackdrop*` so it can flip light on dark themes — that's the whole dark-theme legibility fix.
 - **Apply by repaint, not live re-tint.** Themes only change colors read at `create()`; switching a theme calls `setTheme(id)` then `scene.restart()`. Enumerate-and-re-tint is high-surface-area for a rarely-changed setting; a restart is simpler and bulletproof.
+- **The picker's card is budgeted from the theme LIST, never a literal height.** Rows are laid out by iterating the theme order, so the panel that holds them has to be measured the same way (`head + (n-1)·step + rowH/2 + foot`) — a hardcoded height silently fits exactly the number of themes that existed when it was typed, and the fifth one lands on the DONE button. Same rule as any other list-in-a-frame; the number to keep in the comment is the count at which the card outgrows the screen and needs a scroller instead.
 
 ---
 

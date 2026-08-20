@@ -827,7 +827,7 @@ export class HomeScene extends Phaser.Scene {
     }
     // (2) Single suit-glyph ghost drifting behind the hero. Governor-capped: `quality.count(1)` rounds to 0
     // on the low tier → the sprite is dropped (the pulse alone carries the beat). A RED suit (heart or
-    // diamond) so the faint ghost reads on all 4 themes — a black club/spade would vanish on the dark ones.
+    // diamond) so the faint ghost reads on every theme — a black club/spade would vanish on the dark ones.
     if (quality.count(1) < 1) return
     const cx = this.heroEmblem?.x ?? DESIGN_W / 2
     const cy = this.heroEmblem?.y ?? 330

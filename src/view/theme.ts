@@ -16,13 +16,13 @@
  * Apply model (§2.4): themes only change colours read at `create()`. Picking a
  * theme calls `setTheme(id)` then the scene restarts — there is no live re-tint.
  * Boot textures (symbols/chip/spark/…) are never re-baked; they carry Golden-Hour
- * warmth permanently and read fine on all four washes.
+ * warmth permanently and read fine on every wash.
  */
 
 import { ENDLESS_UNLOCK_LEVEL, endlessUnlocked } from '../core/endless'
 import type { SaveData } from '../core/save'
 
-export type ThemeId = 'golden' | 'roseMidnight' | 'neonVegas' | 'mayaHeart'
+export type ThemeId = 'golden' | 'roseMidnight' | 'neonVegas' | 'mayaHeart' | 'runescape'
 
 /**
  * Per-theme audio palette (§E3-A3) — makes each theme a *room you can hear*. Read by
@@ -139,8 +139,8 @@ export const css = (n: number): string => '#' + (n & 0xffffff).toString(16).padS
 
 const THEME_KEY = 'viva-maya:theme'
 export const DEFAULT_THEME_ID: ThemeId = 'golden'
-/** Picker display order (§2.1): the two free themes first, then the progress-gated pair. */
-export const THEME_ORDER: ThemeId[] = ['golden', 'mayaHeart', 'roseMidnight', 'neonVegas']
+/** Picker display order (§2.1): the free themes first, then the progress-gated pair. */
+export const THEME_ORDER: ThemeId[] = ['golden', 'mayaHeart', 'runescape', 'roseMidnight', 'neonVegas']
 
 /**
  * Golden Hour — the warm default. Its values are the app's CURRENT literals, so
@@ -225,8 +225,8 @@ const golden: Theme = {
 
   // Text on cream. inkMuted / inkFaint / goldText are the deliberate WCAG-AA contrast nudge
   // (§E8 call #3 — the one intentional carve-out from P7's zero-visual-diff pledge): darkened so
-  // muted body text clears 4.5:1 and gold display text clears 3:1 on the cream cards, on all four
-  // themes (cards stay cream everywhere, so one fix covers all). Bright gold stays a FILL colour
+  // muted body text clears 4.5:1 and gold display text clears 3:1 on the cream cards, on every
+  // theme (cards stay cream everywhere, so one fix covers all). Bright gold stays a FILL colour
   // (gold / goldBright / goldBezel below), never a body-text colour.
   ink: '#2a2732',
   inkSoft: '#6a6459',
@@ -288,6 +288,96 @@ const mayaHeart: Theme = {
   // Softer, a touch higher, more reverb — a tender valentine room.
   audio: { bedRoot: 73.42 /* D2 */, waveBias: 'sine', filterWarmth: 1150, reverbMix: 0.28 },
   pageBg: '#fff2f4',
+}
+
+/**
+ * Rune Realm — torchlight on old stone (free). The fifth room, and the one that is not another
+ * lighting rig for the same colours: its second accent is GREEN. Three warm rooms and a neon one
+ * all swing gold ↔ rose ↔ cyan between them, so moss-and-torch-fire is the first genuinely new hue
+ * family the picker has had to offer, and the one thing it must not lose to a "harmonising" pass.
+ *
+ * It is a DARK theme, so it follows the two rules the plum and the navy rooms already follow, for
+ * their reasons rather than as a copy: the cream cards, cushions and inks are INHERITED UNTOUCHED
+ * (golden's WCAG pass covers every theme only for as long as cards stay cream everywhere), and
+ * `onBackdrop*` flips light. Everything that makes this a different ROOM is wash, light and arc.
+ *
+ * ⚠️ The id is the shorthand this theme was asked for by; the NAME is the part a player reads, and
+ * it is deliberately not a third party's trademark. Renaming the room is a one-line change here
+ * plus its `THEME_META` entry — the id is internal (a localStorage value and a texture-key suffix,
+ * e.g. `dealcard:back:runescape`) and changing it silently resets everyone's choice to default.
+ */
+const runescape: Theme = {
+  ...golden,
+  id: 'runescape',
+  name: 'Rune Realm',
+
+  // Old stone under a torch, falling to the dark past the light. ⚠️ The chroma is load-bearing and
+  // was measured, not guessed: the first cut of this wash (0x3c3524, sat 0.40) rendered as an
+  // OLIVE-GREY haze the moment the additive glows landed on it — §V1's "dingy tan sheet" in a dark
+  // key, and invisible in the token table, where it looks like a perfectly reasonable brown. At
+  // sat 0.54 it sits alongside the plum (0.49) and the navy (0.66) and reads as lit stone. Judge a
+  // wash on screen with the glows on, never in the swatch.
+  washTop: 0x44351f,
+  washBottom: 0x140f07,
+  // The room has exactly TWO light sources and the whole theme is built out of them — torch-fire
+  // and moss. Every glow/ray/bokeh pair below is one or the other, so the light can never disagree
+  // with itself the way a third colour in here would.
+  washGlowWarm: 0xff9d2b,
+  washGlowCool: 0x3f9e3f,
+  rayTint: 0xffc247,
+  rayTintCool: 0x5cae4f,
+  bokehWarm: 0xffb436,
+  bokehCool: 0x63b055,
+  marqueeBright: 0xffd23a,
+  marqueeDim: 0x8a6410,
+  // The only arc of the five that ENDS IN GREEN: torch orange (30°), through the coin gold both
+  // marquee tones sit on (41°/46°), up to the moss (122°) that `accentAlt` and the cool glow
+  // already wear — so the ring is still lighting this room rather than running a rainbow across it.
+  // It stops well short of cyan: a blue bulb here would read as Neon Vegas's rig bolted to a castle
+  // wall. `rgb.test.ts` pins both halves of that (own tones on the arc, no stray hue family).
+  rgbHueFrom: 30,
+  rgbHueSpan: 92,
+  rgbSat: 0.78,
+  sparkleTint: 0xffeab0,
+  moteTint: 0x9ecb4f,
+  suitWatermark: 0x6b5c36,
+  scrim: 0x120f07,
+  vignetteInk: 0x120f07,
+  shadow: 0x120f07,
+
+  // Gold, aged — coin metal in torchlight rather than Golden Hour's lit-sign amber. Same hue
+  // family, so every shade derived from it (pill bevels, bezels, embosses) tracks for free.
+  gold: 0xe8ad1e,
+  goldBright: 0xffd76a,
+  goldBezel: 0xd9a52e,
+  goldDeep: 0x9a6a0c,
+  goldDarkest: 0x4d3406,
+  // The `rose` ROLE recast as ember red. It is this palette's heat/alarm colour — the last-5-seconds
+  // timer, the charge bar, the picker's "Reach Level N" — not literally a pink, and a valentine
+  // crimson on stone was the one note left that still sounded like the other rooms. Both tints that
+  // are ever drawn as TYPE gain contrast on the cream cards rather than losing it (rose 4.42:1 →
+  // 5.29:1, roseDeep 6.87:1 → 8.13:1), so recasting the role cannot quietly cost legibility.
+  rose: 0xb8442f,
+  roseLight: 0xe07a5f,
+  roseDeep: 0x8c2f1e,
+  navy: 0x27455c,
+  accent: 0xe8ad1e,
+  accentAlt: 0x57a447,
+  // The cabinet halo stays WARM (Neon Vegas's rule) — in this room that warmth is the torch.
+  cabinetGlow: 0xd07a1c,
+  bloom: 0xffe3a8,
+  bleedWarm: 0xffbe45,
+  bleedCool: 0x74b962,
+
+  // Dark wash → backdrop copy flips light. Parchment ink over an aged-brass muted, both measured
+  // against the wash's LIGHTEST band (`washTop`, the hard case): 9.5:1 and 5.6:1.
+  onBackdropInk: '#f2e6c8',
+  onBackdropMuted: '#c4b184',
+
+  // A stone hall — triangle bias, a dark filter, a long tail. Bb1 keeps every theme root distinct,
+  // which is what makes each one a REAL case in `audio/scale.test.ts` rather than a repeat.
+  audio: { bedRoot: 58.27 /* A#1 */, waveBias: 'triangle', filterWarmth: 820, reverbMix: 0.32 },
+  pageBg: '#44351f',
 }
 
 /** Rose Midnight — after-hours velvet (plum near-dark). Gold+rose aurora on dark. */
@@ -367,7 +457,7 @@ const neonVegas: Theme = {
   pageBg: '#1b2c50',
 }
 
-export const THEMES: Record<ThemeId, Theme> = { golden, mayaHeart, roseMidnight, neonVegas }
+export const THEMES: Record<ThemeId, Theme> = { golden, mayaHeart, runescape, roseMidnight, neonVegas }
 
 /** Picker-facing metadata for each theme (§3e). Cosmetic only — `unlockLevel` gates DISPLAY, never price. */
 export interface ThemeMeta {
@@ -382,6 +472,9 @@ export interface ThemeMeta {
 export const THEME_META: Record<ThemeId, ThemeMeta> = {
   golden: { name: 'Golden Hour', feel: 'the warm default', unlockLevel: 0 },
   mayaHeart: { name: "Maya's Heart", feel: 'a tender valentine', unlockLevel: 0 },
+  // Free, like the two rooms a player already has before the race opens. This one is a LOOK rather
+  // than a reward, and gating it would hide the picker's only green swatch behind level 10.
+  runescape: { name: 'Rune Realm', feel: 'torchlight on old stone', unlockLevel: 0 },
   roseMidnight: { name: 'Rose Midnight', feel: 'after-hours velvet', unlockLevel: 10 },
   // Gated by `endlessUnlocked`, not by this number — so it must TRACK the endless constant, or the
   // row advertises a level the theme already opened past when the race unlock is retuned.

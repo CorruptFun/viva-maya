@@ -8,7 +8,7 @@ import type { HazardKind } from '../core/difficulty'
 /**
  * Baked-art palette (§V1). Boot textures are generated ONCE and never re-baked on a theme change
  * (theme.ts §2.4) — they deliberately carry the DEFAULT theme's warmth permanently and are read
- * against all four washes. Sourcing them from `THEMES.golden` instead of hand-copied hex makes that
+ * against every wash. Sourcing them from `THEMES.golden` instead of hand-copied hex makes that
  * invariant explicit AND keeps every baked prop automatically in sync with the palette, which is
  * what went wrong before: the props were frozen at the v1 literals while the themes moved on.
  *

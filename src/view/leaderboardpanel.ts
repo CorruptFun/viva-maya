@@ -18,7 +18,7 @@
  *  1. Reduced motion: every beat collapses to a complete, static resting state (popIn/fadeRise
  *     already collapse; the sweep, shimmer and heartbeat-breathe are skipped outright). The bright
  *     #1 sweep additionally respects reduceFlashing() — there it becomes a slow soft swell.
- *  2. Theme tokens only: the card is cream on all four themes (like every panel), so on-card inks
+ *  2. Theme tokens only: the card is cream on every theme (like every panel), so on-card inks
  *     come from the Theme's on-cream text tokens and all fills/strokes from its number tokens.
  *  3. 60fps: row plates are baked ONCE per (theme, size) into cached textures (identical rows batch
  *     to one draw), transients (the sweep) destroy themselves, tweens are killed before their

@@ -23,7 +23,7 @@ import { vibratePattern } from './haptics'
 // An in-scene overlay container (NOT a Scene), so it bursts over the live win card with no scene-swap
 // and hands control straight back on CLAIM — the same shape as view/plinko.ts and view/jackpot.ts,
 // built from the same shared toolkit (goldFace, theme tokens, motion eases, sfx cues, the baked
-// chip/bulb/shockwave/glint textures) so it reads as native art and restyles across all four themes
+// chip/bulb/shockwave/glint textures) so it reads as native art and restyles across every theme
 // for free. Reduced-motion / reduce-flashing / quality-governor / haptics aware throughout.
 //
 // ── What is different about this one ─────────────────────────────────────────

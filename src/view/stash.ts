@@ -94,7 +94,7 @@ function bake(
   return key
 }
 
-/** Relative luminance of a packed RGB — tells the two dark washes from the two cream ones. */
+/** Relative luminance of a packed RGB — tells the dark washes from the cream ones. */
 function isDarkWash(): boolean {
   const c = getTheme().washBottom
   return 0.2126 * (((c >> 16) & 0xff) / 255) + 0.7152 * (((c >> 8) & 0xff) / 255) + 0.0722 * ((c & 0xff) / 255) < 0.4

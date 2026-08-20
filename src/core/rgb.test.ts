@@ -12,6 +12,7 @@ import { arcLean, frac, hsvToInt, hueGap, hueOf, ringAlpha, ringHue, roundedRect
 // `view/theme.ts` is Phaser-free (it imports only core), so a core test can read the theme table
 // directly — and it should: the arcs are data the maths is meaningless without.
 import { THEMES, THEME_ORDER } from '../view/theme'
+import type { ThemeId } from '../view/theme'
 
 describe('frac', () => {
   it('returns the fractional part in [0,1)', () => {
@@ -363,12 +364,19 @@ describe('theme hue arcs', () => {
 
   it('no arc strays into a hue family its theme never uses', () => {
     // The three warm themes must never reach green/cyan/blue; Neon Vegas must never reach the warm
-    // reds and greens that would fight its navy night.
-    const forbidden: Record<string, [number, number]> = {
+    // reds and greens that would fight its navy night; Rune Realm ends in moss but must never reach
+    // the blues and violets past it, which would read as the neon rig wired into a castle wall.
+    //
+    // ⚠️ Keyed by `ThemeId`, not by `string`, and that is the point: a new theme in `THEME_ORDER`
+    // with no band declared here used to destructure `undefined` and blow the suite up with a
+    // TypeError three files from the change. Now it fails to COMPILE, at the line whose author
+    // knows the answer.
+    const forbidden: Record<ThemeId, [number, number]> = {
       golden: [70, 290],
       mayaHeart: [70, 290],
       roseMidnight: [70, 290],
       neonVegas: [0, 180],
+      runescape: [140, 350],
     }
     for (const id of THEME_ORDER) {
       const t = THEMES[id]

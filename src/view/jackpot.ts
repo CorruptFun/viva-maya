@@ -21,7 +21,7 @@ import { vibratePattern } from './haptics'
 //   • openJackpotWheel() — the wheel-of-fortune overlay (auto-spins, pays chips, on CLAIM continues).
 //
 // Both are built ENTIRELY from the shared toolkit (goldFace, theme tokens, motion eases, sfx cues,
-// baked textures) so they read as native Golden-Hour art and restyle across all four themes for free.
+// baked textures) so they read as native Golden-Hour art and restyle across every theme for free.
 // The overlay is an in-scene container (NOT a Scene) so it can burst over the live board after a win
 // with no heavy scene-swap. Everything is reduced-motion / reduce-flashing / haptics aware.
 // ─────────────────────────────────────────────────────────────────────────────

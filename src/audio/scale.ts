@@ -44,7 +44,7 @@ export function degree(root: number, n: number): number {
 /**
  * How many rungs a cascade ladder climbs before it holds. SIX — one full pentatonic octave (5 degrees
  * plus the octave) — picked by measuring the TOP of the ladder rather than by taste:
- *   - `pop` anchors at `bedRoot * 16` (880–1175 Hz across the four themes). Rung 5 lands it at
+ *   - `pop` anchors at `bedRoot * 16` (880–1175 Hz across the theme roots). Rung 5 lands it at
  *     1760–2349 Hz, a hair above the ladder's old ceiling of 1480–1568 Hz. A 10-rung ladder would put
  *     rung 9 at 2960–3951 Hz — dead in the ear's most sensitive band at `pop`'s full 0.34 peak, which
  *     would make the deepest chain in the game also its most piercing sound.

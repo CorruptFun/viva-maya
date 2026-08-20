@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { THEMES } from '../view/theme'
+import { THEME_ORDER, THEMES } from '../view/theme'
 import { degree, LADDER_RUNGS, PENTATONIC, rung } from './scale'
 
 /**
@@ -14,9 +14,11 @@ import { degree, LADDER_RUNGS, PENTATONIC, rung } from './scale'
 const ROOTS = Object.values(THEMES).map((t) => t.audio.bedRoot)
 
 describe('degree', () => {
-  it('covers all four theme roots', () => {
-    expect(ROOTS).toHaveLength(4)
-    expect(new Set(ROOTS).size).toBe(4) // distinct roots, so each is a real case
+  it('covers every shipped theme root, and no two rooms share one', () => {
+    // Counted off THEME_ORDER rather than a literal: a theme that exists but never reached the
+    // picker's list is both invisible to players and unpinned by every test that walks that list.
+    expect(ROOTS).toHaveLength(THEME_ORDER.length)
+    expect(new Set(ROOTS).size).toBe(ROOTS.length) // distinct roots, so each is a real case
   })
 
   it('is strictly increasing over a deep chain on every theme root', () => {

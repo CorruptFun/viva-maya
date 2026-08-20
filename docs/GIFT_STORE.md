@@ -44,7 +44,8 @@ The player is not a passenger in that decision any more. See **The stash** below
 ## Cosmetics are intentionally NOT sold here
 Themes stay **free and progress-unlocked** via the existing theme picker
 (`view/theme.ts` `themeUnlocked` — Rose Midnight at L10, Neon Vegas past `ENDLESS_UNLOCK_LEVEL`,
-which is **10** since 2026-08-03, not the 20 an older draft of this note recorded). The store is
+which is **10** since 2026-08-03, not the 20 an older draft of this note recorded; Rune Realm,
+added 2026-08-20, is free from the start like Golden Hour and Maya's Heart). The store is
 boosts-only by design, so the picker's "always free, never chip-priced" contract is untouched.
 
 ## The stash (added 2026-08-03)

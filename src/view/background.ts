@@ -612,7 +612,7 @@ function installIdleThrottle(scene: Phaser.Scene, loops: AmbientLoop[]): void {
 }
 
 /**
- * A1 — one tasteful, theme-specific ambient accent so the four themes read as different ROOMS (not
+ * A1 — one tasteful, theme-specific ambient accent so the themes read as different ROOMS (not
  * just recolours) in the MARGINS beyond colour. Strictly additive and guaranteed off the board:
  * negative depth (Z.flourish), ≤ 0.20 α, ADD blend, and confined to the top / bottom margins so it
  * never crosses the 40–680 × 300–940 board rect. Count is capped by `quality.count()` (and to one on
@@ -623,6 +623,7 @@ function installIdleThrottle(scene: Phaser.Scene, loops: AmbientLoop[]): void {
  *   • Rose Midnight → 1–2 slow warm "stars" drifting on the velvet dark
  *   • Golden Hour   → a single warm dust mote loafing low in the floor light
  *   • Maya's Heart  → a pair of soft rose motes drifting aloft
+ *   • Rune Realm    → wall torches guttering in the top margin (one proxy tween, layered-sine flame)
  */
 function themeFlourish(scene: Phaser.Scene, variant: BackdropVariant): void {
   if (prefersReducedMotion() || quality.tier() === 'low') return
@@ -717,6 +718,60 @@ function themeFlourish(scene: Phaser.Scene, variant: BackdropVariant): void {
       spots
         .slice(0, pick(spots.length))
         .forEach(([x, y], i) => drift(x, y, 0.8, 'bgglow', T.moteTint, 0.07, 0.14, T_DRIFT * 1.15, -20, 36, i * T_DRIFT * 0.4))
+      break
+    }
+    case 'runescape': {
+      // Wall torches guttering in the top margin — this room's own light source, which is the whole
+      // reason its accent is FIRE rather than another drifting mote. Each torch is two layers (a
+      // wide pool + a small hot core) driven by ONE proxy tween, the neonVegas pattern: a flame is
+      // one thing breathing, not two motes that happen to overlap. The rates are deliberately
+      // incommensurate (2.3 / 5.9) and offset per torch, so neither torch lands on a beat and the
+      // pair never gutter together — an even pulse reads as a strobe, which is exactly what this
+      // layer's ≤0.20 α / ADD / margins law exists to keep out.
+      // Seated so the POOL's own box (230×200) still clears the 300px board rect with room to
+      // spare — same air the neonVegas bulbs leave, and the reason this layer can promise it never
+      // crosses the board.
+      const spots: Array<[number, number]> = [
+        [72, 156],
+        [648, 176],
+      ]
+      const torches = spots.slice(0, pick(spots.length)).map(([x, y]) => {
+        const pool = scene.add
+          .image(x, y, 'bgglow')
+          .setDisplaySize(230, 200)
+          .setTint(T.washGlowWarm)
+          .setAlpha(0.1)
+          .setBlendMode(Phaser.BlendModes.ADD)
+          .setDepth(Z.flourish)
+        const core = scene.add
+          .image(x, y - 8, 'bgdot')
+          .setDisplaySize(30, 46)
+          .setTint(T.sparkleTint)
+          .setAlpha(0.14)
+          .setBlendMode(Phaser.BlendModes.ADD)
+          .setDepth(Z.flourish)
+        // setDisplaySize IS a setScale, so the flame's stretch has to ride the baked scale rather
+        // than replace it — a bare setScale here would snap the core back to its 16px texture size.
+        return { pool, core, coreScaleY: core.scaleY }
+      })
+      const proxy = { p: 0 }
+      scene.tweens.add({
+        targets: proxy,
+        p: 1,
+        duration: T_FLICKER * 1.6,
+        repeat: -1,
+        ease: 'Linear',
+        onUpdate: () => {
+          const t = proxy.p * Math.PI * 2
+          for (let i = 0; i < torches.length; i++) {
+            const flame = 0.5 + 0.3 * Math.sin(t * 2.3 + i * 1.7) + 0.2 * Math.sin(t * 5.9 + i * 3.1)
+            const a = Phaser.Math.Clamp(flame, 0, 1)
+            torches[i].pool.setAlpha(0.06 + 0.1 * a)
+            torches[i].core.setAlpha(0.09 + 0.09 * a)
+            torches[i].core.scaleY = torches[i].coreScaleY * (0.9 + 0.2 * a)
+          }
+        },
+      })
       break
     }
     default: {
