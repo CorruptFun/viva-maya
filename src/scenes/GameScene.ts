@@ -284,6 +284,26 @@ const CHEAT_ZONE_TOP = 1104
 const MEGA_WIN_MULT = 12
 
 /**
+ * §X3 — the MEGA FINISH's impact freeze, graded by tier (1..3 → 96/114/132ms).
+ *
+ * The settle was the one big beat in the game with NO hitstop. Everything else that slams gets one
+ * (reel 0 / bomb 60 / jackpot 70), and `playWave` adds a 70ms floor at x4+ — but that line sits
+ * inside `if (hasEvents)`, so it only fires when a special happens to detonate on that wave. A deep
+ * chain that ran on plain matches therefore froze exactly NOWHERE, which is why the payoff could
+ * read softer than the routine bomb that preceded it.
+ *
+ * So this is the CHAIN's freeze, and `playWave`'s stays the BLAST's — one authoritative impact per
+ * settle regardless of what fired along the way. It is deliberately deeper than any per-wave freeze
+ * (70 max): the settle is the beat everything else has been building toward, and a payoff that
+ * freezes for the same span as one of its own waves reads as another wave.
+ *
+ * ⚠️ Sized to stay an IMPACT, not a stutter. Past ~150ms a freeze stops reading as weight and starts
+ * reading as jank, and this one is followed immediately by the eruption + coin fountain, which it
+ * delays one-for-one. Grade it if a tier needs more heft; don't raise the ceiling.
+ */
+const MEGA_FINISH_HITSTOP_MS = [0, 96, 114, 132] as const
+
+/**
  * §X1 — where the celebration ray-rake lives in THIS scene: behind the cabinet and every piece
  * (gameplay sits at depth ≥ 0), above the whole backdrop ladder (≤ -28), so a big win's light
  * sweeps the ROOM around the machine instead of crossing the playfield (owner feedback
@@ -942,6 +962,16 @@ export class GameScene extends Phaser.Scene {
     this.traumaDirY = 0
     this.hitstopUntil = 0
     this.baseTimeScale = 1
+    // The braces to `hitstop`'s belt, and SlotScene has carried them since it ported this freeze
+    // (see its own copy) — this, the original, never got them. `sys.time` / `sys.tweens` outlive a
+    // `scene.start`, so a freeze stranded by a scene torn down mid-hitstop follows the game into its
+    // next screen and leaves it with no tweens and no timers: a dead board, and `t()` never settles,
+    // which is the one failure this scene has no recovery from. The wall-clock restore normally
+    // lands anyway; this is what makes that "normally" not matter. Now load-bearing rather than
+    // theoretical, because §X3 fires the deepest freeze in the game from `megaFinish` — the beat
+    // immediately before `finishWin()` can hand the screen to another scene.
+    this.tweens.timeScale = 1
+    this.time.timeScale = 1
     this.impactFlash = undefined
     this.cameraBreathTween = null // stale tween ref from a prior create (restart re-runs create, not field inits)
     this.boardKickTween = null
@@ -5379,9 +5409,18 @@ export class GameScene extends Phaser.Scene {
   private hitstop(ms: number): void {
     if (this.reducedMotion || ms <= 0) return
     const now = performance.now()
-    if (now < this.hitstopUntil) return
-    this.hitstopUntil = now + ms
+    // "The deepest owns it" — a hit landing mid-freeze no-ops when it would end no later than the
+    // freeze already running, and EXTENDS it when it would run past. The old test (`now <
+    // hitstopUntil`) dropped the second half: whichever hit arrived FIRST owned the freeze, so a
+    // deeper one landing a frame later was thrown away. That is the wrong way round for a beat that
+    // escalates, and §X3's settle freeze — the deepest in the game, and the one most likely to
+    // arrive on the heels of a shallower blast — is exactly what would have been discarded.
+    const until = now + ms
+    if (until <= this.hitstopUntil) return
+    this.hitstopUntil = until
     const restore = this.baseTimeScale
+    // Re-freezing an already-frozen clock is a no-op, so an extension needs no special case here;
+    // the deadline test in the restore below is what keeps the earlier timeout from thawing early.
     this.tweens.timeScale = 0.0001
     this.time.timeScale = 0.0001
     setTimeout(() => {
@@ -9140,7 +9179,10 @@ export class GameScene extends Phaser.Scene {
     const big = tier.t > 0
     // MEGA peak fires on each new TIER reached (x4 MEGA / x6 SUPER / x8 UNREAL), not every wave — a
     // strike that PUNCTUATES the escalation reads far bigger than the same wail becoming wallpaper.
-    if (big && tier.t > this.comboPeakTier) {
+    // Captured BEFORE the branch below spends it: `comboPeakTier` is raised in there, so every read
+    // after this line would say "no". The readout's own punch reads it too (see PUNCH).
+    const crossed = big && tier.t > this.comboPeakTier
+    if (crossed) {
       this.comboPeakTier = tier.t
       sfx.jackpotStrike()
       this.vibrate(tier.t >= 3 ? [70, 40, 90, 40, 160] : tier.t >= 2 ? [60, 40, 140] : [60, 40, 120])
@@ -9184,8 +9226,17 @@ export class GameScene extends Phaser.Scene {
     // Resting size grows with the chain — the visual crescendo — mega tiers pushing past the old 1.5
     // cap up to ~1.85. Then CLAMP so even the punch peak of a long label ("SUPER MEGA! ×6") never
     // overruns the screen: the medallion's fit trick — cap scale to the width the punch can afford.
-    const PUNCH = 1.28
+    // A wave that CROSSES a tier punches harder than one that merely deepens the count. Crossing is
+    // the escalation itself — the wave the name changes on (COMBO ×3 → MEGA WIN!) — and it used to
+    // pop at exactly the same 1.28 as the ×4→×5 that follows it, so the one beat the whole ladder is
+    // built around was the one the readout said nothing special about.
+    const PUNCH = crossed ? 1.46 : 1.28
     const want = big ? Math.min(1.85, 1.24 + tier.t * 0.2) : Math.min(1.5, 0.9 + cascade * 0.1)
+    // ⚠️ The clamp divides by the punch ACTUALLY used, so the guarantee it exists for still holds at
+    // the bigger one: peak width is pinned to DESIGN_W - 44 whatever PUNCH is. On a long label
+    // ("SUPER MEGA! ×6") the clamp binds, so a crossing rests a little smaller and pops to the same
+    // ceiling — a deeper pop, not a wider one, which is the half that can overrun the screen.
+    // Keep the ease monotonic for the same reason: a `backOut` would overshoot straight past it.
     const base = Math.min(want, (DESIGN_W - 44) / (PUNCH * Math.max(1, t.width)))
     if (this.reducedMotion) {
       t.setScale(base) // static: number + heat colour, no punch/pulse
@@ -9196,7 +9247,7 @@ export class GameScene extends Phaser.Scene {
     this.comboTween = this.tweens.add({
       targets: t,
       scale: base * PUNCH,
-      duration: 150,
+      duration: crossed ? 190 : 150, // a crossing hangs a beat longer, so it reads as an event
       yoyo: true,
       ease: 'Quad.easeOut',
     })
@@ -9322,6 +9373,12 @@ export class GameScene extends Phaser.Scene {
     // §X1 raised the settle's inhale (was 0.02 + t*0.012): the eruption below reads as flying PAST
     // the camera only if the camera also leans in. Still zoom-IN only — never below 1 (WASH_BLEED).
     this.megaZoom(0.026 + tier * 0.016)
+    // §X3 — THE PAYOFF FREEZE. Held here, deliberately ahead of the LOW-tier bail: a freeze costs no
+    // fill rate, so it is the one impact cue that survives on the hardware the governor has stripped
+    // the shockwave, bloom, sparks and the whole gold-rush frame from. That device needs it most, not
+    // least. Everything below is created UNDER it and so HOLDS at its opening pose through the freeze
+    // and releases together — the same trick `activationFlash` uses inside `playWave`'s blast freeze.
+    this.hitstop(MEGA_FINISH_HITSTOP_MS[Math.min(3, tier)])
     if (quality.tier() === 'low') return // the ring/bloom are an optional fill-rate layer
     const soft = this.reduceFlashing
     // A gold shockwave ring blowing outward from board centre — the awe layer.
