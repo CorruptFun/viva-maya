@@ -4,6 +4,7 @@ import { DESIGN_W, LIFE_REGEN_MS, LIVES_MAX, restScrollY, worldH } from '../conf
 import { LIFE_REFILL_PRICE } from '../core/store'
 import { ENDLESS_UNLOCK_LEVEL } from '../core/endless'
 import { DEAL_STREAK } from '../core/deal'
+import { daysToNextStreakReward, nextStreakReward } from '../core/daily'
 import type { HazardKind } from '../core/difficulty'
 import { hazardSkin } from './hazardskins'
 import { ensureHazardTexture } from './textures'
@@ -622,7 +623,41 @@ export function addMarquee(scene: Phaser.Scene, centerX: number, y: number, opts
  * Still hidden at streak 0, deliberately: a player with no streak has nothing at stake yet, and the
  * FREE SPIN TODAY badge on the LUCKY SLOTS pill is already carrying the offer for them. A second
  * "start a streak" prompt up here would be the same fact twice on one screen.
+ *
+ * ── The copy now names the next RUNG, and that is the point of the ladder ────
+ * Four cases, and each one says the most actionable true thing available:
+ *
+ *   atRisk, today's pull LANDS a rung   → `ONE WEEK — SPIN TODAY`   (the prize, and its price)
+ *   atRisk, ordinary day                → `4 DAYS — SPIN TODAY`     (unchanged: the stake)
+ *   spun, a rung ahead                  → `DAY 4 · 3 TO ONE WEEK`   (what today bought)
+ *   spun, ladder topped out             → `104 DAY STREAK`          (unchanged: the readout)
+ *
+ * The first is the one worth having: on the day a rung is reachable, the badge stops naming a
+ * number and starts naming a prize. A streak reward the player only learns about by receiving it
+ * cannot make anybody come back — the same lesson as the free-spin reveal, where the cabinet's door
+ * was never hidden but the offer was.
+ *
+ * The pill sizes itself from the label, so the longest string here (`DAY 99 · 1 TO ONE HUNDRED
+ * DAYS`) sets the width: measured 531px of pill inside the 720 design box, i.e. ~94px of margin a
+ * side. That is the budget a renamed rung spends against — re-measure rather than assuming, the way
+ * the reward card's footer had to be (it silently hung 20px off its plate until it was measured).
  */
+/** The badge's copy — see the four cases in `addStreakBadge`'s doc. Exported for its test. */
+export function streakBadgeLabel(streak: number, atRisk: boolean): string {
+  if (atRisk) {
+    // `streak` is the count as it stands BEFORE today's pull, so the rung today would land on is the
+    // one at streak + 1. Getting this off by one would promise a prize a day early, which is the
+    // single worst thing this badge could do.
+    const landing = nextStreakReward(streak)
+    if (landing && landing.day === streak + 1) return `${landing.label} — SPIN TODAY`
+    return `${streak} DAYS — SPIN TODAY`
+  }
+  const next = nextStreakReward(streak)
+  const away = daysToNextStreakReward(streak)
+  if (!next || away === null) return `${streak} DAY STREAK`
+  return `DAY ${streak} · ${away} TO ${next.label}`
+}
+
 export function addStreakBadge(
   scene: Phaser.Scene,
   centerX: number,
@@ -634,7 +669,7 @@ export function addStreakBadge(
   const container = scene.add.container(centerX, y)
   const flame = scene.add.text(0, 0, '🔥', { fontFamily: 'sans-serif', fontSize: '32px' }).setOrigin(0.5)
   const label = scene.add
-    .text(0, 0, atRisk ? `${streak} DAYS — SPIN TODAY` : `${streak} DAY STREAK`, {
+    .text(0, 0, streakBadgeLabel(streak, atRisk), {
       fontFamily: FONT,
       fontSize: '22px',
       fontStyle: '900',

@@ -25,7 +25,7 @@ export function mergeSaves(a: SaveData, b: SaveData): SaveData {
     }
     if (ma[i] > mb[i]) break
   }
-  return { ...winner, ...unionLatches(a, b), ...pickHandle(a, b) }
+  return { ...winner, ...unionLatches(a, b), ...pickHandle(a, b), ...pickStreak(a, b) }
 }
 
 /**
@@ -46,6 +46,34 @@ function pickHandle(a: SaveData, b: SaveData): Partial<SaveData> {
   const bt = b.handleSetAt || 0
   const win = bt > at ? b : a
   return { handle: win.handle ?? null, handleSetAt: win.handleSetAt || 0 }
+}
+
+/**
+ * The DAILY-SPIN STREAK, reconciled across devices — MOST RECENTLY SPUN WINS.
+ *
+ * `pickHandle`'s twin, and it exists for the same reason: a streak is not a magnitude, so it must
+ * not travel with the progress winner. Keep a thirty-day streak on the phone, then open a tablet
+ * that happens to be further through the levels, and the winner's record would quietly restore the
+ * tablet's `streak: 3` — the player loses a month for owning two devices, and the game has no way to
+ * know it happened. That was survivable while a streak only indexed a weekly-resetting chip ladder;
+ * it is not survivable now that the streak REWARDS ladder (core/daily.ts STREAK_REWARDS) pays real
+ * purses at 7 / 14 / 30 / 60 / 100 days and the flame badge counts down to the next one.
+ *
+ * ⚠️ MAX would be the obvious rule and it is WRONG — it resurrects dead streaks. A device left
+ * untouched for a fortnight still holds `streak: 30` from the day it was last opened; maxing would
+ * hand that back to a player whose real streak broke two weeks ago, and hand them the next rung with
+ * it. What makes one side right is only ever recency, and `lastSpinDate` already records exactly
+ * that, so the two fields travel together as a PAIR — splitting them would produce a streak count
+ * from one device dated by the other, which is how a streak advances twice in a day.
+ *
+ * Deliberately shape-tolerant on the date: `null` (never spun) loses to any real date, and the keys
+ * are `YYYY-MM-DD`, which sorts lexicographically exactly as it sorts chronologically. A dead tie
+ * prefers `a` — callers pass LOCAL first — matching mergeSaves' own tie rule, so two devices spun on
+ * the same day keep the local count rather than swapping to an identical remote one.
+ */
+function pickStreak(a: SaveData, b: SaveData): Partial<SaveData> {
+  const win = (b.lastSpinDate || '') > (a.lastSpinDate || '') ? b : a
+  return { lastSpinDate: win.lastSpinDate ?? null, streak: win.streak || 0 }
 }
 
 /**
@@ -112,6 +140,12 @@ function unionLatches(a: SaveData, b: SaveData): Partial<SaveData> {
     // Letting it ride the progress winner would mean a further-along device with a worse storm run
     // erases a real personal best, and a best that can go DOWN is the one thing a best may not do.
     lightningBest: Math.max(a.lightningBest || 0, b.lightningBest || 0),
+    // ⚠️ MAX, like lightningBest above and DELIBERATELY UNLIKE its own sibling `streak`, which
+    // pickStreak resolves by recency. The two fields answer different questions: `streak` is "how
+    // many days are you on RIGHT NOW", which can and must fall, while this is "how far have you ever
+    // got", which cannot. Resurrecting a dead streak is the failure pickStreak avoids; erasing a
+    // real personal best is the failure this one avoids, and they need opposite rules to do it.
+    bestStreak: Math.max(a.bestStreak || 0, b.bestStreak || 0),
     // A CLAIM latch, not a "seen" one — losing it to a progress-winner merge would re-pay the purse
     // and the boost, the exact double-award `championWeeks` sits in this list to prevent. ⚠️ It is
     // per-PLAYER, not per-device, so installing on a phone and then a tablet pays once. That is the

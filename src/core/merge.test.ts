@@ -323,3 +323,56 @@ describe('mergeSaves — chapter trophies and the race-unlock latch', () => {
     expect(coerceSave({ unlocked: 40 }).seenPushOffer).toBe(false)
   })
 })
+
+describe('the daily-spin STREAK — most recently spun wins, and the record only climbs', () => {
+  it('a further-progressed device does NOT overwrite a longer, more recent streak', () => {
+    // THE case this rule exists for. The tablet is further through the levels, so it wins the
+    // progress compare and its whole record is kept — but the phone was spun today and the tablet a
+    // fortnight ago, so a 30-day streak must not become a 3-day one for owning two devices.
+    const phone = save({ unlocked: 20, lastSpinDate: '2026-08-24', streak: 30, bestStreak: 30 })
+    const tablet = save({ unlocked: 90, lastSpinDate: '2026-08-10', streak: 3, bestStreak: 3 })
+    const merged = mergeSaves(phone, tablet)
+    expect(merged.unlocked).toBe(90) // progress still rides the winner
+    expect(merged.streak).toBe(30)
+    expect(merged.lastSpinDate).toBe('2026-08-24')
+  })
+
+  it('does NOT resurrect a dead streak — a stale device loses to a shorter, fresher one', () => {
+    // ⚠️ The reason the rule is recency and not MAX. This player's real streak broke; the tablet
+    // still remembers the 30 days it held when it was last opened, and must not hand them back.
+    const phone = save({ lastSpinDate: '2026-08-24', streak: 2 })
+    const staleTablet = save({ unlocked: 90, lastSpinDate: '2026-08-01', streak: 30 })
+    expect(mergeSaves(phone, staleTablet).streak).toBe(2)
+    expect(mergeSaves(staleTablet, phone).streak).toBe(2)
+  })
+
+  it('carries the pair together — the count is never dated by the other device', () => {
+    const a = save({ lastSpinDate: '2026-08-24', streak: 12 })
+    const b = save({ unlocked: 90, lastSpinDate: '2026-08-23', streak: 40 })
+    const merged = mergeSaves(a, b)
+    expect([merged.lastSpinDate, merged.streak]).toEqual(['2026-08-24', 12])
+  })
+
+  it('a never-spun device loses to any real spin date', () => {
+    const fresh = coerceSave({}) // lastSpinDate null
+    const real = save({ lastSpinDate: '2026-08-24', streak: 9 })
+    expect(mergeSaves(fresh, real).streak).toBe(9)
+    expect(mergeSaves(real, fresh).streak).toBe(9)
+  })
+
+  it('on a same-day tie keeps LOCAL, matching mergeSaves own tie rule', () => {
+    const local = save({ lastSpinDate: '2026-08-24', streak: 5 })
+    const remote = save({ unlocked: 90, lastSpinDate: '2026-08-24', streak: 5 })
+    expect(mergeSaves(local, remote).streak).toBe(5)
+  })
+
+  it('bestStreak takes the MAX — the opposite rule to streak, deliberately', () => {
+    // A record cannot go down. The stale tablet loses the live `streak` above and still contributes
+    // its personal best here, which is exactly the split the two fields exist to make.
+    const phone = save({ lastSpinDate: '2026-08-24', streak: 2, bestStreak: 2 })
+    const staleTablet = save({ unlocked: 90, lastSpinDate: '2026-08-01', streak: 30, bestStreak: 30 })
+    const merged = mergeSaves(phone, staleTablet)
+    expect(merged.streak).toBe(2)
+    expect(merged.bestStreak).toBe(30)
+  })
+})

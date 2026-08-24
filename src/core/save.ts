@@ -14,6 +14,19 @@ export interface SaveData {
   lastSpinDate: string | null
   /** Consecutive-day spin streak (1 = first day). */
   streak: number
+  /**
+   * Longest daily-spin streak ever reached, all-time. Never reset — a RECORD, not a latch, and the
+   * only permanent trace a broken streak leaves behind.
+   *
+   * ⚠️ Merges by MAX (core/merge.ts), exactly like `lightningBest` and pointedly UNLIKE `streak`
+   * itself, which travels by recency because it can legitimately go DOWN. A best that can go down is
+   * the one thing a best may never do.
+   *
+   * Two things read it: the STREAK REWARD event's `repeat` prop (has this player been paid this rung
+   * before — the measurement the repeatable-per-run design stands or falls on), and any surface that
+   * wants to tell a player who just lost a long streak what they were chasing.
+   */
+  bestStreak: number
   /** Prizes waiting to be applied to the next level started. */
   pendingBoosts: BoostType[]
   /**
@@ -226,6 +239,7 @@ const DEFAULTS: SaveData = {
   stars: {},
   lastSpinDate: null,
   streak: 0,
+  bestStreak: 0,
   pendingBoosts: [],
   endlessDays: {},
   lives: LIVES_MAX,
@@ -304,6 +318,14 @@ export function coerceSave(raw: unknown): SaveData {
     base.stars = data.stars && typeof data.stars === 'object' ? data.stars : {}
     base.lastSpinDate = typeof data.lastSpinDate === 'string' ? data.lastSpinDate : null
     base.streak = typeof data.streak === 'number' ? data.streak : 0
+    // Absent in every save written before the streak ladder shipped → seeded from the streak the
+    // player is CARRYING rather than from 0. A returning player's real best is unknowable (it was
+    // never recorded), and the live streak is the only lower bound that is certainly true — better a
+    // conservative real number than a 0 that would call a player's 20th consecutive day their first.
+    base.bestStreak =
+      typeof data.bestStreak === 'number' && Number.isFinite(data.bestStreak)
+        ? Math.max(0, Math.floor(data.bestStreak))
+        : Math.max(0, Math.floor(base.streak))
     base.pendingBoosts = Array.isArray(data.pendingBoosts) ? data.pendingBoosts : []
     // v11: per-DAY bests. Sanitised on the way in — every reader treats this map as trusted, and it
     // is summed into a public weekly total, so a junk entry must never reach the sum.

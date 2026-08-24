@@ -2,7 +2,7 @@ import Phaser from 'phaser'
 import { sfx } from '../audio/sfx'
 import { DESIGN_H, DESIGN_W, restScrollY, viewportCenterY, worldH } from '../config'
 import { EVENTS, track } from '../core/analytics'
-import { spinAvailable, todayKey } from '../core/daily'
+import { daysToNextStreakReward, nextStreakReward, spinAvailable, streakRewardFor, todayKey } from '../core/daily'
 import { LEVEL_COUNT } from '../core/levels'
 import { occasionFor, pendingOccasion } from '../core/maya'
 import { mulberry32 } from '../core/rng'
@@ -26,6 +26,7 @@ import { BOOST_ITEMS, buySpin, freeSlotSpin } from '../core/store'
 import type { FreeSlotKind, FreeSlotSpinResult, SlotPurchase } from '../core/store'
 import { addCasinoBackdrop } from '../view/background'
 import { addScreenGloss } from '../view/fx'
+import { openStreakRewardCard } from '../view/streakrewardcard'
 import { vibratePattern } from '../view/haptics'
 import { coinBurst, igniteVignette, rakeRays } from '../view/megafx'
 import { addJackpotMeter } from '../view/jackpot'
@@ -326,6 +327,28 @@ export class SlotScene extends Phaser.Scene {
     // so the funnel can tell a ritual visit from a shopping trip (a new PROP on the existing event;
     // old dashboards simply ignore it).
     track(EVENTS.SLOTS_OPENED, { chips: save.chips, rows: this.rows, free: this.pullSource() })
+
+    // DEV fixture (?streak=N): open the STREAK REWARD card for rung N without waiting N days for it
+    // — presentation only, ignored in prod, and it grants nothing. `?showroom=N`'s twin, and it
+    // exists for the same reason that one does: the card's plate is sized from the number of prize
+    // rows the rung actually pays (1 at day 3, 3 from day 14 up), so the layout has three distinct
+    // shapes that are otherwise a fortnight apart to look at.
+    if (import.meta.env.DEV) {
+      const day = Number(new URLSearchParams(location.search).get('streak'))
+      const rung = streakRewardFor(day)
+      if (rung) {
+        this.time.delayedCall(200, () =>
+          openStreakRewardCard(this, {
+            reward: rung,
+            chips: rung.chips,
+            freeSpins: rung.freeSpins,
+            boost: rung.boost,
+            balance: save.chips + rung.chips,
+            repeat: false,
+          })
+        )
+      }
+    }
   }
 
   /** Which pull the hero currently offers: the daily gift first, then the bank, then the bet ladder. */
@@ -348,9 +371,23 @@ export class SlotScene extends Phaser.Scene {
         : source === 'banked'
           ? `${save.freeSpins} free spin${save.freeSpins === 1 ? '' : 's'} banked — on the house`
           : save.lastSpinDate === todayKey() && save.streak > 0
-            ? `🔥 day ${save.streak} — free spin again tomorrow`
+            ? this.streakLine(save.streak)
             : 'Buy rows — every row is another payline'
     )
+  }
+
+  /**
+   * The claimed-gift line, pointed FORWARD at the next rung of the streak ladder rather than back at
+   * today's count. "day 4 — free spin again tomorrow" states a number the player can do nothing
+   * with; "3 more days → ONE WEEK" states what is now at stake, which is the entire reason the
+   * ladder exists. Falls back to the old copy once the ladder is topped out, where there is nothing
+   * ahead to name and the honest thing to say is simply "come back".
+   */
+  private streakLine(streak: number): string {
+    const next = nextStreakReward(streak)
+    const away = daysToNextStreakReward(streak)
+    if (!next || away === null) return `🔥 day ${streak} — free spin again tomorrow`
+    return `🔥 day ${streak} — ${away} more day${away === 1 ? '' : 's'} to ${next.label}`
   }
 
   /**
@@ -1242,6 +1279,10 @@ export class SlotScene extends Phaser.Scene {
     const extraParts: string[] = []
     if (res.milestone) extraParts.push(`DAY-5 DOUBLE: ${res.milestone.label}`)
     if (res.comp) extraParts.push(`ON THE HOUSE: ${res.comp.label}`)
+    // ⚠️ The STREAK REWARD deliberately does NOT join `extraParts`. Everything in that list is a
+    // line of prize copy on the reel result; this one gets its own card, because a rung of the
+    // ladder is the rarest thing the cabinet pays and burying "TWO WEEKS" in a comma-separated list
+    // next to a gift-floor comp is how a milestone stops reading as one.
     this.presentResult(res.spin, {
       meter: res.meter,
       charmAward: res.charm,
@@ -1269,6 +1310,27 @@ export class SlotScene extends Phaser.Scene {
             chipLine.setScale(0)
             this.tweens.add({ targets: chipLine, scale: 1, duration: 300, delay: 140, ease: 'Back.easeOut' })
           }
+        }
+        // The rung's card, AFTER the pull has finished paying out — the reels, the chips and the
+        // heartbloom are the daily ritual, and the ladder is a separate thing that happened to land
+        // on the same day. Opening it over a still-animating payout would read as one event.
+        const reward = res.streakReward
+        if (reward) {
+          this.time.delayedCall(900, () => {
+            if (!this.scene.isActive()) return
+            track(EVENTS.STREAK_REWARD, {
+              day: reward.reward.day,
+              chips: reward.chips,
+              boost: reward.boost ?? 'none',
+              spins: reward.freeSpins,
+              repeat: reward.repeat,
+            })
+            void openStreakRewardCard(this, reward).then(() => {
+              // The bank may have grown by a rung's free spins, so the hero pill and the subtitle
+              // both have stale state behind this card.
+              this.rearm()
+            })
+          })
         }
       },
     })

@@ -266,6 +266,22 @@ export const EVENTS = {
    */
   SLOTS_INTRO: 'slots_intro',
   /**
+   * A STREAK REWARD rung was reached and paid (core/daily.ts STREAK_REWARDS) — {day, chips, boost,
+   * spins, repeat}. Fired from the reveal card's mount, like `slots_intro`.
+   *
+   * The measurement the ladder exists to make is the DROP-OFF between rungs: day 3 against day 7
+   * against day 14 is a retention curve read directly off the reward that is supposed to be bending
+   * it, and it is the only way to find out whether the gaps are paced right or whether 14 → 30 is a
+   * fortnight of climbing with nothing in it.
+   *
+   * `repeat` (this player has been paid this rung before) is the one that decides whether the
+   * repeatable-per-run call was correct. The whole argument for repeatability is that a broken
+   * streak leaves something to climb back toward; a population of repeats at day 3 and day 7 is that
+   * argument working, and a near-zero repeat rate means players who break a streak simply leave and
+   * the rung sizes are not the thing to change.
+   */
+  STREAK_REWARD: 'streak_reward',
+  /**
    * ⚡ A LIGHTNING ROUND ended, carrying the rounds survived. The whole tuning signal for the mode:
    * the ramp in core/lightning.ts is a first guess, and the DISTRIBUTION of this number is what says
    * whether the opening quota is a warm-up or a wall. A run bunched at 0–1 means round 1 is already

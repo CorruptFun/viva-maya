@@ -155,6 +155,38 @@ Live: <https://corruptfun.github.io/viva-maya/>
   moved** — do not re-record it; ship the change behind a new activation date
   the way the salt shipped, so the handover lands on a day boundary for
   everyone at once.
+- **The daily streak pays on TWO rhythms, and the big one has no claim latch on
+  purpose.** `CHECKIN_CHIPS` (`core/daily.ts`) is a 7-day chip ladder that RESETS
+  every week — it answers "how far into this week are you", so day 8 pays what day
+  1 pays. `STREAK_REWARDS` is the other half: a named purse at 3/7/14/30/60/100
+  consecutive days, repeatable once per streak RUN (break it, climb back, day 7
+  pays again — a ladder you can only climb once is dead the day it breaks, and
+  re-farming is self-punishing because breaking forfeits the 60/90/150 end of the
+  check-in week). A third thing, `milestoneDue`, is the every-5th-day DOUBLE and is
+  **not** the ladder — two things in one file were nearly both called "milestone".
+  ⚠️ Unlike `chapterRewards` / `championWeeks` / `installRewardClaimed`, the rung
+  grants real chips + a boost + free spins with **no latch of its own**, because it
+  is paid *inside* `advanceDailyRitual`, in the same statement block that writes
+  `lastSpinDate`. **The day latch IS the claim latch.** Lift the grant out to a
+  caller for convenience and a caller that runs twice (a retry, a double-tap, a
+  re-entered scene) pays the purse twice while the streak moves once. Free spins
+  there bypass `FREE_SPIN_DAILY_CAP` deliberately (a rung is not the farmable
+  source that cap bounds) but still honour the BANK cap, and the grant reports what
+  actually stuck so the card never names spins the player didn't get.
+  ⚠️ `streak` + `lastSpinDate` now merge by **recency**, not by progress
+  (`pickStreak` in `core/merge.ts`) — they are `pickHandle`'s twin, not a
+  magnitude. Before 2026-08-24 they rode the progress winner, so opening a
+  further-along tablet silently reset a 30-day streak to 3. MAX is the obvious rule
+  and is **wrong**: a device untouched for a fortnight still holds its old count
+  and would resurrect a dead streak. `bestStreak` is the opposite — a RECORD, so it
+  merges by MAX like `lightningBest`. The two need opposite rules and both are
+  pinned by `merge.test.ts`.
+  The forward-looking copy is the feature, not the purse: the Home flame badge and
+  the cabinet subtitle both name the NEXT rung and its distance
+  (`nextStreakReward`), because a reward discovered only by receiving it cannot
+  make anybody come back. `?streak=N` (DEV) opens the card for any rung — its plate
+  is **measured** from the wrapped footer line, since that string is the longest on
+  the card and hung 20px off the plate until it was budgeted rather than guessed.
 - **Endless has a cheat code**, and it is meant to be there — a secret swipe
   pattern on the dead strip below the board mints a free "mega win", each one
   paying its own Plinko drop (`src/core/cheat.ts`). A run that fires it still

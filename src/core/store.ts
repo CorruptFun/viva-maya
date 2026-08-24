@@ -1,6 +1,6 @@
 import { grantCharm } from './charms'
 import type { CharmAward } from './charms'
-import { advanceDailyRitual, milestoneDue, rollPrize, spinAvailable } from './daily'
+import { advanceDailyRitual, milestoneDue, rollPrize, spinAvailable, type StreakRewardGrant } from './daily'
 import type { Prize } from './daily'
 import { BOOST_META } from './inventory'
 import { loadSave, persistSave } from './save'
@@ -182,9 +182,17 @@ export function buySpin(rows: number, rng: Rng): SlotSpinResult {
 //   (one daily) and the bank caps (FREE_SPIN_DAILY_CAP / FREE_SPIN_BANK_CAP).
 //
 // The DAILY pull also carries the whole check-in ritual — streak, latch, the
-// CHECKIN_CHIPS ladder (advanceDailyRitual), and the every-5th-day DOUBLE
-// prize (milestoneDue) the week strip always promised. A BANKED pull touches
-// none of that, by the same contract banked spins have always had.
+// CHECKIN_CHIPS ladder (advanceDailyRitual), the every-5th-day DOUBLE prize
+// (milestoneDue) the week strip always promised, and the STREAK REWARD ladder
+// at 3/7/14/30/60/100 consecutive days. A BANKED pull touches none of that, by
+// the same contract banked spins have always had.
+//
+// ⚠️ The streak reward is banked INSIDE advanceDailyRitual rather than here,
+// unlike the day-5 double. That is the load-bearing difference between them:
+// the double needs an Rng so it has to be rolled at this layer, whereas the
+// streak reward is a fixed table lookup that must be paid in the same statement
+// block that writes `lastSpinDate` — because that day latch is the only thing
+// stopping it being paid twice. See the warning on advanceDailyRitual.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type FreeSlotKind = 'daily' | 'banked'
@@ -195,6 +203,12 @@ export interface FreeSlotSpinResult {
   comp: Prize | null
   /** The every-5th-streak-day double prize (daily pulls only, else null). */
   milestone: Prize | null
+  /**
+   * The STREAK REWARD banked because today's pull reached a rung of the ladder — 3/7/14/30/60/100
+   * consecutive days (daily pulls only, else null). ⚠️ Not `milestone` above: that one is the
+   * recurring every-5th-day double prize. See the naming note at the top of core/daily.ts.
+   */
+  streakReward: StreakRewardGrant | null
   /** Where the jackpot meter now stands. */
   meter: number
   /** The charm award, when the scatter hit. */
@@ -227,11 +241,14 @@ export function freeSlotSpin(kind: FreeSlotKind, rng: Rng): FreeSlotSpinResult |
   let checkinChips: number | undefined
   let remaining: number | undefined
   let milestone: Prize | null = null
+  let streakReward: StreakRewardGrant | null = null
   if (kind === 'daily') {
     if (!spinAvailable(save)) return null
     const ritual = advanceDailyRitual(save)
     streak = ritual.streak
     checkinChips = ritual.chips
+    // Already banked onto `save` by the ritual — this only carries the receipt out to the caller.
+    streakReward = ritual.reward
     if (milestoneDue(ritual.streak)) {
       milestone = rollPrize(rng)
       save.pendingBoosts.push(milestone.type)
@@ -253,5 +270,5 @@ export function freeSlotSpin(kind: FreeSlotKind, rng: Rng): FreeSlotSpinResult |
   }
   persistSave(save)
 
-  return { spin, comp, milestone, meter: save.jackpotMeter, charm, streak, checkinChips, remaining }
+  return { spin, comp, milestone, streakReward, meter: save.jackpotMeter, charm, streak, checkinChips, remaining }
 }
