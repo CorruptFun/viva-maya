@@ -29,13 +29,15 @@
  * who opted in under the first one's wording. Read that before widening anything here.
  *
  * ── THE MODES ────────────────────────────────────────────────────────────────────────────────────
- *   --drop    MORNING (≈9am at home). The play nudge, for people who were not here yesterday. Carries
- *             the day's HOUSE GIFT by name — "a JACKPOT CHIP is on the table" — which it can do
- *             because the gift is seeded from the day alone and this file carries a byte-identical
+ *   --drop    MORNING (≈9am at home). The play nudge, for people who were not here yesterday. Leads
+ *             with a JACKPOT WHEEL within reach when this player has one (jackpotWinsAway), else
+ *             carries the day's HOUSE GIFT by name — "a JACKPOT CHIP is on the table" — which it can
+ *             do because the gift is seeded from the day alone and this file carries a byte-identical
  *             copy of the roll (see dropForDay). Audience column: `daily_play` (0025).
  *   --daily   EVENING (≈6–7pm at home). Today's board closes at midnight America/Edmonton; for people
- *             who WERE here yesterday. Leads with a streak about to break when there is one, and
- *             otherwise with the player's standing. Audience column: `week_race` (0011).
+ *             who WERE here yesterday. Leads with a streak about to break when there is one, then a
+ *             jackpot wheel within reach, and otherwise the player's standing. Audience column:
+ *             `week_race` (0011).
  *   (default) SUNDAY EVENING. The weekly season, which closes Monday midnight America/Edmonton,
  *             ranked on the SUM of daily bests from the endless_weekly_totals view. Deliberately the
  *             one mode with NO activity filter: a season summary silenced for anyone who drifted off
@@ -45,11 +47,13 @@
  * one-a-day guard — because the only real differences are which partition to read and what to say.
  *
  * WHAT PERSONALISATION COSTS: the race modes join against the leaderboard, which is public data. The
- * streak hook additionally reads the player's own save blob with the service role (signed-in players
- * only — a signed-out subscriber has no cloud save and gets the impersonal copy, which is why
- * user_id is nullable in 0011). ⚠️ A streak count is NOT public, unlike a leaderboard rank, and this
- * runs in a PUBLIC repo whose Actions logs anyone can read — so `--dry-run` prints WHICH HOOK fired
- * and never the composed body for a hook built on private data. See the dry-run block in `main`.
+ * streak and jackpot hooks additionally read the player's own save blob with the service role
+ * (signed-in players only — a signed-out subscriber has no cloud save and gets the impersonal copy,
+ * which is why user_id is nullable in 0011), and the next-level line reads `level_progress`, which
+ * 0007 makes world-readable (it is what the leaderboard's trophy badges derive from). ⚠️ A streak
+ * count and a jackpot meter are NOT public, unlike a leaderboard rank, and this runs in a PUBLIC
+ * repo whose Actions logs anyone can read — so `--dry-run` prints WHICH HOOK fired and never the
+ * composed body for a hook built on private data. See the dry-run block in `main`.
  *
  * USAGE
  *   node scripts/send-push.mjs --dry-run          # weekly, print what would be sent
@@ -396,13 +400,13 @@ async function fetchLastSeen(deviceIds, now) {
 }
 
 /**
- * The streak state of signed-in subscribers: how many consecutive days, and the day of the last
- * daily spin. Everything else in the save blob is dropped on the floor here and never leaves this
- * function — a notification needs two numbers, not a player's progress.
+ * The save-blob facts of signed-in subscribers: how many consecutive days, the day of the last
+ * daily spin, and the jackpot meter. Everything else in the save blob is dropped on the floor here
+ * and never leaves this function — a notification needs three numbers, not a player's progress.
  *
- * ⚠️ A failed or partial read is NOT fatal and never throws: the streak hook simply does not fire
- * and the message falls back to the standing, which is what every player got before this existed.
- * A missing personalisation must never cost a notification.
+ * ⚠️ A failed or partial read is NOT fatal and never throws: the personal hooks simply do not fire
+ * and the message falls back to the standing (or the gift), which is what every player got before
+ * they existed. A missing personalisation must never cost a notification.
  *
  * ⚠️ `lastSpinDate` is the player's DEVICE-LOCAL calendar day (core/daily.ts todayKey) and it is
  * being compared against the RACE day here, because the race day is the only clock this script has.
@@ -411,7 +415,7 @@ async function fetchLastSeen(deviceIds, now) {
  * of the race day produces 0 or a negative, and the hook stays silent. It fails toward saying
  * nothing rather than toward telling somebody their streak is dying when it is not.
  */
-async function fetchStreaks(userIds) {
+async function fetchPlayerFacts(userIds) {
   const out = new Map()
   for (const group of chunk(userIds, 40)) {
     const res = await rest(`saves?select=user_id,data&user_id=in.(${group.join(',')})`)
@@ -419,9 +423,11 @@ async function fetchStreaks(userIds) {
     for (const row of await res.json()) {
       const d = row.data && typeof row.data === 'object' ? row.data : {}
       const streak = Number(d.streak)
+      const meter = Number(d.jackpotMeter)
       out.set(row.user_id, {
         streak: Number.isFinite(streak) ? Math.max(0, Math.floor(streak)) : 0,
         lastSpinDate: typeof d.lastSpinDate === 'string' ? d.lastSpinDate : null,
+        jackpotMeter: Number.isFinite(meter) ? Math.max(0, Math.floor(meter)) : 0,
       })
     }
   }
@@ -442,22 +448,118 @@ export function streakAtRisk(info, today) {
 }
 
 /**
+ * THE JACKPOT WHEEL'S GOAL and THE LADDER'S REACH — src/core/jackpot.ts JACKPOT_GOAL and
+ * src/core/levels.ts LEVEL_COUNT.
+ *
+ * ⚠️ MUST STAY IDENTICAL TO THE APP'S COPIES, for the reason every duplicated constant in this file
+ * carries: a drift here means telling a player they are "one win from the wheel" when they are not,
+ * or naming a level the catalogue does not hold. Pinned in src/core/pushcadence.test.ts.
+ */
+export const JACKPOT_GOAL = 5
+export const LEVEL_COUNT = 500
+
+/**
+ * The jackpot-within-reach hook, or null.
+ *
+ * The JACKPOT WHEEL (core/jackpot.ts) is a meter charged one notch per NEW level win that fires an
+ * always-pays wheel at JACKPOT_GOAL — the game's own "keep playing levels" engine, which makes it
+ * the most concrete unfinished business a nudge can point at. Fires only when the wheel is at most
+ * TWO wins away: further out is a meter reading, not news. Returns the wins left — 0 is a wheel
+ * already LOADED (a store batch or a cross-device merge can carry the meter past the goal), 1–2 a
+ * chase nearly home.
+ *
+ * Total on junk: a signed-out subscriber has no save row, a malformed meter reads as absent, and
+ * both answer null — a missing personalisation must never cost a notification.
+ */
+export function jackpotWinsAway(info) {
+  const meter = info ? Number(info.jackpotMeter) : NaN
+  if (!Number.isFinite(meter)) return null
+  const left = JACKPOT_GOAL - Math.floor(meter)
+  return left <= 2 ? Math.max(0, left) : null
+}
+
+/**
+ * Highest level each signed-in subscriber has WON, from `level_progress` — the world-readable table
+ * the leaderboard's trophy badges derive from (0007's monotonic guard is what makes it trustworthy).
+ * `cleared` is the highest level won (core/trophies.ts spells that coupling out), so the level to
+ * name is `cleared + 1` — and only while that level exists (LEVEL_COUNT; the caller guards it).
+ *
+ * PUBLIC data, unlike the save read above, so a level number may appear in a --dry-run log.
+ * Fail-soft the same way: a failed read costs the copy its level number, never the send.
+ */
+async function fetchCleared(userIds) {
+  const out = new Map()
+  for (const group of chunk(userIds, 40)) {
+    const res = await rest(`level_progress?select=user_id,cleared&user_id=in.(${group.join(',')})`)
+    if (!res.ok) return out
+    for (const row of await res.json()) {
+      const c = Number(row.cleared)
+      if (Number.isFinite(c) && c > 0) out.set(row.user_id, Math.floor(c))
+    }
+  }
+  return out
+}
+
+/** Hooks whose copy is built on private save data — `--dry-run` withholds their bodies from the log. */
+const PRIVATE_HOOKS = new Set(['streak', 'jackpot'])
+
+/**
+ * The jackpot hook's message, said ONCE for both slots so the wheel is described identically in the
+ * morning and the evening — only the gift tail differs (the morning send owns the gift's name; the
+ * evening matches the streak hook's register and leaves it unnamed).
+ *
+ * ⚠️ The level line rides `nextLevel`, which the caller sets null past LEVEL_COUNT — a maxed-out
+ * ladder falls back to the level-less copy rather than naming a level that does not exist. "It
+ * always pays" is the wheel's real contract (core/jackpot.ts: a reward, not gambling) and the one
+ * fact worth repeating to somebody deciding whether the chase is worth finishing.
+ */
+function jackpotMessage(winsAway, nextLevel, giftTail) {
+  const chase =
+    winsAway === 0
+      ? 'The spin is waiting.'
+      : winsAway === 1
+        ? nextLevel
+          ? `Win level ${nextLevel} and it fires.`
+          : 'One more level win fires it.'
+        : nextLevel
+          ? `Two level wins away — level ${nextLevel} is next.`
+          : 'Two level wins away.'
+  const title =
+    winsAway === 0
+      ? '🎰 Your JACKPOT wheel is loaded'
+      : winsAway === 1
+        ? '🎰 One win from your JACKPOT spin'
+        : '🎰 Two wins from your JACKPOT spin'
+  return { hook: 'jackpot', title, body: `${chase} It always pays — and ${giftTail}` }
+}
+
+/**
  * The MORNING nudge (`--drop`) — for people who were not here yesterday.
  *
  * The gift is the hook, and it is a hook precisely because it can be NAMED: "come back and play" is
  * a request, "THE VAULT is on the table today" is an appointment. Everything the copy says is
  * verifiably true when they arrive — the same gift, from the same table, seeded from the same day.
  *
+ * ⚠️ THE JACKPOT WHEEL OUTRANKS THE GIFT when it is within reach: the gift is the same appointment
+ * every subscriber has, the wheel is THIS player's unfinished business with a guaranteed payout
+ * behind it. The gift still rides along by name in every branch, so the appointment is never lost
+ * to the better headline.
+ *
  * ⚠️ NO DAY COUNTS IN THE COPY. "5 days away" is only accurate for a device that emits events, and
  * the one group it would be wrong for is the group that turned events off — who would be told they
  * had been absent while playing daily. The vaguer line is right in every case.
  */
-function messageForDrop(gift, awayDays) {
+function messageForDrop(gift, awayDays, winsAway = null, nextLevel = null) {
+  if (winsAway !== null) {
+    return jackpotMessage(winsAway, nextLevel, `today's gift, ${gift.label}, is on the table too.`)
+  }
   if (awayDays !== null && awayDays >= 4) {
     return {
       hook: 'winback',
       title: 'Your seat is still here',
-      body: `It has been a while — and today's gift is ${gift.label}. ${gift.blurb}`,
+      body: nextLevel
+        ? `Level ${nextLevel} is waiting — and today's gift is ${gift.label}. ${gift.blurb}`
+        : `It has been a while — and today's gift is ${gift.label}. ${gift.blurb}`,
     }
   }
   return {
@@ -478,19 +580,25 @@ function messageForDrop(gift, awayDays) {
  * one good run says "still time"; a WEEKLY total made of seven boards cannot be caught in one run, so
  * its copy points at the thing that can still move — the boards left to play.
  *
- * ⚠️ THE STREAK OUTRANKS THE STANDING, and it is the one hook that jumps the ladder above. A rank is
- * a thing you can improve tomorrow; a streak is a thing you LOSE tonight, permanently, and the
- * ladder it indexes pays real purses at 3/7/14/30/60/100 days (core/daily.ts STREAK_REWARDS). Loss
- * beats gain, and a 30-day run about to end at midnight is the most urgent true sentence this sender
- * can say to anyone. It is checked first for that reason and for no other.
+ * ⚠️ THE STREAK OUTRANKS EVERYTHING, AND THE JACKPOT WHEEL OUTRANKS THE STANDING. The order is loss
+ * before gain before news: a streak is a thing you LOSE tonight, permanently, and the ladder it
+ * indexes pays real purses at 3/7/14/30/60/100 days (core/daily.ts STREAK_REWARDS) — the most
+ * urgent true sentence this sender can say to anyone. A wheel within reach is THIS player's
+ * unfinished business with a guaranteed payout behind it. The standing is a fact about other
+ * people. In practice the evening audience (last seen exactly yesterday) rarely has a row on
+ * TODAY'S board at all, so without the personal hooks most evenings open with the impersonal
+ * leader line — the hooks are what make the one allowed message worth its slot.
  */
-function messageFor(sub, board, hrs, streakDays = null) {
+function messageFor(sub, board, hrs, streakDays = null, winsAway = null, nextLevel = null) {
   if (streakDays) {
     return {
       hook: 'streak',
       title: `🔥 Your ${streakDays}-day streak ends at midnight`,
       body: 'One pull on LUCKY SLOTS keeps it alive — and the daily gift is still on the table.',
     }
+  }
+  if (winsAway !== null) {
+    return jackpotMessage(winsAway, nextLevel, 'the daily gift is still on the table.')
   }
   return { hook: 'standing', ...standingMessage(sub, board, hrs) }
 }
@@ -662,11 +770,17 @@ async function main() {
     if (!boardRes.ok) console.warn(`could not read the board: ${boardRes.status} — sending the impersonal copy`)
   }
 
-  // Streaks, for the evening hook only, and only for the signed-in subscribers who can have one.
-  const streaks =
-    DAILY && subs.some(s => s.user_id)
-      ? await fetchStreaks([...new Set(subs.filter(s => s.user_id).map(s => s.user_id))])
-      : new Map()
+  // The save-blob facts (streak + jackpot meter, PRIVATE) and the level ladder (public), for the
+  // two personalised sends and only for the signed-in subscribers who can have them. The weekly
+  // season reads neither — it is a summary, not a nudge.
+  const signedIn = mode === 'week' ? [] : [...new Set(subs.filter(s => s.user_id).map(s => s.user_id))]
+  const facts = signedIn.length ? await fetchPlayerFacts(signedIn) : new Map()
+  const cleared = signedIn.length ? await fetchCleared(signedIn) : new Map()
+  /** The level to name for this subscriber, or null when unknown or past the ladder's end. */
+  const nextLevelOf = sub => {
+    const won = sub.user_id ? cleared.get(sub.user_id) : undefined
+    return won && won + 1 <= LEVEL_COUNT ? won + 1 : null
+  }
 
   console.log(
     `${mode} ${key} · ends in ${hrs}h · ${all.length} opted in · ${alreadySent} already sent today · ` +
@@ -678,12 +792,22 @@ async function main() {
   let sent = 0
   let retired = 0
   let failed = 0
+  /** Composed messages per hook — the run's only per-branch observability outside `--dry-run`. */
+  const hooks = {}
 
   for (const sub of subs) {
     const msg = DROP
-      ? messageForDrop(gift, awayOf(sub))
-      : messageFor(sub, board, hrs, DAILY ? streakAtRisk(streaks.get(sub.user_id), today) : null)
+      ? messageForDrop(gift, awayOf(sub), jackpotWinsAway(facts.get(sub.user_id)), nextLevelOf(sub))
+      : messageFor(
+          sub,
+          board,
+          hrs,
+          DAILY ? streakAtRisk(facts.get(sub.user_id), today) : null,
+          DAILY ? jackpotWinsAway(facts.get(sub.user_id)) : null,
+          DAILY ? nextLevelOf(sub) : null
+        )
     const { title, body, hook } = msg
+    hooks[hook] = (hooks[hook] ?? 0) + 1
     // The tag collapses a re-send onto the same notification rather than stacking a second one; it
     // is per-BOARD and per-MODE so no reminder can ever overwrite another in the tray.
     const payload = JSON.stringify({ title, body, tag: `${mode}-${key}`, url: './' })
@@ -703,11 +827,15 @@ async function main() {
       const who = sub.user_id ? `user:${sub.user_id.slice(0, 8)}` : 'anon'
       // ⚠️ THE HOOK NAME, NOT THE BODY, FOR ANYTHING BUILT ON PRIVATE DATA. A leaderboard rank and
       // a display name are already public, so the race copy prints in full as it always has. A
-      // STREAK COUNT is not published anywhere, and this repo is public — its Actions logs with it —
-      // so printing "Your 34-day streak ends at midnight" here would publish, in a place nobody
-      // thinks of as a surface, a number the game itself never shows to anyone but its owner.
+      // STREAK COUNT and a JACKPOT METER are not published anywhere, and this repo is public — its
+      // Actions logs with it — so printing "Your 34-day streak ends at midnight" here would
+      // publish, in a place nobody thinks of as a surface, a number the game itself never shows to
+      // anyone but its owner. (The jackpot body's LEVEL number is public on its own, but the body
+      // exists only because of the meter, so the whole line is withheld with it.)
       // The hook name is what a dry run is actually for: it proves which branch fired and for whom.
-      const shown = hook === 'streak' ? '(streak hook — body withheld from the log)' : `${title} :: ${body}`
+      const shown = PRIVATE_HOOKS.has(hook)
+        ? `(${hook} hook — body withheld from the log)`
+        : `${title} :: ${body}`
       console.log(`  [dry] ${who} via ${host} (device ${String(sub.device_id).slice(0, 8)}) → [${hook}] ${shown}`)
       sent++
       continue
@@ -750,7 +878,15 @@ async function main() {
     }
   }
 
-  console.log(`${DRY ? '[dry-run] ' : ''}sent ${sent} · retired ${retired} · soft-failed ${failed}`)
+  // The hook tally counts COMPOSED messages (a soft-fail still counts its hook) — enough to watch
+  // which branch is carrying the send from a scheduled run's log without printing anybody's body.
+  const hookLine = Object.entries(hooks)
+    .map(([h, n]) => `${h}:${n}`)
+    .join(' ')
+  console.log(
+    `${DRY ? '[dry-run] ' : ''}sent ${sent} · retired ${retired} · soft-failed ${failed}` +
+      (hookLine ? ` · hooks ${hookLine}` : '')
+  )
 }
 
 // Only run when executed directly, so the pure helpers above can be imported by

@@ -304,9 +304,11 @@ Live: <https://corruptfun.github.io/viva-maya/>
   (`.github/workflows/endless-push.yml`) and two opt-in categories (`week_race` from 0011,
   `daily_play` from 0025) — a MORNING nudge carrying the day's house gift (`--drop`, 15:00 UTC, for
   devices that did **not** open the game yesterday), an EVENING race reminder (`--daily`, 01:00 UTC,
-  for devices that **did**), and the Sunday season summary. Every player who ever tapped REMIND ME
-  did so against a card promising one nudge (`view/pushoptin.ts`), so the count of *kinds* may grow
-  and the count of *notifications* may not. Three mechanisms hold it, and all three are load-bearing:
+  for devices that **did**), and the Sunday season summary. New REASONS to notify (the
+  jackpot-wheel and next-level hooks, `jackpotWinsAway`) ride the existing sends as better
+  SENTENCES — a new kind of alert is a copy branch in `send-push.mjs`, never a fourth cron. Every
+  player who ever tapped REMIND ME did so against a card promising one nudge
+  (`view/pushoptin.ts`), so the count of *kinds* may grow and the count of *notifications* may not. Three mechanisms hold it, and all three are load-bearing:
   the two daily audiences are **disjoint by construction** (played-yesterday partitions them), every
   mode re-checks `last_sent_at` against today's race day (`sentToday` — this is what covers a manual
   dispatch, a retried cron, and Sunday's blast landing on a morning that already sent), and a device
@@ -321,8 +323,8 @@ Live: <https://corruptfun.github.io/viva-maya/>
   losing an evening to a transient read failure would be a regression caused by a feature meant to
   add reach).
   ⚠️ `--dry-run` prints the HOOK NAME, never the body, for a message built on private data. A
-  leaderboard rank is already public; a **streak count is not**, and this repo — with its Actions
-  logs — is public.
+  leaderboard rank is already public; a **streak count and a jackpot meter are not**, and this
+  repo — with its Actions logs — is public.
 - **The HOUSE GIFT is seeded from the DAY ALONE, and that is what lets a notification name it.**
   `core/bonusdrop.ts` pays one surprise a day, claimed on Home. Because the roll takes the race day
   key and nothing else, the sender composes the message once from a byte-identical copy of the table

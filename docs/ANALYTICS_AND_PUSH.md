@@ -136,8 +136,8 @@ card that promises one nudge. That promise is kept by **volume**, not by countin
 
 | Mode | Fires | Audience | Category | Leads with |
 | --- | --- | --- | --- | --- |
-| `--drop` | 15:00 UTC daily (≈8–9 AM at home) | devices that did **not** open the game yesterday | `daily_play` | the day's house gift, by name |
-| `--daily` | 01:00 UTC Tue–Sun (≈6–7 PM Mon–Sat at home) | devices that **did** open the game yesterday | `week_race` | a streak about to break, else the player's standing |
+| `--drop` | 15:00 UTC daily (≈8–9 AM at home) | devices that did **not** open the game yesterday | `daily_play` | a jackpot wheel within reach, else the day's house gift, by name |
+| `--daily` | 01:00 UTC Tue–Sun (≈6–7 PM Mon–Sat at home) | devices that **did** open the game yesterday | `week_race` | a streak about to break, else a jackpot wheel within reach, else the player's standing |
 | *(default)* | 01:00 UTC Monday (≈Sunday evening at home) | everyone opted in — the one mode with no activity filter | `week_race` | the season's totals |
 
 Three mechanisms keep it to one, and all three are load-bearing:
@@ -172,12 +172,14 @@ key reads an empty board and sends everyone the generic copy while nothing error
 gift roll is worse — the notification names a prize the game does not hand over, which is worse than
 sending nothing. `src/core/analytics.test.ts` pins the keys across three years of dates plus the
 rollover and ISO-year edges; `src/core/bonusdrop.test.ts` pins the roll over the same span.
-**Do not delete either test.**
+`JACKPOT_GOAL` and `LEVEL_COUNT` are duplicated the same way for the jackpot hook and its
+next-level line — `src/core/pushcadence.test.ts` pins both against `core/jackpot.ts` and
+`core/levels.ts`. **Do not delete any of these tests.**
 
 **⚠️ `--dry-run` prints the HOOK NAME, not the body, for anything built on private data.** A
-leaderboard rank is already public; a streak count is not, and this is a public repo whose Actions
-logs anyone can read. Printing "Your 34-day streak ends at midnight" would publish, in a place nobody
-thinks of as a surface, a number the game never shows to anyone else.
+leaderboard rank is already public; a streak count and a jackpot meter are not, and this is a public
+repo whose Actions logs anyone can read. Printing "Your 34-day streak ends at midnight" would
+publish, in a place nobody thinks of as a surface, a number the game never shows to anyone else.
 
 **⚠️ Subscribe/unsubscribe go through `SECURITY DEFINER` RPCs (`0012`), never direct table writes.**
 PostgreSQL requires rows to be visible under a **SELECT** policy before `UPDATE`/`DELETE` can locate

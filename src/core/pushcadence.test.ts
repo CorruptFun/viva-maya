@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { backoffAllows, sentToday, streakAtRisk } from '../../scripts/send-push.mjs'
+import {
+  backoffAllows,
+  JACKPOT_GOAL as SENDER_JACKPOT_GOAL,
+  jackpotWinsAway,
+  LEVEL_COUNT as SENDER_LEVEL_COUNT,
+  sentToday,
+  streakAtRisk,
+} from '../../scripts/send-push.mjs'
 import { dayKey } from './endless'
+import { JACKPOT_GOAL } from './jackpot'
+import { LEVEL_COUNT } from './levels'
 
 /**
  * THE NOTIFICATION CADENCE — the three rules that make it honest for this game to send more than one
@@ -139,5 +148,40 @@ describe('the streak-in-danger hook', () => {
     expect(streakAtRisk(null, TODAY)).toBeNull()
     expect(streakAtRisk(undefined, TODAY)).toBeNull()
     expect(streakAtRisk({ streak: 12, lastSpinDate: null }, TODAY)).toBeNull()
+  })
+})
+
+describe('the jackpot-within-reach hook', () => {
+  it('carries the app’s own goal and ladder reach', () => {
+    // The parity that keeps the copy honest, exactly as bonusdrop.test.ts pins the gift roll: a
+    // sender drifting from core/jackpot.ts would tell a player they are "one win from the wheel"
+    // when they are not, and a LEVEL_COUNT drift would let the next-level line name a level the
+    // catalogue does not hold.
+    expect(SENDER_JACKPOT_GOAL).toBe(JACKPOT_GOAL)
+    expect(SENDER_LEVEL_COUNT).toBe(LEVEL_COUNT)
+  })
+
+  it('fires inside two wins of the wheel', () => {
+    expect(jackpotWinsAway({ jackpotMeter: JACKPOT_GOAL - 2 })).toBe(2)
+    expect(jackpotWinsAway({ jackpotMeter: JACKPOT_GOAL - 1 })).toBe(1)
+  })
+
+  it('reports a loaded wheel as zero, even past the goal', () => {
+    // A store batch or a cross-device merge can carry the meter past the goal; "wins away" floors
+    // at zero rather than going negative and reading as nonsense copy.
+    expect(jackpotWinsAway({ jackpotMeter: JACKPOT_GOAL })).toBe(0)
+    expect(jackpotWinsAway({ jackpotMeter: JACKPOT_GOAL + 3 })).toBe(0)
+  })
+
+  it('stays quiet on an early meter — a half-charged meter is a meter, not news', () => {
+    expect(jackpotWinsAway({ jackpotMeter: 0 })).toBeNull()
+    expect(jackpotWinsAway({ jackpotMeter: JACKPOT_GOAL - 3 })).toBeNull()
+  })
+
+  it('survives a missing or shapeless save', () => {
+    expect(jackpotWinsAway(null)).toBeNull()
+    expect(jackpotWinsAway(undefined)).toBeNull()
+    expect(jackpotWinsAway({})).toBeNull()
+    expect(jackpotWinsAway({ jackpotMeter: Number.NaN })).toBeNull()
   })
 })

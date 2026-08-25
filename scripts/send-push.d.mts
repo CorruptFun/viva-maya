@@ -52,3 +52,16 @@ export declare function streakAtRisk(
   info: { streak: number; lastSpinDate: string | null } | null | undefined,
   today: string
 ): number | null
+
+/**
+ * The jackpot chase constants — src/core/jackpot.ts JACKPOT_GOAL and src/core/levels.ts
+ * LEVEL_COUNT, duplicated because the sender cannot import src/. Pinned by
+ * src/core/pushcadence.test.ts.
+ */
+export declare const JACKPOT_GOAL: number
+export declare const LEVEL_COUNT: number
+
+/** The jackpot-within-reach hook: wins left while the wheel is at most two away (0 = loaded), else null. */
+export declare function jackpotWinsAway(
+  info: { jackpotMeter?: number } | null | undefined
+): number | null
