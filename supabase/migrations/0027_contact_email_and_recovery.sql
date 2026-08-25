@@ -1,5 +1,5 @@
 -- ============================================================================
--- 0026_contact_email_and_recovery.sql
+-- 0027_contact_email_and_recovery.sql
 -- Records WHO paid, as Stripe knows them, and lets the client tell whether an
 -- account could actually be recovered.
 --

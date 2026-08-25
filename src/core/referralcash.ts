@@ -30,7 +30,7 @@ import { cloudSession, isCloudConfigured, sbClient } from './cloud'
  * ---------------------------------------------------------------------------- what is NOT here
  * Nothing in this module can move a cent. It reads a summary and asks the server to start a
  * payout; the ledger, the hold, the rate that actually gets paid and the payout itself all live
- * server-side (supabase/migrations/0025 + supabase/functions/), because `referral_earnings` has no
+ * server-side (supabase/migrations/0026 + supabase/functions/), because `referral_earnings` has no
  * INSERT/UPDATE policy for any client role. That is deliberate and is the one place this feature
  * departs from the rest of the game's trust model: scores are self-reported, money is not.
  *
@@ -46,7 +46,7 @@ export const ENTRY_PRICE_CENTS = 399
 /**
  * Cash paid to a referrer per paid referral, indexed by the REFERRER's own chain depth.
  *
- * ⚠️ THE SAME TABLE AS `public.referral_cash_rate_cents()` in migration 0025. Change one, change
+ * ⚠️ THE SAME TABLE AS `public.referral_cash_rate_cents()` in migration 0026. Change one, change
  * both. This copy only ever DISPLAYS a rate; the SQL copy is what actually writes the ledger row.
  * If they drift, the game promises a player one dollar figure and pays another — the single most
  * damaging bug this feature can have, because the number is money and the player is reading it.
@@ -125,7 +125,7 @@ export interface CashSummary {
 }
 
 /**
- * Read this player's cash position — ONE round trip (`my_cash_summary`, migration 0025), so the
+ * Read this player's cash position — ONE round trip (`my_cash_summary`, migration 0026), so the
  * panel can never render a rate from one instant against balances from another. Null when dormant /
  * signed out / offline; the panel then shows its signed-out state rather than a zeroed one, because
  * "you have earned $0.00" and "we could not ask" must not look the same.

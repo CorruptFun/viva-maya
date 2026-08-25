@@ -121,7 +121,7 @@ the paywall is still a wall.
 ## The switch
 
 `PAYWALL_ACTIVE_FROM` (`core/entitlement.ts`) and `public.paywall_active_from()`
-(migration 0025) are **the same switch on two sides of the wire — change one,
+(migration 0026) are **the same switch on two sides of the wire — change one,
 change both**, exactly like `SALT_ACTIVE_FROM` / `v_salt_from`.
 
 The server half decides who is **grandfathered** (an account created before the
@@ -288,7 +288,7 @@ sent to the canonical address instead.
 ## Cached clients
 
 The PWA is `registerType: 'prompt'` and players run cached bundles for days
-(13 distinct builds were live at once on 2026-08-07). Migration 0025 is purely
+(13 distinct builds were live at once on 2026-08-07). Migration 0026 is purely
 additive and no existing client reads any of it, so applying it changes nothing
 for anyone.
 
@@ -327,8 +327,8 @@ anybody at all.
 | `src/scenes/PaywallScene.ts` | the door — four states, one plate |
 | `src/view/cashout.ts` | YOUR EARNINGS panel (opened from the Store's balance row) |
 | `src/view/signinmodal.ts` | the account step — Google, or an emailed code; DOM so the player gets a real keyboard |
-| `supabase/migrations/0025_paid_entry_and_referral_cash.sql` | the four tables, their RLS, the depth + rate functions |
-| `supabase/migrations/0026_contact_email_and_recovery.sql` | `contact_email`, and `my_access()` reporting recoverability |
+| `supabase/migrations/0026_paid_entry_and_referral_cash.sql` | the four tables, their RLS, the depth + rate functions |
+| `supabase/migrations/0027_contact_email_and_recovery.sql` | `contact_email`, and `my_access()` reporting recoverability |
 | `supabase/functions/create-checkout` | opens Checkout — sets the price, resolves the referrer |
 | `supabase/functions/stripe-webhook` | the only writer of entitlements and commissions |
 | `supabase/functions/connect-onboard` | Stripe Connect onboarding link |

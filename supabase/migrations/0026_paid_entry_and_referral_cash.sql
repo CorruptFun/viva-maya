@@ -1,5 +1,5 @@
 -- ============================================================================
--- 0025_paid_entry_and_referral_cash.sql
+-- 0026_paid_entry_and_referral_cash.sql
 -- PAID ENTRY ($3.99 once, per new account) + CASH REFERRAL COMMISSIONS.
 --
 -- This is the first table set in this schema that holds MONEY, and it is

@@ -37,7 +37,7 @@ const MIN_RETAINED_CENTS = 100
 describe('the rate table', () => {
   it('pays the recorded rates — GOLDEN, re-derive rather than edit', () => {
     // These are the numbers the game says out loud, on the invite card and in the share sheet.
-    // They are also written into `public.referral_cash_rate_cents()` in migration 0025; if this
+    // They are also written into `public.referral_cash_rate_cents()` in migration 0026; if this
     // test is updated without that function, the game promises one figure and the ledger pays
     // another — which is the worst bug this feature can have, because the number is money and the
     // player is reading it.

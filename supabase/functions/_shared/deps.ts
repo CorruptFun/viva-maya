@@ -5,7 +5,7 @@
 // RLS. These four functions are the ONLY writers to `entitlements`,
 // `referral_earnings`, `payout_accounts` and `payouts` — those tables
 // deliberately have no INSERT/UPDATE/DELETE policy for `anon` or
-// `authenticated` (migration 0025), so a client physically cannot mint itself
+// `authenticated` (migration 0026), so a client physically cannot mint itself
 // an entitlement or a commission. Nothing here may ever be moved into the
 // browser bundle, and no secret read here may ever be echoed into a response.
 //

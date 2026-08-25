@@ -67,7 +67,7 @@ async function writeCommission(
   if (typeof referrerId !== 'string' || referrerId === refereeId) return
 
   // ⚠️ The rate is read from the DATABASE, never computed here. `referral_cash_rate_cents` is the
-  // one definition of what a depth is worth (migration 0025); a second copy in this file would be
+  // one definition of what a depth is worth (migration 0026); a second copy in this file would be
   // a second thing to keep in step with the client's display copy, and the failure mode of that
   // drift is paying a player a different number from the one the game showed them.
   const rateRes = await db.rpc('referral_cash_rate_cents', { p_user: referrerId })

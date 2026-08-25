@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# verify-rls.sh — prove the exposure rules of 0010/0011/0014/0015/0019 against a LIVE API.
+# verify-rls.sh — prove the exposure rules of 0010/0011/0014/0015/0019/0026 against a LIVE API.
 #
 # Written because this matrix has to run at least twice: once against a local
 # stack while writing the migrations, and again against production the moment
@@ -265,7 +265,7 @@ fi
 
 
 echo
-echo "── paid entry (0025): MONEY IS NOT SELF-REPORTED ────────────────"
+echo "── paid entry (0026): MONEY IS NOT SELF-REPORTED ────────────────"
 # ⚠️ THE MOST IMPORTANT SECTION IN THIS FILE, and the reason is that it asserts the OPPOSITE of
 # everything above it. `events` must be anon-writable or analytics is dead; `push_subscriptions`
 # must be anon-writable or push is dead. These four tables must be anon-UNwritable or the game is
@@ -315,14 +315,14 @@ case "$c" in *42501*) ok "anon CANNOT shorten the hold on a commission" ;;
 for f in my_access my_cash_summary; do
   c=$(anon -X POST "$URL/rest/v1/rpc/$f" -d '{}')
   case "$c" in *42501*) ok "anon CANNOT call $f" ;;
-               *) bad "$f ANSWERS ANON — is 0025 applied with its grants?" "$c" ;; esac
+               *) bad "$f ANSWERS ANON — is 0026 applied with its grants?" "$c" ;; esac
 done
 
-# …and the one function that IS public, so a failure above can be told apart from "0025 was never
+# …and the one function that IS public, so a failure above can be told apart from "0026 was never
 # applied at all". If this reports PGRST202 the migration is missing, not misconfigured.
 c=$(anon -X POST "$URL/rest/v1/rpc/paywall_active_from" -d '{}')
-case "$c" in *PGRST202*) bad "0025 IS NOT APPLIED — every check in this section is meaningless" "$c" ;;
-             *) ok "0025 is applied (paywall_active_from answers: $c)" ;; esac
+case "$c" in *PGRST202*) bad "0026 IS NOT APPLIED — every check in this section is meaningless" "$c" ;;
+             *) ok "0026 is applied (paywall_active_from answers: $c)" ;; esac
 
 echo
 printf '%d passed, %d failed\n' "$PASS" "$FAIL"

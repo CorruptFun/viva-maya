@@ -31,14 +31,14 @@ Live: <https://corruptfun.github.io/viva-maya/>
   confines, a trigger keeps it monotonic — and that is fine for a leaderboard,
   where the worst case is a fake score. It is **wrong for money**, where the worst
   case is a client minting its own entitlement. So `entitlements`,
-  `referral_earnings`, `payout_accounts` and `payouts` (migration 0025) have
+  `referral_earnings`, `payout_accounts` and `payouts` (migration 0026) have
   SELECT policies for their owner and **no INSERT/UPDATE/DELETE policy for any
   role** — under RLS that is a denial, and the only writer is `service_role`, held
   by the four Edge Functions. ⚠️ **If you are adding a write policy to one of those
   tables to make a client feature work, the feature is wrong, not the policy.**
   Five things are load-bearing and easy to undo:
   - **The switch is two-sided.** `PAYWALL_ACTIVE_FROM` (`core/entitlement.ts`) and
-    `public.paywall_active_from()` (0025) are one switch on two sides of the wire,
+    `public.paywall_active_from()` (0026) are one switch on two sides of the wire,
     exactly like `SALT_ACTIVE_FROM`/`v_salt_from` — **change one, change both.**
     The server half decides who is grandfathered (`auth.users.created_at`, which a
     client cannot forge); the client half decides who is SHOWN a price. Rolling
@@ -528,7 +528,7 @@ edit to make green.
 | `src/core/referralcash.ts` | cash referral commissions — the rate-by-depth table + the payout surface |
 | `src/scenes/PaywallScene.ts` | the door: checking / signed-out / offer / confirming / failed |
 | `src/view/cashout.ts` | YOUR EARNINGS panel — opened from the Store's balance row |
-| `supabase/migrations/` | `0001_saves` → `0025_paid_entry_and_referral_cash` |
+| `supabase/migrations/` | `0001_saves` → `0027_contact_email_and_recovery` |
 | `supabase/functions/` | the ONLY writers of entitlements, commissions and payouts — see the paid-entry note |
 | `scripts/verify-rls.sh` | RLS audit — run after any migration |
 | `scripts/send-push.mjs` | push sender |

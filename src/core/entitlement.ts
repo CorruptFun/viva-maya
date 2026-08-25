@@ -11,7 +11,7 @@ import { stashedRefCode } from './referrals'
  * async server check that keeps it honest, and the call that opens Stripe Checkout.
  *
  * ---------------------------------------------------------------------------- the switch
- * `PAYWALL_ACTIVE_FROM` is the same switch as `public.paywall_active_from()` in migration 0025 —
+ * `PAYWALL_ACTIVE_FROM` is the same switch as `public.paywall_active_from()` in migration 0026 —
  * two sides of one wire, exactly like SALT_ACTIVE_FROM / v_salt_from in the race-day salt. CHANGE
  * ONE, CHANGE BOTH. The server half decides who is grandfathered; this half decides who is SHOWN
  * the paywall. Shipping the code dark and flipping a date is what makes the whole player base cross
@@ -38,7 +38,7 @@ import { stashedRefCode } from './referrals'
 // ---------------------------------------------------------------------------- the switch
 /**
  * The instant paid entry begins. Accounts (and local saves) that predate it never pay.
- * ⚠️ Mirrored by `public.paywall_active_from()` in supabase/migrations/0025 — change both.
+ * ⚠️ Mirrored by `public.paywall_active_from()` in supabase/migrations/0026 — change both.
  */
 export const PAYWALL_ACTIVE_FROM = '2026-09-01T00:00:00Z'
 
