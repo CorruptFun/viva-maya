@@ -197,6 +197,21 @@ export interface SaveData {
    *  marker is on the house" latch (core/marker.ts). freeSpinsDay's sibling: plain
    *  winner's-record on merge, no union needed (a stale value only ever re-offers one comp). */
   markerCompDay: string | null
+  /**
+   * RACE day key ("YYYY-MM-DD", core/endless.ts dayKey) whose HOUSE GIFT has been taken, or null.
+   *
+   * A CLAIM latch, not a "seen" one — it gates real chips, a boost and free spins, so it lives under
+   * iron rule 4 beside `championDays` and `installRewardClaimed`. ⚠️ The RACE calendar, deliberately
+   * NOT the device-local one `markerCompDay` and `freeSpinsDay` use: the gift is named in advance by
+   * the push sender, which runs in CI and has no idea what a player's local clock says
+   * (core/bonusdrop.ts spells this out). A single key rather than a list because there is exactly
+   * one gift a day and yesterday's is gone — nothing ever reads a past day, so nothing accumulates.
+   *
+   * Merges by MAX (core/merge.ts) — the day keys sort lexicographically exactly as they sort
+   * chronologically, so the later claim always wins and a merge can never re-open a gift already
+   * paid on the other device.
+   */
+  bonusDropDay: string | null
 }
 
 /** Most free spins the bank ever holds — earning past this is quietly forfeited. */
@@ -279,6 +294,7 @@ const DEFAULTS: SaveData = {
   handle: null,
   handleSetAt: 0,
   markerCompDay: null,
+  bonusDropDay: null,
 }
 
 function fresh(): SaveData {
@@ -457,6 +473,9 @@ export function coerceSave(raw: unknown): SaveData {
         : 0
     // Slice 0 Marker comp latch — absent in older saves → today's comp unused.
     base.markerCompDay = typeof data.markerCompDay === 'string' ? data.markerCompDay : null
+    // HOUSE GIFT latch — absent in every save written before it shipped → null, so the existing
+    // player base finds today's gift waiting on their next visit rather than starting a day behind.
+    base.bonusDropDay = typeof data.bonusDropDay === 'string' ? data.bonusDropDay : null
     // v6 grace refill: the pool grew (3→10) and the break got much shorter — top EVERYONE up to
     // full on upgrade so nobody is left stranded at the old, stingier count (e.g. mid-session).
     const storedVersion = typeof data.v === 'number' ? (data.v as number) : 1

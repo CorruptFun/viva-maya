@@ -12,7 +12,16 @@
 
 import { EVENTS, analyticsEnabled, setAnalyticsEnabled, track } from '../core/analytics'
 import { cloudSession, isCloudConfigured, onCloudChange, signInWithGoogle, signOutCloud } from '../core/cloud'
-import { disablePush, enablePush, isPushEnabled, pushSupport } from '../core/push'
+import {
+  disablePush,
+  enablePush,
+  isPushEnabled,
+  pushCategories,
+  pushSupport,
+  setPushCategory,
+  type PushCategories,
+  type PushCategory,
+} from '../core/push'
 import { anonName, getHandle, sanitizeName, setHandle } from '../core/leaderboard'
 import { exportSave, importSave } from '../core/save'
 
@@ -319,15 +328,29 @@ export function openCloudModal(): void {
     return stack([heading('Race name'), note(copy), input, preview, saveBtn])
   }
 
-  // ── Race notifications ────────────────────────────────────────────────────────────────────
+  // ── Reminders ─────────────────────────────────────────────────────────────────────────────
   // The race resets and nothing has ever told anyone, so the reset — the one built-in reason to come
   // back — passes most players by. Since the board went DAILY that is a reason to return every
-  // evening, not once a week. This is the opt-in for a single reminder before a board closes.
+  // evening, not once a week. This is the opt-in, plus the per-category switches for what kind.
   //
-  // Rendered as an explicit BUTTON rather than an auto-prompt on load, because a denied
+  // Rendered as explicit BUTTONS rather than an auto-prompt on load, because a denied
   // Notification permission is effectively permanent: the browser will not ask twice and the player
   // has to go into site settings to undo it. Spending that one irreversible ask on someone who has
   // not been told what it is for is how a feature gets killed on its first day.
+  //
+  // ── Why two switches ─────────────────────────────────────────────────────────────────────────
+  // There are two kinds of reminder now (migration 0025): the EVENING one before a board closes, and
+  // the MORNING one that names the day's house gift and warns about a streak that is about to break.
+  // Both on is still ONE notification a day — the sender's slots have disjoint audiences and it
+  // re-checks the day before every send — but "one a day" is a promise about volume, and a player
+  // who wants their standing and not a 9am nudge should be able to say exactly that rather than
+  // choosing between everything and nothing. That is also what makes it honest to have defaulted the
+  // new category ON for people who opted in under the old one's wording: the volume is unchanged and
+  // the narrower choice is one screen away.
+  //
+  // ⚠️ The switches only appear once notifications are ON. Painting two disabled toggles above the
+  // button that enables them turns a one-decision screen into a three-decision one, and the decision
+  // that matters is the irreversible one.
   const buildNotify = (): HTMLElement => {
     const support = pushSupport()
 
@@ -335,7 +358,7 @@ export function openCloudModal(): void {
       // iOS supports Web Push ONLY in an installed PWA. Saying so converts; a disabled button that
       // silently does nothing on iPhone would just read as broken.
       return stack([
-        heading('Race reminder'),
+        heading('Reminders'),
         note(
           'Add Viva Maya to your Home Screen first (tap Share, then “Add to Home Screen”), then come back here to turn on a reminder before a board closes.'
         ),
@@ -343,7 +366,7 @@ export function openCloudModal(): void {
     }
     if (support === 'unsupported') {
       return stack([
-        heading('Race reminder'),
+        heading('Reminders'),
         note('This browser can’t show notifications. Everything else works normally.'),
       ])
     }
@@ -352,22 +375,85 @@ export function openCloudModal(): void {
     const btn = ghostBtn('Remind me before a board closes')
     let enabled = false
 
+    // The two category switches. Hidden until notifications are on, and painted from the SERVER's
+    // answer rather than from a local mirror — see the note on pushCategories: a localStorage copy
+    // is a second definition of a fact the row owns, and it drifts the first time that row goes away.
+    const raceBtn = ghostBtn('')
+    const dropBtn = ghostBtn('')
+    const categoryBox = stack([note('Which ones:'), raceBtn, dropBtn])
+    categoryBox.style.display = 'none'
+    let cats: PushCategories | null = null
+
+    const paintCategories = (): void => {
+      // `null` is UNKNOWN (no subscription, or the read failed), not "off" — so the switches stay
+      // hidden rather than inviting a tap that would report the wrong current state.
+      // ⚠️ Back to 'flex', not '': `stack` IS a flex column, and clearing the property would drop it
+      // to the element default (block) and collapse the gap the rest of this panel is laid out on.
+      categoryBox.style.display = enabled && cats ? 'flex' : 'none'
+      if (!cats) return
+      raceBtn.textContent = cats.weekRace
+        ? '✓ Before a board closes (evening)'
+        : '○ Before a board closes (evening)'
+      dropBtn.textContent = cats.dailyPlay
+        ? '✓ Today’s gift and your streak (morning)'
+        : '○ Today’s gift and your streak (morning)'
+    }
+
+    const refreshCategories = (): void => {
+      void pushCategories().then(next => {
+        cats = next
+        paintCategories()
+      })
+    }
+
+    const toggleCategory = (category: PushCategory, on: boolean, button: HTMLButtonElement): void => {
+      button.disabled = true
+      void setPushCategory(category, on).then(ok => {
+        button.disabled = false
+        if (!ok) {
+          status.textContent = 'Couldn’t change that just now. Please try again.'
+          return
+        }
+        // Turning off the LAST category is a full unsubscribe (core/push.ts owns that rule), so the
+        // whole panel has to be re-read rather than the one switch flipped — otherwise Settings
+        // would show one switch off and the master button still saying ON over a dead subscription.
+        void isPushEnabled().then(stillOn => {
+          enabled = stillOn
+          paint()
+          if (stillOn) refreshCategories()
+          else {
+            cats = null
+            paintCategories()
+          }
+        })
+      })
+    }
+
+    raceBtn.addEventListener('click', () => {
+      if (cats) toggleCategory('week_race', !cats.weekRace, raceBtn)
+    })
+    dropBtn.addEventListener('click', () => {
+      if (cats) toggleCategory('daily_play', !cats.dailyPlay, dropBtn)
+    })
+
     const paint = (): void => {
       btn.textContent = enabled ? 'Turn off reminders' : 'Remind me before a board closes'
       status.textContent = enabled
-        ? 'On — you’ll get one nudge a few hours before a board closes.'
+        ? 'On — at most one nudge a day, never two.'
         : Notification.permission === 'denied'
           ? 'Notifications are blocked for this site in your browser settings.'
-          : 'One notification before a board closes. Nothing else.'
+          : 'At most one notification a day. Nothing else.'
       // A permanent browser-level denial can't be undone from here, so don't offer a button that
       // cannot succeed.
       btn.disabled = !enabled && Notification.permission === 'denied'
       btn.style.opacity = btn.disabled ? '0.55' : '1'
+      paintCategories()
     }
 
     void isPushEnabled().then(on => {
       enabled = on
       paint()
+      if (on) refreshCategories()
     })
     paint()
     // Below the two early returns above on purpose: a player who can't be offered push at all was
@@ -387,6 +473,7 @@ export function openCloudModal(): void {
       if (enabled) {
         void disablePush().then(() => {
           enabled = false
+          cats = null
           btn.disabled = false
           paint()
         })
@@ -401,11 +488,14 @@ export function openCloudModal(): void {
           track(EVENTS.PUSH_BLOCKED, { reason: res.reason ?? 'failed', surface: 'settings' })
         }
         paint()
+        // A fresh register turns BOTH categories on (0025's register RPC), but read them back rather
+        // than assuming: the switches must describe the row, not what the row was asked to become.
+        if (res.ok) refreshCategories()
         if (!res.ok && res.reason === 'failed') status.textContent = 'Couldn’t turn reminders on. Please try again.'
       })
     })
 
-    return stack([heading('Race reminder'), status, btn])
+    return stack([heading('Reminders'), status, btn, categoryBox])
   }
 
   // ── Anonymous gameplay events ─────────────────────────────────────────────────────────────

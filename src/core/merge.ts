@@ -152,6 +152,14 @@ function unionLatches(a: SaveData, b: SaveData): Partial<SaveData> {
     // deliberate reading: the reward exists to buy the first install, not to buy each one.
     installRewardClaimed: a.installRewardClaimed || b.installRewardClaimed,
     referralWelcomeClaimed: a.referralWelcomeClaimed || b.referralWelcomeClaimed,
+    // The HOUSE GIFT claim latch (core/bonusdrop.ts). ⚠️ MAX of a DATE STRING, which is this list's
+    // third distinct rule and the right one for exactly one reason: the gift is claimed once per
+    // race day, so "the latest day either device took it" is the only answer that can never re-open
+    // a gift already paid. `championDays`' union would work too and is what a list of claimed days
+    // needs; this field holds ONE day because nothing ever reads a past one, and unioning a scalar
+    // is not a thing. It is pointedly NOT `pickStreak`'s recency rule — that resolves a pair of
+    // fields that can legitimately go DOWN, and a claim latch may never go down.
+    bonusDropDay: maxDay(a.bonusDropDay, b.bonusDropDay),
     hazardIntros: both(a.hazardIntros, b.hazardIntros),
     specialIntros: both(a.specialIntros, b.specialIntros),
     floorIntros: both(a.floorIntros, b.floorIntros),
@@ -166,6 +174,18 @@ function unionLatches(a: SaveData, b: SaveData): Partial<SaveData> {
     endlessDays: bestPerDay(a.endlessDays, b.endlessDays),
     ...mergeCharms(a, b),
   }
+}
+
+/**
+ * The later of two `YYYY-MM-DD` keys — shape-tolerant, so `null` (never claimed) loses to any real
+ * date and a junk value loses to a well-formed one. Lexicographic order IS chronological order for
+ * this format, which is why no parsing is needed.
+ */
+function maxDay(a: string | null, b: string | null): string | null {
+  const va = typeof a === 'string' ? a : ''
+  const vb = typeof b === 'string' ? b : ''
+  const win = vb > va ? vb : va
+  return win === '' ? null : win
 }
 
 /** Per-key max of two daily-best maps — see the `endlessDays` note in `unionLatches`. */

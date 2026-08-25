@@ -118,11 +118,21 @@ export function openPushOptIn(scene: Phaser.Scene): Promise<void> {
 
     // Three facts, not three features — the same shape as the race-unlock card, because a player
     // deciding whether to hand over notification permission needs to know exactly what they'd get.
-    // The third line is doing real work: "one and only one" is the objection, so answer it unasked.
+    // The third line is doing real work: "how often" is the objection, so answer it unasked.
+    //
+    // ⚠️ THE FIRST LINE IS A PROMISE THE SENDER HAS TO KEEP, and it is the reason this copy changed
+    // when the morning nudge shipped. It used to read "One nudge before the board closes — and that
+    // is the only one you will ever get", which was true of a game with exactly one notification and
+    // would have become a lie the moment a second kind existed. The volume is genuinely unchanged —
+    // scripts/send-push.mjs sends at most one per device per race day, enforced by disjoint audiences
+    // and a same-day guard — so the honest edit is to promise the VOLUME rather than the single
+    // feature. If a future change cannot keep this sentence true, the change is wrong, not the
+    // sentence: everyone who ever tapped REMIND ME did so against it, and a notification permission
+    // is the one thing in this game a player cannot give back twice.
     const rules: Array<[string, string]> = [
-      ['⏰', 'One nudge before the board closes — and that is the only one you will ever get'],
-      ['📅', 'A brand-new board every day. When it is gone, it is gone'],
-      ['🔕', 'Switch it off whenever you like, in Settings'],
+      ['⏰', 'At most one nudge a day — never two, and only when there is something waiting'],
+      ['🎁', 'A new board every day, and a house gift on the cabinet to go with it'],
+      ['🔕', 'Switch it off, or pick which kind you get, in Settings'],
     ]
     rules.forEach(([icon, text], i) => {
       const y = pyTop + 300 + i * 96

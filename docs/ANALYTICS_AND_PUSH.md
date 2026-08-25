@@ -123,21 +123,61 @@ select cron.schedule('prune-events','0 4 * * *',$$select public.prune_events(90)
 
 | Piece | Where |
 | --- | --- |
-| Subscription table | `supabase/migrations/0011_push_subscriptions.sql` |
+| Subscription table | `supabase/migrations/0011_push_subscriptions.sql`, categories in `0025_push_daily_nudge.sql` |
 | Service-worker handlers | `public/push-sw.js` (via `workbox.importScripts` in `vite.config.ts`) |
-| Client opt-in | `src/core/push.ts` + `src/view/cloudmodal.ts` → "Race reminder" |
+| Client opt-in | `src/core/push.ts` + `src/view/pushoptin.ts` (the card) + `src/view/cloudmodal.ts` → "Reminders" (the per-category switches) |
 | Sender | `scripts/send-push.mjs` |
-| Schedule | `.github/workflows/endless-push.yml` — 01:00 UTC = 6–7 PM at home, the evening before each midnight-Mountain close. Tue–Sun on the UTC calendar (= Mon–Sat evenings at home) is today's board (`--daily`); Monday 01:00 UTC (= Sunday evening at home) is the weekly season. The two never overlap: a player must never get two notifications in one evening |
+| Schedule | `.github/workflows/endless-push.yml` — see the cadence table below |
+
+### ⚠️ ONE NOTIFICATION PER DEVICE PER DAY. THIS IS THE RULE EVERYTHING ELSE SERVES
+
+There are three scheduled sends and **two** opt-in categories, and the audience was recruited on a
+card that promises one nudge. That promise is kept by **volume**, not by counting features:
+
+| Mode | Fires | Audience | Category | Leads with |
+| --- | --- | --- | --- | --- |
+| `--drop` | 15:00 UTC daily (≈8–9 AM at home) | devices that did **not** open the game yesterday | `daily_play` | the day's house gift, by name |
+| `--daily` | 01:00 UTC Tue–Sun (≈6–7 PM Mon–Sat at home) | devices that **did** open the game yesterday | `week_race` | a streak about to break, else the player's standing |
+| *(default)* | 01:00 UTC Monday (≈Sunday evening at home) | everyone opted in — the one mode with no activity filter | `week_race` | the season's totals |
+
+Three mechanisms keep it to one, and all three are load-bearing:
+
+1. **Disjoint audiences.** "Played yesterday" partitions the audience, so `--drop` and `--daily`
+   cannot both reach the same device.
+2. **The same-day guard.** Every mode checks `last_sent_at` against today's race day (`sentToday`)
+   and skips anything already written to. This covers the seams the split cannot — a manual
+   `workflow_dispatch` beside a scheduled run, a cron GitHub retried, Sunday's season blast landing
+   on a day the morning nudge already went out, and any fourth mode added later.
+3. **The lapse backoff.** `backoffAllows` decays the cadence with the absence — every third day past
+   3 days away, weekly past 14, nothing past 30. Someone who ignored seven nudges will ignore the
+   eighth and is one tap from switching notifications off forever.
+
+`src/core/pushcadence.test.ts` pins all three. **Do not delete that test** — a bug here is
+unobservable from inside the game (nobody reports "I got two notifications", they just switch them
+off) and cannot be walked back.
+
+The gift's roll (`src/core/bonusdrop.ts`) is seeded from the **day alone**, which is what lets the
+sender name it: same table, same day, same answer on the client and in CI. That predictability is
+deliberate and harmless — a gift is not a contest. **Do not reach for the race salt to "fix" it**;
+salting would cost the naming and close a hole that does not exist.
 
 **Why a GitHub Actions cron:** GitHub Pages is static, so there is no server to run a timer on, and
 Web Push needs an authenticated application server to sign each message. Actions already deploys this
 repo, so it adds no new infrastructure and holds the VAPID private key as a secret. Its scheduler can
-run 10–30 min late, which is irrelevant — the message says "in N hours", computed at run time.
+run 10–30 min late, which is irrelevant — every deadline a message quotes is computed at run time.
 
-**⚠️ `dayKey()` and `weekKey()` are duplicated** in `scripts/send-push.mjs` (it runs as bare Node in CI and cannot
-import from `src/`). A drift there is silent and total: a wrong key reads an empty board and sends
-everyone the generic copy while nothing errors. `src/core/analytics.test.ts` pins the two together
-across three years of dates plus the rollover and ISO-year edges. **Do not delete that test.**
+**⚠️ `dayKey()`, `weekKey()` and the gift roll are duplicated** in `scripts/send-push.mjs` (it runs
+as bare Node in CI and cannot import from `src/`). A drift in the keys is silent and total: a wrong
+key reads an empty board and sends everyone the generic copy while nothing errors. A drift in the
+gift roll is worse — the notification names a prize the game does not hand over, which is worse than
+sending nothing. `src/core/analytics.test.ts` pins the keys across three years of dates plus the
+rollover and ISO-year edges; `src/core/bonusdrop.test.ts` pins the roll over the same span.
+**Do not delete either test.**
+
+**⚠️ `--dry-run` prints the HOOK NAME, not the body, for anything built on private data.** A
+leaderboard rank is already public; a streak count is not, and this is a public repo whose Actions
+logs anyone can read. Printing "Your 34-day streak ends at midnight" would publish, in a place nobody
+thinks of as a surface, a number the game never shows to anyone else.
 
 **⚠️ Subscribe/unsubscribe go through `SECURITY DEFINER` RPCs (`0012`), never direct table writes.**
 PostgreSQL requires rows to be visible under a **SELECT** policy before `UPDATE`/`DELETE` can locate
@@ -314,8 +354,15 @@ The private key must be the pair of it — a mismatch makes every send fail 403.
 
 ### 3. Deploy, then dry-run the sender
 
-Push to `main` as usual. Then, from the Actions tab, run **Endless race reminders** manually with
-`dry_run: true` — it prints exactly what each subscriber would receive and sends nothing.
+Push to `main` as usual. Then, from the Actions tab, run **Game reminders** manually with
+`dry_run: true` — it prints the audience, which hook fired for each subscriber, and (for the public
+race copy) the exact message, sending nothing. Run it once per `scope`: `drop`, `daily`, `weekly`.
+
+**⚠️ Apply `0025` before merging the workflow change.** CI never applies migrations, so a live
+`--drop` run against a database without the `daily_play` column gets a 400 from PostgREST and exits
+1. That is deliberate — a loud failed run beats a silent fallback that blasts the whole race audience
+at nine in the morning — but it means the migration and the merge are two separate acts, in that
+order.
 
 ### Local testing
 

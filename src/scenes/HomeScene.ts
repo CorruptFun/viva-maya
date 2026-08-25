@@ -1,9 +1,11 @@
 import Phaser from 'phaser'
 import { sfx } from '../audio/sfx'
 import { DESIGN_W, restScrollY, viewportCenterY, worldH } from '../config'
+import { claimBonusDrop, dropForDay } from '../core/bonusdrop'
 import { hasAnySpin, spinAvailable, todayKey } from '../core/daily'
 import {
   DAYS_PER_WEEK,
+  dayKey,
   endlessUnlocked,
   endlessWeekStanding,
   previousDayKey,
@@ -54,6 +56,7 @@ import { nextLevelSummary } from '../core/inventory'
 import { openStash, stashBadgeCount } from '../view/stash'
 import { openFreeSpinCard } from '../view/freespincard'
 import { openRaceUnlockCard } from '../view/raceunlockcard'
+import { openBonusDropCard } from '../view/bonusdropcard'
 import { openPushOptIn } from '../view/pushoptin'
 import { openInstallRewardCard } from '../view/installrewardcard'
 import { openAct2Card } from '../view/act2card'
@@ -1091,6 +1094,46 @@ export class HomeScene extends Phaser.Scene {
       for (const reward of rewards) {
         if (!alive.on) return
         await this.openFriendToast(reward, pill, refreshLives)
+      }
+      if (!alive.on) return
+      // 4.5 · THE HOUSE GIFT — one surprise a day, taken here (core/bonusdrop.ts).
+      //
+      // The LAST payout and the one directly before the ask, which is where it belongs on both
+      // sides: it is the only entry in this queue that arrives every single day, so putting it
+      // ahead of a coronation would mean the rarest moment in the game queueing behind the
+      // commonest one — and it is the warmest possible thing to have just handed someone before
+      // asking them for a notification permission.
+      //
+      // ⚠️ CLAIMED AWARD-FIRST, in one atomic write BEFORE the card opens, exactly like the chapter
+      // catch-up above: a force-quit mid-card keeps every chip and a re-open re-offers nothing,
+      // because the day latch inside the claim is the only latch. Zero network, so the dormant
+      // contract holds — this pays whether or not Supabase is configured, which matters because the
+      // reminder that names the gift is the half that needs a server and the gift itself is not.
+      // DEV: `?gift` shows the card on a fixture grant (no award, no latch).
+      // `dayKey`, not `todayKey`: the gift runs on the RACE calendar so the sender can name it in
+      // advance (core/bonusdrop.ts). A DEV fixture on the local calendar would quietly show a
+      // different gift than the live path on any device far enough from Alberta to disagree.
+      const gift = q?.has('gift')
+        ? {
+            drop: dropForDay(q.get('gift') || dayKey()),
+            day: dayKey(),
+            chips: 150,
+            freeSpins: 1,
+            boost: 'doubleScore' as const,
+            balance: loadSave().chips,
+          }
+        : claimBonusDrop()
+      if (gift && alive.on) {
+        if (!q?.has('gift')) {
+          track(EVENTS.BONUS_DROP, {
+            drop: gift.drop.id,
+            chips: gift.chips,
+            spins: gift.freeSpins,
+            boost: gift.boost ?? 'none',
+          })
+        }
+        pill.update(loadSave().chips)
+        await openBonusDropCard(this, gift)
       }
       if (!alive.on) return
       // 5 · RACE REMINDER — the push opt-in, offered on the Home visit after a player's FIRST daily

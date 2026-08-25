@@ -208,6 +208,111 @@ export async function enablePush(): Promise<EnableResult> {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// CATEGORIES — which kinds of notification this install has said yes to.
+//
+// Two of them (migration 0025): the evening RACE reminder 0011 shipped, and the
+// morning PLAY nudge that carries the day's house gift. They are per-category
+// rather than one switch because they answer different questions, and a player
+// who wants their standing before a board closes but does not want a 9am nudge
+// should be able to say exactly that instead of choosing between everything and
+// nothing.
+//
+// ⚠️ Both on is still ONE notification a day, never two — the sender's two slots
+// have disjoint audiences and it re-checks `last_sent_at` before every send.
+// That is stated at length in 0025's header, and it is what makes it honest to
+// have defaulted the new category ON for the people who opted in under the old
+// card's "one nudge, that is the only one you will ever get".
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The two notification categories. Column names in `push_subscriptions`; the RPC validates them. */
+export type PushCategory = 'week_race' | 'daily_play'
+
+/** Which categories this install currently holds. */
+export interface PushCategories {
+  /** The evening reminder before a race board closes. */
+  weekRace: boolean
+  /** The morning nudge — today's house gift, and a streak about to break. */
+  dailyPlay: boolean
+}
+
+/**
+ * Read this install's categories back from the row that decides them, or null when there is no
+ * subscription (or the read failed).
+ *
+ * ⚠️ Deliberately NOT mirrored in localStorage. A local copy is a second definition of a fact the
+ * server owns, and the two drift the moment a row goes away underneath it — a rotated endpoint, a
+ * re-register, or the last-category delete below — leaving Settings painting an ON switch over a
+ * subscription that no longer exists. `get_push_categories` (0025) exists precisely so there is one
+ * answer; it is a definer function because 0011 grants no SELECT policy, and it is safe to expose
+ * because it takes the endpoint as an argument and so can enumerate nothing.
+ *
+ * `null` is "unknown", not "off" — a caller must not paint switches from a failed read.
+ */
+export async function pushCategories(): Promise<PushCategories | null> {
+  try {
+    if (pushSupport() !== 'ready') return null
+    const reg = await navigator.serviceWorker.getRegistration()
+    const sub = await reg?.pushManager.getSubscription()
+    if (!sub) return null
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/get_push_categories`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ p_endpoint: sub.endpoint }),
+    })
+    // 404 is the shape a client deployed ahead of migration 0025 gets back. Answering "unknown"
+    // rather than throwing is what keeps that ordering survivable — see the two-phase note in 0025.
+    if (!res.ok) return null
+    const rows = (await res.json()) as Array<{ week_race?: boolean; daily_play?: boolean }>
+    const row = Array.isArray(rows) ? rows[0] : null
+    if (!row) return null
+    return { weekRace: row.week_race !== false, dailyPlay: row.daily_play !== false }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Turn one category on or off. Returns whether the change actually landed.
+ *
+ * ⚠️ TURNING OFF THE LAST CATEGORY IS A FULL UNSUBSCRIBE, and that rule lives here rather than in
+ * the Settings screen so both doors cannot disagree about it. 0016's stance on `unsubscribe_push` is
+ * that deleting is the honest implementation of "off" — no row, no send, nothing retained — and a
+ * player who switches off the last thing we would ever send has said off. The server half does the
+ * same (0025 deletes the row when both booleans go false); this half also drops the BROWSER
+ * subscription, which the server cannot do, so the player is not left holding a live endpoint for a
+ * row that is gone.
+ */
+export async function setPushCategory(category: PushCategory, on: boolean): Promise<boolean> {
+  try {
+    if (pushSupport() !== 'ready') return false
+    const reg = await navigator.serviceWorker.getRegistration()
+    const sub = await reg?.pushManager.getSubscription()
+    if (!sub) return false
+
+    if (!on) {
+      // Read before writing so "is this the last one" is answered by the row rather than guessed.
+      // An unknown answer (null) falls through to the plain toggle: refusing to act would leave the
+      // player unable to switch anything off, which is strictly the worse failure.
+      const current = await pushCategories()
+      const other = category === 'week_race' ? current?.dailyPlay : current?.weekRace
+      if (current && other === false) {
+        await disablePush()
+        return true
+      }
+    }
+
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/set_push_category`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ p_endpoint: sub.endpoint, p_category: category, p_on: on }),
+    })
+    return res.ok
+  } catch {
+    return false
+  }
+}
+
 /**
  * Whether to put the RACE REMINDER card (view/pushoptin.ts) in front of this player right now.
  *

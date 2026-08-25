@@ -299,6 +299,50 @@ Live: <https://corruptfun.github.io/viva-maya/>
   `create()`, and `main.ts` has already `preventDefault()`ed the browser's own
   install bar, so capturing it and then showing nothing is strictly worse than
   never capturing.
+- **The game sends AT MOST ONE notification per device per race day, and that ceiling is a promise
+  in the product, not a preference.** There are three scheduled sends
+  (`.github/workflows/endless-push.yml`) and two opt-in categories (`week_race` from 0011,
+  `daily_play` from 0025) — a MORNING nudge carrying the day's house gift (`--drop`, 15:00 UTC, for
+  devices that did **not** open the game yesterday), an EVENING race reminder (`--daily`, 01:00 UTC,
+  for devices that **did**), and the Sunday season summary. Every player who ever tapped REMIND ME
+  did so against a card promising one nudge (`view/pushoptin.ts`), so the count of *kinds* may grow
+  and the count of *notifications* may not. Three mechanisms hold it, and all three are load-bearing:
+  the two daily audiences are **disjoint by construction** (played-yesterday partitions them), every
+  mode re-checks `last_sent_at` against today's race day (`sentToday` — this is what covers a manual
+  dispatch, a retried cron, and Sunday's blast landing on a morning that already sent), and a device
+  that keeps ignoring nudges **backs off** to every third day, then weekly, then nothing
+  (`backoffAllows`). `pushcadence.test.ts` pins all three. ⚠️ Don't add a fourth cron without
+  answering "which existing audience does this one exclude". A bug here is invisible from inside the
+  game — nobody reports "I got two notifications", they switch notifications off permanently — and
+  the only trace is a subscription count that quietly stops growing.
+  ⚠️ The `--drop` and `--daily` activity reads **fail in opposite directions on purpose**: `--drop`
+  fails CLOSED (without the answer its whole audience definition is gone and it degrades to a 9am
+  blast at people who are already playing), `--daily` fails OPEN (it has shipped since 0011 and
+  losing an evening to a transient read failure would be a regression caused by a feature meant to
+  add reach).
+  ⚠️ `--dry-run` prints the HOOK NAME, never the body, for a message built on private data. A
+  leaderboard rank is already public; a **streak count is not**, and this repo — with its Actions
+  logs — is public.
+- **The HOUSE GIFT is seeded from the DAY ALONE, and that is what lets a notification name it.**
+  `core/bonusdrop.ts` pays one surprise a day, claimed on Home. Because the roll takes the race day
+  key and nothing else, the sender composes the message once from a byte-identical copy of the table
+  and the player finds *exactly* that gift when they arrive — "your Jackpot Chip is on the table" is
+  an appointment where "come back" is a request. ⚠️ It is therefore globally predictable, and here
+  that is harmless: a gift is not a contest, and "Thursday is Vault day" is a reason to be here on
+  Thursday. **Don't reach for `core/racesalt.ts` to "fix" it** — salting would cost the one property
+  the feature is built on to close a hole that does not exist. (On the race BOARD foreknowledge *is*
+  an advantage, which is why the salt exists there. The two cases look identical and are opposites.)
+  The claim is **award-first with the day latch written in the same statement block as the payment**,
+  exactly like `advanceDailyRitual`'s streak purse — the day latch IS the claim latch, so a card
+  force-quit through keeps every chip and a re-open re-offers nothing. `bonusDropDay` merges by **MAX
+  of the date string**, a third distinct rule in `merge.ts`: not `pickStreak`'s recency (that resolves
+  fields which may legitimately go DOWN; a claim latch may not) and not a union (it holds one day
+  because nothing ever reads a past one). It rides the RACE calendar, not `daily.ts todayKey` — the
+  sender runs in CI and has no idea what a player's local clock says. The table is budgeted as a SIDE
+  dish — ~23 chips/day against the check-in ladder's ~56 — and weighted toward free spins and boosts,
+  which cannot be spent without playing. `bonusdrop.test.ts` pins the budget and the sender parity;
+  **retune by moving weights, and re-derive those numbers rather than widening the bounds to make a
+  richer table green.**
 - **The push opt-in gets ONE ask per install, ever, and `pushOfferDue` is what
   spends it.** `Notification.requestPermission()` is one-shot: a denial is
   permanent, the browser never re-prompts, and the player has to dig through site
@@ -493,8 +537,8 @@ npm run build    # tsc && vite build
 ```
 
 Tests are colocated: `src/core/*.test.ts` (board, merge, hazards, endless,
-plinko rate, slots rate, cheat, endless pace, rgb, fire, apploop, level resume).
-Run them — the game logic has real coverage.
+plinko rate, slots rate, cheat, endless pace, rgb, fire, apploop, level resume,
+bonus drop, push cadence). Run them — the game logic has real coverage.
 
 `slots.rate.test.ts`, `plinko.rate.test.ts` and `endless.pace.test.ts` are
 **economy guards**, not unit tests: they measure what a machine actually pays
@@ -512,6 +556,8 @@ edit to make green.
 | `src/core/` | game logic + its tests — board, merge, levels, endless, daily, slots, hazards, analytics, push, cheat, rgb |
 | `src/core/inventory.ts` | canonical boost names (`BOOST_META`) + the stash model — see the note above |
 | `src/core/install.ts` | "add to home screen" custody; the platform split lives here |
+| `src/core/bonusdrop.ts` | THE HOUSE GIFT — the day-seeded daily surprise the reminder names in advance; see the note above |
+| `src/core/push.ts` | subscription custody + the two notification CATEGORIES (`pushCategories` / `setPushCategory`) |
 | `src/core/apploop.ts` | the anti-drain loop sleep + every signal that undoes it — see the note above |
 | `src/core/swupdate.ts` | may a waiting service worker be applied SILENTLY right now — the boot window + the anti-reload-loop latch (`main.ts` owns the wiring) |
 | `src/core/originmigrate.ts` | the legacy-origin → `corrupt.solutions` profile handoff and its hostname gate — see the two-origins note above |
@@ -523,6 +569,7 @@ edit to make green.
 | `src/view/raceunlockcard.ts` | the one-time DAILY RACE UNLOCKED reveal |
 | `src/view/pushoptin.ts` | the NEVER MISS A BOARD push opt-in card — see the note above; the gate is `pushOfferDue` in `core/push.ts` |
 | `src/view/installrewardcard.ts` | the install reward's payout card — the receipt for `claimInstallReward` |
+| `src/view/bonusdropcard.ts` | the house gift's sealed-box reveal — theatre only; `claimBonusDrop` already paid |
 | `src/view/showroom.ts` | THE SHOWROOM trophy case — doors on the LevelSelect chapter ribbons |
 | `src/view/trophyceremony.ts` | the chapter-complete ceremony + the one-time catch-up card |
 | `src/view/platekit.ts` | the material + lighting law (E7): plates, spotlight scrims, `goldFace` — `ui.ts` re-exports the legacy names |
@@ -531,9 +578,9 @@ edit to make green.
 | `src/view/megafx.ts` | the SCREEN's celebration kit — rays, burning frame, embers, coins, erupting symbols |
 | `src/view/firekit.ts` | the BOARD's fire — ring of fire, wall of flame, tally burn — see the note above before touching it |
 | `src/view3d/stage.ts` | the only three.js usage |
-| `supabase/migrations/` | `0001_saves` → `0024_race_board_salt_enforced` |
+| `supabase/migrations/` | `0001_saves` → `0025_push_daily_nudge` |
 | `scripts/verify-rls.sh` | RLS audit — run after any migration |
-| `scripts/send-push.mjs` | push sender |
+| `scripts/send-push.mjs` | push sender — all three modes; carries the duplicated day keys AND the gift roll |
 | `scripts/gen-icons.mjs` | `npm run icons` |
 
 ## Supabase

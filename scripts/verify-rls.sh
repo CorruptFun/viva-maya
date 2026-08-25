@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# verify-rls.sh — prove the exposure rules of 0010/0011/0014/0015/0019 against a LIVE API.
+# verify-rls.sh — prove the exposure rules of 0010/0011/0014/0015/0019/0025 against a LIVE API.
 #
 # Written because this matrix has to run at least twice: once against a local
 # stack while writing the migrations, and again against production the moment
@@ -198,6 +198,36 @@ case "$c" in 20*) ok "anon CAN register a subscription via RPC ($c)" ;;
 
 c=$(anon "$URL/rest/v1/push_subscriptions?select=*")
 [ "$c" = "[]" ] && ok "anon CANNOT enumerate subscriptions" || bad "PUSH ENDPOINTS ARE ENUMERABLE — anyone can notify every player" "$c"
+
+# ── categories (0025) ────────────────────────────────────────────────────────────────────────
+# The category switches are read AND written through definer RPCs for the same reason subscribe and
+# unsubscribe are: 0011 grants no SELECT policy, so a direct PATCH answers 204 having changed
+# nothing. All three assertions below check the EFFECT.
+cats=$(anon "$URL/rest/v1/rpc/get_push_categories" -X POST -d "{\"p_endpoint\":\"$EP\"}")
+echo "$cats" | grep -q '"week_race":true' && echo "$cats" | grep -q '"daily_play":true' \
+  && ok "a fresh registration is opted in to BOTH categories" \
+  || bad "a new subscriber is not opted in to both categories" "$cats"
+
+anonc -X POST "$URL/rest/v1/rpc/set_push_category" \
+  -d "{\"p_endpoint\":\"$EP\",\"p_category\":\"daily_play\",\"p_on\":false}" >/dev/null
+cats=$(anon "$URL/rest/v1/rpc/get_push_categories" -X POST -d "{\"p_endpoint\":\"$EP\"}")
+echo "$cats" | grep -q '"daily_play":false' && echo "$cats" | grep -q '"week_race":true' \
+  && ok "anon CAN switch one category off and keep the other" \
+  || bad "per-category opt-out did nothing — Settings would lie about what is on" "$cats"
+
+# ⚠️ The category name is untrusted input, and the function whitelists it rather than building
+# dynamic SQL. This probe is the injection attempt that shape exists to refuse: if it were ever
+# rewritten as `set %I = ...`, this payload would switch BOTH columns off and delete the row.
+anonc -X POST "$URL/rest/v1/rpc/set_push_category" \
+  -d "{\"p_endpoint\":\"$EP\",\"p_category\":\"week_race = false, daily_play\",\"p_on\":false}" >/dev/null
+cats=$(anon "$URL/rest/v1/rpc/get_push_categories" -X POST -d "{\"p_endpoint\":\"$EP\"}")
+echo "$cats" | grep -q '"week_race":true' \
+  && ok "an unknown category name is a no-op (not an injection point)" \
+  || bad "SET_PUSH_CATEGORY IS INJECTABLE — a crafted category name rewrote another column" "$cats"
+
+# Put it back, so the rotation and unsubscribe checks below start from the state they expect.
+anonc -X POST "$URL/rest/v1/rpc/set_push_category" \
+  -d "{\"p_endpoint\":\"$EP\",\"p_category\":\"daily_play\",\"p_on\":true}" >/dev/null
 
 # Re-register with DIFFERENT key material, then prove the stored row actually changed. Verified via
 # the sender's own view (service role) when available; otherwise the round-trip below still proves

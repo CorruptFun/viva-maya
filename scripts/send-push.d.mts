@@ -15,3 +15,40 @@ export declare function dayKey(now?: Date): string
 export declare function dayEndsAt(now?: Date): Date
 export declare function weekKey(now?: Date): string
 export declare function weekEndsAt(now?: Date): Date
+
+/**
+ * The sender's copy of the HOUSE GIFT roll (src/core/bonusdrop.ts dropForDay), pinned against the
+ * app's by src/core/bonusdrop.test.ts.
+ *
+ * Only the fields the notification actually says out loud are declared, because only those are
+ * duplicated: the sender never quotes what a gift PAYS, so it carries no copy of the chips, spins or
+ * boost columns to drift from.
+ */
+export declare function dropForDay(day: string): {
+  id: string
+  label: string
+  emoji: string
+  blurb: string
+  weight: number
+}
+
+/** Only the fields the cadence rules read — the real rows carry the keys and the endpoint too. */
+export interface PushSubscriptionRow {
+  last_sent_at?: string | null
+}
+
+/** Has this device already been sent to on `today`'s race day? The one-a-day rule's backstop. */
+export declare function sentToday(sub: PushSubscriptionRow, today: string): boolean
+
+/** May a device this many days absent be nudged again right now? `null` days = unknown, not gone. */
+export declare function backoffAllows(
+  sub: PushSubscriptionRow,
+  awayDays: number | null,
+  now: Date
+): boolean
+
+/** The streak-in-danger hook: the streak's length when it is alive and unsecured, else null. */
+export declare function streakAtRisk(
+  info: { streak: number; lastSpinDate: string | null } | null | undefined,
+  today: string
+): number | null

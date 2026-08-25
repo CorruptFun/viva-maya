@@ -197,6 +197,20 @@ export const EVENTS = {
   PUSH_ENABLED: 'push_enabled',
   PUSH_BLOCKED: 'push_blocked',
 
+  /**
+   * {drop, chips, spins, boost} — the HOUSE GIFT was taken (core/bonusdrop.ts). One per player per
+   * race day by construction, so counting it IS counting how many people the gift brought back, and
+   * `drop` splits that by which gift was on the table — the measurement the weight table is retuned
+   * against.
+   *
+   * ⚠️ A NEW NAME, which means it is invisible to the dashboard until a migration teaches the views
+   * about it: 0014/0015/0021/0022 hardcode `name in (...)`, so an unknown event is stored perfectly
+   * and charted nowhere. That is the accepted cost here — this is a new mechanic rather than a new
+   * angle on an existing one, so there is no event to ride as a prop, and the row is in the table
+   * from day one for whenever the view catches up.
+   */
+  BONUS_DROP: 'bonus_drop',
+
   /** {surface} — invite/share. Answers "did the referral system ever do anything". */
   SHARE_CLICKED: 'share_clicked',
   REFERRAL_CAPTURED: 'referral_captured',
