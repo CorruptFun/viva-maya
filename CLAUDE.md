@@ -603,6 +603,27 @@ supabase db push --include-all             # apply
 already applied gets skipped with only a hint buried in the output — that is
 how `0009` sat unapplied under `0019` without anyone noticing.
 
+**A duplicate migration number has TWO failure modes, and only one is loud.**
+The version is the primary key of `supabase_migrations.schema_migrations`, so
+two LOCAL files sharing a prefix abort the run on SQLSTATE 23505 — that is the
+duplicate-`0012` incident of 2026-07-30, and it is the one everybody expects.
+The other mode is **silent**, and it is the dangerous one: a local file whose
+number matches a version **already applied remotely** is reconciled by NUMBER
+and never by name, so the CLI decides your file is already applied and drops it
+from the plan without a word. ⚠️ **`--dry-run` reports success**, which is
+exactly why it slips through. Measured 2026-08-25 (CLI 2.98.2): with `0025`
+applied and a branch carrying its own unrelated `0025`, the dry run printed
+only `• 0026_…` — the whole paid-entry migration, four money tables and their
+RLS, was omitted in silence, and its dependent would then have run
+`alter table public.entitlements` against a table that was never created.
+So a clean dry run is **not** proof there is no collision. Before pushing from
+any branch, check every local prefix against the Remote column of
+`supabase migration list --linked`. When you must renumber, move the HIGHEST
+file first or `git mv` clobbers, and chase the number everywhere it is written
+as prose — the two-sided switches in `src/core/`, the Edge Function comments,
+`docs/`, and the header list in `scripts/verify-rls.sh` — not just where it
+appears as a path.
+
 **CI never applies migrations.** The workflows only build Pages, send push, and
 prune events. So applying a migration to production and merging it to `main`
 are two separate acts, and *the repo does not describe production until both
@@ -612,7 +633,12 @@ unmerged is invisible to whoever looks next.
 If a push reports `Remote migration versions not found` and suggests
 `migration repair --status reverted <v>`, check whether your branch is simply
 behind `main` before running it. It usually is, and marking an applied
-migration as reverted re-creates exactly the drift above.
+migration as reverted re-creates exactly the drift above. The other innocent
+cause, seen 2026-08-25: the version was applied from a **different branch** and
+your branch has no file for it, so nothing is wrong with production and the
+repair would be actively harmful. It clears the moment that branch lands on
+`main` and yours rebases; to verify before then, copy the missing migration
+into a throwaway tree rather than repairing anything.
 
 ## Secrets
 
@@ -671,3 +697,14 @@ expensive.
 
 GitHub Pages. PWA via `vite-plugin-pwa` (Workbox) — a deploy invalidates
 precached assets, so verify offline behavior after shipping. **Public repo.**
+
+⚠️ **The `gh-pages` branch is NOT the deploy target and pushing to it ships
+nothing.** Pages is configured `build_type: workflow` — the live site is the
+artifact `.github/workflows/deploy.yml` uploads via `actions/deploy-pages`. The
+API still reports a vestigial `source.branch: gh-pages`, which is what makes
+this worth stating: the field is ignored, and the branch has been dead since
+the workflow took over. Its last commit (2026-07-21) is **a different project**
+— a `jackson/` directory holding a LEGO Brick Dodge game — and
+`/viva-maya/jackson/` duly 404s. Keep the branch anyway: it is that project's
+only copy, so it is an archive to move somewhere of its own, never a thing to
+delete on the grounds that it is unused here.
