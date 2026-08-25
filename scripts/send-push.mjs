@@ -548,7 +548,6 @@ function standingMessage(sub, board, hrs) {
 }
 
 async function main() {
-  requireConfig()
   // The modes are mutually exclusive by definition — they read different audience columns and say
   // different things. Both flags together would silently run as `--drop` against a `daily_play`
   // audience while every `DAILY`-gated branch below still believed it was the evening job, which is
@@ -557,6 +556,7 @@ async function main() {
     console.error('--drop and --daily are different sends; pass one')
     process.exit(1)
   }
+  requireConfig()
   const now = new Date()
   const today = dayKey(now)
   const key = DROP ? today : DAILY ? today : weekKey(now)
