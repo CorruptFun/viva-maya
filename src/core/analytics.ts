@@ -669,13 +669,13 @@ export function _reportClientError(message: unknown, extra: Record<string, unkno
 }
 
 /**
- * The three markers scripts/send-push.mjs can actually write (its `notificationUrl`), and nothing
+ * The five markers scripts/send-push.mjs can actually write (its `notificationUrl`), and nothing
  * else. An ALLOW-LIST rather than a parser, because this value arrives from the ADDRESS BAR: anyone
  * can type a URL, `app_open` is the denominator for every rate on the dashboard, and an event prop
  * is a permanent row in a table nothing can edit afterwards. Echoing whatever the query string said
  * would turn the most-fired event in the game into an open text field for strangers.
  */
-const PUSH_SOURCE_RE = /^push-(drop|daily|week)$/
+const PUSH_SOURCE_RE = /^push-(drop|quests|daily|laststand|week)$/
 
 /**
  * WHICH PUSH SEND opened the game, from a `?from=push-…` marker — or null for an organic open.

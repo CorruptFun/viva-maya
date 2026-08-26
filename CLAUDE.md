@@ -404,6 +404,32 @@ Live: <https://corruptfun.github.io/viva-maya/>
   (`name in (...)` across migrations 0014/0015/0021/0022), so a *new* event is
   invisible until a new migration ships and fails silently, whereas a new prop
   rides along for free.
+- **The sender nudges up to three times a day, and the bound is a COUNTER, not
+  the shape of the schedule.** `scripts/send-push.mjs` has five modes on five
+  crons (`endless-push.yml`): the ~9am house gift (`--drop`), the ~1pm quest
+  slate (`--quests`), the ~6pm board (`--daily`), the ~9pm streak rescue
+  (`--laststand`) and the Sunday season. All four weekday slots land on the SAME
+  race day key, so "three a day" means three per board. Two things are
+  load-bearing:
+  - **The number is printed to players.** `VOLUME_RULE` (`view/pushoptin.ts`) is
+    the sentence every subscriber tapped REMIND ME against, and it names
+    `DAILY_SEND_CAP`. Change one, change both — and it has to be a bound
+    something REFUSES to exceed (the per-race-day counter in migration 0028),
+    never a description of how the crons currently work out.
+  - **⚠️ The previous bound was "one a day by disjoint audiences", and it
+    silently delivered NOTHING for two days.** `--drop` took `away >= 2` and
+    `--daily` took `away === 1`; those look like a partition of everybody and
+    leave out `away === 0` — the player who opens the game *every* day, which
+    was all four subscribers. Every run was green and logged
+    `4 opted in · 4 held back · 0 due`, which reads exactly like a healthy quiet
+    evening; the session that shipped it recorded the quiet as correct. The fix
+    is `dueForMode`, and the guard against a repeat is a **total** test (a
+    player in an ordinary state must match *some* weekday mode) plus the
+    **away-histogram** now on every run's log line — `away 0:4` beside
+    `4 held back` is the tell. Per-branch tests cannot catch a hole *between*
+    branches. `--explain` prints the per-device decision when you need it.
+  Modes ride the two existing categories (`week_race` / `daily_play`), so
+  Settings still has two switches and no third one is owed.
 - **The resume guard reloads the page, so its false-positive guard is critical.**
   `core/resumeguard.ts` watches for the game loop failing to advance after a
   resume. `core/apploop.ts` stops the loop on purpose while hidden, so **a hidden

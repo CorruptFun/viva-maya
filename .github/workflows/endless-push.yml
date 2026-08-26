@@ -1,68 +1,80 @@
 name: Game reminders
 
-# THREE SCHEDULES, ONE NOTIFICATION A DAY.
+# FIVE SCHEDULES, AT MOST THREE NOTIFICATIONS A DAY.
 #
-# ⚠️ Read this before adding a fourth entry. The audience is opted in on a card that promises one
-# nudge (src/view/pushoptin.ts), and the promise is kept by VOLUME rather than by the number of jobs
-# below: the modes have disjoint audiences by construction, and the sender re-checks `last_sent_at`
-# against the current race day before every single send. A new cron that does not respect both is a
-# second notification in somebody's evening, and the only signal you will ever get for that is a
-# subscription count that quietly stops going up. scripts/send-push.mjs' header states the rule.
+# ⚠️ Read this before adding a sixth entry. The audience is opted in on a card that prints a NUMBER
+# (src/view/pushoptin.ts VOLUME_RULE), and that number is `DAILY_SEND_CAP` in scripts/send-push.mjs.
+# The promise is kept two ways: every mode has to have something true and specific to say or it stays
+# silent, and every send re-checks a per-race-day counter (migration 0028) plus a minimum gap. A new
+# cron does not need to respect the cap by hand — the sender refuses past it — but it DOES need
+# something worth saying, or it is a slot that spends a player's attention on nothing.
 #
-# THE MORNING NUDGE (--drop) fires at 15:00 UTC — 8–9 AM on the home crowd's clock. It goes ONLY to
-# devices that did not open the game yesterday, so an active player never sees it, and it carries the
-# day's HOUSE GIFT by name (src/core/bonusdrop.ts). Morning rather than evening on purpose: it is an
-# invitation with a whole day behind it, and a deadline is the wrong pressure to put on somebody who
-# is not in the habit yet. Every day, including Monday — the season blast that evening lands on a
-# different home day, and the same-day guard covers the seam either way.
+# ⚠️ THIS SCHEDULE REPLACED ONE THAT SILENTLY DELIVERED NOTHING. Until 2026-08-26 there were three
+# entries and the two weekday sends split the audience by activity: the morning nudge took "was NOT
+# here yesterday", the evening one took "was here EXACTLY yesterday". Those look like a partition and
+# they leave out the player who is here EVERY day — which was all four subscribers. Every run was
+# green and reported `4 opted in · 4 held back · 0 due`. The sender's `dueForMode` carries the full
+# account; each run now also prints an away-histogram so the same failure cannot look healthy again.
 #
-# TODAY'S BOARD (--daily) closes at midnight America/Edmonton (core/endless.ts dayEndsAt — 06:00 UTC
-# on MDT, 07:00 UTC on MST). The daily job fires at 01:00 UTC — 6–7 PM at home, ~5–6 hours before the
-# close — while there is still time to take the board. It goes ONLY to devices that DID open the game
-# yesterday: the morning slot already spoke to everyone else, and this is the audience with a live
-# streak to lose and a rank worth quoting.
+# THE DAY, on the home clock (America/Edmonton; the UTC hours are fixed because cron cannot follow
+# DST, so the local times breathe by an hour across the seasons):
 #
-# THE SEASON closes Monday midnight America/Edmonton (core/endless.ts weekEndsAt). Its job fires in
-# the same 01:00 UTC slot — which on Monday's UTC calendar is SUNDAY EVENING at home, late enough
-# that the totals being reported are close to final. It is the one mode with no activity filter: a
-# season summary silenced for whoever drifted off mid-week is silent for exactly the people it is for.
+#   ≈9am   --drop       The HOUSE GIFT by name (src/core/bonusdrop.ts), to anyone not already here
+#                       today. An invitation with a whole day behind it — a deadline is the wrong
+#                       pressure to put on somebody who is not in the habit yet.
+#   ≈1pm   --quests     The only slot that fires for somebody who IS here today: an unfinished quest
+#                       slate, counted and never named (src/core/quests.ts).
+#   ≈6pm   --daily      Today's board, which closes at midnight. Goes to anyone with real news — a
+#                       row on the board, a streak about to break, a wheel within reach, or simply
+#                       not here yet today.
+#   ≈9pm   --laststand  A live streak that dies at midnight and has not been secured. The narrowest
+#                       gate in the sender and the most valuable thing it can say.
+#   ≈6pm Sun (weekly)   The season, which closes Monday midnight. The one mode with no activity
+#                       filter: a summary silenced for whoever drifted off mid-week is silent for
+#                       exactly the people it is for.
 #
-# ⚠️ The UTC day at 01:00 UTC is already TOMORROW on the home clock's calendar: Monday evening in
-# Alberta is Tuesday 01:00 UTC. That is why the daily cron runs Tue–Sun (`0,2-6`) and the season owns
-# Monday (`1`) — Monday 01:00 UTC IS Sunday evening at home. The 15:00 UTC entry needs no such
-# offset: it is on the same calendar day at home as it is in UTC.
+# ⚠️ THE UTC DAY AT 00:00 AND 03:00 IS ALREADY TOMORROW ON THE HOME CALENDAR: Monday evening in
+# Alberta is Tuesday 00:00 UTC. That is why the evening board runs Tue–Sun (`0,2-6`) and the season
+# owns Monday (`1`) — Monday 00:00 UTC IS Sunday evening at home. The 15:00 and 19:00 entries need no
+# such offset; they are on the same calendar day at home as in UTC. All four weekday slots therefore
+# land on the SAME race day key, which is what makes "three a day" mean three per board.
 #
-# A cron cannot follow DST, so the hours are fixed in UTC and the local send times breathe by an hour
-# across the seasons; the messages compute "in N hours" from the real clock either way.
-#
-# GitHub's scheduler is best-effort and can run 10–30 minutes late under load. That is irrelevant
-# here: every deadline a message quotes is computed at run time from the real clock, so a delayed run
-# reports a smaller N rather than saying anything untrue.
+# GitHub's scheduler is best-effort and can run 10–30 minutes late under load. That is why
+# MIN_GAP_HOURS (2) is looser than the tightest nominal spacing here (3h, evening → last call): a gap
+# tuned to the schedule would drop a legitimate send whenever a cron ran late. Every deadline a
+# message quotes is computed at run time from the real clock, so a late run reports a smaller number
+# rather than saying anything untrue.
 on:
   schedule:
-    - cron: '0 15 * * *'    # every day 15:00 UTC = morning at home — the play nudge + house gift
-    - cron: '0 1 * * 0,2-6' # Tue–Sun 01:00 UTC = Mon–Sat evening at home — today's board
-    - cron: '0 1 * * 1'     # Monday 01:00 UTC = Sunday evening at home — the season
+    - cron: '0 15 * * *'    # every day 15:00 UTC = ~9am at home — the house gift
+    - cron: '0 19 * * *'    # every day 19:00 UTC = ~1pm at home — the quest slate
+    - cron: '0 0 * * 0,2-6' # Tue–Sun 00:00 UTC = Mon–Sat evening at home — today's board
+    - cron: '0 0 * * 1'     # Monday 00:00 UTC = Sunday evening at home — the season
+    - cron: '0 3 * * *'     # every day 03:00 UTC = ~9pm at home — the streak last call
   workflow_dispatch:
     inputs:
       scope:
         description: 'Which reminder to send'
         type: choice
-        options: [drop, daily, weekly]
+        options: [drop, quests, daily, laststand, weekly]
         default: drop
       dry_run:
         description: 'Print what would be sent without sending anything'
         type: boolean
         default: true
+      explain:
+        description: 'Print WHY each device was or was not sent to (per-device decision lines)'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
   # Never let a manual test overlap a scheduled run — two senders would double-notify every player,
-  # which is the fastest way to get notifications switched off for good. (The sender's own
-  # `last_sent_at` guard would catch most of that too, but only after the first one has committed;
-  # serialising here is what makes the guard's answer stable rather than a race.)
+  # which is the fastest way to get notifications switched off for good. (The sender's own budget
+  # counter would catch most of that too, but only after the first one has committed; serialising
+  # here is what makes the counter's answer stable rather than a race.)
   group: endless-push
   cancel-in-progress: false
 
@@ -80,37 +92,40 @@ jobs:
         env:
           SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
           # Service-role key: bypasses RLS, which is the only way to read push_subscriptions
-          # (0011 grants SELECT to nobody), the events log (0010, same) or a player's own save
+          # (0011 grants no SELECT to anyone), the events log (0010, same) or a player's own save
           # (0001). A SECRET, never a repo variable — unlike the publishable key, this one must
           # never be readable from the client or the repo UI.
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           VAPID_PUBLIC_KEY: ${{ vars.VITE_VAPID_PUBLIC_KEY }}
           VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
           VAPID_SUBJECT: ${{ vars.VAPID_SUBJECT }}
-          # Passed through env rather than interpolated into the script body. This particular input is
-          # a typed boolean from a collaborator-only trigger, so it is not really attacker-controlled —
+          # Passed through env rather than interpolated into the script body. These inputs are typed
+          # and come from a collaborator-only trigger, so they are not really attacker-controlled —
           # but `${{ }}` inside `run:` is textual substitution into the shell, and keeping the one
           # habit everywhere is what stops a genuinely untrusted field being pasted in later.
-          # On a scheduled run this is empty, so the real send is the default and --dry-run is opt-in.
+          # On a scheduled run these are empty, so the real send is the default and --dry-run is opt-in.
           DRY_RUN: ${{ inputs.dry_run }}
+          EXPLAIN: ${{ inputs.explain }}
           # Which reminder to send. A scheduled run has no inputs, so it is decided by WHICH cron
-          # fired: the 15:00 entry is the morning nudge, the Monday-01:00 entry (Sunday evening at
-          # home) is the season, and every other evening is that day's board.
+          # fired; the evening board is the fallback because it owns the only multi-day entry.
           # ⚠️ One line on purpose. A folded (`>-`) scalar keeps the newlines of any continuation
-          # line indented deeper than its first, so the pretty three-line version of this expression
+          # line indented deeper than its first, so the pretty multi-line version of this expression
           # reaches the expression parser with real newlines inside it — which is a thing to find out
           # from a live cron rather than from a review.
-          SCOPE: ${{ inputs.scope || (github.event.schedule == '0 15 * * *' && 'drop') || (github.event.schedule == '0 1 * * 1' && 'weekly') || 'daily' }}
-        # A `case` rather than the chain of `[ ] && ARGS=…` tests this replaced: with three modes the
-        # chain needs an unmatched-scope branch to be meaningful, and a scope that matches nothing
-        # silently sending the WEEKLY season blast (the no-flag default) is the one wrong answer that
-        # reaches every subscriber at once. An unknown scope now fails the run instead.
+          SCOPE: ${{ inputs.scope || (github.event.schedule == '0 15 * * *' && 'drop') || (github.event.schedule == '0 19 * * *' && 'quests') || (github.event.schedule == '0 3 * * *' && 'laststand') || (github.event.schedule == '0 0 * * 1' && 'weekly') || 'daily' }}
+        # A `case` rather than a chain of `[ ] && ARGS=…` tests: with five modes the chain needs an
+        # unmatched-scope branch to be meaningful, and a scope that matches nothing silently sending
+        # the WEEKLY season blast (the no-flag default) is the one wrong answer that reaches every
+        # subscriber at once. An unknown scope fails the run instead.
         run: |
           case "$SCOPE" in
-            drop)   ARGS="--drop" ;;
-            daily)  ARGS="--daily" ;;
-            weekly) ARGS="" ;;
+            drop)      ARGS="--drop" ;;
+            quests)    ARGS="--quests" ;;
+            daily)     ARGS="--daily" ;;
+            laststand) ARGS="--laststand" ;;
+            weekly)    ARGS="" ;;
             *) echo "unknown scope: $SCOPE" >&2; exit 1 ;;
           esac
           if [ "$DRY_RUN" = "true" ]; then ARGS="$ARGS --dry-run"; fi
+          if [ "$EXPLAIN" = "true" ]; then ARGS="$ARGS --explain"; fi
           node scripts/send-push.mjs $ARGS

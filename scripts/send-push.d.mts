@@ -35,10 +35,69 @@ export declare function dropForDay(day: string): {
 /** Only the fields the cadence rules read — the real rows carry the keys and the endpoint too. */
 export interface PushSubscriptionRow {
   last_sent_at?: string | null
+  /** Race day key `sends_count` belongs to (migration 0028); absent on the un-migrated fallback. */
+  sends_day?: string | null
+  sends_count?: number | null
 }
 
-/** Has this device already been sent to on `today`'s race day? The one-a-day rule's backstop. */
+/** Has this device already been sent to on `today`'s race day? The pre-0028 one-a-day fallback. */
 export declare function sentToday(sub: PushSubscriptionRow, today: string): boolean
+
+/** How many notifications this device has had on `today`'s race day — 0 when the counter is stale. */
+export declare function sendsToday(sub: PushSubscriptionRow, today: string): number
+
+/**
+ * The volume promise in code: `DAILY_SEND_CAP` is the number src/view/pushoptin.ts's VOLUME_RULE
+ * prints to every player being asked for a notification permission. Change one, change both.
+ */
+export declare const DAILY_SEND_CAP: number
+export declare const MIN_GAP_HOURS: number
+
+/** May this device be sent to at all right now — the day's cap and the minimum gap between sends. */
+export declare function budgetAllows(
+  sub: PushSubscriptionRow,
+  today: string,
+  now: Date,
+  opts?: { cap?: number; gapHours?: number; legacy?: boolean }
+): boolean
+
+/** What `dueForMode` needs to know about one subscriber. Every field is optional and defaults safe. */
+export interface PushDueContext {
+  /** Days since this device was last seen. `null` is UNKNOWN, never "gone". */
+  away?: number | null
+  /** Length of a live, unsecured streak (`streakAtRisk`), else null. */
+  streakDays?: number | null
+  /** Unfinished goals on today's slate (`questsOpen`), else null. */
+  questsOpen?: number | null
+  /** Does this player have a row on the board this run is about? */
+  onBoard?: boolean
+  /** Wins left to the jackpot wheel while it is within reach (`jackpotWinsAway`), else null. */
+  winsAway?: number | null
+}
+
+/**
+ * Does this mode have anything to say to this subscriber?
+ *
+ * ⚠️ The fix for the 2026-08-25 outage, where `drop` (`away >= 2`) and `daily` (`away === 1`)
+ * between them left out `away === 0` — every daily-active player — and delivered nothing while
+ * reporting a healthy-looking quiet state. src/core/pushcadence.test.ts pins the total property.
+ */
+export declare function dueForMode(mode: PushMode, ctx?: PushDueContext): boolean
+
+/** Whether the absence backoff applies to this mode — the two broad ones, not the two narrow ones. */
+export declare function backoffApplies(mode: PushMode): boolean
+
+/** The quest slate's shape, duplicated from src/core/quests.ts and pinned against it. */
+export declare const QUEST_COUNT: number
+export declare const ALL_CLEAR_ID: string
+export declare const ALL_CLEAR_CHIPS: number
+export declare const ALL_CLEAR_SPINS: number
+
+/** Unfinished goals on `today`'s slate — QUEST_COUNT when the slate has not rolled over yet. */
+export declare function questsOpen(
+  info: { quests?: { day: string; claimed: string[] } | null } | null | undefined,
+  today: string
+): number | null
 
 /** May a device this many days absent be nudged again right now? `null` days = unknown, not gone. */
 export declare function backoffAllows(
@@ -67,13 +126,13 @@ export declare function jackpotWinsAway(
 ): number | null
 
 /**
- * The three scheduled sends, named exactly as they appear in the run's log line, in the tray tag and
- * in the open URL's marker. A union rather than `string` so a fourth mode cannot be typed into
+ * The five scheduled sends, named exactly as they appear in the run's log line, in the tray tag and
+ * in the open URL's marker. A union rather than `string` so a sixth mode cannot be typed into
  * `notificationUrl` here without the client's allow-list (`pushSource`, src/core/analytics.ts)
  * being widened in the same change — which is the drift that would otherwise show up as a new
  * mode's attribution reading a silent zero.
  */
-export type PushMode = 'drop' | 'daily' | 'week'
+export type PushMode = 'drop' | 'quests' | 'daily' | 'laststand' | 'week'
 
 /**
  * Where a tapped notification opens: `./?from=push-<mode>`.

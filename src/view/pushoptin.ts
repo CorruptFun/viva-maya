@@ -63,20 +63,30 @@ const CONFIRM_HOLD_MS = 1500
 type Rule = readonly [icon: string, text: string]
 
 /**
- * ⚠️ THE VOLUME PROMISE, AND IT IS A PROMISE THE SENDER HAS TO KEEP. It used to read "One nudge
+ * ⚠️ THE VOLUME PROMISE, AND IT IS A PROMISE THE SENDER HAS TO KEEP. Everyone who ever tapped
+ * REMIND ME did so against this sentence, and a notification permission is the one thing in this
+ * game a player cannot give back twice — so it is kept accurate rather than kept still.
+ *
+ * It has now been rewritten twice, and both rewrites are the same lesson. It first read "One nudge
  * before the board closes — and that is the only one you will ever get", which was true of a game
- * with exactly one notification and became a lie the moment a second kind existed. The volume is
- * genuinely unchanged — scripts/send-push.mjs sends at most one per device per race day, enforced by
- * disjoint audiences and a same-day guard — so the honest edit was to promise the VOLUME rather than
- * the single feature. If a future change cannot keep this sentence true, the change is wrong, not
- * the sentence: everyone who ever tapped REMIND ME did so against it, and a notification permission
- * is the one thing in this game a player cannot give back twice.
+ * with exactly one notification and became a lie the moment a second kind existed; the honest edit
+ * was to promise the VOLUME rather than the single feature. It then read "At most one nudge a day",
+ * which was enforced by giving the two sends disjoint audiences — and that construction turned out
+ * to leave every daily-active player matching NEITHER send, so the real delivered volume was ZERO
+ * (see scripts/send-push.mjs `dueForMode` for the full account). The owner's call on 2026-08-26 was
+ * to nudge a few times through the day for gameplay encouragement, so the number moved.
+ *
+ * ⚠️ THE NUMBER HERE IS `DAILY_SEND_CAP` IN scripts/send-push.mjs. It is printed to a player who is
+ * deciding whether to hand over a permission, so it must be a bound something actually REFUSES to
+ * exceed, not a description of how the current cron schedule happens to work out — which is why the
+ * sender enforces it with a per-race-day counter (migration 0028) rather than by construction. If a
+ * future change cannot keep this sentence true, the change is wrong, not the sentence.
  *
  * It is ONE constant shared by both variants rather than a line in each, because it is the one
  * sentence in here that is a commitment rather than a description — two copies of it would drift the
  * first time either card was reworded, and the drift would be invisible until somebody complained.
  */
-const VOLUME_RULE: Rule = ['⏰', 'At most one nudge a day — never two, and only when there is something waiting']
+const VOLUME_RULE: Rule = ['⏰', 'At most three a day — and only when there is something actually waiting']
 
 /** The objection-handler, likewise shared: "how do I stop it" is the question both audiences ask. */
 const OFF_SWITCH_RULE: Rule = ['🔕', 'Switch it off, or pick which kind you get, in Settings']

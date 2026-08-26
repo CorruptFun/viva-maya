@@ -1,11 +1,22 @@
 import { describe, expect, it } from 'vitest'
 import type { PushMode } from '../../scripts/send-push.mjs'
 import {
+  ALL_CLEAR_CHIPS as SENDER_ALL_CLEAR_CHIPS,
+  ALL_CLEAR_ID as SENDER_ALL_CLEAR_ID,
+  ALL_CLEAR_SPINS as SENDER_ALL_CLEAR_SPINS,
   backoffAllows,
+  backoffApplies,
+  budgetAllows,
+  DAILY_SEND_CAP,
+  dueForMode,
   JACKPOT_GOAL as SENDER_JACKPOT_GOAL,
   jackpotWinsAway,
   LEVEL_COUNT as SENDER_LEVEL_COUNT,
+  MIN_GAP_HOURS,
   notificationUrl,
+  QUEST_COUNT as SENDER_QUEST_COUNT,
+  questsOpen,
+  sendsToday,
   sentToday,
   streakAtRisk,
 } from '../../scripts/send-push.mjs'
@@ -13,15 +24,17 @@ import { pushSource } from './analytics'
 import { dayKey } from './endless'
 import { JACKPOT_GOAL } from './jackpot'
 import { LEVEL_COUNT } from './levels'
+import { ALL_CLEAR_CHIPS, ALL_CLEAR_ID, ALL_CLEAR_SPINS, QUEST_COUNT } from './quests'
 
 /**
  * THE NOTIFICATION CADENCE — the three rules that make it honest for this game to send more than one
  * kind of notification.
  *
- * The game now has three scheduled sends (scripts/send-push.mjs: the morning play nudge, the evening
- * race reminder, the Sunday season summary) against an audience that opted in on a card promising
- * one nudge. That promise is kept by VOLUME, not by count of features — at most one notification per
- * device per race day, ever — and it is kept by these predicates plus a disjoint audience split.
+ * The game now has five scheduled sends (scripts/send-push.mjs: the morning house gift, the
+ * afternoon quest nudge, the evening race reminder, the late streak rescue, the Sunday season
+ * summary) against an audience that opted in on a card printing a NUMBER. That promise is kept by
+ * VOLUME, not by count of features — at most `DAILY_SEND_CAP` per device per race day — and it is
+ * kept by the predicates below plus a per-race-day counter (migration 0028).
  *
  * ⚠️ WHY THIS IS TESTED AT ALL, given it lives in a .mjs the game never imports: a bug here is
  * unobservable from inside the game and expensive outside it. Nobody files a report saying "I got
@@ -206,11 +219,13 @@ describe('the jackpot-within-reach hook', () => {
  *     core/levelresume.ts deliberately cannot restore.
  */
 describe('the notification’s open URL', () => {
-  const MODES: PushMode[] = ['drop', 'daily', 'week']
+  const MODES: PushMode[] = ['drop', 'quests', 'daily', 'laststand', 'week']
 
   it('stamps which of the three sends opened the app', () => {
     expect(notificationUrl('drop')).toBe('./?from=push-drop')
+    expect(notificationUrl('quests')).toBe('./?from=push-quests')
     expect(notificationUrl('daily')).toBe('./?from=push-daily')
+    expect(notificationUrl('laststand')).toBe('./?from=push-laststand')
     expect(notificationUrl('week')).toBe('./?from=push-week')
   })
 
@@ -249,5 +264,161 @@ describe('the notification’s open URL', () => {
       const search = new URL(notificationUrl(mode), 'https://corrupt.solutions/games/viva-maya/').search
       expect(pushSource(search), mode).toBe(`push-${mode}`)
     }
+  })
+})
+
+/**
+ * ⚠️ THE REGRESSION THIS SUITE EXISTS FOR, AND THE ONLY TEST HERE THAT PINS A TOTAL PROPERTY RATHER
+ * THAN A BRANCH.
+ *
+ * Between 2026-08-25 and 2026-08-26 the two weekday sends partitioned the audience by activity:
+ * `drop` took `away >= 2` (not here yesterday) and `daily` took `away === 1` (here exactly
+ * yesterday). Every individual branch was correct, every unit test passed, and between them they
+ * left out `away === 0` — the player who opens the game every day. All four live subscribers were
+ * there. Every scheduled run for two days reported `4 opted in · 4 held back · 0 due`, exited 0, and
+ * delivered nothing; the session that shipped it recorded the quiet as correct in good faith.
+ *
+ * A per-branch test cannot catch that, because no branch was wrong — the hole was BETWEEN them. So
+ * these assert the property the branches exist to serve: a player in an ordinary state must be
+ * reachable by SOMETHING. Tune a bound and this is what fails.
+ */
+describe('reach — every ordinary player matches some weekday mode', () => {
+  const WEEKDAY: PushMode[] = ['drop', 'quests', 'daily', 'laststand']
+  const reached = (ctx: Parameters<typeof dueForMode>[1]) => WEEKDAY.filter(m => dueForMode(m, ctx))
+
+  it('reaches THE DAILY-ACTIVE PLAYER — the exact case that went dark', () => {
+    // Here today, an unfinished quest slate: the afternoon nudge is for exactly this person.
+    expect(reached({ away: 0, questsOpen: 2 })).toContain('quests')
+    // Here today with a streak hours from breaking: the late rescue takes it.
+    expect(reached({ away: 0, streakDays: 12 })).toContain('laststand')
+    // Here today and racing: the evening board has their rank.
+    expect(reached({ away: 0, onBoard: true })).toContain('daily')
+    // Here today, chasing the wheel.
+    expect(reached({ away: 0, winsAway: 1 })).toContain('daily')
+  })
+
+  it('reaches every OTHER away value too, including unknown', () => {
+    for (const away of [1, 2, 3, 7, 29, null]) {
+      expect(reached({ away }).length, `away ${away}`).toBeGreaterThan(0)
+    }
+  })
+
+  it('still says NOTHING to a player with genuinely nothing waiting', () => {
+    // The one silence that is correct, and the reason this is a property and not "always send":
+    // here today, slate cleared, no streak at risk, off the board, no wheel in reach. Every mode
+    // declining is the feature — "the board closes soon" is not news to someone holding the phone.
+    expect(reached({ away: 0, questsOpen: 0 })).toEqual([])
+  })
+
+  it('never lets a mode fire on an empty context by accident', () => {
+    // A default-everything ctx must not light up the two NARROW modes: both are gated on a specific
+    // fact, and a mode that fires on "no information" is a mode that fires on a failed read.
+    expect(dueForMode('quests', {})).toBe(false)
+    expect(dueForMode('laststand', {})).toBe(false)
+    expect(dueForMode('week', {})).toBe(true)
+  })
+
+  it('backs off only the two BROAD modes', () => {
+    // A quest slate and a dying streak are time-critical facts about today; throttling those because
+    // the player has been quiet throttles the only messages that could change that.
+    expect(backoffApplies('drop')).toBe(true)
+    expect(backoffApplies('daily')).toBe(true)
+    expect(backoffApplies('quests')).toBe(false)
+    expect(backoffApplies('laststand')).toBe(false)
+    expect(backoffApplies('week')).toBe(false)
+  })
+})
+
+/**
+ * THE DAY'S BUDGET — the bound the opt-in card prints. `DAILY_SEND_CAP` is the number in
+ * src/view/pushoptin.ts's VOLUME_RULE; if this suite is edited to allow more, that sentence is a lie
+ * and the card has to move in the same commit.
+ */
+describe('the send budget', () => {
+  const TODAY = '2026-08-26'
+  const AT = (h: number) => new Date(`${TODAY}T${String(h).padStart(2, '0')}:00:00Z`)
+  const row = (day: string | null, count: number, lastH: number | null) => ({
+    sends_day: day,
+    sends_count: count,
+    last_sent_at: lastH === null ? null : AT(lastH).toISOString(),
+  })
+
+  it('counts only sends belonging to TODAY', () => {
+    expect(sendsToday(row(TODAY, 2, 1), TODAY)).toBe(2)
+    // A stale counter reads as zero rather than needing a nightly sweep to reset it.
+    expect(sendsToday(row('2026-08-25', 3, 1), TODAY)).toBe(0)
+    expect(sendsToday(row(null, 0, null), TODAY)).toBe(0)
+  })
+
+  it('stops at the cap the card promises', () => {
+    expect(budgetAllows(row(TODAY, DAILY_SEND_CAP - 1, 1), TODAY, AT(20))).toBe(true)
+    expect(budgetAllows(row(TODAY, DAILY_SEND_CAP, 1), TODAY, AT(20))).toBe(false)
+    expect(budgetAllows(row(TODAY, DAILY_SEND_CAP + 9, 1), TODAY, AT(20))).toBe(false)
+  })
+
+  it('refuses two inside the minimum gap, whatever the cap says', () => {
+    // The cap bounds the DAY; the gap is what a player actually experiences as spam. A manual run
+    // landing beside a scheduled one is the case this catches.
+    expect(budgetAllows(row(TODAY, 1, 10), TODAY, AT(10 + MIN_GAP_HOURS - 1))).toBe(false)
+    expect(budgetAllows(row(TODAY, 1, 10), TODAY, AT(10 + MIN_GAP_HOURS))).toBe(true)
+  })
+
+  it('lets a never-sent device through', () => {
+    expect(budgetAllows(row(null, 0, null), TODAY, AT(9))).toBe(true)
+    expect(budgetAllows({}, TODAY, AT(9))).toBe(true)
+  })
+
+  it('falls back to ONE a day when migration 0028 is not applied', () => {
+    // The un-migrated path errs QUIET — it under-sends rather than over-sends, which is the side a
+    // notification budget must fail toward when it cannot see its own accounting. See 0028's header.
+    // ⚠️ The legacy rule compares RACE DAY KEYS, not elapsed hours, so these timestamps have to land
+    // inside the right Edmonton day: race day 2026-08-26 runs 06:00 UTC Aug 26 → 06:00 UTC Aug 27.
+    // `AT(1)` looks like "1am today" and is in fact 7pm on the PREVIOUS race day, which is exactly
+    // the confusion the sender avoids by never comparing hours across this boundary.
+    const legacy = { legacy: true }
+    expect(budgetAllows({ last_sent_at: null }, TODAY, AT(9), legacy)).toBe(true)
+    expect(budgetAllows(row(TODAY, 1, 10), TODAY, AT(20), legacy)).toBe(false)
+    expect(budgetAllows({ last_sent_at: AT(1).toISOString() }, TODAY, AT(20), legacy)).toBe(true)
+  })
+})
+
+/**
+ * THE QUEST SLATE, as the sender sees it. The four constants are duplicated into the .mjs (which
+ * cannot import from src/) and pinned here for the reason every duplicated constant in that file is:
+ * a drift makes the notification promise a payout the game does not hand over.
+ */
+describe('the quest nudge', () => {
+  const TODAY = '2026-08-26'
+
+  it('keeps the sender in step with the app’s own slate', () => {
+    expect(SENDER_QUEST_COUNT).toBe(QUEST_COUNT)
+    expect(SENDER_ALL_CLEAR_ID).toBe(ALL_CLEAR_ID)
+    expect(SENDER_ALL_CLEAR_CHIPS).toBe(ALL_CLEAR_CHIPS)
+    expect(SENDER_ALL_CLEAR_SPINS).toBe(ALL_CLEAR_SPINS)
+  })
+
+  it('treats a slate that has not rolled over as untouched', () => {
+    // The common case for this hook: they opened the app without yet tripping a quest signal, so
+    // their save still carries yesterday's slate. All of today's goals are open.
+    expect(questsOpen({ quests: { day: '2026-08-25', claimed: ['a', 'b'] } }, TODAY)).toBe(QUEST_COUNT)
+  })
+
+  it('counts unfinished goals, and never counts the all-clear bonus as one', () => {
+    expect(questsOpen({ quests: { day: TODAY, claimed: [] } }, TODAY)).toBe(QUEST_COUNT)
+    expect(questsOpen({ quests: { day: TODAY, claimed: ['a'] } }, TODAY)).toBe(QUEST_COUNT - 1)
+    // A finished slate carries the bonus id too. Counting it would report -1 open, which dueForMode
+    // would read as "nothing due" by luck rather than by rule.
+    const finished = { quests: { day: TODAY, claimed: ['a', 'b', 'c', ALL_CLEAR_ID] } }
+    expect(questsOpen(finished, TODAY)).toBe(0)
+    expect(dueForMode('quests', { away: 0, questsOpen: questsOpen(finished, TODAY) })).toBe(false)
+  })
+
+  it('answers null on junk rather than guessing', () => {
+    // A missing personalisation must never cost a notification — and here it costs only this mode,
+    // which is correct, because this mode is ENTIRELY about the slate.
+    expect(questsOpen(null, TODAY)).toBe(null)
+    expect(questsOpen({}, TODAY)).toBe(null)
+    expect(questsOpen({ quests: null }, TODAY)).toBe(null)
+    expect(dueForMode('quests', { away: 0, questsOpen: null })).toBe(false)
   })
 })

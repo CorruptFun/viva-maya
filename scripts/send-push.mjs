@@ -11,40 +11,60 @@
  * path, and pg_cron enabled by hand — more moving parts for a job that runs once a week.)
  *
  * ── THE ONE RULE THIS FILE IS BUILT AROUND ───────────────────────────────────────────────────────
- * ⚠️ **AT MOST ONE NOTIFICATION PER DEVICE PER RACE DAY, ACROSS EVERY MODE BELOW.** Not a guideline —
- * it is the thing that makes it honest to have grown from one notification to three, and it is
- * enforced three ways so it stays true rather than merely intended:
+ * ⚠️ **AT MOST `DAILY_SEND_CAP` NOTIFICATIONS PER DEVICE PER RACE DAY, ACROSS EVERY MODE BELOW, AND
+ * NEVER TWO INSIDE `MIN_GAP_HOURS`.** Not a guideline — it is the thing that makes it honest to
+ * nudge more than once, and it is enforced three ways so it stays true rather than merely intended:
  *
- *   1. The MODES HAVE DISJOINT AUDIENCES by construction. `--drop` goes only to devices that did NOT
- *      open the game yesterday; `--daily` goes only to those that DID. A device cannot be in both.
- *   2. Every mode re-checks `last_sent_at` against today's race day (`sentToday`) and skips anything
- *      already written to. That covers the seams the audience split cannot: a manual run, a retried
- *      cron, the Sunday weekly overlapping a Sunday morning nudge, and any future fourth mode.
+ *   1. Every mode has to have SOMETHING TRUE AND SPECIFIC TO SAY or it stays silent (`dueForMode`).
+ *      This is the primary control, and it is what keeps the volume well under the cap in practice:
+ *      the morning gift skips anyone already here today, the afternoon quest nudge fires ONLY for
+ *      somebody already here with an unfinished slate, and the evening board says nothing at all to
+ *      a player who is already playing, off the board and holding no streak or wheel.
+ *   2. Every send re-checks the day's BUDGET (`budgetAllows`) — a per-race-day counter (migration
+ *      0028) and a minimum gap. That covers the seams the mode gates cannot: a manual run beside a
+ *      scheduled one, a retried cron, and any future mode added by somebody who has not read this.
  *   3. A device that keeps being nudged without coming back BACKS OFF (`backoffAllows`) — to every
  *      third day, then weekly, then not at all. Somebody who has ignored seven nudges will ignore the
  *      eighth, and is one tap from switching notifications off forever.
  *
- * The audience is opted in on a card that promises exactly this (src/view/pushoptin.ts), and
- * migration 0025's header records why the second category was allowed to default ON for the people
- * who opted in under the first one's wording. Read that before widening anything here.
+ * ⚠️ THIS RULE USED TO BE "ONE A DAY", ENFORCED BY DISJOINT AUDIENCES, AND THAT CONSTRUCTION FAILED
+ * SILENTLY. `--drop` took `away >= 2` and `--daily` took `away === 1`, which between them look like
+ * a partition of everybody and leave out `away === 0` — the player who opens the game every single
+ * day. All four live subscribers sat there, and from 2026-08-25 every scheduled run reported
+ * `4 opted in · 4 held back · 0 due` and delivered nothing, green, for two days. The owner's call
+ * (2026-08-26) was to nudge a few times through the day instead; `dueForMode` carries the full
+ * story, and the away-histogram on every run's log line exists so a repeat cannot hide the same way.
+ *
+ * The audience is opted in on a card that prints this volume (src/view/pushoptin.ts VOLUME_RULE —
+ * `DAILY_SEND_CAP` is the same number, change one and change both), and migration 0025's header
+ * records why the second category was allowed to default ON for the people who opted in under the
+ * first one's wording. Read both before widening anything here.
  *
  * ── THE MODES ────────────────────────────────────────────────────────────────────────────────────
- *   --drop    MORNING (≈9am at home). The play nudge, for people who were not here yesterday. Leads
- *             with a JACKPOT WHEEL within reach when this player has one (jackpotWinsAway), else
- *             carries the day's HOUSE GIFT by name — "a JACKPOT CHIP is on the table" — which it can
- *             do because the gift is seeded from the day alone and this file carries a byte-identical
- *             copy of the roll (see dropForDay). Audience column: `daily_play` (0025).
- *   --daily   EVENING (≈6–7pm at home). Today's board closes at midnight America/Edmonton; for people
- *             who WERE here yesterday. Leads with a streak about to break when there is one, then a
- *             jackpot wheel within reach, and otherwise the player's standing. Audience column:
- *             `week_race` (0011).
- *   (default) SUNDAY EVENING. The weekly season, which closes Monday midnight America/Edmonton,
- *             ranked on the SUM of daily bests from the endless_weekly_totals view. Deliberately the
- *             one mode with NO activity filter: a season summary silenced for anyone who drifted off
- *             mid-week would be silent for exactly the people it is for.
+ *   --drop      MORNING (≈9am at home). The play nudge, for anyone not already here today. Leads with
+ *               a JACKPOT WHEEL within reach when this player has one (jackpotWinsAway), else carries
+ *               the day's HOUSE GIFT by name — "a JACKPOT CHIP is on the table" — which it can do
+ *               because the gift is seeded from the day alone and this file carries a byte-identical
+ *               copy of the roll (see dropForDay). Audience column: `daily_play` (0025).
+ *   --quests    AFTERNOON (≈1pm at home). The only mode that fires for somebody who IS here today:
+ *               an unfinished quest slate is the most closable thing in the game (src/core/quests.ts
+ *               — "a finite amount of play now has an end"). Counts goals, never names one; see
+ *               `questsOpen`. Audience column: `daily_play`.
+ *   --daily     EVENING (≈6pm at home). Today's board closes at midnight America/Edmonton. Goes to
+ *               anyone with real news — on the board, a streak about to break, a wheel within reach,
+ *               or simply not here yet today. Leads streak → jackpot → standing. Audience column:
+ *               `week_race` (0011).
+ *   --laststand LATE (≈9pm at home, three hours before the streak dies). The narrowest gate in the
+ *               file: a live, unsecured streak and nothing else. The most valuable sentence this
+ *               sender can say, which is what earns it a slot rather than a branch. Audience column:
+ *               `daily_play`.
+ *   (default)   SUNDAY EVENING. The weekly season, which closes Monday midnight America/Edmonton,
+ *               ranked on the SUM of daily bests from the endless_weekly_totals view. Deliberately
+ *               the one mode with NO activity filter: a season summary silenced for anyone who
+ *               drifted off mid-week would be silent for exactly the people it is for.
  *
- * All three share every line of plumbing below — audience, retire-on-410, failure counting, the
- * one-a-day guard — because the only real differences are which partition to read and what to say.
+ * All five share every line of plumbing below — audience, retire-on-410, failure counting, the day's
+ * budget — because the only real differences are which partition to read and what to say.
  *
  * WHAT PERSONALISATION COSTS: the race modes join against the leaderboard, which is public data. The
  * streak and jackpot hooks additionally read the player's own save blob with the service role
@@ -56,10 +76,13 @@
  * composed body for a hook built on private data. See the dry-run block in `main`.
  *
  * USAGE
- *   node scripts/send-push.mjs --dry-run          # weekly, print what would be sent
- *   node scripts/send-push.mjs --daily --dry-run  # today's board, print what would be sent
- *   node scripts/send-push.mjs --drop --dry-run   # the morning play nudge
- *   node scripts/send-push.mjs                    # send
+ *   node scripts/send-push.mjs --dry-run               # weekly, print what would be sent
+ *   node scripts/send-push.mjs --daily --dry-run       # today's board
+ *   node scripts/send-push.mjs --drop --dry-run        # the morning play nudge
+ *   node scripts/send-push.mjs --quests --dry-run      # the afternoon quest nudge
+ *   node scripts/send-push.mjs --laststand --dry-run   # the late streak rescue
+ *   node scripts/send-push.mjs --drop --explain        # WHY each device was or was not sent to
+ *   node scripts/send-push.mjs                         # send
  *
  * ENV (all required unless noted)
  *   SUPABASE_URL           project URL
@@ -76,8 +99,67 @@
 import webpush from 'web-push'
 
 const DRY = process.argv.includes('--dry-run')
-const DAILY = process.argv.includes('--daily')
-const DROP = process.argv.includes('--drop')
+/** Per-device decision lines in the log. The diagnostic for "why did nobody get one". */
+const EXPLAIN = process.argv.includes('--explain')
+
+/**
+ * THE FIVE SENDS, and the flag that selects each.
+ *
+ * A single MODE rather than the boolean-per-flag this replaced: with two sends a pair of booleans is
+ * readable, and with five it is a truth table where `--quests --laststand` has a meaning nobody
+ * intended. `DROP`/`DAILY` survive as derived constants because the copy builders below branch on
+ * them by name, and renaming those is churn with no reader benefit.
+ */
+const MODE_FLAGS = {
+  '--drop': 'drop',
+  '--quests': 'quests',
+  '--daily': 'daily',
+  '--laststand': 'laststand',
+}
+
+/**
+ * ⚠️ Returns rather than exits, and the mode conflict is reported by `main`.
+ *
+ * This module is imported by src/core/pushcadence.test.ts to pin its pure helpers, and a
+ * `process.exit()` reached at module scope takes the whole test runner down with it — the same
+ * reason `requireConfig` is a function. No flags at all means the weekly season, so a bare
+ * `node scripts/send-push.mjs` keeps the behaviour it has always had.
+ */
+function parseMode(argv) {
+  const picked = [...new Set(argv.filter(a => a in MODE_FLAGS).map(a => MODE_FLAGS[a]))]
+  return { mode: picked[0] ?? 'week', conflict: picked.length > 1, picked }
+}
+
+const { mode: MODE, conflict: MODE_CONFLICT, picked: MODES_PICKED } = parseMode(process.argv)
+const DAILY = MODE === 'daily'
+const DROP = MODE === 'drop'
+const QUESTS = MODE === 'quests'
+const LASTSTAND = MODE === 'laststand'
+
+/**
+ * THE VOLUME PROMISE, IN CODE. `src/view/pushoptin.ts`'s VOLUME_RULE prints this number to every
+ * player deciding whether to hand over a notification permission — change one, change both, and
+ * read that constant's comment first.
+ *
+ * Three is the number the four weekday slots can actually reach, not a ceiling picked to sound
+ * modest: the slots are gated so a given player matches at most three of them on any real day (the
+ * morning gift skips anyone already here; the quest nudge fires ONLY for somebody already here).
+ * The cap is therefore a BACKSTOP against a fifth slot, a retried cron or a manual run landing
+ * beside a scheduled one — not the primary control. The primary control is that every mode has to
+ * have something true and specific to say or it stays silent.
+ */
+export const DAILY_SEND_CAP = 3
+
+/**
+ * Never two notifications inside this many hours, whatever the modes think.
+ *
+ * Deliberately looser than the ~3h the schedule actually leaves between its tightest pair (the
+ * evening board at 00:00 UTC and the streak last-call at 03:00 UTC): GitHub's scheduler is
+ * best-effort and runs 10–30 minutes late under load, so a gap tuned to the nominal spacing would
+ * drop a legitimate send whenever a cron ran late. Two hours is far enough apart that no player
+ * experiences a double-tap, and slack enough that ordinary scheduler drift is not a silent outage.
+ */
+export const MIN_GAP_HOURS = 2
 
 const { SUPABASE_URL, SUPABASE_SERVICE_KEY, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY } = process.env
 
@@ -228,7 +310,7 @@ export function weekEndsAt(now = new Date()) {
 function hoursLeft(now = new Date()) {
   // `--drop` runs in the morning and its copy never quotes a deadline, but the run's LOG does, and a
   // morning nudge reporting "ends in 130h" (the season's clock) reads as a bug in the run summary.
-  const ends = DAILY || DROP ? dayEndsAt(now) : weekEndsAt(now)
+  const ends = MODE === 'week' ? weekEndsAt(now) : dayEndsAt(now)
   return Math.max(0, Math.round((ends.getTime() - now.getTime()) / 3600000))
 }
 
@@ -327,19 +409,51 @@ function chunk(list, size) {
 /**
  * Has this device already been sent to on today's race day?
  *
- * THE BACKSTOP FOR THE ONE-A-DAY RULE. The modes' audiences are disjoint by construction, so in
- * normal operation this never fires — it exists for the seams that construction cannot cover: a
- * manual `workflow_dispatch` run beside a scheduled one, a cron GitHub retried, the Sunday weekly
- * blast landing on a day the morning nudge already went out, and whatever fourth mode gets added
- * later by someone who has not read the header.
+ * THE LEGACY ONE-A-DAY RULE, kept for exactly one job: the fallback when migration 0028 has not
+ * been applied and `sends_count` cannot be read. `budgetAllows` is what the sender normally uses.
  *
- * ⚠️ Compared on the RACE day key, not on elapsed hours: "one a day" means one per board, and the
- * morning slot (≈9am) and the evening slot (≈6pm) are only nine hours apart on the same board.
+ * ⚠️ Compared on the RACE day key, not on elapsed hours: a day means a BOARD, and the morning slot
+ * (≈9am) and the evening slot (≈6pm) are only nine hours apart on the same one.
  */
 export function sentToday(sub, today) {
   if (!sub.last_sent_at) return false
   const at = Date.parse(sub.last_sent_at)
   return Number.isFinite(at) && dayKey(new Date(at)) === today
+}
+
+/**
+ * How many notifications this device has already had on today's race day.
+ *
+ * The counter is stored beside the day it belongs to (migration 0028) rather than swept nightly, so
+ * a stale `sends_day` reads as zero — a device last written to on a previous board starts today's
+ * budget fresh with nothing to reset and no second job to run.
+ */
+export function sendsToday(sub, today) {
+  if (!sub || sub.sends_day !== today) return 0
+  const n = Number(sub.sends_count)
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0
+}
+
+/**
+ * May this device be sent to right now — the volume half of the decision, before any mode has said
+ * whether it has anything to say.
+ *
+ * TWO BOUNDS, because they stop different things. The CAP stops a day exceeding what the opt-in
+ * card promises, and survives somebody adding a fifth cron without reading the header. The GAP
+ * stops two landing back to back, which is the thing a player actually experiences as spam — a
+ * manual `workflow_dispatch` beside a scheduled run, or a cron GitHub retried.
+ *
+ * `legacy` is the un-migrated path: no counter to read, so it falls back to the pre-0028 rule of one
+ * per race day. That errs QUIET (see 0028's header), which is the correct side for a budget to fail
+ * toward when it cannot see its own accounting.
+ */
+export function budgetAllows(sub, today, now, { cap = DAILY_SEND_CAP, gapHours = MIN_GAP_HOURS, legacy = false } = {}) {
+  if (legacy) return !sentToday(sub, today)
+  if (sendsToday(sub, today) >= cap) return false
+  if (!sub.last_sent_at) return true
+  const at = Date.parse(sub.last_sent_at)
+  if (!Number.isFinite(at)) return true
+  return now.getTime() - at >= gapHours * 3600000
 }
 
 /**
@@ -364,6 +478,77 @@ export function backoffAllows(sub, awayDays, now) {
   if (awayDays >= 14) return sinceSendDays >= 7
   if (awayDays >= 3) return sinceSendDays >= 3
   return true
+}
+
+/**
+ * Whether THIS mode has anything to say to THIS subscriber — the content half of the decision,
+ * beside `budgetAllows`' volume half.
+ *
+ * ⚠️ THIS FUNCTION IS THE FIX FOR A REAL, MEASURED OUTAGE, AND THE SHAPE OF IT IS THE LESSON.
+ * Until 2026-08-26 the two weekday slots partitioned the audience by activity: `--drop` took
+ * "was NOT here yesterday" (`away >= 2`) and `--daily` took "was here EXACTLY yesterday"
+ * (`away === 1`). Disjoint, and between them they looked like they covered everyone. They did not
+ * cover `away === 0` — a player who opens the game EVERY day, which is to say the best players
+ * there are. All four live subscribers sat exactly there, and from the day the split shipped every
+ * scheduled run reported `4 opted in · 4 held back · 0 due` and sent nothing at all. Nothing
+ * errored. The run was green, the log line read like a healthy quiet state, and the vault note from
+ * the session that shipped it recorded "0 sends is the CORRECT quiet state" in good faith.
+ *
+ * The lesson is that an audience defined by a RANGE has to be checked for the values that fall
+ * outside every range, and the value that fell outside was the one belonging to the most engaged
+ * players. `pushcadence.test.ts` now asserts the total property directly — a daily-active player
+ * must match at least one weekday mode — so the same hole cannot be reopened by tuning a bound.
+ *
+ * The gates, and why each is drawn where it is:
+ *   · `drop` (morning gift) — anyone who has not ALREADY been here today. It used to be `>= 2`.
+ *     Yesterday's player is exactly who a gift is for; only somebody who has opened the app since
+ *     midnight needs no invitation to it.
+ *   · `quests` (afternoon) — ONLY somebody here today with unfinished quests. The one mode that
+ *     requires presence rather than absence: a checklist half-done is a reason to come back and
+ *     finish, and an untouched one belongs to the morning slot that already spoke to them.
+ *   · `daily` (evening board) — anyone with real news: on today's board, a streak about to break, a
+ *     jackpot wheel within reach, or simply not here yet today. Someone already playing, off the
+ *     board and with no personal hook gets NOTHING, because "the board closes soon" is not news to
+ *     a person holding the phone.
+ *   · `laststand` (late) — a streak that dies at midnight and has not been secured. Nothing else.
+ *     The narrowest gate in the sender and the most valuable sentence it can say.
+ *   · `week` (season) — everyone, unchanged. A summary silenced for whoever drifted off mid-week is
+ *     silent for exactly the people it is for.
+ *
+ * Pure and ctx-shaped rather than reading a subscriber row, so every branch is testable without a
+ * network, a clock or a save blob.
+ */
+export function dueForMode(mode, ctx = {}) {
+  const { away = null, streakDays = null, questsOpen = null, onBoard = false, winsAway = null } = ctx
+  switch (mode) {
+    case 'drop':
+      // `null` is UNKNOWN, not "here today" — a player who turned events off must not be silently
+      // dropped from the one slot that never needed to know where they had been.
+      return away === null || away >= 1
+    case 'quests':
+      return away === 0 && questsOpen !== null && questsOpen > 0
+    case 'daily':
+      return onBoard || streakDays !== null || winsAway !== null || away === null || away >= 1
+    case 'laststand':
+      return streakDays !== null
+    case 'week':
+      return true
+    default:
+      return false
+  }
+}
+
+/**
+ * Whether the absence backoff applies to this mode.
+ *
+ * The two BROAD modes decay with absence, because somebody who has ignored seven of them will
+ * ignore the eighth. The two NARROW ones do not: both are gated on a specific, time-critical fact
+ * about this player today — an unfinished quest slate, a streak hours from breaking — and throttling
+ * those on the grounds that the player has been quiet is throttling the only messages that could
+ * change that. `week` is exempt for the reason in `dueForMode`.
+ */
+export function backoffApplies(mode) {
+  return mode === 'drop' || mode === 'daily'
 }
 
 /**
@@ -424,10 +609,17 @@ async function fetchPlayerFacts(userIds) {
       const d = row.data && typeof row.data === 'object' ? row.data : {}
       const streak = Number(d.streak)
       const meter = Number(d.jackpotMeter)
+      const q = d.quests && typeof d.quests === 'object' ? d.quests : null
       out.set(row.user_id, {
         streak: Number.isFinite(streak) ? Math.max(0, Math.floor(streak)) : 0,
         lastSpinDate: typeof d.lastSpinDate === 'string' ? d.lastSpinDate : null,
         jackpotMeter: Number.isFinite(meter) ? Math.max(0, Math.floor(meter)) : 0,
+        // Only the two fields the nudge can act on. `progress` is deliberately dropped on the
+        // floor: how far into a goal somebody is says nothing this message needs, and the less of
+        // a player's save this function carries out, the less there is to leak into a public log.
+        quests: q
+          ? { day: typeof q.day === 'string' ? q.day : '', claimed: Array.isArray(q.claimed) ? q.claimed : [] }
+          : null,
       })
     }
   }
@@ -479,6 +671,47 @@ export function jackpotWinsAway(info) {
 }
 
 /**
+ * THE QUEST SLATE'S SHAPE — src/core/quests.ts QUEST_COUNT / ALL_CLEAR_ID / ALL_CLEAR_CHIPS /
+ * ALL_CLEAR_SPINS, and nothing else from that module.
+ *
+ * ⚠️ THE CATALOG IS DELIBERATELY NOT DUPLICATED HERE, unlike `dayKey`, `weekKey` and the house
+ * gift's roll. Those three had to be copied because the sender must compute the SAME answer the app
+ * computes. This one must not be, because the copy never names a goal: "two of three done" is true
+ * whichever three the day drew, whereas "win two levels" is a specific claim that would become a LIE
+ * the first time the catalog was retuned and this copy was not — and quests.ts's own header warns
+ * that reordering the catalog silently re-rolls every day's draw. Four small constants can be pinned
+ * against the app's copies in a test; forty lines of catalog drifting silently cannot.
+ */
+export const QUEST_COUNT = 3
+export const ALL_CLEAR_ID = 'all'
+export const ALL_CLEAR_CHIPS = 20
+export const ALL_CLEAR_SPINS = 1
+
+/**
+ * How many of today's quests this player has NOT finished — 0…QUEST_COUNT, or null when unknowable.
+ *
+ * A slate whose `day` is not today has not rolled over on that player's device yet, which means they
+ * have done nothing on today's slate: all of them are open. That is the common case for this hook,
+ * since the afternoon slot fires for people who opened the app without yet tripping a quest signal.
+ *
+ * ⚠️ `ALL_CLEAR_ID` is filtered out of the claimed list. It is the all-three bonus, not a fourth
+ * goal, and counting it would make a finished slate report -1 open — which `dueForMode` would read
+ * as "nothing due" by luck rather than by rule, and which would print "4 of 3 done" the day
+ * somebody wrote the inverse copy.
+ *
+ * Null on a signed-out subscriber, a missing save row or a malformed blob: a missing
+ * personalisation must never cost a notification, and here it costs only this mode's send — which
+ * is correct, because this mode is ENTIRELY about the slate.
+ */
+export function questsOpen(info, today) {
+  const q = info && info.quests
+  if (!q) return null
+  if (q.day !== today) return QUEST_COUNT
+  const claimed = Array.isArray(q.claimed) ? q.claimed.filter(id => id !== ALL_CLEAR_ID).length : 0
+  return Math.max(0, QUEST_COUNT - claimed)
+}
+
+/**
  * Highest level each signed-in subscriber has WON, from `level_progress` — the world-readable table
  * the leaderboard's trophy badges derive from (0007's monotonic guard is what makes it trustworthy).
  * `cleared` is the highest level won (core/trophies.ts spells that coupling out), so the level to
@@ -501,7 +734,7 @@ async function fetchCleared(userIds) {
 }
 
 /** Hooks whose copy is built on private save data — `--dry-run` withholds their bodies from the log. */
-const PRIVATE_HOOKS = new Set(['streak', 'jackpot'])
+const PRIVATE_HOOKS = new Set(['streak', 'jackpot', 'quests', 'laststand'])
 
 /**
  * The jackpot hook's message, said ONCE for both slots so the wheel is described identically in the
@@ -566,6 +799,65 @@ function messageForDrop(gift, awayDays, winsAway = null, nextLevel = null) {
     hook: 'gift',
     title: `${gift.emoji} Today's gift: ${gift.label}`,
     body: `${gift.blurb} One a day, waiting on the cabinet — open it and see.`,
+  }
+}
+
+/**
+ * THE AFTERNOON QUEST NUDGE (`--quests`) — for somebody who is already playing today and has an
+ * unfinished slate.
+ *
+ * The whole value of a quest slate is that it ENDS (src/core/quests.ts: "what is new is that a
+ * finite amount of play now has an end, and the end is visible from the start"), and a checklist
+ * with two of three ticked is the most closable thing this sender can point at. That is why this is
+ * the one mode gated on PRESENCE rather than absence — it finishes something already started.
+ *
+ * ⚠️ NEVER NAMES A GOAL, only counts them. See `questsOpen`'s note: the catalog is not duplicated
+ * into this file, so a named goal here would be a claim this script cannot verify and would go
+ * stale silently the first time the catalog was retuned.
+ *
+ * ⚠️ The bonus is named from the constants, never spelled inline. `ALL_CLEAR_CHIPS`/`ALL_CLEAR_SPINS`
+ * are pinned against the app's copies for the reason every duplicated constant in this file is: a
+ * drift makes the notification promise a payout the game does not hand over.
+ */
+function messageForQuests(open) {
+  const done = QUEST_COUNT - open
+  const bonus = `all ${QUEST_COUNT} pays a ${ALL_CLEAR_CHIPS}-chip bonus and a free spin`
+  if (done === 0) {
+    return {
+      hook: 'quests',
+      title: `📋 Today's ${QUEST_COUNT} quests are still open`,
+      body: `A short list, drawn fresh this morning — and clearing ${bonus}.`,
+    }
+  }
+  return {
+    hook: 'quests',
+    title: `📋 ${done} of ${QUEST_COUNT} quests done`,
+    body:
+      open === 1
+        ? `One left on today's slate — and finishing ${bonus}.`
+        : `${open} left on today's slate — and finishing ${bonus}.`,
+  }
+}
+
+/**
+ * THE LATE STREAK RESCUE (`--laststand`) — the narrowest send in the file and the most valuable
+ * sentence it can say.
+ *
+ * `streakAtRisk` has already established the streak is alive, at least two days deep and NOT yet
+ * secured today, so every word here is true at composition time. The ladder it indexes pays real
+ * purses at 3/7/14/30/60/100 consecutive days (core/daily.ts STREAK_REWARDS), and unlike every other
+ * hook the thing at stake is lost PERMANENTLY at a known hour — which is what earns it a slot of its
+ * own three hours before that hour rather than a branch inside the evening send.
+ *
+ * ⚠️ Quotes the deadline from the real clock like every other message, so a cron GitHub ran late
+ * reports a smaller number rather than saying anything untrue.
+ */
+function messageForLastStand(streakDays, hrs) {
+  const when = hrs <= 1 ? 'in under an hour' : `in ${hrs} hours`
+  return {
+    hook: 'laststand',
+    title: `🔥 Last call — your ${streakDays}-day streak`,
+    body: `It ends at midnight, ${when}. One pull on LUCKY SLOTS keeps it alive.`,
   }
 }
 
@@ -660,7 +952,8 @@ function standingMessage(sub, board, hrs) {
  *
  * Until this existed the payload carried the literal `'./'`, so a push-driven return was
  * indistinguishable from an organic one. That made the single most expensive channel this game has
- * — one permission ask per install, one notification per device per race day — the only one with no
+ * — one permission ask per install, a handful of notifications per device per race day — the only
+ * one with no
  * measurement behind it at all: "did the morning nudge bring anybody back" could not be asked, let
  * alone answered, so the ceiling was being spent on faith. The client reports it as a `from` prop on
  * the `app_open` it already fires (src/core/analytics.ts `pushSource`), never as a new event name —
@@ -690,67 +983,92 @@ export function notificationUrl(mode) {
 
 async function main() {
   // The modes are mutually exclusive by definition — they read different audience columns and say
-  // different things. Both flags together would silently run as `--drop` against a `daily_play`
-  // audience while every `DAILY`-gated branch below still believed it was the evening job, which is
-  // a confusing enough hour to spend that it is worth one line to make impossible.
-  if (DROP && DAILY) {
-    console.error('--drop and --daily are different sends; pass one')
+  // different things. Two flags together would silently run as whichever `parseMode` saw first while
+  // every mode-gated branch below still believed it was the other job.
+  if (MODE_CONFLICT) {
+    console.error(`these are different sends; pass one: ${MODES_PICKED.join(', ')}`)
     process.exit(1)
   }
   requireConfig()
   const now = new Date()
   const today = dayKey(now)
-  const key = DROP ? today : DAILY ? today : weekKey(now)
+  const key = MODE === 'week' ? weekKey(now) : today
   const hrs = hoursLeft(now)
-  const mode = DROP ? 'drop' : DAILY ? 'daily' : 'week'
+  const mode = MODE
   const gift = dropForDay(today)
 
-  // The audience: opted in to THIS category, and not a known corpse. Each mode's predicate matches
-  // a partial index — `week_race` from 0011, `daily_play` from 0025.
+  // The audience: opted in to THIS category, and not a known corpse. Each predicate matches a
+  // partial index — `week_race` from 0011, `daily_play` from 0025.
   //
-  // ⚠️ A 400 here on `--drop` almost certainly means migration 0025 has not been applied: PostgREST
-  // answers a filter on a missing column with a 400, and exiting loudly is the intended behaviour.
-  // The alternative — silently falling back to the `week_race` audience — would blast every race
-  // subscriber at nine in the morning with a message they never opted into. See 0025's header.
-  const column = DROP ? 'daily_play' : 'week_race'
-  const subsRes = await rest(
-    `push_subscriptions?select=endpoint,p256dh,auth,user_id,device_id,created_at,last_sent_at` +
-      `&${column}=is.true&failure_count=lt.5`
-  )
+  // ⚠️ THE THREE PLAY-SIDE SENDS ALL RIDE `daily_play`, AND NO NEW CATEGORY COLUMN WAS ADDED.
+  // Settings offers two switches (race / daily play) and they still partition every send: the
+  // morning gift, the afternoon quest nudge and the late streak rescue are all "your game, today",
+  // which is exactly what somebody switching `daily_play` off is switching off. A third column would
+  // be a third switch for a distinction no player is asking to make, and every subscriber who ever
+  // opted in would land in it by default anyway.
+  //
+  // ⚠️ A 400 here on a `daily_play` mode almost certainly means migration 0025 has not been applied:
+  // PostgREST answers a filter on a missing column with a 400, and exiting loudly is intended. The
+  // alternative — silently falling back to the `week_race` audience — would blast every race
+  // subscriber with a message they never opted into. See 0025's header.
+  const column = mode === 'daily' || mode === 'week' ? 'week_race' : 'daily_play'
+  const BASE_COLS = 'endpoint,p256dh,auth,user_id,device_id,created_at,last_sent_at'
+  const query = cols => `push_subscriptions?select=${cols}&${column}=is.true&failure_count=lt.5`
+
+  // 0028's columns, with a fallback that keeps the run alive if the migration has not landed yet.
+  // The retry is what distinguishes the two 400s: if dropping `sends_day,sends_count` fixes it, it
+  // was 0028; if it does not, it is 0025 (or something else) and we exit loudly as before.
+  let legacyBudget = false
+  let subsRes = await rest(query(`${BASE_COLS},sends_day,sends_count`))
+  if (!subsRes.ok && subsRes.status === 400) {
+    const retry = await rest(query(BASE_COLS))
+    if (retry.ok) {
+      legacyBudget = true
+      console.warn(
+        'migration 0028 (sends_day/sends_count) is not applied — falling back to one notification ' +
+          'per device per race day. The run still delivers; it just under-sends until 0028 lands.'
+      )
+      subsRes = retry
+    }
+  }
   if (!subsRes.ok) {
     console.error(`could not read subscriptions: ${subsRes.status} ${await subsRes.text()}`)
-    if (DROP) console.error('a 400 on --drop usually means migration 0025 (daily_play) is not applied yet')
+    if (column === 'daily_play') {
+      console.error(`a 400 on --${mode} usually means migration 0025 (daily_play) is not applied yet`)
+    }
     process.exit(1)
   }
   const all = await subsRes.json()
 
-  // ── GUARD 1: one notification per device per race day, before anything else is read ───────────
-  const eligible = all.filter(s => !sentToday(s, today))
-  const alreadySent = all.length - eligible.length
+  // ── GUARD 1: the day's send budget, before anything else is read ─────────────────────────────
+  // The cap and the gap together (see `budgetAllows`). Ordered first because it costs nothing and
+  // the reads below cost round trips.
+  const eligible = all.filter(s => budgetAllows(s, today, now, { legacy: legacyBudget }))
+  const overBudget = all.length - eligible.length
 
-  // ── GUARD 2: the activity split — who was here yesterday ──────────────────────────────────────
-  // The two guards are ordered this way on purpose: the activity read costs two round trips and is
-  // pointless for a device that is already out on the one-a-day rule.
+  // ── GUARD 2: the activity read — how long since this device was last here ────────────────────
   //
-  // ⚠️ THE TWO MODES FAIL IN OPPOSITE DIRECTIONS, DELIBERATELY.
-  //   --drop FAILS CLOSED. It is a new send whose entire audience definition is "was not here
-  //     yesterday"; without that answer it degrades to a 9am blast at everyone, including the
-  //     player who finished a level ten minutes ago. Sending nothing is strictly better.
-  //   --daily FAILS OPEN. It is the send that has been shipping since 0011, and its audience filter
-  //     is a refinement rather than its premise. Losing an evening's race reminders to a transient
-  //     read failure would be a regression caused by a feature that is supposed to add reach.
-  // The weekly mode reads no activity at all — see the header.
+  // ⚠️ THE MODES FAIL IN DIFFERENT DIRECTIONS, DELIBERATELY.
+  //   --drop and --quests FAIL CLOSED. Both define their audience in terms of the answer (`drop`
+  //     wants people not here yet today, `quests` wants people who ARE here), so without it they
+  //     degrade to blasting everyone. Sending nothing is strictly better.
+  //   --daily FAILS OPEN. It has been shipping since 0011 and its activity term is a refinement
+  //     rather than its premise — it also fires on a board row, a streak or a jackpot meter, none
+  //     of which need this read. Losing an evening to a transient failure would be a regression.
+  //   --laststand and --week read no activity at all: one is gated purely on the save, the other
+  //     goes to everyone.
   //
   // ⚠️ The guard is per ENDPOINT, and a device can briefly hold two rows — the push service rotates
   // an endpoint and `register_push_subscription` inserts the new one while the old lingers. That is
   // not deduped here on purpose: picking one row per device would pick the DEAD one half the time,
   // dropping the notification AND leaving the corpse un-retired. The old endpoint answers 410 on the
   // next send and is deleted, so exactly one message lands either way.
+  const needsActivity = mode === 'drop' || mode === 'quests' || mode === 'daily'
   const deviceIds = [...new Set(eligible.map(s => s.device_id))]
-  const lastSeen = mode === 'week' || !eligible.length ? new Map() : await fetchLastSeen(deviceIds, now)
+  const lastSeen = !needsActivity || !eligible.length ? new Map() : await fetchLastSeen(deviceIds, now)
   if (!lastSeen) {
-    if (DROP) {
-      console.error('could not read activity — sending nothing rather than nudging players who are already here')
+    if (DROP || QUESTS) {
+      console.error(`could not read activity — sending nothing rather than guessing at --${mode}'s audience`)
       return
     }
     console.warn('could not read activity — sending the race reminder to the whole audience')
@@ -762,37 +1080,26 @@ async function main() {
     return day ? Math.max(0, daysBetweenKeys(day, today)) : null
   }
 
-  let subs = eligible
-  let heldBack = 0
-  if (DROP) {
-    subs = eligible.filter(sub => {
-      const away = awayOf(sub)
-      // Here today, or here yesterday: today's player needs no invitation, and yesterday's player
-      // belongs to the evening slot, which has a better thing to say to them.
-      if (away !== null && away <= 1) return false
-      return backoffAllows(sub, away, now)
-    })
-    heldBack = eligible.length - subs.length
-  } else if (DAILY && lastSeen) {
-    // The mirror image: the evening race reminder is for the people who were here yesterday. Anyone
-    // else already had their turn this morning, or is being deliberately left alone.
-    subs = eligible.filter(sub => awayOf(sub) === 1)
-    heldBack = eligible.length - subs.length
-  }
-
-  // ── The personalisation reads ────────────────────────────────────────────────────────────────
+  // ── The personalisation reads, BEFORE the audience filter ────────────────────────────────────
+  // They moved ahead of the filter when `dueForMode` started consulting them: the evening send now
+  // fires on a board row, a live streak or a wheel within reach, and the afternoon send is defined
+  // entirely by the quest slate, so "who is due" cannot be answered until these are in hand.
+  //
+  // The cost is that the private save read now covers every subscriber inside the day's budget
+  // rather than only the ones already selected. That is the same service-role read over the same
+  // opted-in rows, and nothing new leaves this process — `fetchPlayerFacts` keeps three fields and
+  // drops the rest of the blob on the floor, and PRIVATE_HOOKS still withholds anything built on
+  // them from the log.
+  //
   // The standings, best first — the SAME ordering the app's fetchDailyBoard / fetchWeeklyBoard use,
-  // so a rank computed here matches the rank the player sees in the app. A disagreement between the
-  // two would be worse than sending nothing.
+  // so a rank computed here matches the rank the player sees in the app. The weekly rows come from
+  // the endless_weekly_totals VIEW and rank on `total`, so they are normalised to `score` on the way
+  // in and everything downstream treats one shape.
   //
-  // The weekly rows come from the endless_weekly_totals VIEW and rank on `total`, so they are
-  // normalised to `score` on the way in — everything downstream then treats one shape and the
-  // personalisation branches stay cadence-agnostic.
-  //
-  // Skipped entirely for `--drop`: the morning nudge is about the gift, not the board, and reading a
-  // leaderboard to send a message that never mentions one is a round trip for nothing.
+  // Skipped for the three sends that never mention a board: reading a leaderboard to compose a
+  // message that cannot quote one is a round trip for nothing.
   let board = []
-  if (!DROP && subs.length) {
+  if ((DAILY || mode === 'week') && eligible.length) {
     const boardRes = await rest(
       DAILY
         ? `endless_daily_scores?select=user_id,display_name,score&day_key=eq.${key}&order=score.desc,scored_at.asc`
@@ -803,10 +1110,9 @@ async function main() {
     if (!boardRes.ok) console.warn(`could not read the board: ${boardRes.status} — sending the impersonal copy`)
   }
 
-  // The save-blob facts (streak + jackpot meter, PRIVATE) and the level ladder (public), for the
-  // two personalised sends and only for the signed-in subscribers who can have them. The weekly
-  // season reads neither — it is a summary, not a nudge.
-  const signedIn = mode === 'week' ? [] : [...new Set(subs.filter(s => s.user_id).map(s => s.user_id))]
+  // The save-blob facts (streak, jackpot meter and quest slate — all PRIVATE) and the level ladder
+  // (public). The weekly season reads neither: it is a summary, not a nudge.
+  const signedIn = mode === 'week' ? [] : [...new Set(eligible.filter(s => s.user_id).map(s => s.user_id))]
   const facts = signedIn.length ? await fetchPlayerFacts(signedIn) : new Map()
   const cleared = signedIn.length ? await fetchCleared(signedIn) : new Map()
   /** The level to name for this subscriber, or null when unknown or past the ladder's end. */
@@ -814,12 +1120,87 @@ async function main() {
     const won = sub.user_id ? cleared.get(sub.user_id) : undefined
     return won && won + 1 <= LEVEL_COUNT ? won + 1 : null
   }
+  const onBoardOf = sub => !!sub.user_id && board.some(r => r.user_id === sub.user_id)
+
+  // ── GUARD 3: does this mode have anything to say to this subscriber ──────────────────────────
+  /** The whole decision for one subscriber, and the reason — which is what `--explain` prints. */
+  const decide = sub => {
+    const away = awayOf(sub)
+    const info = facts.get(sub.user_id)
+    const ctx = {
+      away,
+      streakDays: mode === 'daily' || mode === 'laststand' ? streakAtRisk(info, today) : null,
+      questsOpen: mode === 'quests' ? questsOpen(info, today) : null,
+      onBoard: onBoardOf(sub),
+      winsAway: mode === 'daily' ? jackpotWinsAway(info) : null,
+    }
+    if (!dueForMode(mode, ctx)) return { due: false, reason: `no ${mode} news`, away, ctx }
+    if (backoffApplies(mode) && !backoffAllows(sub, away, now)) {
+      return { due: false, reason: 'backoff', away, ctx }
+    }
+    return { due: true, reason: 'due', away, ctx }
+  }
+
+  const decisions = new Map(eligible.map(sub => [sub.endpoint, decide(sub)]))
+  const subs = eligible.filter(sub => decisions.get(sub.endpoint).due)
+  const heldBack = eligible.length - subs.length
+
+  // ── THE DIAGNOSTIC ───────────────────────────────────────────────────────────────────────────
+  // The away histogram prints on EVERY run, scheduled or not, and exists because of how the
+  // 2026-08-25 outage hid: `4 opted in · 4 held back · 0 due` is equally consistent with a healthy
+  // quiet evening and with the entire audience being permanently unreachable, and telling those two
+  // apart needed a number nobody was printing. `away 0:4` on a run that held everyone back says at
+  // a glance that every subscriber was here today — which is either the correct quiet state or the
+  // bug, but is no longer invisible either way. Buckets, never per-device counts, so a scheduled
+  // run's public log stays aggregate.
+  //
+  // ⚠️ Only printed by the modes that actually READ activity. `--laststand` and `--week` never do,
+  // so every device would bucket as `unknown` and the line would read exactly like the symptom of a
+  // broken device-id join — a diagnostic that manufactures its own false positive is worse than no
+  // diagnostic at all.
+  const hist = { 0: 0, 1: 0, '2-6': 0, '7+': 0, unknown: 0 }
+  for (const sub of needsActivity ? eligible : []) {
+    const a = decisions.get(sub.endpoint).away
+    if (a === null) hist.unknown++
+    else if (a === 0) hist[0]++
+    else if (a === 1) hist[1]++
+    else if (a <= 6) hist['2-6']++
+    else hist['7+']++
+  }
+  const histLine = Object.entries(hist)
+    .filter(([, n]) => n > 0)
+    .map(([k, n]) => `${k}:${n}`)
+    .join(' ')
 
   console.log(
-    `${mode} ${key} · ends in ${hrs}h · ${all.length} opted in · ${alreadySent} already sent today · ` +
+    `${mode} ${key} · ends in ${hrs}h · ${all.length} opted in · ${overBudget} over budget · ` +
       `${heldBack} held back · ${subs.length} due` +
-      (DROP ? ` · today's gift: ${gift.id}` : ` · ${board.length} on the board`)
+      (DROP ? ` · today's gift: ${gift.id}` : DAILY || mode === 'week' ? ` · ${board.length} on the board` : '') +
+      (histLine ? ` · away ${histLine}` : '')
   )
+
+  // `--explain` prints the per-device decision — the thing that would have made the outage obvious
+  // in one run. Opt-in rather than always-on because it is per-device where the histogram is
+  // aggregate; it names the same truncated device id the dry-run block does and never the endpoint,
+  // which is a bearer capability, nor any private number behind the reason.
+  if (EXPLAIN) {
+    for (const s2 of eligible) {
+      const d = decisions.get(s2.endpoint)
+      const who = s2.user_id ? `user:${s2.user_id.slice(0, 8)}` : 'anon'
+      console.log(
+        `  [why] device ${String(s2.device_id).slice(0, 8)} ${who} · ` +
+          `away ${!needsActivity ? 'not read' : (d.away ?? 'unknown')} · ` +
+          `sent today ${sendsToday(s2, today)}/${DAILY_SEND_CAP} · ${d.due ? 'DUE' : `held (${d.reason})`}`
+      )
+    }
+    for (const s2 of all.filter(x => !decisions.has(x.endpoint))) {
+      console.log(
+        `  [why] device ${String(s2.device_id).slice(0, 8)} · over budget ` +
+          `(${sendsToday(s2, today)}/${DAILY_SEND_CAP} today, last ${s2.last_sent_at ?? 'never'})`
+      )
+    }
+  }
+
   if (!subs.length) return
 
   let sent = 0
@@ -829,16 +1210,18 @@ async function main() {
   const hooks = {}
 
   for (const sub of subs) {
+    // Every personal fact was already resolved by `decide` — reusing its ctx rather than
+    // recomputing keeps the message and the reason the subscriber was selected in lockstep. A
+    // second, drifting derivation here is exactly how a player gets a notification whose copy
+    // disagrees with the rule that chose them.
+    const ctx = decisions.get(sub.endpoint).ctx
     const msg = DROP
-      ? messageForDrop(gift, awayOf(sub), jackpotWinsAway(facts.get(sub.user_id)), nextLevelOf(sub))
-      : messageFor(
-          sub,
-          board,
-          hrs,
-          DAILY ? streakAtRisk(facts.get(sub.user_id), today) : null,
-          DAILY ? jackpotWinsAway(facts.get(sub.user_id)) : null,
-          DAILY ? nextLevelOf(sub) : null
-        )
+      ? messageForDrop(gift, ctx.away, jackpotWinsAway(facts.get(sub.user_id)), nextLevelOf(sub))
+      : QUESTS
+        ? messageForQuests(ctx.questsOpen)
+        : LASTSTAND
+          ? messageForLastStand(ctx.streakDays, hrs)
+          : messageFor(sub, board, hrs, ctx.streakDays, ctx.winsAway, DAILY ? nextLevelOf(sub) : null)
     const { title, body, hook } = msg
     hooks[hook] = (hooks[hook] ?? 0) + 1
     // The tag collapses a re-send onto the same notification rather than stacking a second one; it
@@ -882,9 +1265,18 @@ async function main() {
         { TTL: 6 * 3600 } // pointless to deliver after the race has closed
       )
       sent++
+      // The day's accounting, written in the same PATCH as `last_sent_at` so a device can never be
+      // marked sent without its counter moving. `sendsToday` reads the row as it was fetched at the
+      // top of this run, and each endpoint is sent at most once per run, so +1 is exact — the
+      // workflow's `concurrency: endless-push` group is what keeps a second run from interleaving.
+      const patch = { last_sent_at: new Date().toISOString(), failure_count: 0 }
+      if (!legacyBudget) {
+        patch.sends_day = today
+        patch.sends_count = sendsToday(sub, today) + 1
+      }
       await rest(`push_subscriptions?endpoint=eq.${encodeURIComponent(sub.endpoint)}`, {
         method: 'PATCH',
-        body: JSON.stringify({ last_sent_at: new Date().toISOString(), failure_count: 0 }),
+        body: JSON.stringify(patch),
       })
     } catch (err) {
       const status = err?.statusCode
