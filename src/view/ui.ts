@@ -612,7 +612,9 @@ export function addMarquee(scene: Phaser.Scene, centerX: number, y: number, opts
  * Warm flame pill announcing the daily-spin streak — a return hook shown on the
  * home screen when streak > 0. The 🔥 lives in its own text object (no letterSpacing)
  * because letterSpacing splits emoji surrogate pairs in Phaser's glyph renderer.
- * Returns null when there's no streak to show.
+ * Returns null when there's no streak to show. With `onTap` the whole pill is also a
+ * pressable DOOR (Home routes it to the cabinet, where the spin it names happens);
+ * without it the badge stays the static readout it always was.
  *
  * ⚠️ `atRisk` (today's pull still unspent) changes the copy from a READOUT to a STAKE, and that is
  * the whole point of the flag: `3 DAY STREAK` states a number the player can do nothing with, while
@@ -663,10 +665,15 @@ export function addStreakBadge(
   centerX: number,
   y: number,
   streak: number,
-  atRisk = false
+  atRisk = false,
+  onTap?: () => void
 ): Phaser.GameObjects.Container | null {
   if (streak <= 0) return null
   const container = scene.add.container(centerX, y)
+  // Everything visible rides `face` so a press can sink the pill while the tap zone stays put —
+  // the standings strip's layout rule (a zone that moves under a held finger flickers over/out).
+  const face = scene.add.container(0, 0)
+  container.add(face)
   const flame = scene.add.text(0, 0, '🔥', { fontFamily: 'sans-serif', fontSize: '32px' }).setOrigin(0.5)
   const label = scene.add
     .text(0, 0, streakBadgeLabel(streak, atRisk), {
@@ -685,7 +692,7 @@ export function addStreakBadge(
   drawPillFace(g, -w / 2, -h / 2, w, h, READOUT_STYLE)
   flame.setPosition(-w / 2 + padX + flame.width / 2, 0)
   label.setPosition(flame.x + flame.width / 2 + gap, 0)
-  container.add([g, flame, label])
+  face.add([g, flame, label])
   // A little flame flicker so it reads as "alive" / on fire.
   scene.tweens.add({
     targets: flame,
@@ -695,6 +702,43 @@ export function addStreakBadge(
     yoyo: true,
     repeat: -1,
     ease: 'Sine.easeInOut',
+  })
+  if (!onTap) return container
+  // THE PILL IS A DOOR AS WELL AS A STAKE (owner call, 2026-08-26). "SPIN TODAY" is a button label,
+  // and a button label on a surface that ignores taps is a small broken promise — so with `onTap`
+  // the whole pill answers, using the standings strip's press grammar (the face sinks + dims), a
+  // hit zone grown to the ≥84px floor `buildPressable` gives real buttons (safe here: Home budgets
+  // 18px + a non-interactive text row above and 26px of clear air below), and a plain `pointerup`
+  // because Home has no swipe surface (addLiveCard's note). Visually it stays a READOUT on purpose:
+  // the copy is the affordance, and a fourth chunky cap in the band would out-shout the live card.
+  const still = prefersReducedMotion()
+  const zone = scene.add.rectangle(0, 0, w, Math.max(h, 84), 0xffffff, 0.001).setInteractive({ useHandCursor: true })
+  container.add(zone)
+  let pressTween: Phaser.Tweens.Tween | undefined
+  const press = (down: boolean): void => {
+    pressTween?.stop()
+    if (still) {
+      face.y = down ? 2 : 0
+      face.setAlpha(down ? 0.85 : 1)
+      return
+    }
+    pressTween = scene.tweens.add({
+      targets: face,
+      y: down ? 2 : 0,
+      alpha: down ? 0.85 : 1,
+      duration: down ? D.micro : D.settle,
+      ease: down ? E.press : E.settle,
+    })
+  }
+  zone.on('pointerdown', () => {
+    sfx.uiPress()
+    press(true)
+  })
+  zone.on('pointerout', () => press(false))
+  zone.on('pointerup', () => {
+    press(false)
+    sfx.uiTap()
+    onTap()
   })
   return container
 }

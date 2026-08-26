@@ -745,8 +745,12 @@ export class HomeScene extends Phaser.Scene {
     // the streak can be acted on — and it keeps naming the NEXT rung and its distance, which is the
     // half of the ladder that can actually bring somebody back. The card carries the same fact as a
     // full sentence when it wins the slot; this is the compact form that is always on screen.
+    // And the pill DOES the thing it asks (owner call, 2026-08-26): tapping it opens the cabinet,
+    // so "SPIN TODAY" is a working button, not a caption about a door two rows further down.
     if (save.streak > 0) {
-      const flame = addStreakBadge(this, DESIGN_W / 2, seatRow(), save.streak, spinAvailable(save))
+      const flame = addStreakBadge(this, DESIGN_W / 2, seatRow(), save.streak, spinAvailable(save), () =>
+        startScene(this, 'slots')
+      )
       if (flame) menuButtons.push(flame)
     }
 
