@@ -365,13 +365,19 @@ Live: <https://corruptfun.github.io/viva-maya/>
   farm is bounded by the ≤70-chip daily ceiling `quests.test.ts` pins). The quest CARD gates on
   the endless unlock — a pre-unlock slate can never finish (`run_board` needs the race) — and
   that gate is the surface's, deliberately not the core's.
-- **Home is one dominant PLAY, a badged icon rail, and at most ONE live card.** The five old
-  notices collapsed into `view/livecard.ts` — an ordered list of PURE providers where the first
-  non-null wins. Adding a notice to Home means adding a PROVIDER in priority order, never a new
-  pill or a second card; a provider reads state and returns copy, and must never write. Every
-  seat below the hero is DERIVED from the named-constant block at the top of `HomeScene.ts` —
-  re-derive the band when adding anything, don't seat it against a fresh literal (LevelSelect's
-  header rule, for the same reason).
+- **Home is one dominant PLAY, the rose ENDLESS hero, a badged icon rail, and at most ONE live
+  card.** The five old notices collapsed into `view/livecard.ts` — an ordered list of PURE providers
+  where the first non-null wins. Adding a notice to Home means adding a PROVIDER in priority order,
+  never a new pill or a second card; a provider reads state and returns copy, and must never write.
+  The ENDLESS hero (`addEndlessHero`, `view/leaderboardpanel.ts`) is the mode's LAUNCHER — the rose
+  plate under PLAY, live standings sub-line, dimmed "unlocks at level N" signpost pre-unlock — and
+  the rail's 🏆 RANKS tile is the one leaderboard DOOR: the standings panel behind it carries all
+  three boards as tabs (TODAY / THIS WEEK / LEVELS). Don't re-add a stash card, a "board not run"
+  notice, a locked-race floor or a RACE tile — the hero and the badged 🎁 STASH door say each of
+  those permanently, and two buttons for one destination is the exact clutter the 2026-08-26 owner
+  pass removed. Every seat below the hero is DERIVED from the named-constant block at the top of
+  `HomeScene.ts` — re-derive the band when adding anything, don't seat it against a fresh literal
+  (LevelSelect's header rule, for the same reason).
 - **The push opt-in gets ONE ask per install, ever, and `pushOfferDue` is what
   spends it.** `Notification.requestPermission()` is one-shot: a denial is
   permanent, the browser never re-prompts, and the player has to dig through site

@@ -6,7 +6,6 @@ import { hasAnySpin, spinAvailable, todayKey } from '../core/daily'
 import {
   DAYS_PER_WEEK,
   dayKey,
-  endlessBestToday,
   endlessUnlocked,
   endlessWeekStanding,
   previousDayKey,
@@ -40,7 +39,8 @@ import { openTrophyCatchUpCard } from '../view/trophyceremony'
 import { openShowroom } from '../view/showroom'
 import { addCasinoBackdrop } from '../view/background'
 import {
-  addDailyRaceStrip,
+  ENDLESS_HERO_H,
+  addEndlessHero,
   devLevelOpts,
   devRaceOpts,
   devSeedRaceLine,
@@ -107,8 +107,10 @@ let bootRevealed = false
  * Home is a HIERARCHY now, not a stack of equals. It used to carry six gold pills at near-equal
  * weight (PLAY, LEVELS, GIFT STORE, LUCKY SLOTS, ENDLESS and the streak) over five simultaneous
  * notices, and when everything is urgent nothing is: there was no first place for the eye to land.
- * So there is ONE dominant PLAY carrying the level number on its face, a badged icon rail for
- * everything else, and at most ONE "what's live now" card (view/livecard.ts owns the ranking).
+ * So there is ONE dominant PLAY carrying the level number on its face, ONE rose ENDLESS hero under
+ * it (the game's second mode, back at first-class weight — owner call 2026-08-26, and rose so the
+ * gold stays PLAY's alone), a badged icon rail for everything else, and at most ONE "what's live
+ * now" card (view/livecard.ts owns the ranking).
  *
  * The seats used to be a dozen unrelated literals with the arithmetic that kept them apart living
  * only in comments — the exact shape of bug that landed LevelSelect's stash door on its leaderboard
@@ -159,7 +161,7 @@ const STACK_TOP = PLAY_Y + PLAY_H / 2 + 24
 const STACK_BOTTOM = 1210
 
 /**
- * Icon-rail geometry. Five tiles is the widest it ever gets (LEVELS · STORE · SLOTS · RACE · STASH)
+ * Icon-rail geometry. Five tiles is the widest it ever gets (LEVELS · STORE · SLOTS · RANKS · STASH)
  * and 5×104 + 4×18 = 592 leaves 64px of margin a side inside the 720 box. The tile is the art box
  * only: `buildPressable` grows every hit zone to ≥84 design px (≈44pt) in each axis, so a tile is
  * comfortably tappable at this size and would stay so if it shrank further.
@@ -356,7 +358,8 @@ export class HomeScene extends Phaser.Scene {
 
     // Weekly-race panel, opened directly for testing (mirrors the ?help pattern). `?race=<variant>`
     // maps to the DEV fixture boards (rich / crownyou / out / empty / loading / error); bare `?race`
-    // = live data. `?raceline=<variant>` seeds the Home standings-line cache (rich / out / new).
+    // = live data. `?raceline=<variant>` seeds the standings-line cache behind the ENDLESS hero's
+    // sub-line (rich / out / new) — the same cache LevelSelect's strip paints from.
     if (import.meta.env.DEV && new URLSearchParams(location.search).has('race')) {
       openRacePanel(this, devRaceOpts(new URLSearchParams(location.search).get('race')))
     }
@@ -667,11 +670,15 @@ export class HomeScene extends Phaser.Scene {
     // Rows carry no hard-coded y: whatever survives the progressive reveal is CENTRED in the fixed
     // band (STACK_TOP → STACK_BOTTOM, both derived at the top of this file). Six full-width gold
     // pills used to live down here at near-equal weight; what lives here now, top → bottom, is one
-    // status line, the streak, ONE live card, the icon rail, and the standings strip. A short band
+    // status line, the streak, the rose ENDLESS hero, ONE live card, and the icon rail. A short band
     // keeps its balance rather than clumping up under the primary action or stranding the survivors
     // at the bottom — the same centring the old stack used, for the same reason.
+    //
+    // Budget check at the fullest band (flame + card + hero all present): 26 + (18+54) + (26+88) +
+    // (26+78) + (26+80) = 422 against the 430 the band holds — grow any row and re-derive this sum.
     const showBrowseRow = !preFirstWin
-    const showRaceStrip = endlessUnlocked(save)
+    /** The ENDLESS hero rides the race tile's old rule: present from the first win on, live or locked. */
+    const showEndlessHero = !preFirstWin
     /** What the card would say right now — asked BEFORE the band is measured, since it may say nothing. */
     const liveCtx: LiveCtx = { save, preFirstWin, refresh: refreshHome }
     const liveNow = pickLiveNow(liveCtx)
@@ -679,9 +686,9 @@ export class HomeScene extends Phaser.Scene {
     const stackRows: Array<[number, number]> = []
     stackRows.push([26, 0]) // the sub-line — best / the chase / HOT STREAK
     if (save.streak > 0) stackRows.push([54, 18]) // the streak flame
+    if (showEndlessHero) stackRows.push([ENDLESS_HERO_H, 26]) // the ENDLESS hero — the second mode
     if (liveNow) stackRows.push([LIVE_CARD_H, 26]) // WHAT'S LIVE NOW — at most one, often none
     stackRows.push([RAIL_H, 26]) // the icon rail — never empty (LUCKY SLOTS is never deferred)
-    if (showRaceStrip) stackRows.push([52, 26]) // the daily standings strip
     const stackH = stackRows.reduce((total, [h, gap], i) => total + h + (i > 0 ? gap : 0), 0)
     let stackY = STACK_TOP + Math.round((STACK_BOTTOM - STACK_TOP - stackH) / 2)
     let stackIdx = 0
@@ -743,6 +750,19 @@ export class HomeScene extends Phaser.Scene {
       if (flame) menuButtons.push(flame)
     }
 
+    // ── THE ENDLESS HERO — the second mode, said in its own name ─────────────────────────────────
+    // The rose plate under PLAY: "ENDLESS" over the live standings line, tap = start a run. It
+    // replaces three scattered race surfaces at once — the rail's 🏆 RACE tile (players know the
+    // mode as ENDLESS, not RACE — owner call, 2026-08-26), the bottom standings strip (its line now
+    // rides this plate; the PANEL moved to the rail's RANKS door), and the live card's stash/locked
+    // floors. Locked it is the dimmed signpost the locked tile was; `view/leaderboardpanel.ts` owns
+    // the plate so Home and the fixtures share one standings sentence.
+    if (showEndlessHero) {
+      menuButtons.push(
+        addEndlessHero(this, DESIGN_W / 2, seatRow(), save, () => startScene(this, 'game', { endless: true }))
+      )
+    }
+
     // ── WHAT'S LIVE NOW — the one rotating card ──────────────────────────────────────────────────
     // Home used to carry five notices at once (the streak line, the ×N free-spins tab, the charm
     // collar's 0/9, the stash's "boost ready" line and the strip's "new board today"). They collapse
@@ -752,9 +772,10 @@ export class HomeScene extends Phaser.Scene {
     if (liveNow) menuButtons.push(addLiveCard(this, DESIGN_W / 2, seatRow(), liveNow, liveCtx))
 
     // ── The icon rail ────────────────────────────────────────────────────────────────────────────
-    // LEVELS · GIFT STORE · LUCKY SLOTS · DAILY RACE · THE STASH, demoted from full-width pills to
+    // LEVELS · GIFT STORE · LUCKY SLOTS · RANKS · THE STASH, demoted from full-width pills to
     // one row of badged doors. Every destination that was reachable before is still exactly one tap
-    // away; what changed is that none of them shouts any more.
+    // away; what changed is that none of them shouts any more. (The race's RUN launcher is the one
+    // exception, promoted back OUT of the rail — the ENDLESS hero above owns it now.)
     //
     // Progressive reveal is unchanged in substance: a destination that can do NOTHING for this player
     // yet is DEFERRED, not greyed out. LEVELS would open a grid whose only reachable chip is the
@@ -783,32 +804,29 @@ export class HomeScene extends Phaser.Scene {
       // knowing the rule, and the card says it in words whenever it wins the slot.
       badge: save.freeSpins > 0 ? { text: String(save.freeSpins), gold: playable } : dailyDue ? { gold: true } : undefined,
     })
-    // The race tile is present from the first win onward, live or locked — the same rule the
-    // full-width module used, so the signpost still lands when the road to it has actually begun.
-    // Locked = no `onTap`: inert and dimmed, exactly as `addRaceLockedModule` was, and the card's
-    // floor provider carries its "unlocks at level N" sentence.
-    if (endlessUnlocked(save) || !preFirstWin) {
+    // THE LEADERBOARD DOOR — the tile the 🏆 RACE tile became when launching the run moved up to the
+    // ENDLESS hero. One door, one modal, every board: it opens the standings panel on its tab row
+    // (TODAY / THIS WEEK / LEVELS), landing on the week — the board the days add into — for a racer,
+    // and on the level ladder for a player the race hasn't opened for yet, so the door always opens
+    // onto a board the player is actually on. No badge: standings hold nothing unclaimed.
+    if (!preFirstWin) {
       railItems.push({
-        id: 'race',
+        id: 'ranks',
         glyph: '🏆',
-        label: 'RACE',
-        onTap: endlessUnlocked(save) ? () => startScene(this, 'game', { endless: true }) : undefined,
-        // A dot, not a count: "today's board is still unraced" has no number to report.
-        badge: endlessUnlocked(save) && endlessBestToday(save) <= 0 ? {} : undefined,
+        label: 'RANKS',
+        onTap: () => openRacePanel(this, { mode: endlessUnlocked(save) ? 'weekly' : 'levels' }),
       })
     }
-    // THE STASH DOOR.
+    // THE STASH DOOR — the ONLY stash control on Home (owner call, 2026-08-26: two stash buttons
+    // was one too many, so the live card's "YOUR STASH · next level: …" provider is gone and the
+    // ENDLESS hero stands where it stood). The badge carries the count; the panel behind the door
+    // still NAMES what's going into the next level, which is where that sentence moved.
     //
     // ⚠️ Shown even when the stash is EMPTY, which is a deliberate break from the progressive-reveal
     // rule above. That rule defers a destination that can do NOTHING for this player yet — but an
     // empty stash is not nothing: it is the only place that says where winnings go, and the moment a
     // player most needs to know that is BEFORE they have won anything. Gated only on `preFirstWin`,
     // so a brand-new save still opens uncluttered.
-    //
-    // What the stash HOLDS is named — not merely counted — by the card's top-ranked provider, which
-    // is where the "🎁 next level: +5 MOVES · DOUBLE SCORE" line went. That naming is the fix that
-    // earned this entry its place on Home ("where does it go? where do you see your stash?"), so it
-    // had to survive the demotion; the tile is the door, the card is the contents.
     if (!preFirstWin) {
       const stashed = stashBadgeCount()
       railItems.push({
@@ -828,18 +846,10 @@ export class HomeScene extends Phaser.Scene {
     }
     const rail = this.addIconRail(seatRow(), railItems)
     menuButtons.push(rail.container)
-
-    // The daily standings strip — the live, tappable line the full-width race module used to carry
-    // over its ENDLESS pill. The pill's job moved to the rail's RACE tile; the strip keeps its own,
-    // which is a different destination (the standings panel, not a run).
-    //
-    // ⚠️ Used AS-IS, and it must stay that way. `addRaceStrip` arms on POINTERDOWN and only opens if
-    // the gesture BEGAN on it, because Phaser dispatches `pointerup` to whatever sits under the
-    // finger at release however far away the press started. Home has no swipe surface, so the bug
-    // does not bite here — but this is ONE component shared with the endless board, where the strip
-    // sits directly above a surface you swipe, and swapping it for a plain pressable to suit Home
-    // would hand the standings panel back to every upward swipe out of the board's top row.
-    if (showRaceStrip) menuButtons.push(addDailyRaceStrip(this, DESIGN_W / 2, seatRow(), save))
+    // The daily standings strip used to close the band here. Its LINE now rides the ENDLESS hero's
+    // sub-line and its DESTINATION is the rail's RANKS door, so Home's band carries the same facts
+    // one row shorter. `addDailyRaceStrip` itself lives on — LevelSelect's race module still seats
+    // it, and the board's TODAY'S LEADER variant still guards against the swipe-release misfire.
 
     // Entrance (timings + rationale in the beat sheet at the top of create()). Reduced motion keeps
     // every button in its final alpha=1 / final-y / final-scale resting state — nothing below runs.
@@ -2133,8 +2143,8 @@ export class HomeScene extends Phaser.Scene {
           sfx.uiTap()
           item.onTap?.()
         },
-        // `disabled` dims AND inerts in one flag — the locked race tile, exactly as the full-width
-        // locked module was: present so the road is visible, silent because there is nothing behind it.
+        // `disabled` dims AND inerts in one flag — a tile with no `onTap` is a signpost: present so
+        // the road is visible, silent because there is nothing behind it yet.
         { disabled: item.onTap === undefined }
       )
       face.add(this.add.text(0, -13, item.glyph, { fontFamily: 'sans-serif', fontSize: '30px' }).setOrigin(0.5))

@@ -2,13 +2,11 @@ import Phaser from 'phaser'
 import { sfx } from '../audio/sfx'
 import { SERIES_SIZE, ownedCharms } from '../core/charms'
 import { daysToNextStreakReward, nextStreakReward, spinAvailable } from '../core/daily'
-import { ENDLESS_UNLOCK_LEVEL, endlessBestToday, endlessUnlocked } from '../core/endless'
-import { nextLevelSummary, stashTotal } from '../core/inventory'
-import { LEVEL_COUNT, levelBoostExclusions } from '../core/levels'
+import { endlessUnlocked } from '../core/endless'
+import { LEVEL_COUNT } from '../core/levels'
 import { questState, type QuestGoal } from '../core/quests'
 import type { SaveData } from '../core/save'
 import { openCharmAlbum } from './charmalbum'
-import { openStash } from './stash'
 import { getTheme } from './theme'
 import { FONT, GHOST_PILL, addPressablePlate, startScene } from './ui'
 
@@ -62,31 +60,18 @@ export interface LiveNow {
   line: string
   /**
    * Where a tap goes. ABSENT = the card is a signpost, not a door — it paints dimmed and inert,
-   * exactly as `addRaceLockedModule` did for the locked race.
+   * exactly as the ENDLESS hero does below its unlock.
    */
   open?: (scene: Phaser.Scene, ctx: LiveCtx) => void
 }
 
 export type LiveProvider = (ctx: LiveCtx) => LiveNow | null
 
-/** 1 · An unclaimed reward is waiting — boosts banked for the next level, named rather than counted. */
-const stashWaiting: LiveProvider = ({ save, preFirstWin }) => {
-  if (preFirstWin || stashTotal(save) === 0) return null
-  return {
-    id: 'stash',
-    glyph: '🎁',
-    heading: 'YOUR STASH',
-    // NAMES what is going in, not just how many — the fix that earned this line its place on Home
-    // ("where does it go? where do you see your stash?", owner-relayed 2026-08-03). The preview
-    // includes the next level's own refusals (a HOUSE MINIMUM level declines DOUBLE SCORE), or the
-    // card would promise a boost the level start then skips.
-    line: nextLevelSummary(save, levelBoostExclusions(Math.min(save.unlocked, LEVEL_COUNT))),
-    open: (scene, ctx) => {
-      sfx.whoosh()
-      openStash(scene, { onChanged: ctx.refresh })
-    },
-  }
-}
+// The `stashWaiting` provider — "YOUR STASH · next level: +5 MOVES · DOUBLE SCORE", once rank 1
+// here — is GONE (owner call, 2026-08-26): with the rail's badged 🎁 STASH door on the same screen
+// it was a second stash button, and the slot it monopolised (any save with a non-empty stash saw
+// nothing else) is where the ENDLESS hero now stands. The naming-not-counting line it carried moved
+// back into the stash panel itself, one tap behind the door.
 
 /**
  * Where a quest sends you. Keyed by the goal's SIGNAL rather than its id, because that vocabulary is
@@ -95,7 +80,7 @@ const stashWaiting: LiveProvider = ({ save, preFirstWin }) => {
  * fall through to nothing at run time — the same silent-forever failure the signal type exists to stop.
  *
  * Every entry is a navigation Home already performs: the level PLAY starts, the rail's SLOTS door, the
- * rail's RACE run. PLAY's launch bloom and its shared-element focus are deliberately NOT copied — those
+ * ENDLESS hero's run. PLAY's launch bloom and its shared-element focus are deliberately NOT copied — those
  * belong to the 460×150 hero, and a 78px card that swells the whole screen would be claiming to be one.
  */
 const QUEST_ROUTES: Record<QuestGoal['signal'], (scene: Phaser.Scene, save: SaveData) => void> = {
@@ -107,14 +92,14 @@ const QUEST_ROUTES: Record<QuestGoal['signal'], (scene: Phaser.Scene, save: Save
 }
 
 /**
- * 2 · Today's quest slate is open — how far in, and what the next row asks for.
+ * 1 · Today's quest slate is open — how far in, and what the next row asks for.
  *
  * Ranked here, above a banked spin, by what ignoring it costs: a spin keeps forever, while a slate is
  * gone at midnight AND wants a real session to finish (up to three activities, one of them a whole race
  * run). Everything below this line either keeps or can still be done at 23:50.
  *
  * ⚠️ There is no completed-but-unclaimed rank for a quest and there never can be — the insertion note
- * this replaces ranked one alongside `stashWaiting`, and that state is unreachable. `advanceQuests`
+ * this replaces ranked one alongside the old stash provider, and that state is unreachable. `advanceQuests`
  * (core/quests.ts) banks the chips and writes the claim latch in the SAME statement block, award-first
  * ("THE CLAIM LATCH IS THE ONLY LATCH"), so a goal is paid the instant it is finished and a slate is
  * only ever in progress or finished-and-paid. A finished slate therefore yields NOTHING: closing the
@@ -128,8 +113,8 @@ const QUEST_ROUTES: Record<QuestGoal['signal'], (scene: Phaser.Scene, save: Save
  * race, so before the race unlocks the slate cannot be finished at all, and a checklist carrying a
  * permanently unreachable row teaches the player that the list is decoration (the catalog's own
  * INTENT-COMPLETABLE rule, aimed at exactly that failure). So the surface hides what the core still
- * computes, using the same predicate the rail's RACE tile and `boardNotRun` read — never a level number
- * of its own.
+ * computes, using the same predicate the ENDLESS hero reads for its locked state — never a level
+ * number of its own.
  */
 const questsOpen: LiveProvider = ({ save }) => {
   if (!endlessUnlocked(save)) return null
@@ -158,7 +143,7 @@ const questsOpen: LiveProvider = ({ save }) => {
   }
 }
 
-/** 3 · Banked free spins — an owned asset, so only a banked purse and tonight's slate outrank it. */
+/** 2 · Banked free spins — an owned asset, so only tonight's slate outranks it. */
 const freeSpinsWaiting: LiveProvider = ({ save }) => {
   if (save.freeSpins <= 0) return null
   return {
@@ -173,20 +158,12 @@ const freeSpinsWaiting: LiveProvider = ({ save }) => {
   }
 }
 
-/** 4 · Today's race board is up and this player hasn't run it. Expires tonight — hence the rank. */
-const boardNotRun: LiveProvider = ({ save }) => {
-  if (!endlessUnlocked(save) || endlessBestToday(save) > 0) return null
-  return {
-    id: 'board',
-    glyph: '🏆',
-    heading: 'DAILY RACE',
-    line: 'a new board today  ·  you haven’t raced it yet',
-    open: scene => startScene(scene, 'game', { endless: true }),
-  }
-}
+// The `boardNotRun` provider ("a new board today · you haven't raced it yet") went with the stash
+// one: the ENDLESS hero is a PERMANENT row saying "new board today" in its own sub-line with the
+// run one tap away, so a card repeating it would be the two-notices problem this file exists to end.
 
 /**
- * 5 · The streak is alive and tonight's pull is still unspent.
+ * 3 · The streak is alive and tonight's pull is still unspent.
  *
  * ⚠️ The rung today's pull LANDS ON is the one at `streak + 1`, never `streak` — promising a prize a
  * day early is the single worst thing this copy could do. `streakBadgeLabel` (view/ui.ts) is the
@@ -215,7 +192,7 @@ const streakAtRisk: LiveProvider = ({ save }) => {
   return { id: 'streak', glyph: '🔥', heading: 'YOUR STREAK', line, open: scene => startScene(scene, 'slots') }
 }
 
-/** 6 · The charm series is nearly closed. Only ever "nearly": a set 6 short is a collection, not news. */
+/** 4 · The charm series is nearly closed. Only ever "nearly": a set 6 short is a collection, not news. */
 const charmsNearDone: LiveProvider = ({ save }) => {
   const have = ownedCharms(save).length
   const missing = SERIES_SIZE - have
@@ -232,40 +209,23 @@ const charmsNearDone: LiveProvider = ({ save }) => {
   }
 }
 
-/**
- * 7 · THE FLOOR — the locked race's signpost, and the only entry here that is not "live".
- *
- * It exists because the full-width locked DAILY RACE module it replaces was the one thing on Home
- * telling a pre-level-10 player that a race is coming at all, and demoting the race to a rail tile
- * would otherwise have thrown that sentence away. It carries no `open` for the same reason the
- * module was inert: there is nothing behind it yet. Last in the list, so it can only ever paint on a
- * screen where nothing else has anything to say.
- */
-const raceLocked: LiveProvider = ({ save, preFirstWin }) => {
-  if (preFirstWin || endlessUnlocked(save)) return null
-  return {
-    id: 'racelocked',
-    glyph: '🔒',
-    heading: 'DAILY RACE',
-    line: `unlocks at level ${ENDLESS_UNLOCK_LEVEL}`,
-  }
-}
+// The `raceLocked` floor ("DAILY RACE · unlocks at level N", the one signpost entry) is gone too:
+// the ENDLESS hero paints that exact sentence on its own locked plate from the first win onward, a
+// PERMANENT seat instead of one that vanished whenever any other notice had something to say.
 
 /**
  * The list, in priority order. Highest first; the first provider to return non-null owns the slot.
  *
- * Ranked by what the player LOSES by ignoring it: an unclaimed reward is already theirs, a quest slate
- * dies at midnight and wants a whole session, a banked spin keeps, a board and a streak die at midnight
- * too but each is one sitting, and a collection never expires at all.
+ * Ranked by what the player LOSES by ignoring it: a quest slate dies at midnight and wants a whole
+ * session, a banked spin keeps, a streak dies at midnight but is one sitting, and a collection never
+ * expires at all. (The stash, the unraced board and the locked race left this list on 2026-08-26 —
+ * each is now said permanently by the ENDLESS hero or the rail's stash door; see the notes above.)
  */
 export const LIVE_PROVIDERS: readonly LiveProvider[] = [
-  stashWaiting,
   questsOpen,
   freeSpinsWaiting,
-  boardNotRun,
   streakAtRisk,
   charmsNearDone,
-  raceLocked,
 ]
 
 /** The single most urgent thing right now, or null when Home genuinely has nothing to say. */

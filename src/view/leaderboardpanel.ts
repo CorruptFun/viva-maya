@@ -1,11 +1,12 @@
 /**
  * RACE leaderboard panel — the display surface over `core/leaderboard.ts`.
  *
- * Renders THREE boards through one card: TODAY (the daily board, which closes at midnight Mountain
- * time — core/endless.ts RACE_TZ),
- * THIS WEEK (the season — every day's best added up), and the all-time LEVEL ladder. The first two
- * are TABS of one another, because the second is literally the first summed across seven boards and
- * a player has to be able to see both to understand either.
+ * Renders THREE boards through one card, as TABS of one another: TODAY (the daily board, which
+ * closes at midnight Mountain time — core/endless.ts RACE_TZ), THIS WEEK (the season — every day's
+ * best added up), and the all-time LEVEL ladder. The endless pair share a card because the second is
+ * literally the first summed across seven boards and a player has to be able to see both to
+ * understand either; the ladder joined the row when the rail's one leaderboard door replaced the
+ * separate RACE tile (owner call, 2026-08-26) — one modal now answers "where do I rank" everywhere.
  *
  * Visually a sibling of the ui.ts overlays (openHelpPanel / openSettingsPanel): same warm scrim,
  * same cream card with the gold bezel, same depth band (60+), same tap-outside / CLOSE dismissal.
@@ -44,6 +45,7 @@ import {
   dayEndsAt,
   dayKey,
   endlessBestToday,
+  endlessUnlocked,
   endlessWeekStanding,
   formatRaceRemaining,
   previousDayKey,
@@ -75,7 +77,18 @@ import { openCloudModal } from './cloudmodal'
 import { D, E, OVERSHOOT, backOut, fadeRise, heartbeat, popIn } from './motion'
 import { quality } from './quality'
 import { getTheme, prefersReducedMotion, reduceFlashing } from './theme'
-import { FONT, GHOST_PILL, GOLD_PILL, ROSE_PILL, addPillButton, addRoundChip, goldFace, inkShadow, startScene } from './ui'
+import {
+  FONT,
+  GHOST_PILL,
+  GOLD_PILL,
+  ROSE_PILL,
+  addPillButton,
+  addPressablePlate,
+  addRoundChip,
+  goldFace,
+  inkShadow,
+  startScene,
+} from './ui'
 import { accentRimTop, addFocusScrim, panelPlate } from './platekit'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -118,11 +131,15 @@ export interface RacePanelOpts {
   mode?: BoardMode
 }
 
-/** The three boards this panel can render. TODAY and THIS WEEK are tabs of one another. */
+/** The three boards this panel can render — the three tabs of the one leaderboard modal. */
 export type BoardMode = 'daily' | 'weekly' | 'levels'
 
-/** The tabbed pair — the two halves of the endless race. The level ladder is reached its own way. */
-const RACE_TABS: BoardMode[] = ['daily', 'weekly']
+/**
+ * The tab row, in reading order: the endless pair first (a day, then the week those days add into),
+ * the campaign ladder last. All three ride one row because the game now has ONE leaderboard door
+ * (Home's RANKS tile) rather than a race door and a ladder door that each hid the other's board.
+ */
+const RACE_TABS: BoardMode[] = ['daily', 'weekly', 'levels']
 
 /**
  * Per-board copy + data source. The crown belongs to boards that CLOSE — today's board hands over at
@@ -136,8 +153,7 @@ const RACE_TABS: BoardMode[] = ['daily', 'weekly']
  * resolving, which is what stops a new board needing new plumbing.
  */
 interface BoardSpec {
-  /** Heading — used only by boards outside the tabbed pair (the tabs are their own heading). */
-  title: string
+  /** This board's tab label — the tab row is the card's heading. */
   tab: string
   subtitle: (b: RaceBoard) => string
   /** Crown-row lead-in ("yesterday's winner"), or null for a board that never closes. */
@@ -153,7 +169,6 @@ interface BoardSpec {
 
 const BOARDS: Record<BoardMode, BoardSpec> = {
   daily: {
-    title: 'DAILY RACE',
     tab: 'TODAY',
     // The date key stays (it is what let us spot two friends on DIFFERENT boards from two
     // screenshots) but the half a player actually wants is when this board hands over.
@@ -168,7 +183,6 @@ const BOARDS: Record<BoardMode, BoardSpec> = {
     champion: () => fetchDailyChampion(previousDayKey()),
   },
   weekly: {
-    title: 'WEEKLY RACE',
     tab: 'THIS WEEK',
     // Says the ranking rule out loud, because it is not guessable from the numbers: this board is
     // every day's best ADDED UP, so a player looking at a total bigger than any run they have ever
@@ -190,7 +204,6 @@ const BOARDS: Record<BoardMode, BoardSpec> = {
   },
   levels: {
     // Named for what it measures, not for the screen it opens from — this is the campaign ladder.
-    title: 'LEVEL RACE',
     tab: 'LEVELS',
     // Says the ranking rule out loud: ties on a rung are the NORMAL case here, so a player who sees
     // themselves below someone on the same level should be able to tell why without asking.
@@ -404,8 +417,8 @@ function makeYouTag(scene: Phaser.Scene): Phaser.GameObjects.Container {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Open a leaderboard overlay — the WEEKLY RACE by default, or the all-time LEVEL RACE with
- * `{ mode: 'levels' }`. Fetches the board (unless `opts.boardOverride` supplies one) and renders
+ * Open the leaderboard overlay — on the TODAY tab by default, or on any board via `opts.mode`.
+ * Fetches the board (unless `opts.boardOverride` supplies one) and renders
  * whichever state the data lands in — every state dressed to the same standard.
  *
  * Safe against double-open (a module latch, mirroring the secret-note guard) and against late
@@ -482,31 +495,24 @@ export function openRacePanel(scene: Phaser.Scene, opts: RacePanelOpts = {}): vo
   }
 
   /**
-   * The two halves of the endless race are TABS, not two panels. A player has to be able to answer
-   * "am I winning today?" and "am I winning the week?" in the same breath — the second is the sum of
-   * the first across seven boards, and splitting them across two entry points would hide exactly the
-   * relationship the format is built on. The active tab wears the gold cap; the other is a ghost.
-   * The level ladder keeps a plain heading: it is a different race, not a third tab of this one.
+   * Every board is a TAB, not a panel of its own. A player has to be able to answer "am I winning
+   * today?", "am I winning the week?" and "how far has everyone got?" in the same breath — the week
+   * is the sum of the days across seven boards, and splitting the boards across separate entry
+   * points would hide exactly the relationships the formats are built on. The active tab wears the
+   * gold cap; the others are ghosts. THIS WEEK leans on `addPillButton`'s shrink-to-fit at this
+   * width, so a longer future tab label costs legibility, not layout.
    */
+  const TAB_W = 190
+  const TAB_STEP = TAB_W + 14
   const renderHeader = (): void => {
     header.removeAll(true)
-    if (!RACE_TABS.includes(mode)) {
-      header.add(
-        scene.add
-          .text(0, cy + 58, spec.title, { fontFamily: FONT, fontSize: '46px', fontStyle: '900', color: T.goldText })
-          .setOrigin(0.5)
-          .setLetterSpacing(2)
-          .setShadow(0, 2, 'rgba(0,0,0,0.12)', 4, false, true)
-      )
-      return
-    }
     RACE_TABS.forEach((m, i) => {
       const active = m === mode
       const tab = addPillButton(
         scene,
-        i === 0 ? -120 : 120,
+        (i - (RACE_TABS.length - 1) / 2) * TAB_STEP,
         cy + 62,
-        228,
+        TAB_W,
         60,
         BOARDS[m].tab,
         active ? GOLD_PILL : GHOST_PILL,
@@ -518,7 +524,7 @@ export function openRacePanel(scene: Phaser.Scene, opts: RacePanelOpts = {}): vo
     })
   }
 
-  /** Flip to the other race board: re-dress the header, re-label, re-resolve. */
+  /** Flip to another board: re-dress the tab row, re-label, re-resolve. */
   const switchTo = (m: BoardMode): void => {
     mode = m
     spec = BOARDS[m]
@@ -1348,31 +1354,144 @@ export function devSeedRaceLine(variant: string | null): void {
  * see the note at its declaration for why it deliberately did NOT move to the interactive gold.
  */
 export function addDailyRaceStrip(scene: Phaser.Scene, x: number, y: number, save: SaveData): Phaser.GameObjects.Container {
-  const week = endlessWeekStanding(save)
-  /** The season tail — omitted entirely on a week with nothing in it, so a new player sees one idea. */
-  const weekTail = week.total > 0 ? `  ·  week ${week.total.toLocaleString()}` : ''
-  const lineFor = (data: RaceLineData | null): string => {
-    if (data && data.myRank !== null) {
-      const total = Math.max(data.total, data.myRank)
-      return `today #${data.myRank} of ${total}${weekTail}`
-    }
-    if (data && data.total > 0) return `today · ${data.total} racing${weekTail || '  ·  set the pace'}`
-    // Offline / dormant / empty board — the save-local line the module replaced (never blank).
-    const best = endlessBestToday(save)
-    if (best > 0) return `today’s best ${best.toLocaleString()}${weekTail}`
-    return week.total > 0 ? `new board today${weekTail}` : `new board today  ·  set the pace`
-  }
-  const cached = raceLineCache && raceLineCache.day === dayKey() ? raceLineCache : null
   return addRaceStrip(scene, x, y, {
-    initial: lineFor(cached),
-    refresh: async () => {
-      const board = await fetchDailyBoard(25)
-      if (board.entries.length === 0) return null // dormant/empty → keep the fallback line + stale cache
-      raceLineCache = { day: board.key, myRank: board.myRank, myScore: board.myScore, total: board.entries.length }
-      return lineFor(raceLineCache)
-    },
+    initial: dailyStandingsLine(save, cachedRaceLine()),
+    refresh: () => refreshRaceLine(save),
     open: () => openRacePanel(scene),
   })
+}
+
+/**
+ * The one sentence of daily standings — "today #R of M · week N" down a ladder of fallbacks
+ * (racing count → save-local best → "new board today"), never blank. Extracted from the strip so
+ * Home's ENDLESS hero and the strip read the SAME sentence off the SAME cache — two surfaces
+ * describing one board must be one definition, or they disagree the first time either moves.
+ * The season tail is omitted entirely on a week with nothing in it, so a new player sees one idea.
+ */
+function dailyStandingsLine(save: SaveData, data: RaceLineData | null): string {
+  const week = endlessWeekStanding(save)
+  const weekTail = week.total > 0 ? `  ·  week ${week.total.toLocaleString()}` : ''
+  if (data && data.myRank !== null) {
+    const total = Math.max(data.total, data.myRank)
+    return `today #${data.myRank} of ${total}${weekTail}`
+  }
+  if (data && data.total > 0) return `today · ${data.total} racing${weekTail || '  ·  set the pace'}`
+  // Offline / dormant / empty board — the save-local line the module replaced (never blank).
+  const best = endlessBestToday(save)
+  if (best > 0) return `today’s best ${best.toLocaleString()}${weekTail}`
+  return week.total > 0 ? `new board today${weekTail}` : `new board today  ·  set the pace`
+}
+
+/** Today's cached standings while they are still today's — the synchronous first paint. */
+function cachedRaceLine(): RaceLineData | null {
+  return raceLineCache && raceLineCache.day === dayKey() ? raceLineCache : null
+}
+
+/** Refresh the standings cache from the live board → the new line, or null to keep what's showing. */
+async function refreshRaceLine(save: SaveData): Promise<string | null> {
+  const board = await fetchDailyBoard(25)
+  if (board.entries.length === 0) return null // dormant/empty → keep the fallback line + stale cache
+  raceLineCache = { day: board.key, myRank: board.myRank, myScore: board.myScore, total: board.entries.length }
+  return dailyStandingsLine(save, raceLineCache)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Home's ENDLESS hero — the rose "play the race" plate that replaced the rail's RACE tile.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The hero's art box, EXPORTED because Home budgets its band against it — the same contract as
+ * `LIVE_CARD_H` (a control seated among other rows needs a real bounding box, not an overhang).
+ * 560×88 against PLAY's 460×150: wider because it carries the standings sentence, barely over half
+ * the height, and ROSE rather than gold — so PLAY keeps ~1.4× its area and the only gold face.
+ */
+export const ENDLESS_HERO_W = 560
+export const ENDLESS_HERO_H = 88
+
+/**
+ * ENDLESS, said out loud on its own rose plate: the mode's name up top and the live daily standings
+ * as its sub-line — the same word-plus-fact grammar PLAY's cap wears. Tapping it STARTS a run
+ * (`onPlay`; Home owns the navigation, as it did for `addRaceModule`); the standings PANEL lives
+ * behind the rail's RANKS tile, so the two destinations the old block split across a pill and a
+ * strip are now a launcher and a door. Named ENDLESS, never RACE (owner call, 2026-08-26 — it is
+ * what players call the mode), in the rose that has set the mode apart since v1 (`ROSE_PILL`).
+ *
+ * Below the unlock it paints dimmed and inert with "unlocks at level N" — the persistent signpost
+ * that replaces both the locked rail tile and the live card's old `raceLocked` floor.
+ *
+ * The sub-line paints synchronously from the module cache (never blank, never a spinner) and
+ * refreshes from the live board through the SAME helpers as the standings strip — one sentence,
+ * one cache (`raceLineCache`), so the hero, the strip and the `?raceline=` fixtures cannot drift.
+ */
+export function addEndlessHero(
+  scene: Phaser.Scene,
+  x: number,
+  y: number,
+  save: SaveData,
+  onPlay: () => void
+): Phaser.GameObjects.Container {
+  const unlocked = endlessUnlocked(save)
+  const { container, face } = addPressablePlate(
+    scene,
+    x,
+    y,
+    ENDLESS_HERO_W,
+    ENDLESS_HERO_H,
+    ROSE_PILL,
+    () => {
+      sfx.uiTap()
+      onPlay()
+    },
+    // `sheen` gives the live plate PLAY's light-catch without a second breathing halo; `disabled`
+    // dims AND inerts the locked signpost in one flag (the live card's own idiom).
+    { sheen: unlocked, disabled: !unlocked }
+  )
+  // Bare emoji Text, never a pill label — addPillButton's letterSpacing splits the surrogate pair.
+  face.add(
+    scene.add
+      .text(-ENDLESS_HERO_W / 2 + 44, 0, unlocked ? '♾️' : '🔒', { fontFamily: 'sans-serif', fontSize: '30px' })
+      .setOrigin(0.5)
+  )
+  face.add(
+    scene.add
+      .text(0, -17, 'ENDLESS', { fontFamily: FONT, fontSize: '31px', fontStyle: '900', color: ROSE_PILL.textColor })
+      .setOrigin(0.5)
+      .setLetterSpacing(3)
+      .setShadow(0, 2, 'rgba(74,4,20,0.35)', 2, false, true)
+  )
+  let size = 19
+  const line = scene.add
+    .text(0, 18, unlocked ? dailyStandingsLine(save, cachedRaceLine()) : `unlocks at level ${ENDLESS_UNLOCK_LEVEL}`, {
+      fontFamily: FONT,
+      fontSize: `${size}px`,
+      fontStyle: '900',
+      color: ROSE_PILL.textColor,
+    })
+    .setOrigin(0.5)
+    .setAlpha(0.9)
+  /** Shrink-to-fit (the live card's recipe): the widest line is a big week total behind a long rank. */
+  const fitLine = (): void => {
+    const inner = ENDLESS_HERO_W - 150 // clear of the glyph column and its mirrored margin
+    while (line.width > inner && size > 14) line.setFontSize(--size)
+  }
+  fitLine()
+  face.add(line)
+  if (!unlocked) return container
+  // Live refresh, dormant-safe (the fetch resolves empty and never throws) — the strip's contract,
+  // behind the strip's exact gate so a signed-out player costs no fetch and DEV fixtures still land.
+  let heroAlive = true
+  container.once(Phaser.GameObjects.Events.DESTROY, () => {
+    heroAlive = false
+  })
+  if (cloudSession() || devChaseSeeded()) {
+    void refreshRaceLine(save).then(next => {
+      if (heroAlive && next !== null) {
+        line.setText(next)
+        fitLine()
+      }
+    })
+  }
+  return container
 }
 
 /** Today's leader, cached across scene restarts the way `raceLineCache` caches your own standing. */
@@ -1391,8 +1510,9 @@ const LEADER_NAME_MAX = 14
 /**
  * TODAY'S LEADER — the top of the endless board, on the play screen, while the run is still live.
  *
- * `addDailyRaceStrip` answers "where am I", which is the right question on Home, where you are
- * choosing what to play. Mid-run players ask a different one out loud — "what do I have to beat" —
+ * `dailyStandingsLine` answers "where am I", which is the right question on the ENDLESS hero and
+ * LevelSelect's race module, where you are choosing what to play. Mid-run players ask a different
+ * one out loud — "what do I have to beat" —
  * and until now the only way to answer it was to leave the run. So this strip leads with the score at
  * the top of the board and names who set it. Same component and the same panel on tap; only the line
  * differs, which is the point: two questions, one control, no second thing to keep in sync.
@@ -1700,33 +1820,9 @@ export function addRaceModule(
   return container
 }
 
-/**
- * The locked DAILY RACE module (below ENDLESS_UNLOCK_LEVEL): the same silhouette, dimmed and inert —
- * a quiet signpost ("something is coming right here"), deliberately non-interactive and flourish-free.
- */
-export function addRaceLockedModule(scene: Phaser.Scene, cx: number, cy: number): Phaser.GameObjects.Container {
-  const T = getTheme()
-  const container = scene.add.container(cx, cy)
-  container.add(scene.add.image(0, 0, ensureModulePlate(scene)).setAlpha(0.5))
-  const lock = scene.textures.exists('lock')
-    ? scene.add.image(-168, 0, 'lock').setDisplaySize(30, 37).setAlpha(0.5)
-    : scene.add.text(-168, 0, '🔒', { fontFamily: 'sans-serif', fontSize: '30px' }).setOrigin(0.5).setAlpha(0.5)
-  container.add(lock)
-  container.add(
-    scene.add
-      .text(16, -16, 'DAILY RACE', { fontFamily: FONT, fontSize: '26px', fontStyle: '900', color: T.inkFaint })
-      .setOrigin(0.5)
-      .setLetterSpacing(2)
-      .setAlpha(0.8)
-  )
-  container.add(
-    scene.add
-      .text(16, 20, `unlocks at level ${ENDLESS_UNLOCK_LEVEL}`, { fontFamily: 'Arial, sans-serif', fontSize: '19px', color: T.inkFaint })
-      .setOrigin(0.5)
-      .setAlpha(0.8)
-  )
-  return container
-}
+// `addRaceLockedModule` — the dimmed full-width locked-race signpost — is gone: nothing had seated
+// it since the icon-rail redesign, and its one sentence ("unlocks at level N") is now the ENDLESS
+// hero's locked sub-line, painted permanently from the first win onward.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DEV fixtures — deterministic boards for the `?race=<variant>` Home param, screenshots + audits.
