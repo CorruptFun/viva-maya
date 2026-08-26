@@ -58,6 +58,8 @@ import { DIFFICULTY, type HazardKind } from '../core/difficulty'
 import { shouldOfferPlinko } from '../core/plinko'
 import { dealReady, winsToDeal } from '../core/deal'
 import { EVENTS, track } from '../core/analytics'
+import { questClaimProps, recordQuestSignal } from '../core/quests'
+import type { QuestGrant } from '../core/quests'
 import { devSetLives, formatCountdown, grantLife, refreshLives, spendLifeFor } from '../core/lives'
 import { levelProgress, maya, pendingOccasion, warmLoseLine, warmWinSubtitle, wasNearMiss } from '../core/maya'
 import { mulberry32 } from '../core/rng'
@@ -243,6 +245,14 @@ const SWEEP_FLIES = 22
 const SWEEP_STAGGER_MS = 150
 const SWEEP_ARC_MS = 250
 const SWEEP_FADE_MS = 360
+
+/**
+ * Gap between two DAILY QUEST receipts fired by one signal (`questReceipts`). One signal can pay a
+ * goal AND the all-clear bonus, and `powerToast` holds exactly one line — sized just past that
+ * toast's own life (180 in + 900 hold + 300 out) so the second receipt replaces a line that has
+ * already gone rather than deleting one the player is still reading.
+ */
+const QUEST_RECEIPT_GAP_MS = 1250
 
 /**
  * Top edge (design-box y) of the endless cheat strip — the hidden swipe surface the mega win is
@@ -6923,6 +6933,36 @@ export class GameScene extends Phaser.Scene {
 
   // -------------------------------------------------------------- endings
 
+  /**
+   * The receipt for a DAILY QUEST that just paid (core/quests.ts). Everything here is theatre over a
+   * settled result: `recordQuestSignal` banked the chips and wrote the claim latch before this ran,
+   * so a scene torn down mid-toast costs the player nothing and a re-entry re-offers nothing.
+   *
+   * `powerToast` rather than `showBoardBanner`, and that is not taste. Both endings put a result card
+   * up ~420ms later behind a depth-40 scrim, so the banner (depth 31) would be buried before it had
+   * finished popping in; the toast rides at 46, in the dead strip below the card — where the helper
+   * shelf has already been retired on a win, and where endless never had one.
+   *
+   * STAGGERED because one signal can pay twice (the goal, then the all-clear) and `powerToast` holds
+   * one line: fired together, the bonus would simply delete the goal's receipt. A pending timer dies
+   * with the scene, so tapping NEXT LEVEL early just skips the tail — it never blocks the flow.
+   */
+  private questReceipts(grants: QuestGrant[]): void {
+    grants.forEach((grant, i) => {
+      track(EVENTS.QUEST_CLAIM, questClaimProps(grant))
+      // The headline is the CATALOG's own (core/quests.ts) — a scene writing its own name for a goal
+      // is the BOOST_META scar. Chips are spelled out rather than 🪙, which silhouettes to a grey
+      // disc; `freeSpins` is what actually STUCK after the bank cap, so this can't name one she
+      // didn't get.
+      const spins = grant.freeSpins
+      const line =
+        `QUEST · ${grant.label} · +${grant.chips} CHIPS` +
+        (spins > 0 ? ` · +${spins} FREE SPIN${spins > 1 ? 'S' : ''}` : '')
+      if (i === 0) this.powerToast(line, 'good')
+      else this.time.delayedCall(i * QUEST_RECEIPT_GAP_MS, () => this.powerToast(line, 'good'))
+    })
+  }
+
   private finishWin(): void {
     this.log('finishWin')
     this.state = 'ended'
@@ -6966,6 +7006,19 @@ export class GameScene extends Phaser.Scene {
     // `moves_left` is the earned leftover, not the raw remainder, so a bought win can't read as a
     // comfortable one and flatter a level that is actually hard.
     track(EVENTS.LEVEL_WIN, { level: this.level, stars, moves_left: earnedLeftover })
+    // DAILY QUEST — one level win, fed to today's slate (core/quests.ts). `recordQuestSignal` rather
+    // than `advanceQuests` because there is no save open here to fold into: every helper on this beat
+    // (`recordResult`, `addChips`, `claimChapter`, `bumpJackpotMeter`) does its own atomic
+    // load→mutate→persist, and `prev` above is a pre-win READ that is never written back.
+    //
+    // ⚠️ REPLAYS COUNT, on purpose — a player who has cleared all the content must not be locked out
+    // of her own quests, and the farm is bounded by the day's ceiling either way. A RESUMED level is
+    // not double-counted: `levelresume` restores a position, and only actually winning reaches here.
+    const questGrants = recordQuestSignal('level_win')
+    // A grant is chips already banked, so the win card's balance has to know about them — same shape
+    // as `chapterGrant.balance` just below, whose own read is taken AFTER this and so includes them.
+    if (questGrants.length > 0) this.chipBanked = questGrants[questGrants.length - 1].balance
+    this.questReceipts(questGrants)
     // CHAPTER REWARD — a FIRST clear of a chapter-closing level banks its trophy + purse (+ milestone
     // boost) right here, before any celebration animates (core/trophies.ts claim, award-first like
     // every other surface). The ceremony later in this method replays this settled result; replays
@@ -7878,6 +7931,16 @@ export class GameScene extends Phaser.Scene {
       days: week.days,
       cheats: this.cheatFires,
     })
+    // DAILY QUEST — PARTICIPATION, and only that: the goal is "play a run on today's board, start to
+    // finish", so nothing here may read `score`, `posted` or `isRecord`. A quest that paid on a
+    // number would be a second, unguarded reason to inflate the softest figure in the game (see
+    // core/racesalt.ts and the migration headers). `recordQuestSignal` for the same reason the win
+    // does it: `recordEndless` directly above already closed its own load→mutate→persist.
+    const questGrants = recordQuestSignal('endless_end')
+    // No chip roll-up on the endless card — unlike the win card there is nothing later to snap the
+    // pill from, so a paid grant moves it here (the shape `settleMarkerLoss` uses on the lose path).
+    if (questGrants.length > 0) this.chipHud?.update(questGrants[questGrants.length - 1].balance)
+    this.questReceipts(questGrants)
     // §X1 — the FULL board celebration (marquee flash, token burst, ray rake, gold fountain,
     // embers, crowned by the golden bloom), reserved for a run that beat the player's OWN best on
     // today's board — `isRecord` is that exact comparison, so it fires on the day's first run and

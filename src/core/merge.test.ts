@@ -376,3 +376,86 @@ describe('the daily-spin STREAK — most recently spun wins, and the record only
     expect(merged.bestStreak).toBe(30)
   })
 })
+
+/**
+ * TODAY'S QUEST SLATE — the fourth merge rule, and the only one that switches between two completely
+ * different merges depending on a field. See `mergeQuests` in merge.ts.
+ *
+ * The slate is a claim latch bolted to a set of counters, and both halves are meaningless except
+ * relative to the DAY they were drawn for. Same day and both records are about the same three goals,
+ * so neither may be thrown away; different days and the older one is not stale data, it is data about
+ * something that no longer exists.
+ */
+describe('mergeSaves — today’s quests', () => {
+  const DAY = '2026-08-24'
+  const slate = (day: string, progress: Record<string, number>, claimed: string[]): Partial<SaveData> => ({
+    quests: { day, progress, claimed },
+  })
+
+  it('unions the claims on a shared day, so a paid quest can never be re-paid', () => {
+    // A claim latch may never reopen. Losing one to a progress-winner merge re-pays the purse — and
+    // silently, because the card would simply show an unticked row the player then ticks a second time.
+    const phone = save({ unlocked: 5, ...slate(DAY, { win_two: 2 }, ['win_two']) })
+    const tablet = save({ unlocked: 90, ...slate(DAY, { spin_slots: 1 }, ['spin_slots']) })
+    for (const merged of [mergeSaves(phone, tablet), mergeSaves(tablet, phone)]) {
+      expect(merged.unlocked).toBe(90) // progress still rides the winner, whole
+      expect([...merged.quests.claimed].sort()).toEqual(['spin_slots', 'win_two'])
+    }
+  })
+
+  it('takes the per-goal MAX of progress, never the sum', () => {
+    // ⚠️ THE load-bearing choice here. Summing looks fairer — win a level on the phone and one on the
+    // tablet and you really have won two — but a merge is not a one-off: it runs on every reconcile
+    // and the merged save is pushed back and merged again. Summing is not idempotent, so (1, 1) → 2,
+    // then 2 against the tablet's 1 → 3, and a two-device player's quests pay themselves out.
+    const phone = save({ unlocked: 5, ...slate(DAY, { win_two: 1 }, []) })
+    const tablet = save({ unlocked: 90, ...slate(DAY, { win_two: 1 }, []) })
+    const once = mergeSaves(phone, tablet)
+    expect(once.quests.progress.win_two).toBe(1)
+    // Merging the result back in a hundred times must give the same answer as merging once.
+    let again = once
+    for (let i = 0; i < 100; i++) again = mergeSaves(again, tablet)
+    expect(again.quests.progress.win_two).toBe(1)
+  })
+
+  it('never lowers a counter — a further-progressed save with less progress cannot clobber it', () => {
+    const phone = save({ unlocked: 5, ...slate(DAY, { win_two: 2 }, []) })
+    const tablet = save({ unlocked: 90, ...slate(DAY, { win_two: 0 }, []) })
+    expect(mergeSaves(phone, tablet).quests.progress.win_two).toBe(2)
+    expect(mergeSaves(tablet, phone).quests.progress.win_two).toBe(2)
+  })
+
+  it('lets the LATER day win wholesale — yesterday’s claims are dead, not merged', () => {
+    // Carrying yesterday's `win_level` claim into today would mean today's quest is born already
+    // ticked: the player is quietly robbed of 15 chips by a card that says the work is done. Carrying
+    // yesterday's progress would hand today a head start nobody earned. Both expire together.
+    const yesterday = save({ unlocked: 90, ...slate('2026-08-23', { win_level: 1 }, ['win_level', 'all']) })
+    const today = save({ unlocked: 5, ...slate(DAY, { spin_slots: 1 }, ['spin_slots']) })
+    for (const merged of [mergeSaves(yesterday, today), mergeSaves(today, yesterday)]) {
+      expect(merged.quests).toEqual({ day: DAY, progress: { spin_slots: 1 }, claimed: ['spin_slots'] })
+    }
+  })
+
+  it('a device that has never drawn a slate loses to one that has', () => {
+    // '' sorts below every real day, which is the correct answer and needs no special case.
+    const wiped = coerceSave({})
+    const played = save({ unlocked: 90, ...slate(DAY, { spin_slots: 1 }, ['spin_slots']) })
+    expect(mergeSaves(wiped, played).quests.day).toBe(DAY)
+    expect(mergeSaves(played, wiped).quests.claimed).toEqual(['spin_slots'])
+  })
+
+  it('tolerates a save with no slate at all, and never aliases one into the result', () => {
+    const bare = { unlocked: 5 } as unknown as SaveData
+    const played = save({ ...slate(DAY, { spin_slots: 1 }, ['spin_slots']) })
+    expect(() => mergeSaves(bare, played)).not.toThrow()
+    expect(mergeSaves(bare, played).quests.day).toBe(DAY)
+    expect(mergeSaves(bare, coerceSave({})).quests).toEqual({ day: '', progress: {}, claimed: [] })
+
+    // Cloned, like mergeCharms' list: the merged record is persisted and then mutated in place by the
+    // next signal, and sharing a map with the losing save is the kind of thing that shows up much later.
+    const merged = mergeSaves(played, coerceSave({}))
+    merged.quests.progress.spin_slots = 99
+    merged.quests.claimed.push('run_board')
+    expect(played.quests).toEqual({ day: DAY, progress: { spin_slots: 1 }, claimed: ['spin_slots'] })
+  })
+})

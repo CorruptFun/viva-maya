@@ -6,6 +6,7 @@ import { hasAnySpin, spinAvailable, todayKey } from '../core/daily'
 import {
   DAYS_PER_WEEK,
   dayKey,
+  endlessBestToday,
   endlessUnlocked,
   endlessWeekStanding,
   previousDayKey,
@@ -25,7 +26,7 @@ import {
   saveChaseSnapshot,
 } from '../core/leaderboard'
 import type { RacePrizeWin, RaceRecap } from '../core/leaderboard'
-import { ACT1_LEVELS, LEVEL_COUNT, levelBoostExclusions } from '../core/levels'
+import { ACT1_LEVELS, LEVEL_COUNT } from '../core/levels'
 import { DIFFICULTY } from '../core/difficulty'
 import { refreshLives } from '../core/lives'
 import { greeting, occasionFor, pendingOccasion, secretNote, withName } from '../core/maya'
@@ -39,8 +40,7 @@ import { openTrophyCatchUpCard } from '../view/trophyceremony'
 import { openShowroom } from '../view/showroom'
 import { addCasinoBackdrop } from '../view/background'
 import {
-  addRaceLockedModule,
-  addRaceModule,
+  addDailyRaceStrip,
   devLevelOpts,
   devRaceOpts,
   devSeedRaceLine,
@@ -52,8 +52,9 @@ import { addScreenGloss } from '../view/fx'
 import { installNudgeOpen, maybeShowInstallNudge } from '../view/installnudge'
 import { maybeShowInstallOffer } from '../view/installsheet'
 import { claimInstallReward, onInstallStateChange } from '../core/install'
-import { nextLevelSummary } from '../core/inventory'
 import { openStash, stashBadgeCount } from '../view/stash'
+import { LIVE_CARD_H, addLiveCard, pickLiveNow } from '../view/livecard'
+import type { LiveCtx } from '../view/livecard'
 import { openFreeSpinCard } from '../view/freespincard'
 import { openRaceUnlockCard } from '../view/raceunlockcard'
 import { openBonusDropCard } from '../view/bonusdropcard'
@@ -77,6 +78,7 @@ import {
   addLivesHud,
   addMarquee,
   addPillButton,
+  addPressablePlate,
   addSettingsChip,
   addSoundChip,
   addStreakBadge,
@@ -98,6 +100,88 @@ import {
  * boot), never on an in-app scene.restart() (theme/settings change) or scene navigation.
  */
 let bootRevealed = false
+
+/**
+ * ── Home's vertical band, budgeted in one place ──────────────────────────────
+ *
+ * Home is a HIERARCHY now, not a stack of equals. It used to carry six gold pills at near-equal
+ * weight (PLAY, LEVELS, GIFT STORE, LUCKY SLOTS, ENDLESS and the streak) over five simultaneous
+ * notices, and when everything is urgent nothing is: there was no first place for the eye to land.
+ * So there is ONE dominant PLAY carrying the level number on its face, a badged icon rail for
+ * everything else, and at most ONE "what's live now" card (view/livecard.ts owns the ranking).
+ *
+ * The seats used to be a dozen unrelated literals with the arithmetic that kept them apart living
+ * only in comments — the exact shape of bug that landed LevelSelect's stash door on its leaderboard
+ * marquee with one pixel to spare. So the seats are named here and the band below the hero is
+ * DERIVED from them. Move a seat and the band follows; add anything up here and budget it against
+ * these numbers rather than against a fresh literal.
+ *
+ *   utility chips   44 · help · settings · CHIPS · charms · theme · sound      (unchanged)
+ *   lives HUD      100 · hearts 84–116, "next life" countdown 120–140          (unchanged)
+ *   greeting       162 · 150–174 — a clear 10px under the countdown
+ *   hero emblem    274 · 168² → 190–358 (the drifting satellites reach 368)
+ *   marquee        434 · bulbs 382–398, VIVA·MAYA 405–469
+ *   tagline        494 · 482–506
+ *   jackpot meter  552 · 540–564
+ *   PLAY           681 · 460×150 → cap 606–756, a 42px gap under the meter
+ *   the band       780 → 1210 · whatever survives the progressive reveal, centred inside it
+ *
+ * ⚠️ The dead band is closed by a MOVE, not by squeezing. The streak flame used to sit at 176,
+ * between the lives countdown and the greeting; it now rides the band under PLAY, and the ~60px it
+ * vacated is exactly what let the decorative stack (emblem · wordmark · tagline · meter) come up far
+ * enough to absorb PLAY growing from 340×96 to 460×150. Net: the primary action starts at 47% of
+ * the design box instead of 53%, on the same 1210 floor the race module used to sit on. Nothing was
+ * made smaller — the emblem is still the tuned 168² that handed the visual lead to PLAY in the
+ * first place, and every gap above is the one it already had (±2px) except emblem→marquee, which
+ * gives up 34 for 12 because a satellite heart and a marquee bulb are both soft decoration.
+ */
+const GREET_Y = 162
+const EMBLEM_Y = 274
+const MARQUEE_Y = 434
+const TAGLINE_Y = 494
+const METER_Y = 552
+/**
+ * PLAY — the largest thing on the screen and the only saturated face left on it. 460×150 =
+ * 69,000px² against 8,320 for a rail tile (8.3×) and 43,680 for the live card (1.6×); the card is
+ * wider on purpose (it carries a sentence) and gives up the height and the gold in exchange, so the
+ * only control PLAY has to out-shout it is beaten many times over. It was 340×96 and 1.26× a LUCKY
+ * SLOTS pill wearing the same gold, which is not a hierarchy — it is a tie.
+ *
+ * The level number rides the CAP. It used to be the first clause of the small line beneath, where it
+ * was a caption about the player rather than a promise about what this button does.
+ */
+const PLAY_Y = 681
+const PLAY_W = 460
+const PLAY_H = 150
+/** Top of the demoted band — derived off PLAY's cap so moving the hero moves everything under it. */
+const STACK_TOP = PLAY_Y + PLAY_H / 2 + 24
+/** The floor the race module used to sit on; the band still ends exactly here. */
+const STACK_BOTTOM = 1210
+
+/**
+ * Icon-rail geometry. Five tiles is the widest it ever gets (LEVELS · STORE · SLOTS · RACE · STASH)
+ * and 5×104 + 4×18 = 592 leaves 64px of margin a side inside the 720 box. The tile is the art box
+ * only: `buildPressable` grows every hit zone to ≥84 design px (≈44pt) in each axis, so a tile is
+ * comfortably tappable at this size and would stay so if it shrank further.
+ */
+const RAIL_W = 104
+const RAIL_H = 80
+const RAIL_GAP = 18
+
+/** One door on the icon rail. `onTap` absent = the tile is present but inert (the locked race). */
+interface RailItem {
+  /** Stable id — never shown; the caller reaches back for a tile by it (the LUCKY SLOTS knock). */
+  id: string
+  /** Bare emoji Text, never a pill label: addPillButton's letterSpacing splits the surrogate pair. */
+  glyph: string
+  label: string
+  onTap?: () => void
+  /**
+   * The one badge this door is allowed. `text` absent = a bare DOT ("there is something here"),
+   * which is all a state with no number to report ever needs.
+   */
+  badge?: { text?: string; gold?: boolean }
+}
 
 /** Dark-wash check (mirrors ui.ts's private `isDarkTheme`) — drives the celebration cards' lit accent rim. */
 function darkWash(T: Theme): boolean {
@@ -316,9 +400,10 @@ export class HomeScene extends Phaser.Scene {
     const refreshLivesHud = (): void => livesHud.update(refreshLives())
     refreshLivesHud()
     this.time.addEvent({ delay: 1000, loop: true, callback: refreshLivesHud })
-    // Daily-spin streak flame — hidden at streak 0. Reads as a STAKE rather than a readout while
-    // today's pull is still unspent, which is the only window in which the streak can be acted on.
-    addStreakBadge(this, DESIGN_W / 2, 176, save.streak, spinAvailable(save))
+    // The daily-spin streak flame used to sit HERE, at y=176, between the lives countdown and the
+    // greeting. It now rides the band under PLAY (see the seat block at the top of this file): it is
+    // one of the five notices the hierarchy pass collapsed, and it belongs next to the thing it is
+    // an argument for. The badge itself is unchanged — same component, same tested copy.
 
     // §E9 time-of-day greeting — NAMELESS by default; the name appears ONLY when maya.showName.
     // On a configured special date it becomes the occasion greeting (the app "already knew").
@@ -326,7 +411,7 @@ export class HomeScene extends Phaser.Scene {
     const occToday = occasionFor(today.slice(5))
     const greetLine = occToday ? withName(occToday.label) : greeting(new Date().getHours())
     const greetText = this.add
-      .text(DESIGN_W / 2, 214, greetLine, { fontFamily: FONT, fontSize: '23px', color: getTheme().onBackdropInk })
+      .text(DESIGN_W / 2, GREET_Y, greetLine, { fontFamily: FONT, fontSize: '23px', color: getTheme().onBackdropInk })
       .setOrigin(0.5)
       .setLetterSpacing(1)
     // H1 · fade-rise the greeting so the top of Home composes in rather than stamping static. On boot it
@@ -353,7 +438,7 @@ export class HomeScene extends Phaser.Scene {
     // 168², was 190²: at 190 the decoration was the biggest object on a screen whose PLAY cap is
     // 340×96, and it out-shouted the primary action on motion too (see HOLD_MS below). −20% of its
     // area hands the visual lead back to PLAY while the emblem stays the hero of the top band.
-    const emblemY = 330
+    const emblemY = EMBLEM_Y
     const SUITS = ['suitHeart', 'suitSpade', 'suitDiamond', 'suitClub'] as const
     const emblem = this.add.image(DESIGN_W / 2, emblemY, reduced ? 'heartbig' : SUITS[0])
     emblem.setDisplaySize(168, 168)
@@ -446,7 +531,7 @@ export class HomeScene extends Phaser.Scene {
 
     // Marquee wordmark (+ a subtle bulb row for the power-on to cascade-light). On boot, beats #2/#3:
     // a single gold sweep unveils VIVA·MAYA and the bulbs cascade left→right after the emblem draws in.
-    const marquee = addMarquee(this, DESIGN_W / 2, 500, { bulbs: true })
+    const marquee = addMarquee(this, DESIGN_W / 2, MARQUEE_Y, { bulbs: true })
     if (powerOn) marquee.powerOn(this, 420)
     // BT1 · power-on audio swell (Signature #1 finish). A warm, theme-tinted rising chord — the tonal
     // sibling of the sweep's airy `whoosh` — blooms as the boot reveal lights the wordmark, so the
@@ -457,7 +542,7 @@ export class HomeScene extends Phaser.Scene {
     // passes VIVA (~150ms into the 420ms lead-in).
     if (isBoot) this.time.delayedCall(powerOn ? 560 : 120, () => sfx.powerOn())
     const tagline = this.add
-      .text(DESIGN_W / 2, 560, 'cascades  ·  power-ups  ·  jackpots', {
+      .text(DESIGN_W / 2, TAGLINE_Y, 'cascades  ·  power-ups  ·  jackpots', {
         fontFamily: FONT,
         fontSize: '24px',
         color: getTheme().onBackdropMuted,
@@ -471,8 +556,11 @@ export class HomeScene extends Phaser.Scene {
     // Soft gold halo behind PLAY — rendered underneath the button. Its steady breathe is phase-locked
     // to the shared `heartbeat` clock in update() (C1), so it pulses in time with every other ambient
     // glow in the app. Uses the runtime 'bgglow' texture from the backdrop.
-    const glow = this.add.image(DESIGN_W / 2, 720, 'bgglow')
-    glow.setTint(getTheme().gold).setBlendMode(Phaser.BlendModes.ADD).setDisplaySize(460, 240)
+    // 600×270 for a 460×150 cap. The old halo was 460×240 behind a 340×96 button — 1.35× its width
+    // but 2.5× its height, because a short button needs a tall glow to read as lit at all. A cap half
+    // again as tall does not, and keeping that ratio would have washed the jackpot meter above it.
+    const glow = this.add.image(DESIGN_W / 2, PLAY_Y, 'bgglow')
+    glow.setTint(getTheme().gold).setBlendMode(Phaser.BlendModes.ADD).setDisplaySize(600, 270)
     const glowSX = glow.scaleX
     const glowSY = glow.scaleY
     glow.setAlpha(reduced ? 0.28 : 0)
@@ -508,13 +596,57 @@ export class HomeScene extends Phaser.Scene {
     // C6 · opt-in shared-element bloom: hand the destination PLAY's on-screen spot + size so the board
     // "opens" from right here. Additive — only this one nav passes a focus; reduced motion never queues
     // it (gated in startScene), so the calm path keeps today's flat cream cross-fade untouched.
-    const play = addPillButton(this, DESIGN_W / 2, 720, 340, 96, 'PLAY', GOLD_PILL, () => {
-      // §F2 launch bloom fires FIRST (a full-screen gold swell from the button), then the nav —
-      // composing with, never replacing, the C6 shared-element focus handed to the destination.
-      this.launchBloom(DESIGN_W / 2, 720, 340, 96)
-      startScene(this, 'game', { level: currentLevel }, undefined, { x: DESIGN_W / 2, y: 720, w: 340, h: 96, tint: getTheme().gold })
-    },
+    //
+    // Composed from `addPressablePlate` rather than `addPillButton` because the cap carries TWO
+    // children — the word and the level number. `addPillButton` can only seat one centred label, and
+    // its letterSpacing is also what makes an emoji render as tofu, so the plate is the house answer
+    // whenever a control needs more than a single string (the stash door composes the same way).
+    const { container: play, face: playFace } = addPressablePlate(
+      this,
+      DESIGN_W / 2,
+      PLAY_Y,
+      PLAY_W,
+      PLAY_H,
+      GOLD_PILL,
+      () => {
+        sfx.uiTap()
+        // §F2 launch bloom fires FIRST (a full-screen gold swell from the button), then the nav —
+        // composing with, never replacing, the C6 shared-element focus handed to the destination.
+        this.launchBloom(DESIGN_W / 2, PLAY_Y, PLAY_W, PLAY_H)
+        startScene(this, 'game', { level: currentLevel }, undefined, {
+          x: DESIGN_W / 2,
+          y: PLAY_Y,
+          w: PLAY_W,
+          h: PLAY_H,
+          tint: getTheme().gold,
+        })
+      },
       { sheen: true }
+    )
+    // THE LEVEL NUMBER IS ON THE BUTTON. It used to be the first clause of the small line underneath
+    // ("Level 47 · best 12,340"), where it read as a caption about the player rather than as a
+    // promise about what this button does. Both texts are seated in the moving `face`, so they sink
+    // with the cap. The emboss shadow is `GOLD_PILL.textColor` at 0.35 — the same struck-metal
+    // treatment `addPillButton` derives and the coronation banner spells out by hand.
+    playFace.add(
+      this.add
+        .text(0, -24, 'PLAY', { fontFamily: FONT, fontSize: '54px', fontStyle: '900', color: GOLD_PILL.textColor })
+        .setOrigin(0.5)
+        .setLetterSpacing(2)
+        .setShadow(0, 2, 'rgba(74,51,5,0.35)', 2, false, true)
+    )
+    playFace.add(
+      this.add
+        .text(0, 32, `LEVEL ${currentLevel}`, {
+          fontFamily: FONT,
+          fontSize: '26px',
+          fontStyle: '900',
+          color: GOLD_PILL.textColor,
+        })
+        .setOrigin(0.5)
+        .setLetterSpacing(3)
+        .setShadow(0, 2, 'rgba(74,51,5,0.35)', 2, false, true)
+        .setAlpha(0.82)
     )
     // PLAY is deliberately NOT in `menuButtons`: it is the one primary action and it gets its own
     // early entrance beat (HERO_BEAT) rather than a slot in the subordinate stagger below.
@@ -523,73 +655,33 @@ export class HomeScene extends Phaser.Scene {
     // PLAY's breathe is STARTED LATER (see the entrance below). §V1 gave the entrance a real scale
     // pop, and a resting breathe on the same property would fight it — so the idle breathe is
     // deferred until the button has finished landing. Gated (§E8): reduced motion never starts it.
-    const sub =
-      save.best > 0
-        ? `Level ${currentLevel}  ·  best ${save.best.toLocaleString()}`
-        : `Level ${currentLevel}  ·  swipe to match 3`
-    // A live HOT STREAK rides the sub-line rather than taking furniture of its own — it is the one
-    // place on Home that is already about "where you are", and the band below is budgeted to the
-    // pixel. Deliberately NOT near the streak FLAME at y=176: that one counts consecutive DAYS SPUN,
-    // and two things called a streak within 600px of each other is one concept too many for a screen.
-    // The wins-to-a-deal detail lives on the win card, which is where it can actually be acted on.
-    const hot = save.winStreak > 0 ? `${sub}  ·  HOT STREAK ${save.winStreak}` : sub
-    // A repaint that lands after the scene has gone would set text on a destroyed object — the same
-    // SHUTDOWN latch the reveal chain below uses, declared here because this fetch starts earlier.
-    const subLineAlive = { on: true }
-    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
-      subLineAlive.on = false
-    })
-    const subLine = this.add
-      .text(DESIGN_W / 2, 790, hot, { fontFamily: FONT, fontSize: '22px', color: getTheme().onBackdropMuted })
-      .setOrigin(0.5)
-    /**
-     * THE CHASE rides this line too, and it takes the `best` segment's slot when it arrives.
-     *
-     * Same reasoning that put HOT STREAK here rather than in furniture of its own, one step further:
-     * the stack under PLAY is budgeted to the pixel (840→1210 fits the full set EXACTLY — see the
-     * band note below), so there is no room on Home for a strip, and this is already the one line on
-     * the screen about where you stand. `best` yields rather than appends because a third clause
-     * would run this line under 700px on a long handle, and between "your best score" and "someone
-     * is three levels ahead of you" only one of them is a reason to press PLAY.
-     *
-     * Asynchronous and SILENT on failure: signed out, offline, dormant or alone on the ladder all
-     * leave the line exactly as it painted. It never blanks and never shows a spinner — the chase is
-     * a bonus on a line that already said something true.
-     */
-    void fetchLevelNeighbours().then(w => {
-      if (!w || !subLineAlive.on) return
-      saveChaseSnapshot(w)
-      const copy = chaseCopy(w)
-      track(EVENTS.CHASE_SHOWN, { gap_above: w.above[0]?.gap ?? -1, gap_below: w.below[0]?.gap ?? -1 })
-      const chased = `Level ${currentLevel}  ·  ${copy.tag}`
-      subLine.setText(save.winStreak > 0 ? `${chased}  ·  HOT STREAK ${save.winStreak}` : chased)
-    })
 
     // Jackpot charge meter — a compact progress read-out in the hero area (fills one notch per level
     // win). Display-only: the wheel itself explodes in-game after the win that tops the meter off.
-    // §V1 spacing: was y=590, which left only ~5px between the tagline's descenders (y560, 24px) and
-    // the 24px-tall track — the two read as one crowded clump while a 130px void sat below them.
-    // Re-centred in the band between the tagline and PLAY (y720). Sits a touch above the true
-    // midpoint because PLAY's ambient halo bleeds ~10px past its cap, so optical centre ≠ geometric.
-    addJackpotMeter(this, DESIGN_W / 2, 618, { width: 300, compact: true }).update(save.jackpotMeter, false)
+    // §V1 spacing: was y=590, which left only ~5px between the tagline's descenders and the 24px-tall
+    // track — the two read as one crowded clump while a 130px void sat below them. It keeps the 34px
+    // of air it was given then; only the seat moved, with the rest of the decorative stack.
+    addJackpotMeter(this, DESIGN_W / 2, METER_Y, { width: 300, compact: true }).update(save.jackpotMeter, false)
 
-    // ── The subordinate stack under PLAY ─────────────────────────────────────────────────────────
+    // ── The demoted band under PLAY ──────────────────────────────────────────────────────────────
     // Rows carry no hard-coded y: whatever survives the progressive reveal is CENTRED in the fixed
-    // band under PLAY (840 — a clear 50px below the sub-line — down to 1210). The full stack fills
-    // that band exactly, so it reproduces the §V1 spacing to the pixel (872 / 986 / 1134) with 44px
-    // of air between pills and 34 above the race plate, whose bake carries its own inner padding.
-    // A short stack then keeps the band's balance rather than clumping up under the primary action
-    // (two gold pills nose-to-tail read as a pair, not as primary + secondary) or stranding the
-    // survivors at the bottom.
-    const STACK_TOP = 840
-    const STACK_BOTTOM = 1210
+    // band (STACK_TOP → STACK_BOTTOM, both derived at the top of this file). Six full-width gold
+    // pills used to live down here at near-equal weight; what lives here now, top → bottom, is one
+    // status line, the streak, ONE live card, the icon rail, and the standings strip. A short band
+    // keeps its balance rather than clumping up under the primary action or stranding the survivors
+    // at the bottom — the same centring the old stack used, for the same reason.
     const showBrowseRow = !preFirstWin
-    const showRaceRow = endlessUnlocked(save) || !preFirstWin
+    const showRaceStrip = endlessUnlocked(save)
+    /** What the card would say right now — asked BEFORE the band is measured, since it may say nothing. */
+    const liveCtx: LiveCtx = { save, preFirstWin, refresh: refreshHome }
+    const liveNow = pickLiveNow(liveCtx)
     /** The surviving rows, top → bottom: [height, air above it]. Drives the centring below. */
     const stackRows: Array<[number, number]> = []
-    if (showBrowseRow) stackRows.push([64, 0]) // LEVELS + GIFT STORE
-    stackRows.push([76, 44]) // LUCKY SLOTS — never deferred (see below)
-    if (showRaceRow) stackRows.push([152, 34]) // WEEKLY RACE, live or locked signpost
+    stackRows.push([26, 0]) // the sub-line — best / the chase / HOT STREAK
+    if (save.streak > 0) stackRows.push([54, 18]) // the streak flame
+    if (liveNow) stackRows.push([LIVE_CARD_H, 26]) // WHAT'S LIVE NOW — at most one, often none
+    stackRows.push([RAIL_H, 26]) // the icon rail — never empty (LUCKY SLOTS is never deferred)
+    if (showRaceStrip) stackRows.push([52, 26]) // the daily standings strip
     const stackH = stackRows.reduce((total, [h, gap], i) => total + h + (i > 0 ? gap : 0), 0)
     let stackY = STACK_TOP + Math.round((STACK_BOTTOM - STACK_TOP - stackH) / 2)
     let stackIdx = 0
@@ -603,108 +695,151 @@ export class HomeScene extends Phaser.Scene {
       return cy
     }
 
-    // LEVELS + GIFT STORE share a row so the store gets a first-class entry without growing the
-    // stack. Both are deferred pre-first-win: LEVELS would open a grid whose only reachable chip is
-    // the level PLAY already starts, and the store's cheapest boost costs 40 chips of a balance of 0.
-    if (showBrowseRow) {
-      const rowY = seatRow()
-      const levels = addPillButton(this, DESIGN_W / 2 - 158, rowY, 300, 64, 'LEVELS', GHOST_PILL, () =>
-        startScene(this, 'levelselect')
-      )
-      menuButtons.push(levels)
-      const store = addPillButton(this, DESIGN_W / 2 + 158, rowY, 300, 64, 'GIFT STORE', GHOST_PILL, () =>
-        startScene(this, 'store')
-      )
-      menuButtons.push(store)
+    // PLAY's sub-line. The level number LEFT this line for the button face, so what remains is the
+    // one thing it was always really for: where you stand. A live HOT STREAK rides it rather than
+    // taking furniture of its own — and the wins-to-a-deal detail still lives on the win card, which
+    // is where it can actually be acted on.
+    const sub = save.best > 0 ? `best ${save.best.toLocaleString()}` : 'swipe to match 3'
+    const hot = save.winStreak > 0 ? `${sub}  ·  HOT STREAK ${save.winStreak}` : sub
+    // A repaint that lands after the scene has gone would set text on a destroyed object — the same
+    // SHUTDOWN latch the reveal chain below uses, declared here because this fetch starts earlier.
+    const subLineAlive = { on: true }
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      subLineAlive.on = false
+    })
+    const subLine = this.add
+      .text(DESIGN_W / 2, seatRow(), hot, { fontFamily: FONT, fontSize: '22px', color: getTheme().onBackdropMuted })
+      .setOrigin(0.5)
+    /**
+     * THE CHASE rides this line too, and it takes the `best` segment's slot when it arrives.
+     *
+     * Same reasoning that put HOT STREAK here rather than in furniture of its own, one step further:
+     * the band is budgeted (see the seat block at the top of this file), so there is no room on Home
+     * for a strip, and this is already the one line on the screen about where you stand. `best`
+     * yields rather than appends because a third clause would run this line under 700px on a long
+     * handle, and between "your best score" and "someone is three levels ahead of you" only one of
+     * them is a reason to press PLAY.
+     *
+     * Asynchronous and SILENT on failure: signed out, offline, dormant or alone on the ladder all
+     * leave the line exactly as it painted. It never blanks and never shows a spinner — the chase is
+     * a bonus on a line that already said something true.
+     */
+    void fetchLevelNeighbours().then(w => {
+      if (!w || !subLineAlive.on) return
+      saveChaseSnapshot(w)
+      const copy = chaseCopy(w)
+      track(EVENTS.CHASE_SHOWN, { gap_above: w.above[0]?.gap ?? -1, gap_below: w.below[0]?.gap ?? -1 })
+      subLine.setText(save.winStreak > 0 ? `${copy.tag}  ·  HOT STREAK ${save.winStreak}` : copy.tag)
+    })
+
+    // The daily-spin streak flame, moved down from y=176 to sit with the thing it argues for. Hidden
+    // at streak 0 (`addStreakBadge` returns null and the row was never budgeted). Reads as a STAKE
+    // rather than a readout while today's pull is still unspent, which is the only window in which
+    // the streak can be acted on — and it keeps naming the NEXT rung and its distance, which is the
+    // half of the ladder that can actually bring somebody back. The card carries the same fact as a
+    // full sentence when it wins the slot; this is the compact form that is always on screen.
+    if (save.streak > 0) {
+      const flame = addStreakBadge(this, DESIGN_W / 2, seatRow(), save.streak, spinAvailable(save))
+      if (flame) menuButtons.push(flame)
     }
 
-    // LUCKY SLOTS entry — the machine, front and centre by name ("It's cool in the gift store but
-    // we should make a subtle button to play it on the main screen"). One free pull a day, banked
-    // free spins, and the paid bet ladder all live behind this one door (SlotScene). Gold whenever
-    // the machine holds ANY free pull — today's daily spin OR banked free spins (hasAnySpin) — and a
-    // quiet ghost once the gifts are spent; the marquee-stud row across the crown (decorateSlotsPill)
-    // carries the "this is the slots" identity in both postures, while the streak flame at the top of
-    // the screen keeps carrying the day count. NEVER deferred — day one is exactly when the daily
-    // spin pays (it seeds the streak and boosts the first level), so this is the one first-run entry
-    // that can already do something.
-    // NOTE: no emoji in pill labels — addPillButton's letterSpacing splits
-    // surrogate pairs in Phaser's glyph renderer (renders tofu).
+    // ── WHAT'S LIVE NOW — the one rotating card ──────────────────────────────────────────────────
+    // Home used to carry five notices at once (the streak line, the ×N free-spins tab, the charm
+    // collar's 0/9, the stash's "boost ready" line and the strip's "new board today"). They collapse
+    // into this one slot; `view/livecard.ts` owns the ordered provider list that decides who gets it,
+    // and the QUESTS INSERTION POINT is a commented line inside that list. Often there is nothing
+    // live at all, and then there is no card — which is the point of a slot rather than a shelf.
+    if (liveNow) menuButtons.push(addLiveCard(this, DESIGN_W / 2, seatRow(), liveNow, liveCtx))
+
+    // ── The icon rail ────────────────────────────────────────────────────────────────────────────
+    // LEVELS · GIFT STORE · LUCKY SLOTS · DAILY RACE · THE STASH, demoted from full-width pills to
+    // one row of badged doors. Every destination that was reachable before is still exactly one tap
+    // away; what changed is that none of them shouts any more.
+    //
+    // Progressive reveal is unchanged in substance: a destination that can do NOTHING for this player
+    // yet is DEFERRED, not greyed out. LEVELS would open a grid whose only reachable chip is the
+    // level PLAY already starts, and the store's cheapest boost costs 40 chips of a balance of 0.
+    // LUCKY SLOTS is NEVER deferred — day one is exactly when the daily spin pays (it seeds the
+    // streak and boosts the first level), so it is the one first-run door that can already do
+    // something, and it sits in the middle of the rail because it is the one that is always there.
     const playable = hasAnySpin(save)
-    const dailyY = seatRow()
-    const daily = addPillButton(this, DESIGN_W / 2, dailyY, 340, 76, 'LUCKY SLOTS', playable ? GOLD_PILL : GHOST_PILL, () =>
-      startScene(this, 'slots')
-    )
-    this.decorateSlotsPill(daily, playable)
-    menuButtons.push(daily)
-    // The daily's ARRIVAL beat is fired after the entrance (see the stagger below) — it no longer
-    // breathes, so PLAY owns the only perpetual "tap me" on the screen.
-    // Banked free spins → a glowing "×N FREE SPINS" badge pinned to the LUCKY SLOTS corner. Rides
-    // INSIDE the pill container so the daily's beat carries it; the glow pulse is its own beat
-    // (reduce-flashing → static soft glow; reduced motion → static badge, no pop, no pulse).
-    // What is actually waiting, in words — see buildFreeSpinsBadge for why this is no longer gated on
-    // banked spins alone. The DAILY pull leads whenever it is unspent: it is the one every player
-    // holds, and unlike a banked spin it EXPIRES tonight, so it is the fact with a deadline on it.
     const dailyDue = spinAvailable(save)
-    const badgeText = dailyDue
-      ? save.freeSpins > 0
-        ? `FREE SPIN +${save.freeSpins}`
-        : 'FREE SPIN TODAY'
-      : save.freeSpins > 0
-        ? `×${save.freeSpins} FREE SPINS`
-        : null
-    if (badgeText) daily.add(this.buildFreeSpinsBadge(badgeText))
-    // THE STASH DOOR. Rides under the daily pill wherever it was seated (a first-run spin banks a
-    // boost while the rows above are still deferred, so this can't key off the full stack's geometry).
-    //
-    // This line used to read "🎁 boost ready for your next level" and was INERT — it named neither
-    // what nor how many, and there was nowhere to go and look, which is most of why a player asked
-    // "where does it go? where do you see your stash?" on 2026-08-03.
-    //
-    // ⚠️ It is now shown even when the stash is EMPTY, which is a deliberate break from the
-    // progressive-reveal rule above. That rule defers a destination that can do NOTHING for this
-    // player yet — but an empty stash is not nothing: it is the only place that says where winnings
-    // go, and the moment a player most needs to know that is BEFORE they have won anything. Gated
-    // only on `preFirstWin`, so a brand-new save still opens uncluttered.
-    if (!preFirstWin) {
-      // NAMES what is going in, not just how many. The level-start banner already lists the boosts,
-      // but it fires after the level has begun and they are already spent — confirmation, not
-      // information. This is the same fact moved to where the decision actually happens, in the slot
-      // the count was using anyway.
-      const n = stashBadgeCount()
-      // The preview names what the level PLAY will start would take — including that level's own
-      // refusals (a HOUSE MINIMUM level declines DOUBLE SCORE), or the line would promise a boost
-      // the level start then skips.
-      const label = `🎁 ${nextLevelSummary(save, levelBoostExclusions(Math.min(save.unlocked, LEVEL_COUNT)))}`
-      const stashLine = this.add
-        .text(DESIGN_W / 2, dailyY + 58, label, {
-          fontFamily: FONT,
-          fontSize: '20px',
-          color: n > 0 ? getTheme().goldText : getTheme().onBackdropMuted,
-        })
-        .setOrigin(0.5)
-        .setInteractive({ useHandCursor: true })
-      stashLine.on('pointerup', () => {
-        sfx.uiTap()
-        // Holding or promoting changes which boosts the next level takes, and PLAY's sub-line and
-        // this very count are both read from the save at build time — so a change repaints Home
-        // rather than leaving a stale readout behind.
-        openStash(this, { onChanged: () => this.scene.restart() })
+    const railItems: RailItem[] = []
+    if (showBrowseRow) {
+      railItems.push({ id: 'levels', glyph: '⭐', label: 'LEVELS', onTap: () => startScene(this, 'levelselect') })
+      // No badge: the store sells, it does not hold anything unclaimed for the day. Referral purses
+      // and chapter trophies are paid by the celebration queue below, never picked up in there.
+      railItems.push({ id: 'store', glyph: '💰', label: 'STORE', onTap: () => startScene(this, 'store') })
+    }
+    railItems.push({
+      id: 'slots',
+      glyph: '🎰',
+      label: 'SLOTS',
+      onTap: () => startScene(this, 'slots'),
+      // The count when there is one, a bare gold dot when the only thing waiting is today's pull.
+      // GOLD means "free pull ready" — today's daily spin, banked spins, or both. That state used to
+      // be carried by the pill's whole face going gold, which is unlearnable (it means nothing until
+      // you have opened the door you are not opening); a badge is a difference you can see without
+      // knowing the rule, and the card says it in words whenever it wins the slot.
+      badge: save.freeSpins > 0 ? { text: String(save.freeSpins), gold: playable } : dailyDue ? { gold: true } : undefined,
+    })
+    // The race tile is present from the first win onward, live or locked — the same rule the
+    // full-width module used, so the signpost still lands when the road to it has actually begun.
+    // Locked = no `onTap`: inert and dimmed, exactly as `addRaceLockedModule` was, and the card's
+    // floor provider carries its "unlocks at level N" sentence.
+    if (endlessUnlocked(save) || !preFirstWin) {
+      railItems.push({
+        id: 'race',
+        glyph: '🏆',
+        label: 'RACE',
+        onTap: endlessUnlocked(save) ? () => startScene(this, 'game', { endless: true }) : undefined,
+        // A dot, not a count: "today's board is still unraced" has no number to report.
+        badge: endlessUnlocked(save) && endlessBestToday(save) <= 0 ? {} : undefined,
       })
     }
-
-    // WEEKLY RACE module — the full-width ENDLESS block (replaces the v1 trophy chip). Unlocked:
-    // the rose ENDLESS pill over a live, tappable standings line (leaderboardpanel owns the data +
-    // panel). Locked: the same silhouette dimmed to a quiet "unlocks at level N" signpost, where N
-    // is ENDLESS_UNLOCK_LEVEL (the locked module reads the constant, so this copy never drifts) —
-    // shown from the first win onward, so the signpost lands when the road to it has actually begun.
-    if (showRaceRow) {
-      const raceY = seatRow()
-      menuButtons.push(
-        endlessUnlocked(save)
-          ? addRaceModule(this, DESIGN_W / 2, raceY, save, () => startScene(this, 'game', { endless: true }))
-          : addRaceLockedModule(this, DESIGN_W / 2, raceY)
-      )
+    // THE STASH DOOR.
+    //
+    // ⚠️ Shown even when the stash is EMPTY, which is a deliberate break from the progressive-reveal
+    // rule above. That rule defers a destination that can do NOTHING for this player yet — but an
+    // empty stash is not nothing: it is the only place that says where winnings go, and the moment a
+    // player most needs to know that is BEFORE they have won anything. Gated only on `preFirstWin`,
+    // so a brand-new save still opens uncluttered.
+    //
+    // What the stash HOLDS is named — not merely counted — by the card's top-ranked provider, which
+    // is where the "🎁 next level: +5 MOVES · DOUBLE SCORE" line went. That naming is the fix that
+    // earned this entry its place on Home ("where does it go? where do you see your stash?"), so it
+    // had to survive the demotion; the tile is the door, the card is the contents.
+    if (!preFirstWin) {
+      const stashed = stashBadgeCount()
+      railItems.push({
+        id: 'stash',
+        glyph: '🎁',
+        label: 'STASH',
+        onTap: () => {
+          // Holding or promoting changes which boosts the next level takes, and the card, this badge
+          // and PLAY's sub-line are all read from the save at build time — so a change repaints Home
+          // wholesale rather than leaving three stale readouts behind. Deferred a frame (refreshHome)
+          // so the restart can never land while the panel that triggered it is still tearing down.
+          sfx.whoosh()
+          openStash(this, { onChanged: refreshHome })
+        },
+        badge: stashed > 0 ? { text: String(stashed), gold: true } : undefined,
+      })
     }
+    const rail = this.addIconRail(seatRow(), railItems)
+    menuButtons.push(rail.container)
+
+    // The daily standings strip — the live, tappable line the full-width race module used to carry
+    // over its ENDLESS pill. The pill's job moved to the rail's RACE tile; the strip keeps its own,
+    // which is a different destination (the standings panel, not a run).
+    //
+    // ⚠️ Used AS-IS, and it must stay that way. `addRaceStrip` arms on POINTERDOWN and only opens if
+    // the gesture BEGAN on it, because Phaser dispatches `pointerup` to whatever sits under the
+    // finger at release however far away the press started. Home has no swipe surface, so the bug
+    // does not bite here — but this is ONE component shared with the endless board, where the strip
+    // sits directly above a surface you swipe, and swapping it for a plain pressable to suit Home
+    // would hand the standings panel back to every upward swipe out of the board's top row.
+    if (showRaceStrip) menuButtons.push(addDailyRaceStrip(this, DESIGN_W / 2, seatRow(), save))
 
     // Entrance (timings + rationale in the beat sheet at the top of create()). Reduced motion keeps
     // every button in its final alpha=1 / final-y / final-scale resting state — nothing below runs.
@@ -743,17 +878,20 @@ export class HomeScene extends Phaser.Scene {
         repeat: -1,
         ease: 'Sine.easeInOut',
       })
-      if (playable) {
+      const slotsTile = rail.tiles.get('slots')
+      if (playable && slotsTile) {
         // A playable machine still has to say "there's something here" — so it says it ONCE, in the
         // ARRIVAL channel rather than the idle one: a single knock a beat after it has settled (far
         // enough after that it reads as its own gesture, not entrance overshoot), then stillness.
-        // What carries the state from then on is static and always legible: the gold face against
-        // its spent GHOST twin, the label, the lit stud row, and the free-spins badge's glow pulse.
+        // What carries the state from then on is static and always legible: the gold badge against
+        // its unbadged twin, the 🎰 glyph, and the card's own sentence when it wins the slot.
+        // ⚠️ The cue is timed off the RAIL, not off the tile — the tiles ride inside one container
+        // that springs in as a single beat, so a tile has no stagger index of its own.
         this.tweens.add({
-          targets: daily,
+          targets: slotsTile,
           scale: 1.05,
           duration: 260,
-          delay: landedAt(daily) + 260,
+          delay: landedAt(rail.container) + 260,
           yoyo: true,
           ease: 'Sine.easeInOut',
         })
@@ -1951,100 +2089,95 @@ export class HomeScene extends Phaser.Scene {
   }
 
   /**
-   * The marquee-stud row that brands the LUCKY SLOTS pill: seven small bulbs along the cap's crown,
-   * alternating gold/rose exactly like the machine's own cabinet ring, so the Home button and the
-   * cabinet read as the same physical sign. Playable → lit, with a slow travelling chase lapping the
-   * row (reduce-flashing: the same wave at a gentler period ≥520ms half-cycle; reduced motion:
-   * statically lit). Spent → dim and still, so the ghost pill keeps its slot-machine identity
-   * without claiming there's anything to pull. Rides the outer container (not the sinking face),
-   * the same seat the free-spins badge uses.
-   */
-  private decorateSlotsPill(pill: Phaser.GameObjects.Container, playable: boolean): void {
-    const T = getTheme()
-    const reduced = this.prefersReducedMotion()
-    const n = 7
-    const runW = 250
-    const bulbY = -41 // the cap's crown: cap centre ≈ −5 (pillGeom ext 9 on h=76), half-height 38
-    for (let i = 0; i < n; i++) {
-      const bulb = this.add
-        .image(-runW / 2 + (runW * i) / (n - 1), bulbY, 'bulb')
-        .setDisplaySize(11, 11)
-        .setTint(i % 2 === 0 ? T.gold : T.rose)
-      pill.add(bulb)
-      if (!playable) {
-        bulb.setAlpha(0.3)
-      } else if (reduced) {
-        bulb.setAlpha(0.9)
-      } else {
-        const period = reduceFlashing() ? 2200 : 1500
-        bulb.setAlpha(0.45)
-        this.tweens.add({
-          targets: bulb,
-          alpha: 1,
-          duration: period / 2,
-          yoyo: true,
-          repeat: -1,
-          ease: 'Sine.easeInOut',
-          delay: (i / n) * period,
-        })
-      }
-    }
-  }
-
-  /**
-   * Glowing "×N FREE SPINS" badge for the LUCKY SLOTS pill's corner — banked machine spins waiting.
-   * A rose tab (rose = the "special" accent, distinct on the gold pill) with a soft gold glow:
-   * pulse gated by reduceFlashing (static soft glow) and reduced motion (static badge, no pop).
-   */
-  /**
-   * The badge pinned to the LUCKY SLOTS pill's corner — what is waiting behind the door, in words.
+   * ── THE ICON RAIL ────────────────────────────────────────────────────────────
+   * One row of badged doors, replacing the four full-width pills (LEVELS, GIFT STORE, LUCKY SLOTS,
+   * ENDLESS) that used to compete with PLAY at near-equal weight. Every tile is the same chunky-3D
+   * GHOST cap the rest of the app wears, so the rail is quiet by construction: PLAY keeps the only
+   * saturated face on the screen, and a badge — not a gold pill — is what says "something here".
    *
-   * ⚠️ It takes a LABEL, not a count, and that is the fix. It used to render only for BANKED free
-   * spins (`save.freeSpins > 0`), which meant the daily pull — the one every player holds, every
-   * day, and the only thing behind that door on day one — announced itself solely by the pill being
-   * gold rather than grey. Gold is unlearnable: it means nothing until you have already opened the
-   * door you are not opening. Measured 2026-08-07, only 24 of 73 real players ever had.
+   * Three things are load-bearing:
+   *   · TILES RIDE ONE CONTAINER. The whole rail springs in as a single entrance beat rather than
+   *     five staggered ones, which is what keeps the last module landing at ~1350ms the way three
+   *     rows used to. It also means a tile has no stagger index of its own — see the LUCKY SLOTS
+   *     arrival knock, which is timed off the rail.
+   *   · THE GLYPH IS ITS OWN TEXT. `addPillButton`'s letterSpacing splits an emoji's surrogate pair
+   *     and Phaser renders tofu, so a tile composes from `addPressablePlate` — the same reason the
+   *     stash door and the live card do.
+   *   · THE BADGE RIDES THE OUTER CONTAINER, never the sinking `face`: the press must carry the
+   *     glyph without dragging the number off the tile. That is the charm collar's own seat, and the
+   *     one place this rail deliberately copies rather than shares (a collar is five lines).
    *
-   * The pill's own label stays `LUCKY SLOTS`, deliberately: the machine is front and centre BY NAME
-   * (see the entry above), and a badge that states the offer beside a pill that states the identity
-   * says both things at once, where a swapped label would trade one for the other.
+   * Hit zones are ≥84 design px (≈44pt) in each axis for free — `buildPressable` grows every one to
+   * that floor whatever the art box says, so the tiles could shrink further without becoming a miss.
    */
-  private buildFreeSpinsBadge(text: string): Phaser.GameObjects.Container {
+  private addIconRail(
+    y: number,
+    items: RailItem[]
+  ): { container: Phaser.GameObjects.Container; tiles: Map<string, Phaser.GameObjects.Container> } {
     const T = getTheme()
-    const reduced = this.prefersReducedMotion()
-    const c = this.add.container(140, -40)
-    c.setAngle(-6)
-    const label = this.add
-      .text(0, 0, text, { fontFamily: FONT, fontSize: '17px', fontStyle: '900', color: T.onRose })
-      .setOrigin(0.5)
-      .setLetterSpacing(1)
-    const w = label.width + 28
-    const h = 34
-    if (this.textures.exists('bgglow')) {
-      const glow = this.add
-        .image(0, 0, 'bgglow')
-        .setBlendMode(Phaser.BlendModes.ADD)
-        .setTint(T.goldBright)
-        .setDisplaySize(w * 1.9, h * 3.2)
-        .setAlpha(0.3)
-      c.add(glow)
-      if (!reduced && !reduceFlashing()) {
-        this.tweens.add({ targets: glow, alpha: 0.5, duration: 900, yoyo: true, repeat: -1, ease: E.hero })
+    const container = this.add.container(DESIGN_W / 2, y)
+    const tiles = new Map<string, Phaser.GameObjects.Container>()
+    // Centre whatever survived the progressive reveal, rather than seating against a fixed left edge
+    // — a rail of one (a brand-new save keeps only LUCKY SLOTS) has to look deliberate too.
+    const span = items.length * RAIL_W + Math.max(0, items.length - 1) * RAIL_GAP
+    items.forEach((item, i) => {
+      const x = -span / 2 + RAIL_W / 2 + i * (RAIL_W + RAIL_GAP)
+      const { container: tile, face } = addPressablePlate(
+        this,
+        x,
+        0,
+        RAIL_W,
+        RAIL_H,
+        GHOST_PILL,
+        () => {
+          sfx.uiTap()
+          item.onTap?.()
+        },
+        // `disabled` dims AND inerts in one flag — the locked race tile, exactly as the full-width
+        // locked module was: present so the road is visible, silent because there is nothing behind it.
+        { disabled: item.onTap === undefined }
+      )
+      face.add(this.add.text(0, -13, item.glyph, { fontFamily: 'sans-serif', fontSize: '30px' }).setOrigin(0.5))
+      face.add(
+        this.add
+          .text(0, 21, item.label, { fontFamily: FONT, fontSize: '13px', fontStyle: '900', color: T.inkSoft })
+          .setOrigin(0.5)
+          .setLetterSpacing(1)
+      )
+      if (item.badge) {
+        // Top-right, clear of the caption at the tile's foot. Gold = a free pull or a purse already
+        // yours; rose = a thing worth doing. A bare dot when there is no number to report.
+        const badge = this.add.container(RAIL_W / 2 - 13, -RAIL_H / 2 + 2)
+        const fill = item.badge.gold ? T.gold : T.rose
+        const g = this.add.graphics()
+        if (item.badge.text === undefined) {
+          g.fillStyle(T.cardFill, 0.9)
+          g.fillCircle(0, 0, 10)
+          g.fillStyle(fill, 1)
+          g.fillCircle(0, 0, 7.5)
+          badge.add(g)
+        } else {
+          const label = this.add
+            .text(0, 0, item.badge.text, {
+              fontFamily: FONT,
+              fontSize: '15px',
+              fontStyle: '900',
+              color: item.badge.gold ? T.goldPillText : T.onRose,
+            })
+            .setOrigin(0.5)
+          const bw = Math.max(22, label.width + 14)
+          g.fillStyle(fill, 1)
+          g.fillRoundedRect(-bw / 2, -11, bw, 22, 11)
+          g.lineStyle(2, T.cardFill, 0.9)
+          g.strokeRoundedRect(-bw / 2, -11, bw, 22, 11)
+          badge.add([g, label])
+        }
+        tile.add(badge)
       }
-    }
-    const g = this.add.graphics()
-    g.fillStyle(T.roseDeep, 1)
-    g.fillRoundedRect(-w / 2, -h / 2 + 2.5, w, h, h / 2)
-    g.fillStyle(T.rose, 1)
-    g.fillRoundedRect(-w / 2, -h / 2, w, h, h / 2)
-    g.fillStyle(T.roseLight, 0.45)
-    g.fillRoundedRect(-w / 2 + 5, -h / 2 + 3, w - 10, h * 0.42, h * 0.21)
-    g.lineStyle(2, T.goldBezel, 1)
-    g.strokeRoundedRect(-w / 2, -h / 2, w, h, h / 2)
-    c.add([g, label])
-    // Announce with a late pop (after the menu stagger has landed); reduced → already at rest.
-    popIn(this, c, { from: 0.5, delay: 900, overshoot: OVERSHOOT.pop })
-    return c
+      container.add(tile)
+      tiles.set(item.id, tile)
+    })
+    return { container, tiles }
   }
 
   /**

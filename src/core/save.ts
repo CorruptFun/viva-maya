@@ -3,6 +3,32 @@ import { DIFFICULTY } from './difficulty'
 import { JACKPOT_GOAL } from './jackpot'
 import type { BoostType, PromoReward } from './types'
 
+/**
+ * TODAY'S QUEST SLATE — the day it was drawn for, how far each goal has got, and which are PAID.
+ * core/quests.ts owns the catalog, the draw, the payment and the merge rule; this is only its shape.
+ *
+ * Declared HERE rather than in that module because this one stays dependency-free — core/quests.ts
+ * imports save.ts, never the reverse, exactly as core/charms.ts and core/trophies.ts do. The same
+ * rule is why `coerceQuests` below filters goal ids to strings without checking them against the
+ * catalog: an unknown id is inert, because every reader looks goals up BY the day's drawn list.
+ */
+export interface QuestState {
+  /**
+   * RACE day key ("YYYY-MM-DD", core/endless.ts dayKey) this slate belongs to, or '' when there has
+   * never been one. A slate belongs to exactly ONE day: when the day rolls, progress and claims are
+   * both replaced wholesale rather than patched, because yesterday's are equally dead.
+   */
+  day: string
+  /** Goal id → units recorded on `day`. Only the day's drawn goals are ever written. */
+  progress: Record<string, number>
+  /**
+   * Goal ids already PAID, plus `'all'` for the all-clear bonus. THE claim latch — a goal's chips and
+   * its entry here are written in one statement block, so this is the only thing standing between a
+   * repeated signal and a second payment. Unioned within a day on merge; a claim may never reopen.
+   */
+  claimed: string[]
+}
+
 export interface SaveData {
   v: 13
   best: number
@@ -212,6 +238,19 @@ export interface SaveData {
    * paid on the other device.
    */
   bonusDropDay: string | null
+  /**
+   * TODAY'S DAILY QUESTS — the drawn day, the counters and the claim latch (core/quests.ts).
+   *
+   * Absent in every save written before quests shipped → the empty slate, which the first signal of
+   * the day fills in; nobody starts a day behind. It rides the RACE calendar for the reason
+   * `bonusDropDay` does — one midnight for the board, the gift and the slate rather than three.
+   *
+   * ⚠️ It merges by its OWN rule (`mergeQuests` in core/merge.ts), which is neither of the two above
+   * it: a slate is a claim latch bolted to a set of counters, and both halves are scoped to one day.
+   * Same day → per-goal MAX progress and a UNION of claims; different days → the LATER slate wins
+   * whole. Read that comment before changing this shape.
+   */
+  quests: QuestState
 }
 
 /** Most free spins the bank ever holds — earning past this is quietly forfeited. */
@@ -295,6 +334,7 @@ const DEFAULTS: SaveData = {
   handleSetAt: 0,
   markerCompDay: null,
   bonusDropDay: null,
+  quests: { day: '', progress: {}, claimed: [] },
 }
 
 function fresh(): SaveData {
@@ -313,6 +353,43 @@ function fresh(): SaveData {
     chapterRewards: [],
     endlessDays: {},
     charms: [],
+    // Nested, so BOTH its map and its array are re-initialised — a shallow spread of the slate would
+    // hand every fresh save DEFAULTS' own `progress` object to write today's counters into.
+    quests: { day: '', progress: {}, claimed: [] },
+  }
+}
+
+/**
+ * The QUEST SLATE, sanitised on the way in (core/quests.ts owns everything else about it).
+ *
+ * ⚠️ A slate whose `day` is missing or malformed is DROPPED WHOLE rather than repaired field by
+ * field. Progress and claims mean nothing except relative to a day — "won two levels" is not a fact
+ * on its own — so a dateless slate is not a damaged slate, it is not a slate. Dropping it also gives
+ * the rest of the code one invariant worth having: `day === ''` always implies no progress and no
+ * claims, so a blob arriving through the origin handoff or a pasted backup code cannot smuggle in a
+ * set of claims that some later day might honour.
+ *
+ * Goal ids are filtered to strings but deliberately NOT validated against the catalog, for the reason
+ * `charms` gives: this module stays dependency-free, and an unknown id is inert because every reader
+ * looks goals up BY the day's drawn list.
+ */
+function coerceQuests(raw: unknown): QuestState {
+  const empty: QuestState = { day: '', progress: {}, claimed: [] }
+  if (!raw || typeof raw !== 'object') return empty
+  const q = raw as Partial<QuestState>
+  if (typeof q.day !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(q.day)) return empty
+  const progress: Record<string, number> = {}
+  if (q.progress && typeof q.progress === 'object') {
+    for (const [id, n] of Object.entries(q.progress as Record<string, unknown>)) {
+      if (typeof n === 'number' && Number.isFinite(n) && n > 0) progress[id] = Math.floor(n)
+    }
+  }
+  return {
+    day: q.day,
+    progress,
+    claimed: Array.isArray(q.claimed)
+      ? Array.from(new Set(q.claimed.filter((x): x is string => typeof x === 'string')))
+      : [],
   }
 }
 
@@ -476,6 +553,10 @@ export function coerceSave(raw: unknown): SaveData {
     // HOUSE GIFT latch — absent in every save written before it shipped → null, so the existing
     // player base finds today's gift waiting on their next visit rather than starting a day behind.
     base.bonusDropDay = typeof data.bonusDropDay === 'string' ? data.bonusDropDay : null
+    // DAILY QUESTS — absent in every save written before they shipped → an empty slate, and the
+    // first signal of the day draws and fills one. Nobody starts a day behind, and nothing has to be
+    // back-filled, because a slate is only ever about today. See coerceQuests above.
+    base.quests = coerceQuests(data.quests)
     // v6 grace refill: the pool grew (3→10) and the break got much shorter — top EVERYONE up to
     // full on upgrade so nobody is left stranded at the old, stingier count (e.g. mid-session).
     const storedVersion = typeof data.v === 'number' ? (data.v as number) : 1

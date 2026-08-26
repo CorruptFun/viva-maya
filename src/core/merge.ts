@@ -1,4 +1,4 @@
-import type { SaveData } from './save'
+import type { QuestState, SaveData } from './save'
 
 /** Sum of earned stars — a progress signal in the merge tiebreak chain. */
 function totalStars(s: SaveData): number {
@@ -173,6 +173,9 @@ function unionLatches(a: SaveData, b: SaveData): Partial<SaveData> {
     chapterRewards: bothN(a.chapterRewards, b.chapterRewards),
     endlessDays: bestPerDay(a.endlessDays, b.endlessDays),
     ...mergeCharms(a, b),
+    // TODAY'S QUESTS — a claim latch bolted to a set of counters, both scoped to one day, so it gets
+    // its own rule rather than joining any of the three above. See mergeQuests.
+    ...mergeQuests(a, b),
   }
 }
 
@@ -186,6 +189,86 @@ function maxDay(a: string | null, b: string | null): string | null {
   const vb = typeof b === 'string' ? b : ''
   const win = vb > va ? vb : va
   return win === '' ? null : win
+}
+
+/**
+ * TODAY'S QUEST SLATE across two devices (core/quests.ts) — DAY-SCOPED, so it is `bonusDropDay`'s
+ * problem with a payload attached, and none of the three existing rules can carry it alone.
+ *
+ * The slate is a claim latch (`claimed`) bolted to a set of counters (`progress`), and BOTH halves
+ * are meaningless except relative to the `day` they were drawn for. So the day is compared first, and
+ * it decides which of two completely different merges happens:
+ *
+ *  • SAME DAY — per-goal MAX progress, UNION of claims. Both devices were playing the same three
+ *    goals, so both records are about the same thing and neither may be thrown away.
+ *
+ *    ⚠️ MAX rather than SUM, and this is the load-bearing choice. Summing looks fairer (win a level
+ *    on the phone and one on the tablet and you really have won two), but a merge here is not a
+ *    one-off event: it runs on every reconcile, and the merged save is pushed back and merged again.
+ *    Summing is not idempotent — (1, 1) becomes 2, that 2 merged against the tablet's 1 becomes 3,
+ *    and a two-device player's quests pay themselves out while they watch. MAX is idempotent by
+ *    construction, so the same two saves merged a hundred times give the same answer as merging them
+ *    once. The cost is real and small: cross-device play on a multi-step goal counts as the better
+ *    single device rather than as the total. Idempotence is not negotiable; that is.
+ *
+ *    UNION of claims for the reason every latch in `unionLatches` is unioned: a claim latch may never
+ *    reopen. Losing one to a merge re-pays the purse, which is exactly the double-award iron rule 4
+ *    exists to prevent — and here it would be silent, because the card would simply show an unticked
+ *    row the player then ticks a second time. `'all'` (the all-clear bonus latch) rides along in the
+ *    same list and is protected by the same union.
+ *
+ *  • DIFFERENT DAYS — the LATER slate wins WHOLESALE, progress and claims together, and the older one
+ *    is discarded entire. It is not unioned across days, and that is the point: a claim is a fact
+ *    about a DAY, not about a player. Carry yesterday's `win_level` claim into today and today's
+ *    quest is born already ticked — the player is quietly robbed of 15 chips by a card that says the
+ *    work is done. Carry yesterday's progress and today's board starts with a head start nobody
+ *    earned. Both halves expire together because both were only ever about that day.
+ *
+ * Lexicographic order IS chronological order for `YYYY-MM-DD`, so no parsing is needed — the same
+ * property `maxDay` leans on. `''` (never drawn) sorts below every real day and therefore loses to
+ * one, which is the correct answer for a device that has never seen a slate. Two `''` days merge by
+ * the same-day branch and produce nothing meaningful, which is harmless: `coerceSave` guarantees a
+ * `''` day carries no progress and no claims, and the next signal rolls the slate regardless.
+ *
+ * Shape-tolerant on the way in (a save from before this shipped, or a hand-built fixture, has no
+ * slate at all) and the result is CLONED rather than aliased, like `mergeCharms`' — the merged record
+ * is persisted and then mutated in place by the next signal, and sharing a map with the losing save
+ * is the kind of thing that only shows up much later.
+ */
+function mergeQuests(a: SaveData, b: SaveData): Partial<SaveData> {
+  const qa = questSlate(a)
+  const qb = questSlate(b)
+  if (qa.day !== qb.day) {
+    const later = qb.day > qa.day ? qb : qa
+    return { quests: { day: later.day, progress: { ...later.progress }, claimed: [...later.claimed] } }
+  }
+  const progress: Record<string, number> = {}
+  for (const [id, n] of Object.entries(qa.progress)) {
+    if (typeof n === 'number' && Number.isFinite(n)) progress[id] = n
+  }
+  for (const [id, n] of Object.entries(qb.progress)) {
+    if (typeof n !== 'number' || !Number.isFinite(n)) continue
+    const cur = progress[id]
+    if (typeof cur !== 'number' || n > cur) progress[id] = n
+  }
+  return {
+    quests: {
+      day: qa.day,
+      progress,
+      claimed: Array.from(new Set([...qa.claimed, ...qb.claimed])),
+    },
+  }
+}
+
+/** One save's slate, read shape-tolerantly — a missing or malformed one reads as "never drawn". */
+function questSlate(s: SaveData): QuestState {
+  const q = s.quests
+  if (!q || typeof q !== 'object' || typeof q.day !== 'string') return { day: '', progress: {}, claimed: [] }
+  return {
+    day: q.day,
+    progress: q.progress && typeof q.progress === 'object' ? q.progress : {},
+    claimed: Array.isArray(q.claimed) ? q.claimed.filter((x): x is string => typeof x === 'string') : [],
+  }
 }
 
 /** Per-key max of two daily-best maps — see the `endlessDays` note in `unionLatches`. */

@@ -325,6 +325,12 @@ Live: <https://corruptfun.github.io/viva-maya/>
   ⚠️ `--dry-run` prints the HOOK NAME, never the body, for a message built on private data. A
   leaderboard rank is already public; a **streak count and a jackpot meter are not**, and this
   repo — with its Actions logs — is public.
+  ⚠️ A tapped notification opens `./?from=push-<mode>` (sender `notificationUrl`), which the
+  client reports as `app_open`'s `from` prop and then strips. `public/push-sw.js` must treat any
+  `./?from=` target as the SAME PAGE — focus, never `navigate()`: navigate is a reload, and an
+  endless run is deliberately not resumable. The prefix lives in three copies (sender, service
+  worker, client allow-list); they move together or a mode's attribution silently reads zero
+  (`pushcadence.test.ts` pins the sender↔client pair and names the SW copy in a comment).
 - **The HOUSE GIFT is seeded from the DAY ALONE, and that is what lets a notification name it.**
   `core/bonusdrop.ts` pays one surprise a day, claimed on Home. Because the roll takes the race day
   key and nothing else, the sender composes the message once from a byte-identical copy of the table
@@ -345,22 +351,49 @@ Live: <https://corruptfun.github.io/viva-maya/>
   which cannot be spent without playing. `bonusdrop.test.ts` pins the budget and the sender parity;
   **retune by moving weights, and re-derive those numbers rather than widening the bounds to make a
   richer table green.**
+- **Daily quests are the game's only CLOSED reward loop, and every goal must be
+  intent-completable** — nothing luck-gated, and `run_board` may never read a score (scores belong
+  to the race's defence story). `core/quests.ts` draws three goals off `<day>#quests` on the RACE
+  calendar (the HOUSE GIFT's rule, for its reasons: predictable, and deliberately unsalted), and
+  pays each with the claim latch written in the same statement block as the chips — a grant is a
+  RECEIPT, never an offer, so no card may gate it. ⚠️ The slate merges by its OWN rule
+  (`mergeQuests`): same day → per-goal MAX progress + UNION of claims (SUM is not idempotent
+  across repeated reconciles and pays itself out); different days → the later slate wins whole,
+  because a claim is a fact about a day, not about a player. Signals fire beside the analytics
+  track calls (`level_win` / `slots_spun` / `endless_end`, GameScene + SlotScene); replays DO
+  count (a player who cleared all content must not be locked out of their own quests, and the
+  farm is bounded by the ≤70-chip daily ceiling `quests.test.ts` pins). The quest CARD gates on
+  the endless unlock — a pre-unlock slate can never finish (`run_board` needs the race) — and
+  that gate is the surface's, deliberately not the core's.
+- **Home is one dominant PLAY, a badged icon rail, and at most ONE live card.** The five old
+  notices collapsed into `view/livecard.ts` — an ordered list of PURE providers where the first
+  non-null wins. Adding a notice to Home means adding a PROVIDER in priority order, never a new
+  pill or a second card; a provider reads state and returns copy, and must never write. Every
+  seat below the hero is DERIVED from the named-constant block at the top of `HomeScene.ts` —
+  re-derive the band when adding anything, don't seat it against a fresh literal (LevelSelect's
+  header rule, for the same reason).
 - **The push opt-in gets ONE ask per install, ever, and `pushOfferDue` is what
   spends it.** `Notification.requestPermission()` is one-shot: a denial is
   permanent, the browser never re-prompts, and the player has to dig through site
   settings to undo it. So the real prompt is only ever reached by tapping REMIND
-  ME on the NEVER MISS A BOARD card (`view/pushoptin.ts`) — a soft ask, offered
-  once, on the Home visit after a player's FIRST daily race. Never fire the
-  browser prompt on load, and never widen the gate for reach: `pushOfferDue`
-  (`core/push.ts`, `push.test.ts` pins every branch) refuses before the first
-  race, on an iPhone outside an installed PWA, and when the browser has already
-  decided — each of those is a case where the card would burn the ask for
-  nothing. ⚠️ The one-time latch (`save.seenPushOffer`) is set on the card's way
+  ME on the opt-in card (`view/pushoptin.ts`) — a soft ask, offered once, at one
+  of TWO qualifying moments sharing the single latch: the Home visit after a
+  player's FIRST daily race (the NEVER MISS A BOARD copy), or — for the level
+  players who may never race — after `PUSH_OFFER_LEVEL_WINS` (5) level wins,
+  i.e. right after the first JACKPOT wheel has paid (the A GIFT EVERY MORNING
+  copy). That threshold is a deliberate literal, NOT an import of
+  `JACKPOT_GOAL`: a jackpot retune must never silently move a
+  permanent-permission gate. Never fire the browser prompt on load, and never
+  widen the gate for reach: `pushOfferDue` (`core/push.ts`, `push.test.ts` pins
+  every branch) refuses before either moment, on an iPhone outside an installed
+  PWA, and when the browser has already decided — each of those is a case where
+  the card would burn the ask for nothing. ⚠️ The one-time latch (`save.seenPushOffer`) is set on the card's way
   OUT, not on render, unlike `seenRaceUnlock`: a reveal spends itself by being
   seen, an offer spends itself by being *answered*, so a transient network
   failure keeps the retry alive instead of costing the player the feature. The
-  Settings → Race reminder toggle stays as the second door for everyone who says
-  no; both doors fire the same three analytics events, split by a `surface` prop
+  Settings → Reminders switches stay as the last door for everyone who says
+  no; every door fires the same three analytics events, split by a `surface`
+  prop (`card` race copy · `card_leveler` morning-gift copy · `settings`)
   rather than new event names — the dashboard views hardcode the names they chart
   (`name in (...)` across migrations 0014/0015/0021/0022), so a *new* event is
   invisible until a new migration ships and fails silently, whereas a new prop
@@ -559,6 +592,8 @@ edit to make green.
 | `src/core/inventory.ts` | canonical boost names (`BOOST_META`) + the stash model — see the note above |
 | `src/core/install.ts` | "add to home screen" custody; the platform split lives here |
 | `src/core/bonusdrop.ts` | THE HOUSE GIFT — the day-seeded daily surprise the reminder names in advance; see the note above |
+| `src/core/quests.ts` | daily quests — the closed loop: day-seeded draw, award-first grants, its own merge rule (see the note above) |
+| `src/view/livecard.ts` | Home's single "what's live now" card — the ordered pure-provider list (see the note above) |
 | `src/core/push.ts` | subscription custody + the two notification CATEGORIES (`pushCategories` / `setPushCategory`) |
 | `src/core/apploop.ts` | the anti-drain loop sleep + every signal that undoes it — see the note above |
 | `src/core/swupdate.ts` | may a waiting service worker be applied SILENTLY right now — the boot window + the anti-reload-loop latch (`main.ts` owns the wiring) |
@@ -569,7 +604,7 @@ edit to make green.
 | `src/view/stash.ts` | the stash panel + its two doors (Home line, LevelSelect `🎁 N` pill) |
 | `src/view/installsheet.ts` | the install sheet — DOM, so the iOS guide can point at real browser chrome |
 | `src/view/raceunlockcard.ts` | the one-time DAILY RACE UNLOCKED reveal |
-| `src/view/pushoptin.ts` | the NEVER MISS A BOARD push opt-in card — see the note above; the gate is `pushOfferDue` in `core/push.ts` |
+| `src/view/pushoptin.ts` | the push opt-in card, race + morning-gift variants — see the note above; the gate is `pushOfferDue` in `core/push.ts` |
 | `src/view/installrewardcard.ts` | the install reward's payout card — the receipt for `claimInstallReward` |
 | `src/view/bonusdropcard.ts` | the house gift's sealed-box reveal — theatre only; `claimBonusDrop` already paid |
 | `src/view/showroom.ts` | THE SHOWROOM trophy case — doors on the LevelSelect chapter ribbons |

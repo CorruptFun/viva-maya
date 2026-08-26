@@ -5,6 +5,8 @@ import { EVENTS, track } from '../core/analytics'
 import { daysToNextStreakReward, nextStreakReward, spinAvailable, streakRewardFor, todayKey } from '../core/daily'
 import { LEVEL_COUNT } from '../core/levels'
 import { occasionFor, pendingOccasion } from '../core/maya'
+import { questClaimProps, recordQuestSignal } from '../core/quests'
+import type { QuestGrant } from '../core/quests'
 import { mulberry32 } from '../core/rng'
 import { loadSave, markOccasionSeen } from '../core/save'
 import {
@@ -103,6 +105,13 @@ const CHARM_TEX = 'slotcharm'
 /** Reel travel: the first reel's spin time, and what each reel to its right adds. */
 const SPIN_MS = 850
 const SPIN_STEP_MS = 260
+
+/**
+ * Gap between two DAILY QUEST receipts fired by one pull (`questReceipts`). One signal can pay a goal
+ * AND the all-clear bonus, and `toast` does not track the line it put up — two fired together would
+ * render exactly on top of each other. Sized past that toast's own life (180 in + 950 hold + 320 out).
+ */
+const QUEST_RECEIPT_GAP_MS = 1350
 
 // ── the detent's impact budget ───────────────────────────────────────────────
 // A five-reel stop is an ANTICIPATION curve, and until 2026-08-11 it wasn't shaped like one: reels
@@ -968,6 +977,20 @@ export class SlotScene extends Phaser.Scene {
     this.spinBtn?.setVisible(false)
     this.betPills.forEach(p => p.setAlpha(0.45))
     if (purchase) this.balance.update(purchase.balance) // a free pull moves no chips until its receipts land
+    // DAILY QUEST — one pull, fed to today's slate (core/quests.ts). ONE call covers both doors: the
+    // card promises "the free one counts", and by here the paid and free paths have both settled, so
+    // a spin that was refused (`denied` / `rearm` above) has already returned without reaching it.
+    //
+    // `recordQuestSignal` rather than `advanceQuests` — there is no save open to fold into: `buySpin`
+    // and `freeSlotSpin` bank the whole result before the first reel moves, each in its own atomic
+    // load→mutate→persist. It sits a few lines under the SLOTS_SPUN track rather than beside it so it
+    // lands AFTER the pill has taken the purchase's balance; fired above, a quest's chips would be
+    // painted on and then wiped off by the pre-award number the spin returned.
+    const questGrants = recordQuestSignal('slots_spun')
+    if (questGrants.length > 0) this.balance.update(questGrants[questGrants.length - 1].balance)
+    this.questReceipts(questGrants)
+    // …and the subtitle re-reads the save after that, so an all-clear's free spin shows up in the
+    // cabinet's own offer line on the way out of this pull rather than one pull later.
     this.paintSubtitle()
 
     // The machine answers the press instantly: the attract loop stands down, the whole marquee snaps
@@ -1925,10 +1948,46 @@ export class SlotScene extends Phaser.Scene {
 
   // ───────────────────────────────────────────────────────────────────── juice
 
-  private toast(msg: string): void {
+  /**
+   * The receipt for a DAILY QUEST that just paid (core/quests.ts). Theatre over a settled result:
+   * `recordQuestSignal` banked the chips and wrote the claim latch before this ran, so a cabinet
+   * walked out of mid-toast costs nothing and a re-entry re-offers nothing.
+   *
+   * STAGGERED because one pull can pay twice (the goal, then the all-clear) and `toast` does not
+   * track the line it put up — fired together they would render on top of each other. A pending timer
+   * dies with the scene, so leaving mid-spin just skips the tail; it never holds the reels up.
+   */
+  private questReceipts(grants: QuestGrant[]): void {
+    grants.forEach((grant, i) => {
+      track(EVENTS.QUEST_CLAIM, questClaimProps(grant))
+      // The headline is the CATALOG's own (core/quests.ts) — a scene writing its own name for a goal
+      // is the BOOST_META scar. Chips are spelled out rather than 🪙, which silhouettes to a grey
+      // disc; `freeSpins` is what actually STUCK after the bank cap, so this can't name one she
+      // didn't get. Same line GameScene prints, because it is the same receipt.
+      const spins = grant.freeSpins
+      const line =
+        `QUEST · ${grant.label} · +${grant.chips} CHIPS` +
+        (spins > 0 ? ` · +${spins} FREE SPIN${spins > 1 ? 'S' : ''}` : '')
+      if (i === 0) this.toast(line, 'good')
+      else this.time.delayedCall(i * QUEST_RECEIPT_GAP_MS, () => this.toast(line, 'good'))
+    })
+  }
+
+  /**
+   * A brief line at the foot of the screen. `tone` keeps the warn colour it has always had by default
+   * (both original callers are refusals); a receipt for something the player GAINED has to pass
+   * 'good', or a reward arrives in the colour this cabinet says "Not enough chips" in. Same vocabulary
+   * as GameScene's `powerToast`.
+   */
+  private toast(msg: string, tone: 'good' | 'bad' = 'bad'): void {
     const T = getTheme()
     const t = this.add
-      .text(DESIGN_W / 2, DESIGN_H - 120, msg, { fontFamily: FONT, fontSize: '24px', fontStyle: '900', color: T.warn })
+      .text(DESIGN_W / 2, DESIGN_H - 120, msg, {
+        fontFamily: FONT,
+        fontSize: '24px',
+        fontStyle: '900',
+        color: tone === 'bad' ? T.warn : T.ok,
+      })
       .setOrigin(0.5)
       .setDepth(75)
     if (prefersReducedMotion()) {
