@@ -61,9 +61,16 @@ export const EVENTS = {
   /**
    * Once per app open. The denominator for literally every other rate on this list.
    *
-   * props: {standalone, lang}. `standalone` is the ONLY cross-platform "this player is installed"
-   * signal there is — Apple fires no install event, so on iOS a later open reporting standalone is
-   * the ground truth, and it is what the install reward triggers on (core/install.ts).
+   * props: {standalone, lang, host, from?}. `standalone` is the ONLY cross-platform "this player is
+   * installed" signal there is — Apple fires no install event, so on iOS a later open reporting
+   * standalone is the ground truth, and it is what the install reward triggers on (core/install.ts).
+   *
+   * `from` is WHICH PUSH SEND opened the app ('push-drop' | 'push-daily' | 'push-week'), and it is
+   * ABSENT on an organic open rather than null or '' — presence is the whole answer, so the reach
+   * of a notification is `count(*) filter (where props->>'from' is not null)` over this event with
+   * no sentinel value to remember. See `pushSource` below for where the value comes from and why it
+   * is an allow-list; it rides as a prop rather than a new event name for the reason the push
+   * opt-in's `surface` prop does — a new NAME is charted nowhere until a dashboard migration ships.
    *
    * ⚠️ Deliberately carries NO platform / user-agent prop, even though the iOS-vs-Android split
    * would be useful: public/privacy.html promises in plain language that an event carries nothing
@@ -210,6 +217,28 @@ export const EVENTS = {
    * from day one for whenever the view catches up.
    */
   BONUS_DROP: 'bonus_drop',
+
+  /**
+   * {quest, chips, spins} — a DAILY QUEST was finished and PAID (core/quests.ts): one row per goal,
+   * plus one carrying `quest: 'all'` for the all-clear bonus. Award-first, so a row here is money
+   * that already moved rather than a card that was shown.
+   *
+   * `quest` splits the count by which goal it was — the measurement the catalog is retuned against,
+   * since "nobody ever finishes the board one" is a fact about that goal and not about quests. And
+   * `spins` is worth carrying even though only the all-clear row ever pays any: a 0 there is a free
+   * spin the BANK cap ate, which is invisible from every other angle.
+   *
+   * ⚠️ A NEW NAME, which means it is invisible to the dashboard until a migration teaches the views
+   * about it: 0014/0015/0021/0022 hardcode `name in (...)`, so an unknown event is stored perfectly
+   * and charted nowhere. That is the accepted cost here, exactly the call `bonus_drop` made — this
+   * is a new mechanic rather than a new angle on an existing one, so there is no event to ride as a
+   * prop, and the rows are in the table from day one for whenever a view catches up.
+   *
+   * The props are built by `questClaimProps` (core/quests.ts) rather than spelled out at the call
+   * sites: the name is vocabulary and belongs here, but what a claim REPORTS is known by the one
+   * module that knows what a claim IS.
+   */
+  QUEST_CLAIM: 'quest_claim',
 
   /** {surface} — invite/share. Answers "did the referral system ever do anything". */
   SHARE_CLICKED: 'share_clicked',
@@ -640,6 +669,72 @@ export function _reportClientError(message: unknown, extra: Record<string, unkno
 }
 
 /**
+ * The three markers scripts/send-push.mjs can actually write (its `notificationUrl`), and nothing
+ * else. An ALLOW-LIST rather than a parser, because this value arrives from the ADDRESS BAR: anyone
+ * can type a URL, `app_open` is the denominator for every rate on the dashboard, and an event prop
+ * is a permanent row in a table nothing can edit afterwards. Echoing whatever the query string said
+ * would turn the most-fired event in the game into an open text field for strangers.
+ */
+const PUSH_SOURCE_RE = /^push-(drop|daily|week)$/
+
+/**
+ * WHICH PUSH SEND opened the game, from a `?from=push-…` marker — or null for an organic open.
+ *
+ * Takes the search string rather than reading `location` itself, so the rule is pure, testable
+ * without a DOM, and pinned from both sides: analytics.test.ts covers what it refuses, and
+ * pushcadence.test.ts feeds it the sender's own `notificationUrl` output so the two allow-lists
+ * cannot drift apart in silence (a mode the sender stamps but this rejects reports as "nobody came
+ * back", which looks like a result rather than like a bug).
+ */
+export function pushSource(search: string): string | null {
+  try {
+    const raw = new URLSearchParams(search).get('from')
+    return raw && PUSH_SOURCE_RE.test(raw) ? raw : null
+  } catch {
+    // A search string this malformed is not something to report — and analytics never throws.
+    return null
+  }
+}
+
+/**
+ * Drop the `?from=` marker from the address bar once it has been read.
+ *
+ * WHY IT MUST GO: it is a fact about ONE open, and a URL outlives one open. Left in place it rides
+ * a reload, a bookmark, a pasted link and the legacy→canonical origin hop — every one of which
+ * would then report a later ORGANIC open as push-driven. The worst case is an install made from a
+ * marked URL: the manifest's `start_url: './'` is the only thing standing between that and a
+ * shortcut that re-attributes EVERY launch, forever, and Safari's Add to Home Screen has not
+ * always honoured a start_url. An attribution that inflates itself is worse than none at all.
+ * Stripped whether or not the value was VALID, so a stale or hand-typed marker cannot linger either.
+ *
+ * ⚠️ ONLY the `from` key, and the FRAGMENT IS LEFT BYTE-FOR-BYTE. Two things share this URL and
+ * neither may be disturbed: the DEV flags a dozen scenes read (`?gift`, `?streak=N`, `?sat=px`,
+ * `?race=…`), and — in the hash — the origin handoff that carries a player's ENTIRE PROFILE between
+ * the two origins (core/originmigrate.ts). Rewriting the URL wholesale, or dropping the hash the way
+ * `adoptHandoffFromUrl` deliberately does after it has consumed one, would cost somebody their save.
+ * (Re-serialising the survivors does normalise a valueless flag: `?gift` comes back as `gift=`.
+ * `has()` and `get()` answer identically for both, which is all any reader here uses.)
+ */
+function stripPushSource(): void {
+  try {
+    if (typeof window === 'undefined' || typeof history === 'undefined') return
+    const params = new URLSearchParams(window.location.search)
+    if (!params.has('from')) return
+    params.delete('from')
+    const query = params.toString()
+    history.replaceState(
+      null,
+      '',
+      `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`
+    )
+  } catch {
+    // replaceState throws on an opaque origin and `history` is missing in some WebView shims. The
+    // marker simply stays in the address bar: a later reload would then over-count one open as
+    // push-driven, which is a bounded inaccuracy and nowhere near worth risking the boot for.
+  }
+}
+
+/**
  * Wire up the session: mint a session id, log the open, and arrange for the queue to be flushed when
  * the player leaves.
  *
@@ -697,6 +792,12 @@ export function initAnalytics(
     })
   }
 
+  // DID A NOTIFICATION BRING THIS PLAYER BACK? Read before the event is composed, stripped straight
+  // after it is queued. The marker survives the legacy→canonical origin hop on its own —
+  // `handoffTarget` carries the search string across (core/originmigrate.ts) — so a push open that
+  // migrates origin is still attributed, and the fragment it travels beside is never touched.
+  const from = typeof window !== 'undefined' ? pushSource(window.location.search) : null
+
   track(EVENTS.APP_OPEN, {
     standalone:
       typeof window !== 'undefined' &&
@@ -710,7 +811,13 @@ export function initAnalytics(
     // A prop rather than a new event name on purpose: it is queryable the moment it lands, where a
     // new name would need a dashboard migration before it charted anywhere.
     host: typeof window !== 'undefined' ? window.location.hostname : undefined,
+    // Spread, so the key is ABSENT on an organic open rather than present-and-null: "was this open
+    // push-driven" is then a plain `props->>'from' is not null`, with no sentinel to remember and
+    // no way for a null to be miscounted as a fourth kind of source.
+    ...(from ? { from } : {}),
   })
+  // Read once, then gone — the marker explains THIS open and no later one. See stripPushSource.
+  stripPushSource()
 }
 
 /** Test/diagnostic seam: what is waiting to be sent. Not part of the game's runtime surface. */

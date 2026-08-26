@@ -181,6 +181,16 @@ leaderboard rank is already public; a streak count and a jackpot meter are not, 
 repo whose Actions logs anyone can read. Printing "Your 34-day streak ends at midnight" would
 publish, in a place nobody thinks of as a surface, a number the game never shows to anyone else.
 
+**Push reach is measured on `app_open`'s optional `from` prop** (`push-drop` | `push-daily` |
+`push-week`), stamped into the notification's open URL by `send-push.mjs notificationUrl`,
+validated against an allow-list client-side (`pushSource` in `core/analytics.ts`), and stripped
+from the address bar after the one open it explains. Absent means organic — reach is
+`props->>'from' is not null` over `app_open`, and it is a FLOOR: a tap with the game already open
+FOCUSES instead of re-opening (`public/push-sw.js` treats any `./?from=` target as the same page —
+navigating would reload, and an endless run is deliberately not resumable). The `./?from=` prefix
+exists in three copies — sender, service worker, client allow-list — and they move together or a
+mode's attribution silently reads zero; `pushcadence.test.ts` pins the sender↔client pair.
+
 **⚠️ Subscribe/unsubscribe go through `SECURITY DEFINER` RPCs (`0012`), never direct table writes.**
 PostgreSQL requires rows to be visible under a **SELECT** policy before `UPDATE`/`DELETE` can locate
 them — the lookup is governed by the SELECT policy, not the UPDATE one. `0011` intentionally grants
@@ -194,7 +204,11 @@ for that case and the UI says "Add to Home Screen first" rather than showing a d
 
 **A denied notification permission is permanent** — the browser will not ask twice. That is why the
 prompt is only ever reached from an explicit tap on a control that has already explained itself, and
-never fired on load.
+never fired on load. The opt-in card has two qualifying moments sharing one `seenPushOffer` latch —
+a first daily race, or `PUSH_OFFER_LEVEL_WINS` (5) cleared levels, i.e. right after the first
+JACKPOT wheel has paid — reported through the same three events (`push_shown` / `push_enabled` /
+`push_blocked`) split by the `surface` prop: `card` (race copy), `card_leveler` (morning-gift
+copy), `settings`. No new event name, so nothing needs a dashboard migration.
 
 ---
 

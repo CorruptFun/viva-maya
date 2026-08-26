@@ -655,6 +655,39 @@ function standingMessage(sub, board, hrs) {
   }
 }
 
+/**
+ * The URL a tapped notification opens — the game's own page, stamped with WHICH SEND opened it.
+ *
+ * Until this existed the payload carried the literal `'./'`, so a push-driven return was
+ * indistinguishable from an organic one. That made the single most expensive channel this game has
+ * — one permission ask per install, one notification per device per race day — the only one with no
+ * measurement behind it at all: "did the morning nudge bring anybody back" could not be asked, let
+ * alone answered, so the ceiling was being spent on faith. The client reports it as a `from` prop on
+ * the `app_open` it already fires (src/core/analytics.ts `pushSource`), never as a new event name —
+ * the dashboard's views hardcode the names they chart, so a new NAME is stored perfectly and charted
+ * nowhere until a migration ships, where a new PROP is queryable the moment it lands.
+ *
+ * ⚠️ A QUERY PARAM ON A RELATIVE URL. Every clause there is load-bearing:
+ *   · RELATIVE (`./…`) because the game answers on two origins from a sub-path on each
+ *     (corruptfun.github.io/viva-maya/ and corrupt.solutions/games/viva-maya/, see
+ *     core/originmigrate.ts). An absolute URL here would land half the audience on the OTHER
+ *     origin — a different localStorage, a different save, a different push subscription.
+ *   · THE QUERY, NEVER THE FRAGMENT. The fragment is spoken for: it is how the origin handoff
+ *     carries a player's entire profile between those two origins, and a marker sharing that space
+ *     is a marker that can collide with a save.
+ *   · The `./?from=` PREFIX is also what public/push-sw.js matches on to decide that a tap on an
+ *     already-open window should FOCUS rather than navigate — and navigate() is a reload, on a game
+ *     whose endless run is deliberately not resumable. Change this prefix and read that file first.
+ *
+ * ⚠️ The client half validates against exactly these three names and drops anything else, so a
+ * FOURTH mode added here without being added there is not an error — it is a silent zero on the new
+ * mode's attribution, which reads as "nobody came back" rather than as a bug. `pushcadence.test.ts`
+ * pins the two sides against each other.
+ */
+export function notificationUrl(mode) {
+  return `./?from=push-${mode}`
+}
+
 async function main() {
   // The modes are mutually exclusive by definition — they read different audience columns and say
   // different things. Both flags together would silently run as `--drop` against a `daily_play`
@@ -809,8 +842,9 @@ async function main() {
     const { title, body, hook } = msg
     hooks[hook] = (hooks[hook] ?? 0) + 1
     // The tag collapses a re-send onto the same notification rather than stacking a second one; it
-    // is per-BOARD and per-MODE so no reminder can ever overwrite another in the tray.
-    const payload = JSON.stringify({ title, body, tag: `${mode}-${key}`, url: './' })
+    // is per-BOARD and per-MODE so no reminder can ever overwrite another in the tray. It is NOT
+    // what carries the attribution — `url` is (see notificationUrl); the tag never leaves the tray.
+    const payload = JSON.stringify({ title, body, tag: `${mode}-${key}`, url: notificationUrl(mode) })
 
     if (DRY) {
       // Identify the recipient well enough to audit the audience, WITHOUT printing the endpoint

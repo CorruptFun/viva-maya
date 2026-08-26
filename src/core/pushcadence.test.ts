@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest'
+import type { PushMode } from '../../scripts/send-push.mjs'
 import {
   backoffAllows,
   JACKPOT_GOAL as SENDER_JACKPOT_GOAL,
   jackpotWinsAway,
   LEVEL_COUNT as SENDER_LEVEL_COUNT,
+  notificationUrl,
   sentToday,
   streakAtRisk,
 } from '../../scripts/send-push.mjs'
+import { pushSource } from './analytics'
 import { dayKey } from './endless'
 import { JACKPOT_GOAL } from './jackpot'
 import { LEVEL_COUNT } from './levels'
@@ -183,5 +186,68 @@ describe('the jackpot-within-reach hook', () => {
     expect(jackpotWinsAway(undefined)).toBeNull()
     expect(jackpotWinsAway({})).toBeNull()
     expect(jackpotWinsAway({ jackpotMeter: Number.NaN })).toBeNull()
+  })
+})
+
+/**
+ * THE OPEN URL — where a tapped notification lands, and the marker that says which send sent it.
+ *
+ * The payload used to carry the literal './', so a push-driven return was indistinguishable from an
+ * organic one and the ceiling above was being spent on faith. `notificationUrl` stamps
+ * `?from=push-<mode>`; src/core/analytics.ts reports it as `app_open`'s `from` prop and strips it.
+ *
+ * Three properties of the string are load-bearing, and each of them is a different disaster:
+ *   · RELATIVE — the game is served from a sub-path on TWO origins, which do not share storage. An
+ *     absolute URL would land half the audience on the other one, with a different save.
+ *   · QUERY, NOT FRAGMENT — the fragment carries the origin handoff's whole profile payload
+ *     (core/originmigrate.ts). A marker there could collide with somebody's save.
+ *   · The `./?from=` PREFIX — public/push-sw.js's same-page test. Miss it and a tap on an
+ *     already-open game NAVIGATES, which is a reload, which ends an endless run that
+ *     core/levelresume.ts deliberately cannot restore.
+ */
+describe('the notification’s open URL', () => {
+  const MODES: PushMode[] = ['drop', 'daily', 'week']
+
+  it('stamps which of the three sends opened the app', () => {
+    expect(notificationUrl('drop')).toBe('./?from=push-drop')
+    expect(notificationUrl('daily')).toBe('./?from=push-daily')
+    expect(notificationUrl('week')).toBe('./?from=push-week')
+  })
+
+  it('stays RELATIVE, so it resolves under the game’s own path on BOTH origins', () => {
+    for (const base of [
+      'https://corrupt.solutions/games/viva-maya/',
+      'https://corruptfun.github.io/viva-maya/',
+    ]) {
+      for (const mode of MODES) {
+        expect(new URL(notificationUrl(mode), base).href, `${base} ${mode}`).toBe(
+          `${base}?from=push-${mode}`
+        )
+      }
+    }
+  })
+
+  it('keeps the marker in the QUERY — the fragment belongs to the origin handoff', () => {
+    for (const mode of MODES) expect(notificationUrl(mode)).not.toContain('#')
+  })
+
+  it('matches the same-page prefix public/push-sw.js focuses on instead of reloading', () => {
+    // ⚠️ The service worker is not importable from here (it is ES5-ish, `self`-scoped, and ships
+    // verbatim out of public/), so this pins the SENDER's half of that contract and names the
+    // literal to keep in step: `target.indexOf('./?from=') === 0` in push-sw.js's isSamePage. If
+    // this prefix ever moves, that file has to move with it in the same commit — otherwise every
+    // notification tap on an already-open game becomes a navigate(), i.e. a reload of a live board.
+    for (const mode of MODES) expect(notificationUrl(mode).indexOf('./?from=')).toBe(0)
+  })
+
+  it('is understood by the CLIENT half — the two allow-lists must not drift', () => {
+    // The parity that keeps the attribution honest, in the same spirit as the JACKPOT_GOAL pin
+    // above. A fourth mode stamped by the sender but missing from `pushSource`'s allow-list would
+    // not error anywhere: it would report as a silent zero, which reads like "nobody came back"
+    // rather than like a bug, and could sit there for months.
+    for (const mode of MODES) {
+      const search = new URL(notificationUrl(mode), 'https://corrupt.solutions/games/viva-maya/').search
+      expect(pushSource(search), mode).toBe(`push-${mode}`)
+    }
   })
 })

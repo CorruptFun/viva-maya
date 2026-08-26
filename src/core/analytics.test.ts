@@ -7,6 +7,7 @@ import {
   _reportClientError,
   _reset,
   analyticsEnabled,
+  pushSource,
   setAnalyticsEnabled,
   track,
 } from './analytics'
@@ -339,5 +340,73 @@ describe('client error telemetry (0015)', () => {
     }
     expect(() => _reportClientError(evil)).not.toThrow()
     expect(() => _reportClientError(undefined)).not.toThrow()
+  })
+})
+
+/**
+ * PUSH-OPEN ATTRIBUTION — `?from=push-<mode>` → the `from` prop on app_open.
+ *
+ * The sender stamps the marker (scripts/send-push.mjs `notificationUrl`) and this reads it, which is
+ * what turns "did the one notification we are allowed to send bring anybody back" from an article of
+ * faith into a query. The happy path is one line; the tests that matter are the REFUSALS, because
+ * this value does not arrive over the wire — it arrives in the ADDRESS BAR, where anyone can type
+ * one. `app_open` is the denominator for every rate on the dashboard and its rows are permanent, so
+ * a helper that echoed whatever the query string said would make the most-fired event in the game an
+ * open text field for strangers. Hence an allow-list of exactly the three names the sender can write.
+ *
+ * The sender-side half of this pairing lives in pushcadence.test.ts, which feeds this function the
+ * sender's real output so the two allow-lists cannot drift apart in silence.
+ */
+describe('push-open attribution (pushSource)', () => {
+  it('reads the three markers the sender can actually write', () => {
+    expect(pushSource('?from=push-drop')).toBe('push-drop')
+    expect(pushSource('?from=push-daily')).toBe('push-daily')
+    expect(pushSource('?from=push-week')).toBe('push-week')
+  })
+
+  it('does not care about the leading ? or the order of the params', () => {
+    // It is handed `location.search` in the game, which carries the '?' — but a caller passing the
+    // bare query (a test, a URL built by hand) must get the same answer, not a silent null.
+    expect(pushSource('from=push-daily')).toBe('push-daily')
+    expect(pushSource('?streak=7&from=push-week&sat=44')).toBe('push-week')
+    expect(pushSource('?from=push-drop&gift')).toBe('push-drop')
+  })
+
+  it('reports nothing at all for an organic open', () => {
+    // Absence is the answer here — the prop is omitted rather than nulled at the call site, so this
+    // returning null IS "this player opened the game on their own".
+    expect(pushSource('')).toBeNull()
+    expect(pushSource('?')).toBeNull()
+    expect(pushSource('?ref=ABC123&gift')).toBeNull()
+    expect(pushSource('?from=')).toBeNull()
+  })
+
+  it('refuses anything the sender could not have written', () => {
+    // Every one of these is one hand-typed URL away, and a permanent row in the events table on the
+    // other side of it. `push-evil` is the interesting one: it is the shape a near-miss takes, and
+    // a prefix test (rather than the anchored allow-list) would wave it straight through.
+    for (const junk of [
+      'push-evil',
+      'push-drop-extra',
+      'push-',
+      'PUSH-DROP',
+      'push-drop ',
+      ' push-drop',
+      'drop',
+      'email',
+      '<script>alert(1)</script>',
+      'x'.repeat(5000),
+    ]) {
+      expect(pushSource(`?from=${encodeURIComponent(junk)}`), junk).toBeNull()
+    }
+  })
+
+  it('never throws, whatever the address bar holds', () => {
+    // Same rule as every other path in this file: losing a metric is free, breaking the boot is not.
+    // This one runs inside initAnalytics, before the first frame.
+    expect(() => pushSource('?from=%E0%A4%A')).not.toThrow() // malformed percent-escape
+    expect(() => pushSource('%%%&&&==')).not.toThrow()
+    expect(() => pushSource(undefined as never)).not.toThrow()
+    expect(pushSource('?from=%E0%A4%A')).toBeNull()
   })
 })

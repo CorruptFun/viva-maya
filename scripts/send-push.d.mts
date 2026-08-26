@@ -65,3 +65,22 @@ export declare const LEVEL_COUNT: number
 export declare function jackpotWinsAway(
   info: { jackpotMeter?: number } | null | undefined
 ): number | null
+
+/**
+ * The three scheduled sends, named exactly as they appear in the run's log line, in the tray tag and
+ * in the open URL's marker. A union rather than `string` so a fourth mode cannot be typed into
+ * `notificationUrl` here without the client's allow-list (`pushSource`, src/core/analytics.ts)
+ * being widened in the same change — which is the drift that would otherwise show up as a new
+ * mode's attribution reading a silent zero.
+ */
+export type PushMode = 'drop' | 'daily' | 'week'
+
+/**
+ * Where a tapped notification opens: `./?from=push-<mode>`.
+ *
+ * Relative, and the marker rides the QUERY rather than the fragment — the fragment carries the
+ * origin handoff's entire profile payload (core/originmigrate.ts). The `./?from=` prefix is also
+ * public/push-sw.js's same-page test, which is what keeps a tap on an already-open game a FOCUS
+ * rather than a reload. Pinned, including against the client half, by src/core/pushcadence.test.ts.
+ */
+export declare function notificationUrl(mode: PushMode): string

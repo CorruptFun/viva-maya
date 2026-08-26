@@ -313,8 +313,72 @@ export async function setPushCategory(category: PushCategory, on: boolean): Prom
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// THE OFFER GATE — may the opt-in card be put in front of this player, and if so,
+// which of the two things we actually send is it allowed to promise them.
+// ─────────────────────────────────────────────────────────────────────────────
+
 /**
- * Whether to put the RACE REMINDER card (view/pushoptin.ts) in front of this player right now.
+ * How many numbered levels a player must have WON before the offer is worth spending on them.
+ *
+ * Five, because that is exactly where a level player has already met the machinery a morning nudge
+ * would be ABOUT: `bumpJackpotMeter` adds one notch per level win and the wheel fires at
+ * `JACKPOT_GOAL` (5), so a player at five wins has just watched their first JACKPOT spin pay out.
+ * The card's "a heads-up when your JACKPOT wheel is within reach" therefore describes something they
+ * have seen rather than something they must take on trust. Earlier and the ask lands on a player who
+ * cannot yet picture what they are agreeing to; later and it lands after the days in which somebody
+ * decides whether this is an app they keep.
+ *
+ * ⚠️ It is a LITERAL 5, deliberately not `JACKPOT_GOAL` itself. The two agreeing today is what makes
+ * this number the right one, but they answer different questions — one is how long the wheel's chase
+ * is, the other is when a permanent permission ask is worth spending. Importing it would let a
+ * jackpot retune silently move a gate that nothing about the jackpot should be allowed to move.
+ *
+ * ⚠️ Counted off `save.stars`, whose ONLY writer is `recordResult` (core/save.ts) and whose only
+ * caller is `GameScene.finishWin` — so one key is one level WON, never one attempted, and a replay
+ * of a level already cleared does not add a second. Do **not** swap this for `unlocked`: that also
+ * advances on a win, but it is a FRONTIER that starts at 1 and counts the level you are allowed to
+ * play next, so the same number there means a different number of wins here.
+ */
+export const PUSH_OFFER_LEVEL_WINS = 5
+
+/**
+ * Which of the two qualifying moments this player arrived by — and therefore which set of words on
+ * the card is TRUE for them.
+ *
+ * Two, because the card is a promise about what will arrive and the two audiences would receive
+ * different notifications. A racer gets the evening board reminder (`week_race`, 0011) and has just
+ * played the exact board it is about. A pure level player has never opened the race, so NEVER MISS A
+ * BOARD would be a card about a mode they do not use — what they would actually receive is the
+ * MORNING nudge (`daily_play`, 0025): the day's house gift named in advance, plus their JACKPOT
+ * wheel when it is within reach.
+ *
+ * The decision lives here rather than in the card for the same reason the gate does — it is a fact
+ * about the save, it is testable without booting Phaser, and one answer is what stops the copy and
+ * the gate disagreeing about who is being spoken to.
+ *
+ * ⚠️ RACE WINS TIES: a player who has done both has raced, and the race reminder is the one they
+ * have direct evidence for. And a save qualifying for NEITHER answers `'race'` rather than throwing,
+ * because `?pushoffer` (DEV) opens the card straight past the gate on any save at all.
+ */
+export type PushOfferFlavour = 'race' | 'daily'
+
+/** True once `recordEndless` has written a run — `endlessDays` is `{}` until the first race. */
+function hasRaced(save: SaveData): boolean {
+  return Object.keys(save.endlessDays ?? {}).length > 0
+}
+
+/** Distinct numbered levels cleared — see `PUSH_OFFER_LEVEL_WINS` for why `stars` is the counter. */
+function levelWins(save: SaveData): number {
+  return Object.keys(save.stars ?? {}).length
+}
+
+export function pushOfferFlavour(save: SaveData): PushOfferFlavour {
+  return !hasRaced(save) && levelWins(save) >= PUSH_OFFER_LEVEL_WINS ? 'daily' : 'race'
+}
+
+/**
+ * Whether to put the opt-in card (view/pushoptin.ts) in front of this player right now.
  *
  * Lives here rather than beside the card because it is a composition of the three capability checks
  * above — and because a gate that decides whether to spend a PERMANENT browser permission ask has to
@@ -324,10 +388,17 @@ export async function setPushCategory(category: PushCategory, on: boolean): Prom
  * Every `false` is a case where the card would either be a lie or a waste of the one-time latch, so
  * the gate is deliberately strict:
  *
- *  - **Already answered** (`seenPushOffer`) — asked once, in our own words, ever.
- *  - **Has not raced yet** — `endlessDays` is `{}` until the first run, so this is the "first race
- *    happened" signal, and a reminder about a board closing is meaningless before then. It is the
- *    entire premise of the card's copy.
+ *  - **Already answered** (`seenPushOffer`) — asked once, in our own words, ever. Shared across BOTH
+ *    qualifying moments below: a player sees one of the two cards, once, and never the other.
+ *  - **Has done nothing we could nudge them about** — either a first race (`endlessDays` is `{}`
+ *    until `recordEndless` writes a run) or `PUSH_OFFER_LEVEL_WINS` cleared levels. Until 2026-08-25
+ *    the race was the only door, which silently excluded the entire pure-level audience: the ladder
+ *    is most of the game, a player can spend weeks on it without ever opening the race, and the
+ *    morning `daily_play` nudge is aimed squarely at exactly those people. They could only ever find
+ *    notifications by going looking in Settings for a feature nothing had mentioned.
+ *    ⚠️ This widens WHEN THE CARD IS OFFERED, never when the browser prompt fires. That prompt is
+ *    still only reachable from an explicit REMIND ME tap, which is the rule the one-shot permission
+ *    forces; see the file header and `view/pushoptin.ts`.
  *  - **Can't subscribe here** — 'needs-install' on an iPhone outside an installed PWA, 'unsupported'
  *    on a browser without the APIs or a build with no VAPID key. Burning the latch to say "not on
  *    this device" would mean never offering it on the device they go on to install to; that case
@@ -341,7 +412,7 @@ export async function setPushCategory(category: PushCategory, on: boolean): Prom
 export async function pushOfferDue(save: SaveData): Promise<boolean> {
   try {
     if (save.seenPushOffer) return false
-    if (Object.keys(save.endlessDays ?? {}).length === 0) return false
+    if (!hasRaced(save) && levelWins(save) < PUSH_OFFER_LEVEL_WINS) return false
     if (pushSupport() !== 'ready') return false
     if (pushPermission() === 'denied') return false
     if (await isPushEnabled()) return false
