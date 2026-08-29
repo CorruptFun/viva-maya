@@ -84,7 +84,6 @@ import {
   ROSE_PILL,
   addPillButton,
   addPressablePlate,
-  addRoundChip,
   goldFace,
   inkShadow,
   startScene,
@@ -547,27 +546,6 @@ export function openRacePanel(scene: Phaser.Scene, opts: RacePanelOpts = {}): vo
   const closePill = addPillButton(scene, 160, CARD_H / 2 - 70, 240, 68, 'CLOSE', GOLD_PILL, close)
   cardRoot.add(closePill)
   controls.push(closePill)
-
-  // The `?` chip — the explainer, one tap from the board it explains. Deliberately HERE rather than
-  // only in how-to-play: a player who is confused about the race is looking AT the race, and the
-  // weekly board is the one screen where the numbers make no sense until someone says "these are
-  // seven days added together". Pinned to the card's top-left, clear of the tabs and the subtitle.
-  //
-  // It hands over the CURRENT mode, read at tap time rather than captured at build time, so a tab
-  // switch takes the explainer with it — and the ladder, which is not part of the endless race at
-  // all, gets the rules of the board it is actually on.
-  const rules = addRoundChip(
-    scene,
-    cx + 46,
-    cy + 46,
-    46,
-    '?',
-    { fontFamily: FONT, fontSize: '26px', fontStyle: '900', color: T.goldText },
-    () => openRaceRulesPanel(scene, mode)
-  )
-  rules.container.setDepth(0) // rides the card's own stacking, not addRoundChip's default 50
-  cardRoot.add(rules.container)
-  controls.push(rules.container)
 
   // Card entrance: pop in from a dealt-card 0.92 with a gentle spring + a quick fade. Reduced
   // motion → popIn collapses instantly and the alpha is simply set.
@@ -2324,13 +2302,12 @@ const RULES: Record<'race' | 'levels', RulesSpec> = {
 let rulesOpen = false
 
 /**
- * Open the explainer for a board. Reachable from the board panel's `?` chip and from the how-to-play
- * panel's RACE RULES button, because the two audiences arrive from opposite directions: one is
- * already looking at a leaderboard they don't understand, the other is reading the manual.
+ * Open the explainer for a board. Reachable from the how-to-play panel's RACE RULES button, and from
+ * the dev `?rules=` param and Home's own hooks.
  *
- * `mode` is the board being explained, so the `?` chip can hand over whichever board is on screen —
- * the two race tabs share the race explainer, the ladder gets its own. It defaults to the race for
- * the manual's door, which has no board in front of it and means the endless race when it says RACE.
+ * `mode` is the board being explained — the two race tabs share the race explainer, the ladder gets
+ * its own. It defaults to the race for the manual's door, which has no board in front of it and means
+ * the endless race when it says RACE.
  */
 export function openRaceRulesPanel(scene: Phaser.Scene, mode: BoardMode = 'daily'): void {
   if (rulesOpen) return
