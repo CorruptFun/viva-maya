@@ -1,4 +1,5 @@
 import Phaser from 'phaser'
+import { isEntitledLocally, paywallConfigured } from '../core/paywall'
 import { createAllTextures, warmPieceTextures } from '../view/textures'
 
 export class BootScene extends Phaser.Scene {
@@ -15,12 +16,18 @@ export class BootScene extends Phaser.Scene {
     // DEV shortcuts: ?level=N jumps into a level, ?endless=1 into the weekly race, ?lightninground=1
     // into the ⚡ storm (automated checks). Lightning is tested FIRST because it also sets `endless`
     // inside GameScene.init — routing on `endless` first would drop the mode and open the race.
+    // They all bypass the paid-entry gate below, same as every other DEV shortcut on this screen.
     const params = new URLSearchParams(location.search)
     const level = import.meta.env.DEV && params.has('level') ? Number(params.get('level')) : null
     if (import.meta.env.DEV && params.has('lightninground')) this.scene.start('game', { lightning: true })
     else if (import.meta.env.DEV && params.has('endless')) this.scene.start('game', { endless: true })
     else if (level && Number.isFinite(level)) this.scene.start('game', { level })
     else if (import.meta.env.DEV && params.get('scene')) this.scene.start(params.get('scene')!)
+    // PAID ENTRY: dormant on a build with no Supabase configured (paywallConfigured() false), and a
+    // no-op the instant a device has ever unlocked (isEntitledLocally() caches that forever — see
+    // core/paywall.ts). `entitlement_session` survives a fresh return from Stripe Checkout even
+    // though this device isn't entitled yet; PaywallScene is what verifies and unlocks it.
+    else if (paywallConfigured() && !isEntitledLocally()) this.scene.start('paywall', { sessionId: params.get('entitlement_session') })
     else this.scene.start('home')
   }
 }

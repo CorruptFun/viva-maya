@@ -594,6 +594,30 @@ Live: <https://corruptfun.github.io/viva-maya/>
   guard and persists in the save — so the storm arrives a board or a level later
   instead of on the move that would have won the level.
 
+- **The whole game sits behind a $1.33 one-time Stripe paywall, and it is
+  DORMANT by construction.** `BootScene` routes to `PaywallScene` instead of
+  `'home'` only when `paywallConfigured()` (a `VITE_SUPABASE_URL` is set) **and**
+  the device has never unlocked (`isEntitledLocally()`, a permanent local cache
+  once granted) — so a local/preview build with no Supabase configured, and
+  every DEV `?level=`/`?endless=`/`?scene=` shortcut, bypasses it exactly like
+  they bypass everything else on that screen. See `docs/PAID_ENTRY_STRIPE.md`
+  for setup and `core/paywall.ts`'s header for the trust model in full; the
+  short version, stated once here because it matters: this follows the same
+  **"guard rails, not replay"** posture as score defence — the client caches
+  entitlement locally and trusts it, real anti-tamper would need a receipt
+  store this static site doesn't have, and a $1.33 unlock doesn't justify
+  building one. ⚠️ `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` are **Edge
+  Function secrets only** (`supabase secrets set`) — never `.env`, never
+  `src/config.ts`, never anywhere that reaches the client bundle or a commit.
+  The entitlement tables (`0029_paid_entry.sql`) carry **no RLS policies at
+  all** — every read/write is the `service_role` from one of the three Edge
+  Functions (`stripe-checkout`, `stripe-webhook`, `entitlement-status`), which
+  is deliberate, not a gap. A purchase is attributed to the SAME anonymous
+  device id `core/analytics.ts` mints, never a second fingerprint, and doesn't
+  cross the two-origins split (corruptfun.github.io ↔ corrupt.solutions) any
+  more than any other storage here does — RESTORE PURCHASE by email is the
+  intended recovery path, on a new device or a new origin alike.
+
 ## Run it
 
 ```sh
@@ -623,6 +647,9 @@ edit to make green.
 | `src/core/` | game logic + its tests — board, merge, levels, endless, daily, slots, hazards, analytics, push, cheat, rgb |
 | `src/core/inventory.ts` | canonical boost names (`BOOST_META`) + the stash model — see the note above |
 | `src/core/install.ts` | "add to home screen" custody; the platform split lives here |
+| `src/core/paywall.ts` | the $1.33 lifetime paid-entry gate — dormant-if-unconfigured, local cache, restore-by-email (see the note above) |
+| `src/scenes/PaywallScene.ts` | the paid-entry screen `BootScene` routes to instead of Home |
+| `supabase/functions/` | Stripe Edge Functions: `stripe-checkout`, `stripe-webhook`, `entitlement-status` — see `docs/PAID_ENTRY_STRIPE.md` |
 | `src/core/bonusdrop.ts` | THE HOUSE GIFT — the day-seeded daily surprise the reminder names in advance; see the note above |
 | `src/core/quests.ts` | daily quests — the closed loop: day-seeded draw, award-first grants, its own merge rule (see the note above) |
 | `src/view/livecard.ts` | Home's single "what's live now" card — the ordered pure-provider list (see the note above) |
@@ -719,7 +746,8 @@ commit or paste key material.** Publishable client config belongs in
 
 In this repo, all under `docs/`: `GAME_DESIGN.md`, `BUILD_OVERVIEW.md`,
 `UI_COOKBOOK.md`, `ANALYTICS_AND_PUSH.md`, `CLOUD_SAVE_SETUP.md`,
-`CLOUD_SAVE_GOOGLE_SIGNIN.md`, `GIFT_STORE.md`, `GO_LIVE_CHECKLIST.md`. For
+`CLOUD_SAVE_GOOGLE_SIGNIN.md`, `GIFT_STORE.md`, `GO_LIVE_CHECKLIST.md`,
+`PAID_ENTRY_STRIPE.md`. For
 schema and score security the authority is the migration header comments, not a
 design doc — see the score-defence bullet at the top.
 

@@ -501,7 +501,7 @@ function writeLS(key: string, value: string): void {
  * the alternative (deriving an id from device characteristics) is exactly the tracking this
  * game's privacy policy promises not to do.
  */
-function getDeviceId(): string {
+export function getDeviceId(): string {
   if (deviceId) return deviceId
   const existing = readLS(DEVICE_KEY)
   if (existing && existing.length >= 8) {
