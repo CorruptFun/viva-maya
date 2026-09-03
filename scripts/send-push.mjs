@@ -127,14 +127,41 @@ const MODE_FLAGS = {
  */
 function parseMode(argv) {
   const picked = [...new Set(argv.filter(a => a in MODE_FLAGS).map(a => MODE_FLAGS[a]))]
+  if (argv.includes('--auto')) picked.push('auto')
   return { mode: picked[0] ?? 'week', conflict: picked.length > 1, picked }
 }
 
-const { mode: MODE, conflict: MODE_CONFLICT, picked: MODES_PICKED } = parseMode(process.argv)
-const DAILY = MODE === 'daily'
-const DROP = MODE === 'drop'
-const QUESTS = MODE === 'quests'
-const LASTSTAND = MODE === 'laststand'
+/**
+ * `--auto`: let the HOME CLOCK pick the mode (`modeForClock`), which is how every scheduled run
+ * works now. `--force`: send an explicit mode outside its slot anyway — for a deliberate manual run,
+ * never for a cron (see `SLOTS` for why a cron must not be trusted with a fixed hour).
+ */
+const AUTO = process.argv.includes('--auto')
+const FORCE = process.argv.includes('--force')
+
+const { mode: PARSED_MODE, conflict: MODE_CONFLICT, picked: MODES_PICKED } = parseMode(process.argv)
+
+/**
+ * The mode this run is, and the four derived booleans the copy builders branch on by name.
+ *
+ * `let`, not `const`: under `--auto` the mode is not knowable until `main` has looked at the clock,
+ * and everything below reads these at call time rather than at import. `selectMode` is the ONLY
+ * writer, so a run can never be half one mode and half another.
+ */
+let MODE = 'week'
+let DAILY = false
+let DROP = false
+let QUESTS = false
+let LASTSTAND = false
+
+function selectMode(mode) {
+  MODE = mode
+  DAILY = mode === 'daily'
+  DROP = mode === 'drop'
+  QUESTS = mode === 'quests'
+  LASTSTAND = mode === 'laststand'
+}
+selectMode(PARSED_MODE === 'auto' ? 'week' : PARSED_MODE)
 
 /**
  * THE VOLUME PROMISE, IN CODE. `src/view/pushoptin.ts`'s VOLUME_RULE prints this number to every
@@ -153,11 +180,12 @@ export const DAILY_SEND_CAP = 3
 /**
  * Never two notifications inside this many hours, whatever the modes think.
  *
- * Deliberately looser than the ~3h the schedule actually leaves between its tightest pair (the
- * evening board at 00:00 UTC and the streak last-call at 03:00 UTC): GitHub's scheduler is
- * best-effort and runs 10–30 minutes late under load, so a gap tuned to the nominal spacing would
- * drop a legitimate send whenever a cron ran late. Two hours is far enough apart that no player
- * experiences a double-tap, and slack enough that ordinary scheduler drift is not a silent outage.
+ * The slots (`SLOTS`) are laid out so this can never lock a later slot out: the evening board's
+ * slot closes at 19:00 and the last call's runs 20:00–23:30, so even a board reminder that lands
+ * at 18:59 leaves the last call an hour and a half of its slot. Two hours is far enough apart that
+ * no player experiences a double-tap, and short enough that it never eats a slot. (This used to
+ * be justified against a cron timetable and "10–30 minutes of scheduler drift"; the drift turned
+ * out to be hours — see `SLOTS`.)
  */
 export const MIN_GAP_HOURS = 2
 
@@ -247,12 +275,20 @@ function shiftDayKey(key, days) {
   return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`
 }
 
-/** The instant RACE_TZ's clocks strike midnight opening `key` — two-pass for the DST seams. */
-function raceMidnight(key) {
-  const naive = Date.parse(`${key}T00:00:00Z`)
+/**
+ * The instant RACE_TZ's clocks read `minutes` past midnight on `key` — two-pass for the DST seams.
+ * `raceMidnight` is the zero case; the slot windows below are the others.
+ */
+export function raceInstant(key, minutes = 0) {
+  const naive = Date.parse(`${key}T00:00:00Z`) + minutes * 60000
   let t = naive - raceOffsetMs(new Date(naive))
   t = naive - raceOffsetMs(new Date(t))
   return new Date(t)
+}
+
+/** The instant RACE_TZ's clocks strike midnight opening `key`. */
+function raceMidnight(key) {
+  return raceInstant(key, 0)
 }
 
 /**
@@ -312,6 +348,91 @@ function hoursLeft(now = new Date()) {
   // morning nudge reporting "ends in 130h" (the season's clock) reads as a bug in the run summary.
   const ends = MODE === 'week' ? weekEndsAt(now) : dayEndsAt(now)
   return Math.max(0, Math.round((ends.getTime() - now.getTime()) / 3600000))
+}
+
+/**
+ * THE DAY'S SLOTS, ON THE HOME CLOCK — minutes past midnight America/Edmonton, `[from, until)`.
+ *
+ * ⚠️ THE CLOCK PICKS THE MODE. THE CRON DOES NOT. Until 2026-09-03 each mode had its own cron and
+ * the workflow decided which send this was from WHICH cron had fired. GitHub's scheduler is not a
+ * clock: measured over 2026-08-26 → 09-03 on this repo, the 15:00 UTC entry ran 3.1–3.4 h late, the
+ * 19:00 one 2.4–4.9 h, the 00:00 one 2.4–3.0 h, and the 03:00 one — the ~9pm streak last call —
+ * 4.7 to 10.9 HOURS late. That last one therefore fired at 1:40–2:00 AM on the home clock, past
+ * the midnight the message is about, so it landed on the NEXT race day, read
+ * "your streak ends at midnight, in 22 hours", and (under the one-a-day fallback the sender was
+ * running in, because migration 0028 had not been applied) spent that device's whole day on it.
+ * The player whose phone that was saw one strange 2 AM message a day and nothing else, ever.
+ *
+ * So the workflow now runs ONE cron, hourly, with `--auto`, and each run asks the home clock which
+ * slot it is standing in. A run that lands late still lands in a slot; a run that lands in the
+ * quiet hours does nothing; and a slot that has already been served to a device is skipped for that
+ * device (`sentInSlot`), so two runs in one slot are one notification. The slots are what keep the
+ * copy honest — `laststand` closes at 23:30 because the sentence it says is about THIS midnight.
+ *
+ * Spacing: `daily` ends an hour before `laststand` opens, and `laststand` outlasts `daily` by more
+ * than MIN_GAP_HOURS, so a board reminder that lands at the very end of its slot can never lock the
+ * last call out (src/core/pushcadence.test.ts pins that). Sunday's season summary takes the evening
+ * board's slot (`modeForClock`), exactly as the old Monday-00:00-UTC cron did.
+ */
+export const SLOTS = [
+  { mode: 'drop', from: 8 * 60, until: 12 * 60 },
+  { mode: 'quests', from: 12 * 60, until: 16 * 60 },
+  { mode: 'daily', from: 16 * 60, until: 19 * 60 },
+  { mode: 'laststand', from: 20 * 60, until: 23 * 60 + 30 },
+]
+
+/** The slot a mode runs in. `week` shares the evening board's. */
+export function slotFor(mode) {
+  return SLOTS.find(s => s.mode === (mode === 'week' ? 'daily' : mode)) ?? null
+}
+
+/** Minutes past midnight on the home clock, whether it is Sunday there, and "HH:MM" for the log. */
+function homeClock(at) {
+  const w = raceWallClock(at)
+  const dow = new Date(Date.parse(`${dayKey(at)}T00:00:00Z`)).getUTCDay() // 0 = Sunday
+  return { minutes: w.h * 60 + w.mi, sunday: dow === 0, label: `${pad2(w.h)}:${pad2(w.mi)}` }
+}
+
+/** "08:00–12:00", for the log. */
+export function slotLabel(slot) {
+  const f = m => `${pad2(Math.floor(m / 60))}:${pad2(m % 60)}`
+  return `${f(slot.from)}–${f(slot.until)}`
+}
+
+/**
+ * Which send is due at this instant, by the home clock — or null in the quiet hours.
+ *
+ * Sunday evening is the season, not the board: the weekly total closes Monday midnight, and the
+ * evening slot is the one place both modes would otherwise say something about "the race".
+ */
+export function modeForClock(now = new Date()) {
+  const { minutes, sunday } = homeClock(now)
+  const slot = SLOTS.find(s => minutes >= s.from && minutes < s.until)
+  if (!slot) return null
+  return { mode: slot.mode === 'daily' && sunday ? 'week' : slot.mode, slot }
+}
+
+/** Is this mode's slot open right now on the home clock? */
+export function windowOpen(mode, now = new Date()) {
+  const slot = slotFor(mode)
+  if (!slot) return false
+  const { minutes } = homeClock(now)
+  return minutes >= slot.from && minutes < slot.until
+}
+
+/**
+ * Has this device already been sent to since this slot opened today?
+ *
+ * The per-device latch that makes an hourly cron safe: the second, third and fourth run to land in
+ * one slot find every device the first one served and skip them. Compared against the slot's
+ * OPENING instant on today's race day, not against elapsed hours — a send from the previous slot is
+ * not this slot's, and the minimum gap already stops two landing back to back.
+ */
+export function sentInSlot(sub, slot, now = new Date()) {
+  if (!sub || !sub.last_sent_at || !slot) return false
+  const at = Date.parse(sub.last_sent_at)
+  if (!Number.isFinite(at)) return false
+  return at >= raceInstant(dayKey(now), slot.from).getTime()
 }
 
 /** Whole days between two YYYY-MM-DD keys (b − a). Calendar arithmetic, so DST cannot reach it. */
@@ -989,12 +1110,42 @@ async function main() {
     console.error(`these are different sends; pass one: ${MODES_PICKED.join(', ')}`)
     process.exit(1)
   }
-  requireConfig()
   const now = new Date()
+  const clock = homeClock(now)
+
+  // ── GUARD 0: the clock ───────────────────────────────────────────────────────────────────────
+  // Under `--auto` the home clock picks the mode, and the quiet hours pick nothing — that decision
+  // is made BEFORE requireConfig so a run in the quiet hours costs no secrets and no round trips.
+  // An explicit mode is held to its slot too: the whole reason the slots exist is that "which cron
+  // fired" stopped meaning "what time it is", and a manual `--laststand` at 2 AM would say the same
+  // untrue sentence a late cron did. `--dry-run` may look at any mode at any hour (it sends nothing,
+  // and being able to audit the audience at 10 AM is the point of it); a real send outside its slot
+  // needs `--force`, and refusing it is a red run rather than a quiet one so it gets noticed.
+  if (AUTO) {
+    const pick = modeForClock(now)
+    if (!pick) {
+      console.log(`auto · ${clock.label} at home · quiet hours — no slot is open, nothing to send`)
+      return
+    }
+    selectMode(pick.mode)
+  } else if (!windowOpen(MODE, now)) {
+    const slot = slotFor(MODE)
+    const where = slot ? `${slotLabel(slot)} at home` : 'no slot'
+    if (DRY) {
+      console.warn(`--${MODE} runs ${where}; it is ${clock.label} — a dry run proceeds, a real send would not`)
+    } else if (!FORCE) {
+      console.error(`--${MODE} runs ${where}; it is ${clock.label} — refusing to send outside its slot (pass --force to override)`)
+      process.exit(1)
+    } else {
+      console.warn(`--${MODE} runs ${where}; it is ${clock.label} — sending anyway under --force`)
+    }
+  }
+  requireConfig()
   const today = dayKey(now)
   const key = MODE === 'week' ? weekKey(now) : today
   const hrs = hoursLeft(now)
   const mode = MODE
+  const slot = slotFor(mode)
   const gift = dropForDay(today)
 
   // The audience: opted in to THIS category, and not a known corpse. Each predicate matches a
@@ -1043,8 +1194,17 @@ async function main() {
   // ── GUARD 1: the day's send budget, before anything else is read ─────────────────────────────
   // The cap and the gap together (see `budgetAllows`). Ordered first because it costs nothing and
   // the reads below cost round trips.
-  const eligible = all.filter(s => budgetAllows(s, today, now, { legacy: legacyBudget }))
-  const overBudget = all.length - eligible.length
+  // Then the slot latch: a device this slot has already reached today is done with it, whatever
+  // the budget says — that is what lets the hourly cron land in one slot several times over.
+  const budgetOf = s =>
+    !budgetAllows(s, today, now, { legacy: legacyBudget })
+      ? 'over budget'
+      : sentInSlot(s, slot, now)
+        ? 'had this slot'
+        : null
+  const eligible = all.filter(s => budgetOf(s) === null)
+  const overBudget = all.filter(s => budgetOf(s) === 'over budget').length
+  const slotDone = all.length - eligible.length - overBudget
 
   // ── GUARD 2: the activity read — how long since this device was last here ────────────────────
   //
@@ -1173,10 +1333,14 @@ async function main() {
     .join(' ')
 
   console.log(
-    `${mode} ${key} · ends in ${hrs}h · ${all.length} opted in · ${overBudget} over budget · ` +
+    `${mode} ${key} · ${clock.label} at home${slot ? ` (slot ${slotLabel(slot)})` : ''} · ends in ${hrs}h · ` +
+      `${all.length} opted in · ${overBudget} over budget · ${slotDone} had this slot · ` +
       `${heldBack} held back · ${subs.length} due` +
       (DROP ? ` · today's gift: ${gift.id}` : DAILY || mode === 'week' ? ` · ${board.length} on the board` : '') +
-      (histLine ? ` · away ${histLine}` : '')
+      (histLine ? ` · away ${histLine}` : '') +
+      // On the summary line, not only in stderr: this fallback ran for eight days unnoticed
+      // (2026-08-26 → 09-03) because the warning above was the one line nobody grepped for.
+      (legacyBudget ? ' · ⚠️ 0028 NOT APPLIED — one-a-day fallback' : '')
   )
 
   // `--explain` prints the per-device decision — the thing that would have made the outage obvious
@@ -1194,8 +1358,9 @@ async function main() {
       )
     }
     for (const s2 of all.filter(x => !decisions.has(x.endpoint))) {
+      const who = s2.user_id ? `user:${s2.user_id.slice(0, 8)}` : 'anon'
       console.log(
-        `  [why] device ${String(s2.device_id).slice(0, 8)} · over budget ` +
+        `  [why] device ${String(s2.device_id).slice(0, 8)} ${who} · ${budgetOf(s2)} ` +
           `(${sendsToday(s2, today)}/${DAILY_SEND_CAP} today, last ${s2.last_sent_at ?? 'never'})`
       )
     }

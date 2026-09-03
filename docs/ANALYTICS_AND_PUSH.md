@@ -129,32 +129,50 @@ select cron.schedule('prune-events','0 4 * * *',$$select public.prune_events(90)
 | Sender | `scripts/send-push.mjs` |
 | Schedule | `.github/workflows/endless-push.yml` — see the cadence table below |
 
-### ⚠️ ONE NOTIFICATION PER DEVICE PER DAY. THIS IS THE RULE EVERYTHING ELSE SERVES
+### ⚠️ AT MOST THREE NOTIFICATIONS PER DEVICE PER RACE DAY, AND THE HOME CLOCK PICKS THEM
 
-There are three scheduled sends and **two** opt-in categories, and the audience was recruited on a
-card that promises one nudge. That promise is kept by **volume**, not by counting features:
+There are five sends and **two** opt-in categories, and the audience was recruited on a card that
+prints a number (`VOLUME_RULE` = `DAILY_SEND_CAP`). That promise is kept by **volume**, not by
+counting features. The timetable is the sender's (`SLOTS` in `scripts/send-push.mjs`), on the home
+clock (America/Edmonton):
 
-| Mode | Fires | Audience | Category | Leads with |
+| Mode | Slot at home | Audience | Category | Leads with |
 | --- | --- | --- | --- | --- |
-| `--drop` | 15:00 UTC daily (≈8–9 AM at home) | devices that did **not** open the game yesterday | `daily_play` | a jackpot wheel within reach, else the day's house gift, by name |
-| `--daily` | 01:00 UTC Tue–Sun (≈6–7 PM Mon–Sat at home) | devices that **did** open the game yesterday | `week_race` | a streak about to break, else a jackpot wheel within reach, else the player's standing |
-| *(default)* | 01:00 UTC Monday (≈Sunday evening at home) | everyone opted in — the one mode with no activity filter | `week_race` | the season's totals |
+| `--drop` | 08:00–12:00 | anyone not already here today | `daily_play` | a jackpot wheel within reach, else the day's house gift, by name |
+| `--quests` | 12:00–16:00 | only someone here today with unfinished quests | `daily_play` | the slate's count, never a goal's name |
+| `--daily` | 16:00–19:00 Mon–Sat | anyone with real news: on the board, a streak at risk, a wheel in reach, or not here yet | `week_race` | a streak about to break, else the wheel, else the player's standing |
+| *(default)* | 16:00–19:00 Sunday | everyone opted in — the one mode with no activity filter | `week_race` | the season's totals |
+| `--laststand` | 20:00–23:30 | a live streak that dies at midnight and is not yet secured | `daily_play` | the streak, and the hours left |
 
-Three mechanisms keep it to one, and all three are load-bearing:
+`.github/workflows/endless-push.yml` is **one hourly cron** running `--auto`. Each run asks the clock
+which slot it is standing in, does nothing in the quiet hours, and skips every device that slot has
+already reached today (`sentInSlot`). **It used to be five fixed-hour crons, and that delivered the
+wrong message at the wrong time:** measured 2026-08-26 → 09-03, GitHub ran them 2.4–10.9 hours late,
+so the ~9pm last call fired at 1:40–2:00 AM on the *next* race day and said "ends at midnight, in 22
+hours". Never schedule a mode by cron hour; a real manual send outside its slot needs `--force`.
 
-1. **Disjoint audiences.** "Played yesterday" partitions the audience, so `--drop` and `--daily`
-   cannot both reach the same device.
-2. **The same-day guard.** Every mode checks `last_sent_at` against today's race day (`sentToday`)
-   and skips anything already written to. This covers the seams the split cannot — a manual
-   `workflow_dispatch` beside a scheduled run, a cron GitHub retried, Sunday's season blast landing
-   on a day the morning nudge already went out, and any fourth mode added later.
-3. **The lapse backoff.** `backoffAllows` decays the cadence with the absence — every third day past
-   3 days away, weekly past 14, nothing past 30. Someone who ignored seven nudges will ignore the
-   eighth and is one tap from switching notifications off forever.
+Four mechanisms bound the volume, and all four are load-bearing:
 
-`src/core/pushcadence.test.ts` pins all three. **Do not delete that test** — a bug here is
-unobservable from inside the game (nobody reports "I got two notifications", they just switch them
-off) and cannot be walked back.
+1. **The counter.** `sends_day` / `sends_count` (migration 0028) — at most `DAILY_SEND_CAP` per
+   device per race day, whatever the schedule does. ⚠️ The sender tolerates 0028 being unapplied by
+   falling back to one-a-day, and that fallback ran unnoticed for eight days after 0028 merged
+   (the summary line now says so in capitals).
+2. **The gap.** `MIN_GAP_HOURS` — never two inside two hours.
+3. **The slot latch.** `sentInSlot` — however many hourly runs land in one slot, a device gets that
+   slot once.
+4. **The lapse backoff.** `backoffAllows` decays the two broad modes with the absence — every third
+   day past 3 days away, weekly past 14, nothing past 30. Someone who ignored seven nudges will
+   ignore the eighth and is one tap from switching notifications off forever.
+
+`src/core/pushcadence.test.ts` pins all of them, plus the reach property (every ordinary player
+matches *some* weekday mode) and the slots' order and distance from midnight. **Do not delete that
+test** — a bug here is unobservable from inside the game (nobody reports "I got two notifications",
+they just switch them off) and cannot be walked back.
+
+**A subscription row names the player who was signed in when it was registered — and only then.**
+`syncPushIdentity` (`src/core/push.ts`, from `cloud.ts`'s auth listener) re-registers a device once
+per account so a row never stays anonymous after a sign-in; an anonymous row has no save for the
+sender to read, so every weekday send holds it back as "no news".
 
 The gift's roll (`src/core/bonusdrop.ts`) is seeded from the **day alone**, which is what lets the
 sender name it: same table, same day, same answer on the client and in CI. That predictability is
@@ -163,8 +181,9 @@ salting would cost the naming and close a hole that does not exist.
 
 **Why a GitHub Actions cron:** GitHub Pages is static, so there is no server to run a timer on, and
 Web Push needs an authenticated application server to sign each message. Actions already deploys this
-repo, so it adds no new infrastructure and holds the VAPID private key as a secret. Its scheduler can
-run 10–30 min late, which is irrelevant — every deadline a message quotes is computed at run time.
+repo, so it adds no new infrastructure and holds the VAPID private key as a secret. Its scheduler is
+**not a clock** — hours late on this repo, see above — which is why the cron is hourly and the
+sender reads the home clock; every deadline a message quotes is computed at run time too.
 
 **⚠️ `dayKey()`, `weekKey()` and the gift roll are duplicated** in `scripts/send-push.mjs` (it runs
 as bare Node in CI and cannot import from `src/`). A drift in the keys is silent and total: a wrong

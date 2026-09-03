@@ -13,12 +13,18 @@ import {
   jackpotWinsAway,
   LEVEL_COUNT as SENDER_LEVEL_COUNT,
   MIN_GAP_HOURS,
+  modeForClock,
   notificationUrl,
   QUEST_COUNT as SENDER_QUEST_COUNT,
   questsOpen,
+  raceInstant,
   sendsToday,
+  sentInSlot,
   sentToday,
+  slotFor,
+  SLOTS,
   streakAtRisk,
+  windowOpen,
 } from '../../scripts/send-push.mjs'
 import { pushSource } from './analytics'
 import { dayKey } from './endless'
@@ -420,5 +426,86 @@ describe('the quest nudge', () => {
     expect(questsOpen({}, TODAY)).toBe(null)
     expect(questsOpen({ quests: null }, TODAY)).toBe(null)
     expect(dueForMode('quests', { away: 0, questsOpen: null })).toBe(false)
+  })
+})
+
+/**
+ * THE CLOCK, NOT THE CRON — the fix for the second silent outage.
+ *
+ * Five fixed-hour crons ran 2–11 hours late on this repo (measured 2026-08-26 → 09-03). The ~9pm
+ * streak last call landed at 1:40–2:00 AM, on the NEXT race day, said "ends at midnight, in 22
+ * hours", and spent the device's one-a-day fallback budget on it. Every run was green. The sender
+ * now polls hourly and asks the home clock which slot it is in, so the instants below are the ones
+ * that matter: the run that actually fired, and the seams around each slot.
+ */
+describe('the clock picks the mode', () => {
+  // America/Edmonton is UTC−6 in September (MDT). 07:52Z is 01:52 at home — the real run.
+  const THE_2AM_RUN = new Date('2026-09-03T07:52:09Z')
+
+  it('selects NOTHING at 1:52 AM — the instant the late last call actually fired', () => {
+    expect(modeForClock(THE_2AM_RUN)).toBeNull()
+    expect(windowOpen('laststand', THE_2AM_RUN)).toBe(false)
+  })
+
+  it('walks the day in order on a weekday', () => {
+    expect(modeForClock(new Date('2026-09-03T15:37:00Z'))?.mode).toBe('drop') // 09:37
+    expect(modeForClock(new Date('2026-09-03T19:37:00Z'))?.mode).toBe('quests') // 13:37
+    expect(modeForClock(new Date('2026-09-03T22:37:00Z'))?.mode).toBe('daily') // 16:37
+    expect(modeForClock(new Date('2026-09-04T02:37:00Z'))?.mode).toBe('laststand') // 20:37
+  })
+
+  it('is quiet between the evening board and the last call, and after 23:30', () => {
+    expect(modeForClock(new Date('2026-09-04T01:15:00Z'))).toBeNull() // 19:15
+    expect(modeForClock(new Date('2026-09-04T05:45:00Z'))).toBeNull() // 23:45
+    expect(modeForClock(new Date('2026-09-04T06:00:00Z'))).toBeNull() // 00:00 — the day flips
+  })
+
+  it('gives Sunday evening to the season, and leaves the rest of Sunday to the weekday slots', () => {
+    // 2026-09-06 is a Sunday.
+    expect(modeForClock(new Date('2026-09-06T22:37:00Z'))?.mode).toBe('week')
+    expect(modeForClock(new Date('2026-09-06T15:37:00Z'))?.mode).toBe('drop')
+    expect(modeForClock(new Date('2026-09-07T02:37:00Z'))?.mode).toBe('laststand')
+    // Monday evening is a board again.
+    expect(modeForClock(new Date('2026-09-07T22:37:00Z'))?.mode).toBe('daily')
+  })
+
+  it('reads the home clock, not UTC, across the DST seam', () => {
+    // 2026-11-01 is the fall-back Sunday: Mountain time goes from −6 to −7 at 02:00 local.
+    // 16:37Z is 09:37 MST that day — the morning gift, not the quest slate 15:37Z would be in MDT.
+    expect(modeForClock(new Date('2026-11-01T16:37:00Z'))?.mode).toBe('drop')
+    expect(modeForClock(new Date('2026-11-02T03:37:00Z'))?.mode).toBe('laststand') // 20:37 MST
+  })
+
+  it('keeps every slot clear of midnight, in order, and gives the last call room after the board', () => {
+    const byStart = [...SLOTS].sort((a, b) => a.from - b.from)
+    expect(byStart.map(s => s.mode)).toEqual(['drop', 'quests', 'daily', 'laststand'])
+    for (let i = 1; i < byStart.length; i++) expect(byStart[i].from).toBeGreaterThanOrEqual(byStart[i - 1].until)
+    // The last call's sentence is about THIS midnight; a slot that touched it would let a run
+    // fire on the next race day and say "in 22 hours" again.
+    expect(byStart[byStart.length - 1].until).toBeLessThan(24 * 60)
+    expect(byStart[0].from).toBeGreaterThanOrEqual(8 * 60)
+    // A board reminder at the very end of its slot must not lock the last call out via the gap.
+    const daily = slotFor('daily')!
+    const last = slotFor('laststand')!
+    expect(last.until - daily.until).toBeGreaterThan(MIN_GAP_HOURS * 60)
+    // `week` rides the board's slot.
+    expect(slotFor('week')).toBe(daily)
+  })
+
+  it('latches a device the slot has already reached today, and only that slot', () => {
+    const now = new Date('2026-09-03T23:10:00Z') // 17:10 at home, inside the evening board's slot
+    const daily = slotFor('daily')!
+    const opened = raceInstant('2026-09-03', daily.from) // 16:00 at home
+    expect(opened.toISOString()).toBe('2026-09-03T22:00:00.000Z')
+    // Sent at 16:20 by an earlier run this slot: done.
+    expect(sentInSlot({ last_sent_at: '2026-09-03T22:20:00Z' }, daily, now)).toBe(true)
+    // Sent at 13:30 — that was the quest slot's send, not this one.
+    expect(sentInSlot({ last_sent_at: '2026-09-03T19:30:00Z' }, daily, now)).toBe(false)
+    // Yesterday's board reminder at the same hour is yesterday's.
+    expect(sentInSlot({ last_sent_at: '2026-09-02T22:20:00Z' }, daily, now)).toBe(false)
+    // Never sent, junk, or no slot (the season on a weekday dry run): never latched.
+    expect(sentInSlot({}, daily, now)).toBe(false)
+    expect(sentInSlot({ last_sent_at: 'not a date' }, daily, now)).toBe(false)
+    expect(sentInSlot({ last_sent_at: '2026-09-03T22:20:00Z' }, null, now)).toBe(false)
   })
 })

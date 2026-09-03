@@ -299,24 +299,21 @@ Live: <https://corruptfun.github.io/viva-maya/>
   `create()`, and `main.ts` has already `preventDefault()`ed the browser's own
   install bar, so capturing it and then showing nothing is strictly worse than
   never capturing.
-- **The game sends AT MOST ONE notification per device per race day, and that ceiling is a promise
-  in the product, not a preference.** There are three scheduled sends
-  (`.github/workflows/endless-push.yml`) and two opt-in categories (`week_race` from 0011,
-  `daily_play` from 0025) — a MORNING nudge carrying the day's house gift (`--drop`, 15:00 UTC, for
-  devices that did **not** open the game yesterday), an EVENING race reminder (`--daily`, 01:00 UTC,
-  for devices that **did**), and the Sunday season summary. New REASONS to notify (the
+- **The game sends AT MOST `DAILY_SEND_CAP` (three) notifications per device per race day, and
+  that ceiling is a promise in the product, not a preference.** Five sends (`scripts/send-push.mjs`:
+  the house gift, the quest slate, the evening board, the streak last call, the Sunday season) ride
+  two opt-in categories (`week_race` from 0011, `daily_play` from 0025). New REASONS to notify (the
   jackpot-wheel and next-level hooks, `jackpotWinsAway`) ride the existing sends as better
-  SENTENCES — a new kind of alert is a copy branch in `send-push.mjs`, never a fourth cron. Every
-  player who ever tapped REMIND ME did so against a card promising one nudge
-  (`view/pushoptin.ts`), so the count of *kinds* may grow and the count of *notifications* may not. Three mechanisms hold it, and all three are load-bearing:
-  the two daily audiences are **disjoint by construction** (played-yesterday partitions them), every
-  mode re-checks `last_sent_at` against today's race day (`sentToday` — this is what covers a manual
-  dispatch, a retried cron, and Sunday's blast landing on a morning that already sent), and a device
-  that keeps ignoring nudges **backs off** to every third day, then weekly, then nothing
-  (`backoffAllows`). `pushcadence.test.ts` pins all three. ⚠️ Don't add a fourth cron without
-  answering "which existing audience does this one exclude". A bug here is invisible from inside the
-  game — nobody reports "I got two notifications", they switch notifications off permanently — and
-  the only trace is a subscription count that quietly stops growing.
+  SENTENCES — a new kind of alert is a copy branch and a slot in `send-push.mjs`, never a cron.
+  Every player who ever tapped REMIND ME did so against a card printing that number
+  (`view/pushoptin.ts` `VOLUME_RULE`), so the count of *kinds* may grow and the count of
+  *notifications* may not. The bound is a per-race-day COUNTER (migration 0028) plus a two-hour
+  minimum gap, checked on every send; a device that keeps ignoring nudges **backs off** to every
+  third day, then weekly, then nothing (`backoffAllows`). `pushcadence.test.ts` pins all of it. A
+  bug here is invisible from inside the game — nobody reports "I got two notifications", they switch
+  notifications off permanently — and the only trace is a subscription count that quietly stops
+  growing. The timetable and the two outages it has had are in the "sender nudges up to three
+  times a day" bullet further down.
   ⚠️ The `--drop` and `--daily` activity reads **fail in opposite directions on purpose**: `--drop`
   fails CLOSED (without the answer its whole audience definition is gone and it degrades to a 9am
   blast at people who are already playing), `--daily` fails OPEN (it has shipped since 0011 and
@@ -404,13 +401,38 @@ Live: <https://corruptfun.github.io/viva-maya/>
   (`name in (...)` across migrations 0014/0015/0021/0022), so a *new* event is
   invisible until a new migration ships and fails silently, whereas a new prop
   rides along for free.
-- **The sender nudges up to three times a day, and the bound is a COUNTER, not
-  the shape of the schedule.** `scripts/send-push.mjs` has five modes on five
-  crons (`endless-push.yml`): the ~9am house gift (`--drop`), the ~1pm quest
-  slate (`--quests`), the ~6pm board (`--daily`), the ~9pm streak rescue
-  (`--laststand`) and the Sunday season. All four weekday slots land on the SAME
-  race day key, so "three a day" means three per board. Two things are
-  load-bearing:
+- **The sender nudges up to three times a day, the bound is a COUNTER, and the
+  HOME CLOCK picks the send — never the cron.** `scripts/send-push.mjs` has five
+  modes in four slots on the home clock (`SLOTS`, America/Edmonton): the house
+  gift 08:00–12:00 (`--drop`), the quest slate 12:00–16:00 (`--quests`), the
+  board 16:00–19:00 (`--daily`; the Sunday season takes that slot), the streak
+  last call 20:00–23:30 (`--laststand`), and quiet hours otherwise.
+  `endless-push.yml` is ONE hourly cron running `--auto`; each run asks the
+  clock which slot it is in and skips every device that slot already reached
+  today (`sentInSlot`). All four slots land on the SAME race day key, so
+  "three a day" means three per board.
+  ⚠️ **It used to be five fixed-hour crons, and GitHub cannot keep time.**
+  Measured 2026-08-26 → 09-03 on this repo, the crons ran 2.4 to 10.9 hours
+  late — every run green — so the ~9pm last call fired at 1:40–2:00 AM on the
+  NEXT race day, said "your streak ends at midnight, in 22 hours", and (0028
+  not yet applied → one-a-day fallback) spent that phone's whole day on it. The
+  owner's report was "the only notification I have ever seen is the race
+  ending one". Never schedule a mode by cron hour again; a manual real send
+  outside its slot needs `--force`, and `--dry-run` may run any mode any time.
+  ⚠️ **A migration that ships tolerated is a migration that ships unapplied.**
+  0028 merged 2026-08-26 with a sender that degrades to one-a-day without it,
+  and sat unapplied for eight days while every run logged the fallback warning
+  in stderr. A tolerated migration needs a loud line in the summary, not a
+  warning nobody greps for; and "apply before merging" in a commit message is
+  not a step anyone runs.
+  ⚠️ **A subscription row is stamped with `user_id` at registration and never
+  again**, so a device that subscribed signed-out (or signed in later, or on the
+  other origin) is anonymous forever — and to the sender an anonymous row has no
+  streak, slate, meter or board row, so every weekday send holds it back as
+  "no news". One of four live subscribers sat there. `syncPushIdentity`
+  (`core/push.ts`, called from `cloud.ts`'s auth listener) re-registers once per
+  device per account and restores any category the player had switched off,
+  because 0025's ON CONFLICT resets both to on. Two things are load-bearing:
   - **The number is printed to players.** `VOLUME_RULE` (`view/pushoptin.ts`) is
     the sentence every subscriber tapped REMIND ME against, and it names
     `DAILY_SEND_CAP`. Change one, change both — and it has to be a bound

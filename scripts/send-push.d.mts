@@ -15,6 +15,33 @@ export declare function dayKey(now?: Date): string
 export declare function dayEndsAt(now?: Date): Date
 export declare function weekKey(now?: Date): string
 export declare function weekEndsAt(now?: Date): Date
+/** The instant the home clock reads `minutes` past midnight on race day `key` (DST-aware). */
+export declare function raceInstant(key: string, minutes?: number): Date
+
+/**
+ * A slot of the day on the home clock: minutes past midnight America/Edmonton, `[from, until)`.
+ * `mode` is the weekday send that owns it; Sunday's evening slot runs `week` instead.
+ */
+export interface PushSlot {
+  mode: 'drop' | 'quests' | 'daily' | 'laststand'
+  from: number
+  until: number
+}
+
+/**
+ * THE TIMETABLE — the sender's, not the cron's. GitHub's scheduler ran this repo's crons 2–11 hours
+ * late (measured 2026-08-26 → 09-03), so the workflow now polls hourly and the home clock picks the
+ * slot. src/core/pushcadence.test.ts pins the slots' order, their distance from midnight and the
+ * spacing that keeps a late board reminder from locking out the last call.
+ */
+export declare const SLOTS: readonly PushSlot[]
+export declare function slotFor(mode: PushMode): PushSlot | null
+export declare function slotLabel(slot: PushSlot): string
+/** Which send the home clock says is due at `now`, or null in the quiet hours. */
+export declare function modeForClock(now?: Date): { mode: PushMode; slot: PushSlot } | null
+export declare function windowOpen(mode: PushMode, now?: Date): boolean
+/** Has this device been sent to since `slot` opened on today's race day — the hourly run's latch. */
+export declare function sentInSlot(sub: PushSubscriptionRow, slot: PushSlot | null, now?: Date): boolean
 
 /**
  * The sender's copy of the HOUSE GIFT roll (src/core/bonusdrop.ts dropForDay), pinned against the

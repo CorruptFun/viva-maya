@@ -183,28 +183,87 @@ export async function enablePush(): Promise<EnableResult> {
         applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY as string),
       }))
 
-    const json = sub.toJSON() as { endpoint?: string; keys?: { p256dh?: string; auth?: string } }
-    if (!json.endpoint || !json.keys?.p256dh || !json.keys?.auth) return { ok: false, reason: 'failed' }
-
-    // Goes through the SECURITY DEFINER function (0012), NOT a direct table write.
-    // A direct upsert CANNOT WORK here: the table has no SELECT policy (endpoints must never be
-    // enumerable), and Postgres needs a row to be visible under a SELECT policy before ON CONFLICT
-    // can update it — so the direct version silently refreshed nothing while returning 201.
-    // user_id is deliberately NOT sent: the function reads it from the JWT so it can't be forged.
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/register_push_subscription`, {
-      method: 'POST',
-      headers: authHeaders(),
-      body: JSON.stringify({
-        p_endpoint: json.endpoint,
-        p_p256dh: json.keys.p256dh,
-        p_auth: json.keys.auth,
-        p_device_id: readDeviceId(),
-      }),
-    })
-    if (!res.ok) return { ok: false, reason: 'failed' }
+    if (!(await registerSubscription(sub))) return { ok: false, reason: 'failed' }
     return { ok: true }
   } catch {
     return { ok: false, reason: 'failed' }
+  }
+}
+
+/**
+ * Write (or rewrite) this device's subscription row.
+ *
+ * Goes through the SECURITY DEFINER function (0012), NOT a direct table write.
+ * A direct upsert CANNOT WORK here: the table has no SELECT policy (endpoints must never be
+ * enumerable), and Postgres needs a row to be visible under a SELECT policy before ON CONFLICT
+ * can update it — so the direct version silently refreshed nothing while returning 201.
+ * user_id is deliberately NOT sent: the function reads it from the JWT in `authHeaders()` so it
+ * can't be forged — which also means WHO the row belongs to is decided by who is signed in at the
+ * moment this runs, and is why `syncPushIdentity` below has to call it again after a sign-in.
+ */
+async function registerSubscription(sub: PushSubscription): Promise<boolean> {
+  const json = sub.toJSON() as { endpoint?: string; keys?: { p256dh?: string; auth?: string } }
+  if (!json.endpoint || !json.keys?.p256dh || !json.keys?.auth) return false
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/register_push_subscription`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({
+      p_endpoint: json.endpoint,
+      p_p256dh: json.keys.p256dh,
+      p_auth: json.keys.auth,
+      p_device_id: readDeviceId(),
+    }),
+  })
+  return res.ok
+}
+
+/** Which account this device's subscription row was last stamped with — per device, per origin. */
+const IDENTITY_KEY = 'viva-maya:push-identity'
+
+/**
+ * Make sure the subscription row carries the player who is signed in NOW.
+ *
+ * ⚠️ WHY THIS EXISTS: a row's `user_id` is set from the JWT at registration and never again, so a
+ * device that subscribed while signed out — or signed in afterwards, or on the other origin — sits
+ * in `push_subscriptions` as ANONYMOUS forever. To the sender an anonymous row has no save to read:
+ * no streak, no quest slate, no jackpot meter, no board row. Every one of the weekday sends is gated
+ * on exactly those facts, so such a device is reachable by nothing but the Sunday season summary,
+ * however much it plays. Measured 2026-09-03: one of the four live subscribers was in this state,
+ * daily-active and held back from every weekday run as "no news".
+ *
+ * Runs whenever a session is present (boot restore and fresh sign-in alike) and latches on the user
+ * id, so it costs one round trip per device per account rather than one per open. Re-registering
+ * resets both category switches to ON (0025's ON CONFLICT clause — the right default for a brand-new
+ * subscriber), so the current switches are read first and anything the player had turned off is
+ * turned off again. Fail-soft throughout: a device that cannot be re-stamped is exactly as reachable
+ * as it was before, and the latch is only set on success so the next open tries again.
+ */
+export async function syncPushIdentity(userId: string | null): Promise<boolean> {
+  try {
+    if (!userId) return false
+    if (pushSupport() !== 'ready' || Notification.permission !== 'granted') return false
+    let stamped: string | null = null
+    try {
+      stamped = localStorage.getItem(IDENTITY_KEY)
+    } catch {
+      /* private mode / blocked storage: re-stamp every open, which is only ever a redundant write */
+    }
+    if (stamped === userId) return false
+    const reg = await navigator.serviceWorker.getRegistration()
+    const sub = await reg?.pushManager.getSubscription()
+    if (!sub) return false
+    const before = await pushCategories()
+    if (!(await registerSubscription(sub))) return false
+    if (before && !before.weekRace) await setPushCategory('week_race', false)
+    if (before && !before.dailyPlay) await setPushCategory('daily_play', false)
+    try {
+      localStorage.setItem(IDENTITY_KEY, userId)
+    } catch {
+      /* see above */
+    }
+    return true
+  } catch {
+    return false
   }
 }
 

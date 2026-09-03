@@ -285,6 +285,14 @@ export async function initCloud(): Promise<void> {
       }
       void syncNow()
     }
+    // The push subscription row must name the player who is signed in NOW, or the sender can read
+    // nothing personal for this device and every weekday nudge stays silent (see syncPushIdentity).
+    // Latched on the user id inside, so this is one round trip per device per account, not per
+    // open. Lazy import for the same reason as analytics: the auth path never waits on push.
+    if (session) {
+      const userId = session.userId
+      void import('./push').then(p => p.syncPushIdentity(userId))
+    }
   })
   try {
     const { data } = await c.auth.getSession()
