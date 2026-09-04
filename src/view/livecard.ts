@@ -1,6 +1,7 @@
 import Phaser from 'phaser'
 import { sfx } from '../audio/sfx'
 import { SERIES_SIZE, ownedCharms } from '../core/charms'
+import { activeChipEvent, eventRemaining } from '../core/chipevent'
 import { daysToNextStreakReward, nextStreakReward, spinAvailable } from '../core/daily'
 import { endlessUnlocked } from '../core/endless'
 import { LEVEL_COUNT } from '../core/levels'
@@ -46,6 +47,12 @@ export interface LiveCtx {
    * reaching into four widgets — the same "apply by repaint" rule the theme picker follows.
    */
   refresh: () => void
+  /**
+   * The instant Home painted, for the one provider whose fact is a WINDOW rather than a save field
+   * (a chip event). Passed in, never read from `Date` inside a provider, so `pickLiveNow` stays a
+   * pure function of its argument and a test can put the clock anywhere.
+   */
+  now: Date
 }
 
 /** One thing worth saying, in the shape the card paints. */
@@ -89,6 +96,30 @@ const QUEST_ROUTES: Record<QuestGoal['signal'], (scene: Phaser.Scene, save: Save
   level_win: (scene, save) => startScene(scene, 'game', { level: Math.min(save.unlocked, LEVEL_COUNT) }),
   slots_spun: scene => startScene(scene, 'slots'),
   endless_end: scene => startScene(scene, 'game', { endless: true }),
+}
+
+/**
+ * 0 · A CHIP EVENT is running — every numbered level pays ×N until the season resets.
+ *
+ * Outranks the quest slate for the length of the window, and only then: a promo is the one entry
+ * here that a player cannot discover from the game itself (a quest is on the slate, a spin is in the
+ * bank, a streak is on the flame), so an unadvertised weekend would pay out silently and bring
+ * nobody back for Saturday. The countdown is the race panels' own coarse form ("2d 5h"), and the
+ * end it counts to is `weekEndsAt` — the exact instant the endless board resets (core/chipevent.ts).
+ *
+ * Tap = PLAY's target, the level the event pays on. Not gated on `preFirstWin`: level 1 is a level,
+ * and doubling a first clear is the friendliest possible hello.
+ */
+const chipEventLive: LiveProvider = ({ now }) => {
+  const ev = activeChipEvent(now)
+  if (!ev) return null
+  return {
+    id: `event:${ev.id}`,
+    glyph: '💰',
+    heading: ev.label,
+    line: `every level pays ×${ev.mult} chips  ·  ${eventRemaining(ev, now)} left`,
+    open: (scene, ctx) => QUEST_ROUTES.level_win(scene, ctx.save),
+  }
 }
 
 /**
@@ -216,12 +247,13 @@ const charmsNearDone: LiveProvider = ({ save }) => {
 /**
  * The list, in priority order. Highest first; the first provider to return non-null owns the slot.
  *
- * Ranked by what the player LOSES by ignoring it: a quest slate dies at midnight and wants a whole
- * session, a banked spin keeps, a streak dies at midnight but is one sitting, and a collection never
+ * Ranked by what the player LOSES by ignoring it: a chip event dies with the season and pays on
+ * every level until then, a quest slate dies at midnight and wants a whole session, a banked spin keeps, a streak dies at midnight but is one sitting, and a collection never
  * expires at all. (The stash, the unraced board and the locked race left this list on 2026-08-26 —
  * each is now said permanently by the ENDLESS hero or the rail's stash door; see the notes above.)
  */
 export const LIVE_PROVIDERS: readonly LiveProvider[] = [
+  chipEventLive,
   questsOpen,
   freeSpinsWaiting,
   streakAtRisk,

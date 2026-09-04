@@ -680,7 +680,7 @@ export class HomeScene extends Phaser.Scene {
     /** The ENDLESS hero rides the race tile's old rule: present from the first win on, live or locked. */
     const showEndlessHero = !preFirstWin
     /** What the card would say right now — asked BEFORE the band is measured, since it may say nothing. */
-    const liveCtx: LiveCtx = { save, preFirstWin, refresh: refreshHome }
+    const liveCtx: LiveCtx = { save, preFirstWin, refresh: refreshHome, now: new Date() }
     const liveNow = pickLiveNow(liveCtx)
     /** The surviving rows, top → bottom: [height, air above it]. Drives the centring below. */
     const stackRows: Array<[number, number]> = []

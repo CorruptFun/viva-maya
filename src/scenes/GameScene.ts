@@ -25,6 +25,8 @@ import {
 import { Board } from '../core/board'
 import { CheatSwipeCode, swipeDir } from '../core/cheat'
 import { awardFreeSpinsFor, todayKey } from '../core/daily'
+import { eventChipReward } from '../core/chipevent'
+import type { ChipEvent } from '../core/chipevent'
 import { DAYS_PER_WEEK, dayKey, endlessBestForDay, recordEndless } from '../core/endless'
 import type { WeekStanding } from '../core/endless'
 import { endlessLockPlan, endlessShapeFor } from '../core/endlessramp'
@@ -558,6 +560,8 @@ export class GameScene extends Phaser.Scene {
   private chipHud?: ChipPill
   /** New chip total banked by the current win (set in finishWin, applied on the payout fly-in). */
   private chipBanked = 0
+  /** The chip event that multiplied this win's purse (set in finishWin), or null — the win card names it. */
+  private winEvent: ChipEvent | null = null
 
   /** Jackpot charge meter in the HUD (fills one notch per level win). */
   private jackpotHud?: JackpotMeter
@@ -6999,13 +7003,27 @@ export class GameScene extends Phaser.Scene {
     // replay now pays a fraction UNLESS it beats your stored star count, because chasing stars is the
     // whole point of replaying and must stay worth doing at full rate. Replay itself remains free.
     const replayScale = isReplay && !beatsBest ? DIFFICULTY.economy.replayChipFraction : 1
-    const chipReward = Math.round((stars * 8 + earnedLeftover * 2) * replayScale)
+    const baseReward = Math.round((stars * 8 + earnedLeftover * 2) * replayScale)
+    // A CHIP EVENT (core/chipevent.ts — "DOUBLE CHIPS WEEKEND") multiplies the FINAL purse, replay
+    // discount included, so the fresh-clear : farm ratio §G4 set stays put. This is the only site
+    // an event touches: the base above is what a level is worth, this is what the weekend pays.
+    const promo = eventChipReward(baseReward)
+    const chipReward = promo.chips
+    this.winEvent = promo.event
     this.chipBanked = addChips(chipReward)
     // Paired with the level_start / level_fail below, this is the per-level win rate — the query that
     // separates "level 21 is a wall" from "level 21 is just how far a new player gets in a day".
     // `moves_left` is the earned leftover, not the raw remainder, so a bought win can't read as a
-    // comfortable one and flatter a level that is actually hard.
-    track(EVENTS.LEVEL_WIN, { level: this.level, stars, moves_left: earnedLeftover })
+    // comfortable one and flatter a level that is actually hard. `chips` + `chip_mult` are what let
+    // a chip-event weekend be measured against an ordinary one; `event` names the row that paid.
+    track(EVENTS.LEVEL_WIN, {
+      level: this.level,
+      stars,
+      moves_left: earnedLeftover,
+      chips: chipReward,
+      chip_mult: promo.mult,
+      ...(promo.event ? { event: promo.event.id } : {}),
+    })
     // DAILY QUEST — one level win, fed to today's slate (core/quests.ts). `recordQuestSignal` rather
     // than `advanceQuests` because there is no save open here to fold into: every helper on this beat
     // (`recordResult`, `addChips`, `claimChapter`, `bumpJackpotMeter`) does its own atomic
@@ -8719,6 +8737,27 @@ export class GameScene extends Phaser.Scene {
       .setOrigin(0, 0.5)
     card.add(counter)
     settleActions.push(() => counter.setText(String(chipReward)))
+    // A CHIP EVENT says its name on the receipt: the counter already shows the doubled number, and a
+    // player who does not know WHY it is bigger this weekend cannot come back for more of it (the
+    // streak ladder's forward-looking rule, applied to a purse). Rose, like the NEW BEST ribbon —
+    // it is the card's one "this is unusual" colour. Seated under the counter (52px at py+8 reaches
+    // py+34) and clear of the NEXT LEVEL pill, whose top edge is at 140.
+    if (this.winEvent) {
+      const tag = this.add
+        .text(58, py + 46, `×${this.winEvent.mult} · ${this.winEvent.label}`, {
+          fontFamily: FONT,
+          fontSize: '15px',
+          fontStyle: '900',
+          color: css(T.roseDeep),
+        })
+        .setOrigin(0, 0.5)
+      // Shrink to fit the counter's column — 58 in from centre to 16 short of the 520 card's right
+      // edge is 186px, and a future event's label has no way of knowing that budget.
+      const budget = 260 - 58 - 16
+      let size = 15
+      while (tag.width > budget && size > 11) tag.setFontSize(--size)
+      card.add(tag)
+    }
 
     if (!animate) {
       pileChips.forEach(c => c.setScale(46 / 48))

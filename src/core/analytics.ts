@@ -82,7 +82,9 @@ export const EVENTS = {
 
   /** {level} — a level actually began (not merely browsed to on the map). */
   LEVEL_START: 'level_start',
-  /** {level, stars, moves_left} */
+  /** {level, stars, moves_left, chips, chip_mult, event?} — `chips` is the purse actually banked and
+   *  `chip_mult` the running chip event's multiplier (1 outside one; `event` names the row that paid —
+   *  core/chipevent.ts), so a DOUBLE CHIPS weekend can be measured against an ordinary one. */
   LEVEL_WIN: 'level_win',
   /** {level, reason: 'out_of_moves' | 'out_of_lives'} — the wall detector. */
   LEVEL_FAIL: 'level_fail',

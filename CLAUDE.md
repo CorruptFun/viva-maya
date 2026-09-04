@@ -187,6 +187,17 @@ Live: <https://corruptfun.github.io/viva-maya/>
   make anybody come back. `?streak=N` (DEV) opens the card for any rung — its plate
   is **measured** from the wrapped footer line, since that string is the longest on
   the card and hung 20px off the plate until it was budgeted rather than guessed.
+- **A chip event is a ROW, not a branch — and its window closes when the season does.**
+  `core/chipevent.ts` holds every time-boxed multiplier on the level-win purse (the first is
+  DOUBLE CHIPS WEEKEND, 2026-09-04 → Monday 2026-09-07). `finishWin` asks `eventChipReward` what
+  a win pays and never learns why; the Home live card and the win-card tag read the same row.
+  `until` is **derived** from `weekEndsAt(from)` — Monday midnight in RACE_TZ, the instant the
+  endless board and the weekly totals reset — never a hand-typed ISO end, so the promo and the
+  race cannot disagree about when the weekend is over. The multiplier rides the FINAL purse,
+  §G4 replay discount included, and touches nothing else (quests, chapter purses, storm, champion
+  purse and endless are all priced against their own faucets). Rows are append-only so a spike in
+  `level_win.chips` stays datable; `chipevent.test.ts` refuses overlapping windows. To run a new
+  one, add a row with a future `from` — a client that has the code is not yet "in the event".
 - **Endless has a cheat code**, and it is meant to be there — a secret swipe
   pattern on the dead strip below the board mints a free "mega win", each one
   paying its own Plinko drop (`src/core/cheat.ts`). A run that fires it still
